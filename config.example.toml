@@ -1,0 +1,17 @@
+[database]
+path = "~/.local/share/agent-introspection/introspection.sqlite3"
+busy_timeout_ms = 5000
+
+[signoz]
+health_url = "http://localhost:8080/api/v1/health"
+otlp_http_endpoint = "http://localhost:4318"
+compose_directory = "~/.local/share/codex-observability/signoz/deploy/docker"
+clickhouse_container = "signoz-clickhouse"
+collector_container = "signoz-otel-collector"
+docker_context = "orbstack"
+docker_host = "unix:///Users/adamjackson/.orbstack/run/docker.sock"
+
+[scheduler]
+timezone = "Europe/London"
+interval_seconds = 3600
+lease_seconds = 3600

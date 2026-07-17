@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["capability", "schema_version"],
+  "properties": {
+    "capability": {
+      "const": "model-schema-canary"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  }
+}

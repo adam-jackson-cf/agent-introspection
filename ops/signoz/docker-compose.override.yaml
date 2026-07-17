@@ -1,0 +1,16 @@
+services:
+  signoz:
+    ports: !override
+      - "127.0.0.1:8080:8080"
+    environment:
+      - "SIGNOZ_USER_ROOT_ENABLED=${SIGNOZ_USER_ROOT_ENABLED:?}"
+      - "SIGNOZ_USER_ROOT_EMAIL=${SIGNOZ_USER_ROOT_EMAIL:?}"
+      - "SIGNOZ_USER_ROOT_PASSWORD=${SIGNOZ_USER_ROOT_PASSWORD:?}"
+      - "SIGNOZ_USER_ROOT_ORG_NAME=${SIGNOZ_USER_ROOT_ORG_NAME:?}"
+      - "SIGNOZ_IDENTN_IMPERSONATION_ENABLED=true"
+      - "SIGNOZ_IDENTN_TOKENIZER_ENABLED=false"
+      - "SIGNOZ_IDENTN_APIKEY_ENABLED=false"
+  otel-collector:
+    ports: !override
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
