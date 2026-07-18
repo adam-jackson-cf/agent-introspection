@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_introspection.capabilities import (
+    CapabilityError,
     discover_source_schema,
     enforce_approved_schema,
     verify_network_perimeter,
@@ -28,15 +29,23 @@ from agent_introspection.database import (
 )
 from agent_introspection.detectors import DetectorEngine, DetectorEvent, Observation
 from agent_introspection.evidence import HydratedEvidence, hydrate_allowlisted_fields
+from agent_introspection.generations import GenerationError, validate_active_generation_contract
 from agent_introspection.identities import (
     ProjectIdentity,
     canonical_task,
     discover_project,
 )
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
+from agent_introspection.outcomes import derive_outcome
+from agent_introspection.review import record_review_activity_snapshot
 from agent_introspection.scheduler import scan_lease
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
-from agent_introspection.telemetry import DerivedEvent, drain_outbox, enqueue_events
+from agent_introspection.telemetry import (
+    OPERATIONAL_SCOPE,
+    DerivedEvent,
+    drain_outbox,
+    enqueue_events,
+)
 from agent_introspection.trends import (
     Occurrence,
     TrendEvaluation,
@@ -57,6 +66,137 @@ class TrendEventRecord:
     category: str
     project_id: str | None
     detector_id: str
+
+
+@dataclass(slots=True)
+class PipelineStream:
+    """Safe terminal state for one bounded source query."""
+
+    query_status: str = "unknown"
+    data_state: str = "unknown"
+    latest_timestamp_ns: int | None = None
+
+
+def _stream_lag(stream: PipelineStream, *, finished_ns: int) -> tuple[str, int | None]:
+    if stream.latest_timestamp_ns is None:
+        return "not_applicable", None
+    lag_ms = (finished_ns - stream.latest_timestamp_ns) // 1_000_000
+    if lag_ms < 0:
+        return "clock_skew", None
+    return "available", int(lag_ms)
+
+
+def _freshness(
+    *,
+    terminal_status: str,
+    logs: PipelineStream,
+    traces: PipelineStream,
+    finished_ns: int,
+) -> str:
+    if terminal_status == "failed":
+        return "missing"
+    timestamps = [
+        timestamp
+        for timestamp in (logs.latest_timestamp_ns, traces.latest_timestamp_ns)
+        if timestamp is not None
+    ]
+    if not timestamps:
+        return "fresh"
+    lag_ms = (finished_ns - max(timestamps)) // 1_000_000
+    if lag_ms < 0:
+        return "clock_skew"
+    if lag_ms <= 3_900_000:
+        return "fresh"
+    if lag_ms <= 7_200_000:
+        return "late"
+    return "stale"
+
+
+def _pipeline_state(
+    *,
+    terminal_status: str,
+    freshness: str,
+    logs: PipelineStream,
+    traces: PipelineStream,
+    hydration: PipelineStream,
+) -> str:
+    if terminal_status == "failed":
+        return "unhealthy"
+    if any(stream.query_status != "available" for stream in (logs, traces, hydration)):
+        return "unhealthy"
+    if freshness == "fresh":
+        return "healthy"
+    if freshness == "late":
+        return "degraded"
+    return "unhealthy"
+
+
+def _pipeline_snapshot_event(
+    *,
+    scan_run_id: str,
+    end_ns: int,
+    terminal_status: str,
+    error_class: str | None,
+    logs: PipelineStream,
+    traces: PipelineStream,
+    hydration: PipelineStream,
+    finished_ns: int,
+    duration_ms: float,
+    rows_processed: int,
+    pending_after_drain: int,
+    active_generation: str | None,
+) -> DerivedEvent:
+    logs_lag_state, logs_lag_ms = _stream_lag(logs, finished_ns=finished_ns)
+    traces_lag_state, traces_lag_ms = _stream_lag(traces, finished_ns=finished_ns)
+    freshness = _freshness(
+        terminal_status=terminal_status,
+        logs=logs,
+        traces=traces,
+        finished_ns=finished_ns,
+    )
+    attributes: dict[str, str | int | float | bool] = {
+        "pipeline.state": _pipeline_state(
+            terminal_status=terminal_status,
+            freshness=freshness,
+            logs=logs,
+            traces=traces,
+            hydration=hydration,
+        ),
+        "scan.terminal_status": terminal_status,
+        "pipeline.freshness": freshness,
+        "logs.query_status": logs.query_status,
+        "logs.data_state": logs.data_state,
+        "traces.query_status": traces.query_status,
+        "traces.data_state": traces.data_state,
+        "hydration.query_status": hydration.query_status,
+        "hydration.data_state": hydration.data_state,
+        "logs.lag_state": logs_lag_state,
+        "traces.lag_state": traces_lag_state,
+        "scan.duration_ms": duration_ms,
+        "rows.processed": rows_processed,
+        "outbox.pending_after_drain_excluding_terminal_event": pending_after_drain,
+    }
+    if error_class is not None:
+        attributes["pipeline.error_class"] = error_class
+    if active_generation is not None:
+        attributes["analysis.generation"] = active_generation
+    if logs.latest_timestamp_ns is not None:
+        attributes["logs.latest_timestamp_ns"] = logs.latest_timestamp_ns
+    if traces.latest_timestamp_ns is not None:
+        attributes["traces.latest_timestamp_ns"] = traces.latest_timestamp_ns
+    if logs_lag_ms is not None:
+        attributes["logs.lag_ms"] = logs_lag_ms
+    if traces_lag_ms is not None:
+        attributes["traces.lag_ms"] = traces_lag_ms
+    return DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id=scan_run_id,
+        entity_version=1,
+        event_sequence=1,
+        event_name="introspection.pipeline.snapshot",
+        attributes=attributes,
+        timestamp_ns=end_ns,
+    )
 
 
 def _stable_id(*parts: str) -> str:
@@ -182,12 +322,12 @@ def _detector_events(
             projects[project.identity] = project
         hydrated = hydration_by_id.get(log.log_id)
         operation = operations.get(log.log_id)
-        outcome = hydrated.outcome if hydrated else None
-        if log.event_name == "codex.tool_decision" and log.decision_source == "user":
-            event_name = "turn/steer"
-            outcome = log.decision
-        else:
-            event_name = log.event_name
+        event_name, outcome = derive_outcome(
+            event_name=log.event_name,
+            decision_source=log.decision_source,
+            decision=log.decision,
+            hydrated_outcome=hydrated.outcome if hydrated else None,
+        )
         events.append(
             DetectorEvent(
                 event_id=log.log_id,
@@ -512,7 +652,7 @@ def run_scan(
     client: ClickHouseClient | None = None,
     end_time: datetime | None = None,
 ) -> dict[str, Any]:
-    """Run one fail-closed scan and atomically advance the source watermark."""
+    """Run one fail-closed scan and publish only a safe terminal pipeline snapshot."""
     started = time.monotonic()
     now = end_time or datetime.now(UTC)
     if now.tzinfo is None:
@@ -524,273 +664,343 @@ def run_scan(
         container=config.signoz.clickhouse_container,
     )
     quick_check(connection)
-    verify_network_perimeter(docker_context=config.signoz.docker_context)
-    inventory = discover_source_schema(source)
-    enforce_approved_schema(connection, inventory)
+    logs_stream = PipelineStream()
+    traces_stream = PipelineStream()
+    hydration_stream = PipelineStream()
+    logs: list[LogRow] = []
+    traces: list[TraceRow] = []
+    hydration: list[HydrationRow] = []
+    records: list[ObservationRecord] = []
+    trend_events: list[TrendEventRecord] = []
+    active_generation: str | None = None
+    terminal_status = "failed"
+    error_class: str | None = None
+    failure: BaseException | None = None
+    terminal_only_failure = False
+    scan_run_persisted = False
+    telemetry_delivered = 0
+    pending_after_drain = 0
     with scan_lease(
         connection,
         duration=timedelta(seconds=config.scheduler.lease_seconds),
     ):
         start_ns, end_ns, start_bucket, end_bucket = _bounds(connection, end_ns)
-        with connection:
-            connection.execute(
-                """
-                INSERT INTO scan_runs (
-                    id, status, started_at, source_start_ns, source_end_ns, details_json
-                ) VALUES (?, 'running', ?, ?, ?, '{}')
-                """,
-                (scan_run_id, _iso_now(), start_ns, end_ns),
-            )
+        terminal_at = datetime.now(UTC)
+        started_at = _iso_now()
         try:
-            logs = list(
-                source.logs(
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    start_bucket=start_bucket,
-                    end_bucket=end_bucket,
+            try:
+                verify_network_perimeter(docker_context=config.signoz.docker_context)
+            except CapabilityError:
+                error_class = "network_perimeter"
+                raise
+            try:
+                source_contract_fingerprint = enforce_approved_schema(
+                    connection, discover_source_schema(source)
                 )
-            )
-            start_dt = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
-            end_dt = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
-            traces = list(
-                source.traces(
-                    start=start_dt,
-                    end=end_dt,
-                    start_bucket=start_bucket,
-                    end_bucket=end_bucket,
+            except CapabilityError:
+                error_class = "source_contract"
+                raise
+            try:
+                active_generation = validate_active_generation_contract(
+                    connection,
+                    source_contract_fingerprint=source_contract_fingerprint,
                 )
-            )
-            trace_index = {trace.trace_id: trace for trace in traces}
-            shortlisted = _shortlisted_log_ids(logs, trace_index)
-            hydration: list[HydrationRow] = []
-            for offset in range(0, len(shortlisted), 250):
-                hydration.extend(
-                    source.hydrate(
-                        identity_kind="log_id",
-                        identifiers=shortlisted[offset : offset + 250],
+                if active_generation is None:
+                    error_class = "generation_unavailable"
+                    terminal_only_failure = True
+                    raise GenerationError("active analysis generation is unavailable")
+            except GenerationError:
+                if error_class is None:
+                    error_class = "generation_contract"
+                active_generation = None
+                raise
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO scan_runs (
+                        id, status, started_at, source_start_ns, source_end_ns, details_json
+                    ) VALUES (?, 'running', ?, ?, ?, '{}')
+                    """,
+                    (scan_run_id, started_at, start_ns, end_ns),
+                )
+            scan_run_persisted = True
+            try:
+                logs = list(
+                    source.logs(
                         start_ns=start_ns,
                         end_ns=end_ns,
                         start_bucket=start_bucket,
                         end_bucket=end_bucket,
                     )
                 )
-            events, projects = _detector_events(logs, traces, hydration)
-            token_baselines: dict[str, list[int]] = defaultdict(list)
-            for event in events:
-                if event.token_count is not None:
-                    token_baselines[event.project_id].append(event.token_count)
-            observations = DetectorEngine().detect(events, token_baselines=token_baselines)
-            event_index = {event.event_id: event for event in events}
-            records = _records(scan_run_id, observations, event_index, projects)
-            if records:
-                placeholders = ",".join("?" for _ in records)
-                existing_ids = {
-                    str(row[0])
-                    for row in connection.execute(
-                        f"SELECT id FROM observations WHERE id IN ({placeholders})",
-                        tuple(record.id for record in records),
+                logs_stream = PipelineStream(
+                    query_status="available",
+                    data_state="records" if logs else "no_data",
+                    latest_timestamp_ns=max((log.timestamp_ns for log in logs), default=None),
+                )
+            except BaseException:
+                logs_stream.query_status = "failed"
+                error_class = "logs_query"
+                raise
+            try:
+                start_dt = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
+                end_dt = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
+                traces = list(
+                    source.traces(
+                        start=start_dt,
+                        end=end_dt,
+                        start_bucket=start_bucket,
+                        end_bucket=end_bucket,
                     )
-                }
-                records = [record for record in records if record.id not in existing_ids]
-            connection.execute("BEGIN IMMEDIATE")
-            _persist_projects(connection, projects)
-            if logs:
-                last_id = logs[-1].log_id
-            elif traces:
-                last_id = f"trace:{traces[-1].trace_id}"
-            else:
-                last_id = "no-data"
-            persist_observations_and_watermark(
-                connection,
-                records,
-                SourceWatermark("signoz_logs", end_ns, last_id, _iso_now()),
-                manage_transaction=False,
-            )
-            _persist_evidence(connection, records, hydration)
-            trend_events = _update_findings(
-                connection,
-                records,
-                now=now,
-                manage_transaction=False,
-            )
-            project_names = {
-                str(row[0]): Path(str(row[1])).name
-                for row in connection.execute(
-                    "SELECT id, canonical_path FROM project_identities"
-                ).fetchall()
-            }
-            elapsed_ms = (time.monotonic() - started) * 1000
-            status = "no_data" if not logs and not traces else "succeeded"
-            connection.execute(
-                """
-                UPDATE scan_runs SET status = ?, completed_at = ?, rows_processed = ?,
-                    details_json = ? WHERE id = ?
-                """,
-                (
-                    status,
-                    _iso_now(),
-                    len(logs) + len(traces),
-                    json.dumps(
-                        {
-                            "logs": len(logs),
-                            "traces": len(traces),
-                            "hydrated": len(hydration),
-                            "observations": len(records),
-                            "trends": len(trend_events),
-                        },
-                        sort_keys=True,
-                        separators=(",", ":"),
+                )
+                traces_stream = PipelineStream(
+                    query_status="available",
+                    data_state="records" if traces else "no_data",
+                    latest_timestamp_ns=max(
+                        (int(trace.ended_at.timestamp() * 1_000_000_000) for trace in traces),
+                        default=None,
                     ),
-                    scan_run_id,
-                ),
-            )
-            derived_events = [
-                DerivedEvent(
-                    entity_id=record.id,
-                    entity_version=1,
-                    event_sequence=index,
-                    event_name="introspection.observation.detected",
-                    attributes={
-                        "detector.id": record.detector_id,
-                        "project.id": record.project_identity_id or "unresolved",
-                        "project.name": project_names.get(
-                            record.project_identity_id or "", "unresolved"
-                        ),
-                        "finding.id": record.fingerprint,
-                    },
-                    timestamp_ns=record.occurred_at_ns,
                 )
-                for index, record in enumerate(records, 1)
-            ]
-            derived_events.append(
-                DerivedEvent(
-                    entity_id=scan_run_id,
-                    entity_version=1,
-                    event_sequence=len(records) + 1,
-                    event_name="introspection.scan.completed",
-                    attributes={
-                        "scan.status": status,
-                        "source.availability": "available",
-                        "scan.duration_ms": elapsed_ms,
-                        "rows.processed": len(logs) + len(traces),
-                        "source.lag_ms": max(0.0, (datetime.now(UTC) - now).total_seconds() * 1000),
-                    },
-                    timestamp_ns=end_ns,
+            except BaseException:
+                traces_stream.query_status = "failed"
+                error_class = "traces_query"
+                raise
+            try:
+                trace_index = {trace.trace_id: trace for trace in traces}
+                shortlisted = _shortlisted_log_ids(logs, trace_index)
+                for offset in range(0, len(shortlisted), 250):
+                    hydration.extend(
+                        source.hydrate(
+                            identity_kind="log_id",
+                            identifiers=shortlisted[offset : offset + 250],
+                            start_ns=start_ns,
+                            end_ns=end_ns,
+                            start_bucket=start_bucket,
+                            end_bucket=end_bucket,
+                        )
+                    )
+                hydration_stream = PipelineStream(
+                    query_status="available",
+                    data_state="records" if hydration else "no_data",
                 )
-            )
-            derived_events.extend(
-                DerivedEvent(
-                    entity_id=trend.evaluation.finding_id,
-                    entity_version=trend.entity_version,
-                    event_sequence=trend.entity_version,
-                    event_name=(
-                        "introspection.trend.promoted"
-                        if trend.promoted
-                        else "introspection.trend.evaluated"
-                    ),
-                    attributes={
-                        "trend.state": str(trend.evaluation.state),
-                        "finding.category": trend.category,
-                        "project.id": trend.project_id or "unresolved",
-                        "project.name": project_names.get(trend.project_id or "", "unresolved"),
-                        "detector.id": trend.detector_id,
-                        "finding.id": trend.evaluation.finding_id,
-                        "occurrence.count": trend.evaluation.occurrence_count,
-                    },
-                    timestamp_ns=trend.evaluation.window_ended_at_ns,
-                )
-                for trend in trend_events
-            )
-            backup_directory = config.database.path.parent / "backups"
-            backups = (
-                sorted(backup_directory.glob("*.sqlite3")) if backup_directory.exists() else []
-            )
-            backup_age = (
-                max(0.0, datetime.now(UTC).timestamp() - backups[-1].stat().st_mtime)
-                if backups
-                else -1.0
-            )
-            derived_events.append(
-                DerivedEvent(
-                    entity_id="sqlite-health",
-                    entity_version=end_ns,
-                    event_sequence=end_ns,
-                    event_name="introspection.sqlite.health",
-                    attributes={
-                        "sqlite.integrity": "ok",
-                        "sqlite.size_bytes": config.database.path.stat().st_size,
-                        "sqlite.backup_age_seconds": backup_age,
-                        "sqlite.backup_available": bool(backups),
-                        "snapshot.id": scan_run_id,
-                    },
-                    timestamp_ns=end_ns,
-                )
-            )
-            enqueue_events(connection, derived_events)
-            connection.commit()
-            delivered = 0
-            pending = 0
-            for _ in range(20):
-                drain = drain_outbox(
+            except BaseException:
+                hydration_stream.query_status = "failed"
+                error_class = "hydration"
+                raise
+            try:
+                events, projects = _detector_events(logs, traces, hydration)
+                token_baselines: dict[str, list[int]] = defaultdict(list)
+                for event in events:
+                    if event.token_count is not None:
+                        token_baselines[event.project_id].append(event.token_count)
+                observations = DetectorEngine().detect(events, token_baselines=token_baselines)
+                event_index = {event.event_id: event for event in events}
+                records = _records(scan_run_id, observations, event_index, projects)
+                if records:
+                    placeholders = ",".join("?" for _ in records)
+                    existing_ids = {
+                        str(row[0])
+                        for row in connection.execute(
+                            f"SELECT id FROM observations WHERE id IN ({placeholders})",
+                            tuple(record.id for record in records),
+                        )
+                    }
+                    records = [record for record in records if record.id not in existing_ids]
+                connection.execute("BEGIN IMMEDIATE")
+                _persist_projects(connection, projects)
+                if logs:
+                    last_id = logs[-1].log_id
+                elif traces:
+                    last_id = f"trace:{traces[-1].trace_id}"
+                else:
+                    last_id = "no-data"
+                persist_observations_and_watermark(
                     connection,
-                    endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
-                    limit=500,
+                    records,
+                    SourceWatermark("signoz_logs", end_ns, last_id, _iso_now()),
+                    manage_transaction=False,
                 )
-                delivered += drain["delivered"]
-                pending = drain["pending"]
-                if drain["selected"] == 0 or drain["delivered"] == 0:
-                    break
-            measured_pending = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
-                ).fetchone()[0]
-            )
-            enqueue_events(
-                connection,
-                [
+                _persist_evidence(connection, records, hydration)
+                trend_events = _update_findings(
+                    connection,
+                    records,
+                    now=now,
+                    manage_transaction=False,
+                )
+                project_names = {
+                    str(row[0]): Path(str(row[1])).name
+                    for row in connection.execute(
+                        "SELECT id, canonical_path FROM project_identities"
+                    ).fetchall()
+                }
+                scope = f"generation:{active_generation}"
+                projection_events = [
                     DerivedEvent(
-                        entity_id="otlp-outbox",
-                        entity_version=end_ns,
-                        event_sequence=end_ns,
-                        event_name="introspection.outbox.snapshot",
+                        scope=scope,
+                        entity_id=record.id,
+                        entity_version=1,
+                        event_sequence=1,
+                        event_name="introspection.observation.detected",
                         attributes={
-                            "outbox.pending": measured_pending,
-                            "snapshot.id": scan_run_id,
+                            "analysis.generation": active_generation,
+                            "detector.id": record.detector_id,
+                            "project.id": record.project_identity_id or "unresolved",
+                            "project.name": project_names.get(
+                                record.project_identity_id or "", "unresolved"
+                            ),
+                            "finding.id": record.fingerprint,
                         },
-                        timestamp_ns=end_ns,
+                        timestamp_ns=record.occurred_at_ns,
                     )
-                ],
-            )
-            snapshot_drain = drain_outbox(
+                    for record in records
+                ]
+                projection_events.extend(
+                    DerivedEvent(
+                        scope=scope,
+                        entity_id=trend.evaluation.finding_id,
+                        entity_version=trend.entity_version,
+                        event_sequence=trend.entity_version,
+                        event_name=(
+                            "introspection.trend.promoted"
+                            if trend.promoted
+                            else "introspection.trend.evaluated"
+                        ),
+                        attributes={
+                            "analysis.generation": active_generation,
+                            "trend.state": str(trend.evaluation.state),
+                            "finding.category": trend.category,
+                            "project.id": trend.project_id or "unresolved",
+                            "project.name": project_names.get(trend.project_id or "", "unresolved"),
+                            "detector.id": trend.detector_id,
+                            "finding.id": trend.evaluation.finding_id,
+                            "occurrence.count": trend.evaluation.occurrence_count,
+                        },
+                        timestamp_ns=trend.evaluation.window_ended_at_ns,
+                    )
+                    for trend in trend_events
+                )
+                enqueue_events(connection, projection_events)
+                terminal_status = "no_data" if not logs and not traces else "succeeded"
+                connection.commit()
+            except BaseException:
+                if connection.in_transaction:
+                    connection.rollback()
+                if error_class is None:
+                    error_class = "processing"
+                raise
+        except BaseException as exc:
+            failure = exc
+            active_generation = None
+            if connection.in_transaction:
+                connection.rollback()
+            terminal_status = "failed"
+            if error_class is None:
+                error_class = "processing"
+        for _ in range(20):
+            drain = drain_outbox(
                 connection,
                 endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
                 limit=500,
             )
-            delivered += snapshot_drain["delivered"]
-            pending = snapshot_drain["pending"]
-            return {
-                "scan_run_id": scan_run_id,
-                "status": status,
-                "logs": len(logs),
-                "traces": len(traces),
-                "observations": len(records),
-                "trend_evaluations": len(trend_events),
-                "telemetry_delivered": delivered,
-                "telemetry_pending": pending,
-            }
-        except BaseException as exc:
-            if connection.in_transaction:
-                connection.rollback()
-            current = connection.execute(
-                "SELECT status FROM scan_runs WHERE id = ?", (scan_run_id,)
-            ).fetchone()
-            if current is not None and current[0] == "running":
-                with connection:
-                    connection.execute(
-                        """
-                    UPDATE scan_runs SET status = 'failed', completed_at = ?, error_code = ?
+            telemetry_delivered += drain["delivered"]
+            if drain["selected"] == 0 or drain["delivered"] == 0:
+                break
+        pending_after_drain = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
+            ).fetchone()[0]
+        )
+        finished_ns = time.time_ns()
+        duration_ms = (time.monotonic() - started) * 1000
+        snapshot = _pipeline_snapshot_event(
+            scan_run_id=scan_run_id,
+            end_ns=end_ns,
+            terminal_status=terminal_status,
+            error_class=error_class,
+            logs=logs_stream,
+            traces=traces_stream,
+            hydration=hydration_stream,
+            finished_ns=finished_ns,
+            duration_ms=duration_ms,
+            rows_processed=len(logs) + len(traces),
+            pending_after_drain=pending_after_drain,
+            active_generation=active_generation,
+        )
+        details = {
+            "hydrated": len(hydration),
+            "logs": len(logs),
+            "observations": len(records),
+            "traces": len(traces),
+            "trends": len(trend_events),
+        }
+        error_code = (
+            error_class
+            if terminal_only_failure
+            else type(failure).__name__
+            if failure is not None
+            else error_class
+        )
+        details_json = json.dumps(details, sort_keys=True, separators=(",", ":"))
+        with connection:
+            if scan_run_persisted:
+                connection.execute(
+                    """
+                    UPDATE scan_runs
+                    SET status = ?, completed_at = ?, rows_processed = ?, error_code = ?,
+                        details_json = ?
                     WHERE id = ?
                     """,
-                        (_iso_now(), type(exc).__name__, scan_run_id),
-                    )
-            raise
+                    (
+                        terminal_status,
+                        terminal_at.isoformat(),
+                        len(logs) + len(traces),
+                        error_code,
+                        details_json,
+                        scan_run_id,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO scan_runs (
+                        id, status, started_at, completed_at, source_start_ns, source_end_ns,
+                        rows_processed, error_code, details_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        scan_run_id,
+                        terminal_status,
+                        started_at,
+                        terminal_at.isoformat(),
+                        start_ns,
+                        end_ns,
+                        len(logs) + len(traces),
+                        error_code,
+                        details_json,
+                    ),
+                )
+            review_snapshot = record_review_activity_snapshot(
+                connection,
+                trigger_kind="scan_run",
+                trigger_id=scan_run_id,
+                trigger_version=1,
+                timestamp=terminal_at,
+            )
+            enqueue_events(connection, [snapshot, review_snapshot])
+        pending = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
+            ).fetchone()[0]
+        )
+        if failure is not None and not terminal_only_failure:
+            raise failure
+        return {
+            "scan_run_id": scan_run_id,
+            "status": terminal_status,
+            "logs": len(logs),
+            "traces": len(traces),
+            "observations": len(records),
+            "trend_evaluations": len(trend_events),
+            "telemetry_delivered": telemetry_delivered,
+            "telemetry_pending": pending,
+        }

@@ -9,25 +9,36 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
 from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
 from opentelemetry.proto.logs.v1.logs_pb2 import LogRecord, ResourceLogs, ScopeLogs
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 
-from agent_introspection.source import ClickHouseClient, SourceError
+from agent_introspection.source import SourceError
 
 SERVICE_NAME = "agent-introspection"
 OBSERVATION_EVENT_NAME = "introspection.observation.detected"
+OPERATIONAL_SCOPE = "operational"
+REVIEW_SCOPE = "review"
+
+
+class EventQueryClient(Protocol):
+    """The read-only query contract required for remote event verification."""
+
+    def query(
+        self, sql: str, parameters: Mapping[str, str | int]
+    ) -> Iterable[Mapping[str, Any]]: ...
 
 
 @dataclass(frozen=True)
 class DerivedEvent:
+    scope: str
     entity_id: str
     entity_version: int
     event_sequence: int
@@ -37,14 +48,23 @@ class DerivedEvent:
 
     @property
     def event_id(self) -> str:
+        if not self.scope:
+            raise ValueError("event scope is required")
         material = "\x1f".join(
-            (self.entity_id, str(self.entity_version), str(self.event_sequence), self.event_name)
+            (
+                self.scope,
+                self.entity_id,
+                str(self.entity_version),
+                str(self.event_sequence),
+                self.event_name,
+            )
         )
         return str(uuid.UUID(hashlib.sha256(material.encode()).hexdigest()[:32]))
 
     def payload(self) -> dict[str, Any]:
         return {
             "event.id": self.event_id,
+            "event.scope": self.scope,
             "entity.id": self.entity_id,
             "entity.version": self.entity_version,
             "event.sequence": self.event_sequence,
@@ -62,6 +82,15 @@ class ObservationReconciliationPlan:
     observation_count: int
     existing_local_observation_events: int
     events: tuple[DerivedEvent, ...]
+
+
+@dataclass(frozen=True)
+class RemoteEventReference:
+    """The immutable fields required to confirm one delivered OTLP event."""
+
+    event_id: str
+    event_name: str
+    timestamp_ns: int
 
 
 def enqueue_event(connection: sqlite3.Connection, event: DerivedEvent) -> str:
@@ -189,6 +218,7 @@ def plan_observation_reconciliation(
                 (
                     (detector_id, project_sort_key, event_id_tuple),
                     DerivedEvent(
+                        scope=OPERATIONAL_SCOPE,
                         entity_id=observation_id,
                         entity_version=1,
                         event_sequence=0,
@@ -207,6 +237,7 @@ def plan_observation_reconciliation(
             sorted(candidates, key=lambda item: item[0]), 1
         ):
             recovered = DerivedEvent(
+                scope=OPERATIONAL_SCOPE,
                 entity_id=event.entity_id,
                 entity_version=event.entity_version,
                 event_sequence=ordinal,
@@ -225,40 +256,67 @@ def plan_observation_reconciliation(
     )
 
 
-def remote_observation_event_ids(
-    client: ClickHouseClient, events: Sequence[DerivedEvent]
+def remote_event_ids(
+    client: EventQueryClient, events: Sequence[DerivedEvent | RemoteEventReference]
 ) -> set[str]:
-    """Check SigNoz for the exact observation event IDs before local replay."""
+    """Check SigNoz for exact immutable event IDs before a control-plane transition."""
 
+    references = tuple(
+        RemoteEventReference(event.event_id, event.event_name, event.timestamp_ns)
+        if isinstance(event, DerivedEvent)
+        else event
+        for event in events
+    )
     present: set[str] = set()
-    for offset in range(0, len(events), 250):
-        batch = events[offset : offset + 250]
-        event_ids = {event.event_id for event in batch}
-        placeholders = ", ".join(f"{{event_{index}:String}}" for index in range(len(batch)))
-        start_ns = min(event.timestamp_ns for event in batch)
-        end_ns = max(event.timestamp_ns for event in batch)
-        query = f"""
+    by_name: dict[str, list[RemoteEventReference]] = {}
+    for reference in references:
+        if not reference.event_id or not reference.event_name or reference.timestamp_ns < 0:
+            raise ValueError(
+                "remote event references require an ID, name, and non-negative timestamp"
+            )
+        by_name.setdefault(reference.event_name, []).append(reference)
+    for event_name, named_references in sorted(by_name.items()):
+        for offset in range(0, len(named_references), 250):
+            batch = named_references[offset : offset + 250]
+            event_ids = {event.event_id for event in batch}
+            placeholders = ", ".join(f"{{event_{index}:String}}" for index in range(len(batch)))
+            start_ns = min(event.timestamp_ns for event in batch)
+            end_ns = max(event.timestamp_ns for event in batch)
+            query = f"""
         SELECT DISTINCT attributes_string['event.id'] AS event_id
         FROM signoz_logs.distributed_logs_v2
         WHERE timestamp BETWEEN {{start_ns:UInt64}} AND {{end_ns:UInt64}}
           AND ts_bucket_start BETWEEN {{start_bucket:UInt64}} AND {{end_bucket:UInt64}}
           AND resource.`service.name`::String = 'agent-introspection'
-          AND attributes_string['event.name'] = '{OBSERVATION_EVENT_NAME}'
+          AND attributes_string['event.name'] = {{event_name:String}}
           AND attributes_string['event.id'] IN ({placeholders})
         """.strip()
-        parameters: dict[str, str | int] = {
-            "start_ns": start_ns,
-            "end_ns": end_ns,
-            "start_bucket": max(0, start_ns // 1_000_000_000 - 1800),
-            "end_bucket": end_ns // 1_000_000_000,
-        }
-        parameters.update({f"event_{index}": event.event_id for index, event in enumerate(batch)})
-        for row in client.query(query, parameters):
-            event_id = row.get("event_id")
-            if not isinstance(event_id, str) or event_id not in event_ids:
-                raise SourceError("SigNoz returned an unexpected observation event ID")
-            present.add(event_id)
+            parameters: dict[str, str | int] = {
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "start_bucket": max(0, start_ns // 1_000_000_000 - 1800),
+                "end_bucket": end_ns // 1_000_000_000,
+                "event_name": event_name,
+            }
+            parameters.update(
+                {f"event_{index}": event.event_id for index, event in enumerate(batch)}
+            )
+            for row in client.query(query, parameters):
+                event_id = row.get("event_id")
+                if not isinstance(event_id, str) or event_id not in event_ids:
+                    raise SourceError("SigNoz returned an unexpected event ID")
+                present.add(event_id)
     return present
+
+
+def remote_observation_event_ids(
+    client: EventQueryClient, events: Sequence[DerivedEvent]
+) -> set[str]:
+    """Check SigNoz for exact observation event IDs before local replay."""
+
+    if any(event.event_name != OBSERVATION_EVENT_NAME for event in events):
+        raise ValueError("observation reconciliation requires observation events")
+    return remote_event_ids(client, events)
 
 
 def enqueue_observation_reconciliation(

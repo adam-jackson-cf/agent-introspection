@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from agent_introspection.telemetry import DerivedEvent, enqueue_event
+from agent_introspection.telemetry import REVIEW_SCOPE, DerivedEvent, enqueue_events
 
 LUNA_MODEL = "gpt-5.6-luna"
 LUNA_EFFORT = "medium"
@@ -32,6 +32,9 @@ class ReviewLimits:
 LUNA_LIMITS = ReviewLimits(40, 4, 10, 24_000, 8_000)
 PROPOSAL_LIMITS = ReviewLimits(8, 8, 1, 48_000, 16_000)
 COMBINED_CALL_LIMIT = 12
+REVIEW_SESSION_CHANGED_EVENT = "introspection.review.session_changed"
+REVIEW_ACTIVITY_SNAPSHOT_EVENT = "introspection.review.activity_snapshot"
+REVIEW_ACTIVITY_ENTITY_ID = "review-activity"
 
 
 @dataclass(frozen=True)
@@ -64,8 +67,260 @@ class ReviewEnvelope:
         }
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    """Nullable, source-backed token fields for one accepted review run."""
+
+    input_tokens: int | None
+    output_tokens: int | None
+    reasoning_tokens: int | None
+    total_tokens: int | None
+    availability: Literal["complete", "partial", "unavailable"]
+
+
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _timestamp_ns(value: datetime) -> int:
+    return int(value.timestamp() * 1_000_000_000)
+
+
+def _parse_token_component(provenance: dict[str, Any], field: str) -> int | None:
+    value = provenance.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer when available")
+    return value
+
+
+def _token_usage(provenance: dict[str, Any]) -> TokenUsage:
+    input_tokens = _parse_token_component(provenance, "input_tokens")
+    output_tokens = _parse_token_component(provenance, "output_tokens")
+    reasoning_tokens = _parse_token_component(provenance, "reasoning_tokens")
+    supplied_total = _parse_token_component(provenance, "total_tokens")
+    components = (input_tokens, output_tokens, reasoning_tokens)
+    if all(value is not None for value in components):
+        total_tokens = sum(value for value in components if value is not None)
+        if supplied_total is not None and supplied_total != total_tokens:
+            raise ValueError("total_tokens must equal known token components")
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            total_tokens=total_tokens,
+            availability="complete",
+        )
+    if any(value is not None for value in components):
+        if supplied_total is not None:
+            raise ValueError("total_tokens is unavailable when token components are partial")
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            total_tokens=None,
+            availability="partial",
+        )
+    if supplied_total is not None:
+        raise ValueError("total_tokens is unavailable without token components")
+    return TokenUsage(
+        input_tokens=None,
+        output_tokens=None,
+        reasoning_tokens=None,
+        total_tokens=None,
+        availability="unavailable",
+    )
+
+
+def _session_changed_event(
+    *,
+    session_id: str,
+    entity_version: int,
+    purpose: str,
+    status: Literal["exported", "imported"],
+    candidate_count: int,
+    timestamp: datetime,
+    result_count: int | None = None,
+    token_usage: TokenUsage | None = None,
+) -> DerivedEvent:
+    attributes: dict[str, str | int | float | bool] = {
+        "review.purpose": purpose,
+        "review.status": status,
+        "review.candidate.count": candidate_count,
+        "review.token.availability": (
+            "not_applicable" if token_usage is None else token_usage.availability
+        ),
+    }
+    if result_count is not None:
+        attributes["review.result.count"] = result_count
+    if token_usage is not None:
+        for attribute, value in (
+            ("review.token.input", token_usage.input_tokens),
+            ("review.token.output", token_usage.output_tokens),
+            ("review.token.reasoning", token_usage.reasoning_tokens),
+            ("review.token.total", token_usage.total_tokens),
+        ):
+            if value is not None:
+                attributes[attribute] = value
+    return DerivedEvent(
+        scope=REVIEW_SCOPE,
+        entity_id=session_id,
+        entity_version=entity_version,
+        event_sequence=entity_version,
+        event_name=REVIEW_SESSION_CHANGED_EVENT,
+        attributes=attributes,
+        timestamp_ns=_timestamp_ns(timestamp),
+    )
+
+
+def _review_activity_counts(connection: sqlite3.Connection) -> tuple[int, int, int, int]:
+    session_rows = connection.execute(
+        """
+        SELECT purpose, COUNT(*)
+        FROM review_sessions
+        WHERE status = 'imported' AND purpose IN ('classification', 'proposal')
+        GROUP BY purpose
+        """
+    ).fetchall()
+    session_counts = {str(row[0]): int(row[1]) for row in session_rows}
+    classification_results = int(
+        connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM semantic_classifications classification
+            JOIN review_sessions session ON session.id = classification.review_session_id
+            WHERE session.status = 'imported' AND session.purpose = 'classification'
+            """
+        ).fetchone()[0]
+    )
+    proposal_results = int(
+        connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM proposal_drafts draft
+            JOIN review_sessions session ON session.id = draft.review_session_id
+            WHERE session.status = 'imported' AND session.purpose = 'proposal'
+            """
+        ).fetchone()[0]
+    )
+    return (
+        session_counts.get("classification", 0),
+        session_counts.get("proposal", 0),
+        classification_results,
+        proposal_results,
+    )
+
+
+def _review_activity_snapshot_event(
+    *,
+    entity_version: int,
+    trigger_kind: Literal["review_session", "scan_run"],
+    classification_session_count: int,
+    proposal_session_count: int,
+    classification_result_count: int,
+    proposal_result_count: int,
+    timestamp: datetime,
+) -> DerivedEvent:
+    return DerivedEvent(
+        scope=REVIEW_SCOPE,
+        entity_id=REVIEW_ACTIVITY_ENTITY_ID,
+        entity_version=entity_version,
+        event_sequence=entity_version,
+        event_name=REVIEW_ACTIVITY_SNAPSHOT_EVENT,
+        attributes={
+            "review.activity.availability": "available",
+            "review.classification.session_count": classification_session_count,
+            "review.proposal.session_count": proposal_session_count,
+            "review.classification.result_count": classification_result_count,
+            "review.proposal.result_count": proposal_result_count,
+            "snapshot.trigger.kind": trigger_kind,
+        },
+        timestamp_ns=_timestamp_ns(timestamp),
+    )
+
+
+def record_review_activity_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    trigger_kind: Literal["review_session", "scan_run"],
+    trigger_id: str,
+    trigger_version: int,
+    timestamp: datetime,
+) -> DerivedEvent:
+    """Persist one immutable current-review aggregate and return its derived event."""
+    existing = connection.execute(
+        """
+        SELECT entity_version, trigger_kind, classification_session_count,
+               proposal_session_count, classification_result_count, proposal_result_count,
+               created_at, id
+        FROM review_activity_snapshots
+        WHERE trigger_kind = ? AND trigger_id = ? AND trigger_version = ?
+        """,
+        (trigger_kind, trigger_id, trigger_version),
+    ).fetchone()
+    if existing is not None:
+        existing_timestamp = datetime.fromisoformat(str(existing[6]))
+        existing_trigger_kind = str(existing[1])
+        if existing_trigger_kind not in {"review_session", "scan_run"}:
+            raise RuntimeError("review activity snapshot has an invalid trigger kind")
+        valid_trigger_kind: Literal["review_session", "scan_run"] = (
+            "review_session" if existing_trigger_kind == "review_session" else "scan_run"
+        )
+        event = _review_activity_snapshot_event(
+            entity_version=int(existing[0]),
+            trigger_kind=valid_trigger_kind,
+            classification_session_count=int(existing[2]),
+            proposal_session_count=int(existing[3]),
+            classification_result_count=int(existing[4]),
+            proposal_result_count=int(existing[5]),
+            timestamp=existing_timestamp,
+        )
+        if event.event_id != str(existing[7]):
+            raise RuntimeError("review activity snapshot identity mismatch")
+        return event
+    entity_version = int(
+        connection.execute(
+            "SELECT COALESCE(MAX(entity_version), 0) + 1 FROM review_activity_snapshots"
+        ).fetchone()[0]
+    )
+    (
+        classification_session_count,
+        proposal_session_count,
+        classification_result_count,
+        proposal_result_count,
+    ) = _review_activity_counts(connection)
+    event = _review_activity_snapshot_event(
+        entity_version=entity_version,
+        trigger_kind=trigger_kind,
+        classification_session_count=classification_session_count,
+        proposal_session_count=proposal_session_count,
+        classification_result_count=classification_result_count,
+        proposal_result_count=proposal_result_count,
+        timestamp=timestamp,
+    )
+    connection.execute(
+        """
+        INSERT INTO review_activity_snapshots (
+            id, entity_version, trigger_kind, trigger_id, trigger_version,
+            classification_session_count, proposal_session_count,
+            classification_result_count, proposal_result_count, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.event_id,
+            entity_version,
+            trigger_kind,
+            trigger_id,
+            trigger_version,
+            classification_session_count,
+            proposal_session_count,
+            classification_result_count,
+            proposal_result_count,
+            timestamp.isoformat(),
+        ),
+    )
+    return event
 
 
 def create_review_session(
@@ -77,15 +332,16 @@ def create_review_session(
     batch_id: str | None = None,
 ) -> ReviewEnvelope:
     """Create and reserve one bounded review session."""
-    limits = LUNA_LIMITS if kind == "classification" else PROPOSAL_LIMITS
-    model = LUNA_MODEL if kind == "classification" else PROPOSAL_MODEL
-    effort = LUNA_EFFORT if kind == "classification" else PROPOSAL_EFFORT
+    purpose = kind
+    limits = LUNA_LIMITS if purpose == "classification" else PROPOSAL_LIMITS
+    model = LUNA_MODEL if purpose == "classification" else PROPOSAL_MODEL
+    effort = LUNA_EFFORT if purpose == "classification" else PROPOSAL_EFFORT
     if not 0 < len(candidates) <= limits.items_per_call:
         raise ValueError(f"candidate count per call must be between 1 and {limits.items_per_call}")
     ids = tuple(str(candidate["id"]) for candidate in candidates)
     if len(set(ids)) != len(ids):
         raise ValueError("candidate IDs must be unique")
-    payload = {"kind": kind, "candidates": candidates}
+    payload = {"purpose": purpose, "candidates": candidates}
     raw = _canonical_bytes(payload)
     if len(raw.decode()) > limits.max_input_characters:
         raise ValueError("review payload exceeds input character limit")
@@ -108,33 +364,33 @@ def create_review_session(
     with connection:
         prior_rows = connection.execute(
             """
-            SELECT kind, ordered_candidate_ids_json
+            SELECT purpose, ordered_candidate_ids_json
             FROM review_sessions WHERE batch_id = ?
             """,
             (envelope.batch_id,),
         ).fetchall()
         if len(prior_rows) >= COMBINED_CALL_LIMIT:
             raise RuntimeError("combined model call limit exhausted")
-        same_kind = [row for row in prior_rows if row[0] == kind]
+        same_kind = [row for row in prior_rows if row[0] == purpose]
         if len(same_kind) >= limits.max_calls:
-            raise RuntimeError(f"{kind} model call limit exhausted")
+            raise RuntimeError(f"{purpose} model call limit exhausted")
         prior_candidate_count = sum(len(json.loads(row[1])) for row in same_kind)
         if prior_candidate_count + len(candidates) > limits.max_items:
             raise RuntimeError(f"{kind} candidate limit exhausted")
         connection.execute(
             """
             INSERT INTO review_sessions (
-                id, batch_id, nonce, schema_version, kind, requested_model, requested_effort,
+                id, batch_id, nonce, schema_version, purpose, requested_model, requested_effort,
                 ordered_candidate_ids_json, payload_hash, byte_count,
-                reserved_model_budget, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exported', ?)
+                reserved_model_budget, status, entity_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exported', 1, ?)
             """,
             (
                 envelope.session_id,
                 envelope.batch_id,
                 envelope.nonce,
                 envelope.schema_version,
-                kind,
+                purpose,
                 model,
                 effort,
                 json.dumps(ids),
@@ -152,6 +408,31 @@ def create_review_session(
             """,
             (str(uuid.uuid4()), envelope.session_id, reserved_model_budget, now),
         )
+        timestamp = datetime.fromisoformat(now)
+        session_event = _session_changed_event(
+            session_id=envelope.session_id,
+            entity_version=1,
+            purpose=purpose,
+            status="exported",
+            candidate_count=len(ids),
+            timestamp=timestamp,
+        )
+        connection.execute(
+            """
+            INSERT INTO review_session_events (
+                id, review_session_id, entity_version, status, review_run_id, created_at
+            ) VALUES (?, ?, 1, 'exported', NULL, ?)
+            """,
+            (session_event.event_id, envelope.session_id, now),
+        )
+        activity_snapshot = record_review_activity_snapshot(
+            connection,
+            trigger_kind="review_session",
+            trigger_id=envelope.session_id,
+            trigger_version=1,
+            timestamp=timestamp,
+        )
+        enqueue_events(connection, [session_event, activity_snapshot])
     return envelope
 
 
@@ -177,7 +458,7 @@ def validate_model_output(
     row = connection.execute(
         """
         SELECT nonce, schema_version, requested_model, requested_effort,
-               ordered_candidate_ids_json, payload_hash, kind, status, reserved_model_budget
+               ordered_candidate_ids_json, payload_hash, purpose, status, reserved_model_budget
         FROM review_sessions WHERE id = ?
         """,
         (document["session_id"],),
@@ -209,6 +490,8 @@ def validate_model_output(
     actual_ids = [result.get("candidate_id") for result in results]
     if actual_ids != expected_ids:
         raise ValueError("model output candidate IDs or ordering mismatch")
+    if row[6] not in {"classification", "proposal"}:
+        raise ValueError("review session purpose cannot import results")
     limits = LUNA_LIMITS if row[6] == "classification" else PROPOSAL_LIMITS
     if len(_canonical_bytes(document).decode()) > limits.max_output_characters:
         raise ValueError("model output exceeds accepted character limit")
@@ -222,16 +505,19 @@ def import_model_output(
     provenance: dict[str, Any],
 ) -> None:
     """Persist validated model output and consume its reserved budget."""
-    kind, results = validate_model_output(connection, document, provenance=provenance)
+    purpose, results = validate_model_output(connection, document, provenance=provenance)
+    token_usage = _token_usage(provenance)
     now = datetime.now(UTC).isoformat()
+    timestamp = datetime.fromisoformat(now)
     with connection:
         run_id = str(uuid.uuid4())
         connection.execute(
             """
             INSERT INTO model_runs (
                 id, review_session_id, model, effort, trace_id, input_tokens,
-                output_tokens, reasoning_tokens, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)
+                output_tokens, reasoning_tokens, total_tokens, token_availability,
+                status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)
             """,
             (
                 run_id,
@@ -239,13 +525,15 @@ def import_model_output(
                 provenance["model"],
                 provenance["effort"],
                 provenance["trace_id"],
-                int(provenance.get("input_tokens", 0)),
-                int(provenance.get("output_tokens", 0)),
-                int(provenance.get("reasoning_tokens", 0)),
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+                token_usage.reasoning_tokens,
+                token_usage.total_tokens,
+                token_usage.availability,
                 now,
             ),
         )
-        table = "semantic_classifications" if kind == "classification" else "proposal_drafts"
+        table = "semantic_classifications" if purpose == "classification" else "proposal_drafts"
         for result in results:
             connection.execute(
                 f"INSERT INTO {table} "
@@ -260,7 +548,11 @@ def import_model_output(
                 ),
             )
         connection.execute(
-            "UPDATE review_sessions SET status = 'imported', imported_at = ? WHERE id = ?",
+            """
+            UPDATE review_sessions
+            SET status = 'imported', imported_at = ?, entity_version = 2
+            WHERE id = ?
+            """,
             (now, document["session_id"]),
         )
         connection.execute(
@@ -271,19 +563,29 @@ def import_model_output(
             """,
             (str(uuid.uuid4()), document["session_id"], -int(provenance["token_count"]), now),
         )
-    enqueue_event(
-        connection,
-        DerivedEvent(
-            entity_id=run_id,
-            entity_version=1,
-            event_sequence=1,
-            event_name="introspection.model.run",
-            attributes={
-                "model": str(provenance["model"]),
-                "reasoning.effort": str(provenance["effort"]),
-                "trace.id": str(provenance["trace_id"]),
-                "token.total": int(provenance["token_count"]),
-            },
-            timestamp_ns=int(datetime.fromisoformat(now).timestamp() * 1_000_000_000),
-        ),
-    )
+        session_event = _session_changed_event(
+            session_id=str(document["session_id"]),
+            entity_version=2,
+            purpose=purpose,
+            status="imported",
+            candidate_count=len(results),
+            result_count=len(results),
+            token_usage=token_usage,
+            timestamp=timestamp,
+        )
+        connection.execute(
+            """
+            INSERT INTO review_session_events (
+                id, review_session_id, entity_version, status, review_run_id, created_at
+            ) VALUES (?, ?, 2, 'imported', ?, ?)
+            """,
+            (session_event.event_id, document["session_id"], run_id, now),
+        )
+        activity_snapshot = record_review_activity_snapshot(
+            connection,
+            trigger_kind="review_session",
+            trigger_id=str(document["session_id"]),
+            trigger_version=2,
+            timestamp=timestamp,
+        )
+        enqueue_events(connection, [session_event, activity_snapshot])

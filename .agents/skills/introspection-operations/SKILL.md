@@ -1,6 +1,6 @@
 ---
-name: "agent-introspection"
-description: "Operate local Agent Introspection workflows safely; USE WHEN you need health checks, scans, bounded model review, proposal persistence, or approval recording for Agent Introspection."
+name: "introspection-operations"
+description: "Operate local Agent Introspection workflows safely; USE WHEN you need health checks, scans, proposal persistence, or approval recording."
 ---
 
 # Workflow
@@ -8,12 +8,12 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 ### Step 1: Verify system health
 
 - **Purpose**: Confirm the local system is safe and ready before reading or changing persisted state.
-- **When**: Before scans, model review, proposal operations, or approval recording.
+- **When**: Before scans, proposal operations, or approval recording.
 - Verify SigNoz health, loopback-only network bindings, and disabled OrbStack LAN exposure.
 - Check the approved source-schema fingerprint and stop on unapproved drift.
 - Check SQLite integrity, dashboard validity, telemetry outbox state, and scheduler status.
 - Report failed capabilities without bypassing or weakening any gate.
-- Workflow: [Health workflow](references/step-1-health-workflow.md)
+- Workflow: [Health workflow](references/health-workflow.md)
 
 ### Step 2: Run deterministic scans
 
@@ -22,30 +22,19 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 - Use scheduler leases, source watermarks, bounded ClickHouse reads, and idempotent persistence.
 - Respect the seven-day actionable trend window and one successful or no-data scheduled run per UTC interval slot.
 - Drain duplicate-tolerant derived telemetry and report scan, observation, trend, and delivery evidence.
-- Workflow: [Scan workflow](references/step-2-scan-workflow.md)
+- Workflow: [Scan workflow](references/scan-workflow.md)
 
-### Step 3: Conduct bounded model review
-
-- **Purpose**: Classify ambiguous episodes and analyze actionable trends through verified model-specific background subagents.
-- Export persisted review candidates without modifying target repositories.
-- Use GPT-5.6 Luna medium for semantic classification and GPT-5.5 high for actionable trend analysis and proposal drafting.
-- Enforce the per-review candidate, call, character, output, and combined-call limits.
-- Validate the nonce, payload hash, candidate IDs, requested model, effort, schema, and returned provenance before import.
-- Query SigNoz for actual model and token telemetry before another call.
-- Stop further calls and defer remaining candidates unchanged when provenance is missing or a ceiling is exceeded.
-- Workflow: [Model review workflow](references/step-3-model-review-workflow.md)
-
-### Step 4: Persist and inspect proposals
+### Step 3: Persist and inspect proposals
 
 - **Purpose**: Create durable proposals from validated actionable findings without applying them.
-- Require validated GPT-5.5 proposal output tied to an actionable finding.
+- Require validated review output tied to an actionable finding.
 - Evaluate established project tools first, new tools second, and bespoke scripts third.
 - Persist the root cause, trend window, evidence, membership rationale, intervention, scope, target, rejected alternatives, validation criteria, rollback criteria, predicted success metric, and create-skill handoff fields when applicable.
 - Inspect the proposal and its append-only event history.
 - Never mutate a target repository or apply a proposal.
-- Workflow: [Proposal workflow](references/step-4-proposal-workflow.md)
+- Workflow: [Proposal workflow](references/proposal-workflow.md)
 
-### Step 5: Record approval decisions
+### Step 4: Record approval decisions
 
 - **Purpose**: Record an explicit user decision while preserving the boundary between approval and application.
 - **When**: Only after the user explicitly approves or rejects a specific persisted proposal.
@@ -53,7 +42,7 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 - Require an explicit approve or reject decision and record the actor and reason.
 - Permit only pending to approved or pending to rejected transitions.
 - Never enter applying, mark applied, or change a target repository; those actions require a separate explicit user request.
-- Workflow: [Approval workflow](references/step-5-approval-workflow.md)
+- Workflow: [Approval workflow](references/approval-workflow.md)
 
 ## Output
 

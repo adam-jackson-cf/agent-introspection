@@ -19,6 +19,7 @@ from agent_introspection.database import (
     verify_database_file,
     weekly_maintenance,
 )
+from agent_introspection.migrations import MIGRATIONS
 
 
 def _scan(connection: sqlite3.Connection, scan_id: str = "scan-1") -> None:
@@ -77,7 +78,7 @@ def test_connection_enforces_wal_foreign_keys_timeout_and_schema(tmp_path: Path)
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 12_345
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
         assert quick_check(connection) == ("ok",)
         assert integrity_check(connection) == ("ok",)
     finally:

@@ -502,6 +502,330 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         ),
         requires_foreign_keys_disabled=True,
     ),
+    Migration(
+        version=3,
+        name="add immutable analysis generations",
+        statements=(
+            """
+            CREATE TABLE analysis_generations (
+                id TEXT PRIMARY KEY,
+                ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal > 0),
+                window_start_ns INTEGER NOT NULL CHECK (window_start_ns >= 0),
+                window_end_ns INTEGER NOT NULL CHECK (window_end_ns > window_start_ns),
+                source_contract_fingerprint TEXT NOT NULL
+                    CHECK (length(source_contract_fingerprint) = 64),
+                detector_contract_hash TEXT NOT NULL CHECK (length(detector_contract_hash) = 64),
+                normalization_contract_hash TEXT NOT NULL
+                    CHECK (length(normalization_contract_hash) = 64),
+                semantic_hash TEXT NOT NULL CHECK (length(semantic_hash) = 64),
+                created_at TEXT NOT NULL
+            ) STRICT
+            """,
+            """
+            CREATE TABLE analysis_generation_event_links (
+                generation_id TEXT NOT NULL REFERENCES analysis_generations(id),
+                event_id TEXT NOT NULL REFERENCES otlp_outbox(event_id),
+                role TEXT NOT NULL CHECK (role IN ('projection', 'activation')),
+                PRIMARY KEY (generation_id, event_id, role),
+                UNIQUE (event_id)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE TABLE analysis_generation_activations (
+                generation_id TEXT NOT NULL REFERENCES analysis_generations(id),
+                activation_event_id TEXT NOT NULL REFERENCES otlp_outbox(event_id),
+                activated_at TEXT NOT NULL,
+                PRIMARY KEY (generation_id),
+                UNIQUE (activation_event_id),
+                UNIQUE (generation_id, activation_event_id)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE TABLE analysis_generation_current (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                generation_id TEXT NOT NULL,
+                activation_event_id TEXT NOT NULL,
+                activated_at TEXT NOT NULL,
+                FOREIGN KEY (generation_id, activation_event_id)
+                    REFERENCES analysis_generation_activations(generation_id, activation_event_id)
+            ) STRICT
+            """,
+            """
+            CREATE TRIGGER analysis_generations_no_update
+            BEFORE UPDATE ON analysis_generations BEGIN
+                SELECT RAISE(ABORT, 'analysis generations are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generations_no_delete
+            BEFORE DELETE ON analysis_generations BEGIN
+                SELECT RAISE(ABORT, 'analysis generations are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_event_links_no_update
+            BEFORE UPDATE ON analysis_generation_event_links BEGIN
+                SELECT RAISE(ABORT, 'analysis generation event links are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_event_links_no_delete
+            BEFORE DELETE ON analysis_generation_event_links BEGIN
+                SELECT RAISE(ABORT, 'analysis generation event links are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_activation_link_guard
+            BEFORE INSERT ON analysis_generation_event_links
+            WHEN NEW.role = 'activation'
+             AND EXISTS (
+                SELECT 1
+                FROM analysis_generation_event_links link
+                JOIN otlp_outbox event ON event.event_id = link.event_id
+                WHERE link.generation_id = NEW.generation_id
+                  AND link.role = 'projection'
+                  AND event.status != 'delivered'
+             )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'analysis generation projections must be delivered before activation'
+                );
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_activations_no_update
+            BEFORE UPDATE ON analysis_generation_activations BEGIN
+                SELECT RAISE(ABORT, 'analysis generation activations are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_activations_no_delete
+            BEFORE DELETE ON analysis_generation_activations BEGIN
+                SELECT RAISE(ABORT, 'analysis generation activations are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_activation_evidence_guard
+            BEFORE INSERT ON analysis_generation_activations
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM analysis_generation_event_links link
+                JOIN otlp_outbox event ON event.event_id = link.event_id
+                WHERE link.generation_id = NEW.generation_id
+                  AND link.event_id = NEW.activation_event_id
+                  AND link.role = 'activation'
+                  AND event.status = 'delivered'
+            )
+             OR EXISTS (
+                SELECT 1
+                FROM analysis_generation_event_links link
+                JOIN otlp_outbox event ON event.event_id = link.event_id
+                WHERE link.generation_id = NEW.generation_id
+                  AND link.role = 'projection'
+                  AND event.status != 'delivered'
+             )
+            BEGIN
+                SELECT RAISE(ABORT, 'analysis generation activation requires delivered evidence');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_current_insert_guard
+            BEFORE INSERT ON analysis_generation_current
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM analysis_generation_activations activation
+                JOIN otlp_outbox event ON event.event_id = activation.activation_event_id
+                WHERE activation.generation_id = NEW.generation_id
+                  AND activation.activation_event_id = NEW.activation_event_id
+                  AND event.status = 'delivered'
+            )
+             OR EXISTS (
+                SELECT 1
+                FROM analysis_generation_event_links link
+                JOIN otlp_outbox event ON event.event_id = link.event_id
+                WHERE link.generation_id = NEW.generation_id
+                  AND link.role = 'projection'
+                  AND event.status != 'delivered'
+             )
+            BEGIN
+                SELECT RAISE(ABORT, 'current analysis generation requires delivered activation');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_current_update_guard
+            BEFORE UPDATE ON analysis_generation_current
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM analysis_generation_activations activation
+                JOIN otlp_outbox event ON event.event_id = activation.activation_event_id
+                WHERE activation.generation_id = NEW.generation_id
+                  AND activation.activation_event_id = NEW.activation_event_id
+                  AND event.status = 'delivered'
+            )
+             OR EXISTS (
+                SELECT 1
+                FROM analysis_generation_event_links link
+                JOIN otlp_outbox event ON event.event_id = link.event_id
+                WHERE link.generation_id = NEW.generation_id
+                  AND link.role = 'projection'
+                  AND event.status != 'delivered'
+             )
+            BEGIN
+                SELECT RAISE(ABORT, 'current analysis generation requires delivered activation');
+            END
+            """,
+            """
+            CREATE TRIGGER analysis_generation_current_no_delete
+            BEFORE DELETE ON analysis_generation_current BEGIN
+                SELECT RAISE(ABORT, 'current analysis generation cannot be deleted');
+            END
+            """,
+        ),
+    ),
+    Migration(
+        version=4,
+        name="add immutable review lifecycle telemetry",
+        statements=(
+            """
+            CREATE TABLE new_review_sessions (
+                id TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL,
+                nonce TEXT NOT NULL UNIQUE,
+                schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+                purpose TEXT NOT NULL CHECK (
+                    purpose IN ('capability_probe', 'classification', 'proposal')
+                ),
+                requested_model TEXT NOT NULL,
+                requested_effort TEXT NOT NULL,
+                ordered_candidate_ids_json TEXT NOT NULL
+                    CHECK (json_valid(ordered_candidate_ids_json)),
+                payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
+                byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+                reserved_model_budget INTEGER NOT NULL CHECK (reserved_model_budget >= 0),
+                status TEXT NOT NULL CHECK (status IN ('exported', 'imported')),
+                entity_version INTEGER NOT NULL CHECK (entity_version > 0),
+                created_at TEXT NOT NULL,
+                imported_at TEXT
+            ) STRICT
+            """,
+            """
+            INSERT INTO new_review_sessions (
+                id, batch_id, nonce, schema_version, purpose, requested_model, requested_effort,
+                ordered_candidate_ids_json, payload_hash, byte_count, reserved_model_budget, status,
+                entity_version, created_at, imported_at
+            )
+            SELECT
+                id, batch_id, nonce, schema_version, kind, requested_model, requested_effort,
+                ordered_candidate_ids_json, payload_hash, byte_count, reserved_model_budget, status,
+                CASE status WHEN 'imported' THEN 2 ELSE 1 END, created_at, imported_at
+            FROM review_sessions
+            """,
+            "DROP TABLE review_sessions",
+            "ALTER TABLE new_review_sessions RENAME TO review_sessions",
+            """
+            CREATE INDEX review_sessions_batch_idx
+            ON review_sessions(batch_id, purpose, created_at)
+            """,
+            """
+            ALTER TABLE model_runs
+            ADD COLUMN total_tokens INTEGER CHECK (total_tokens IS NULL OR total_tokens >= 0)
+            """,
+            """
+            ALTER TABLE model_runs
+            ADD COLUMN token_availability TEXT NOT NULL DEFAULT 'unavailable' CHECK (
+                token_availability IN ('complete', 'partial', 'unavailable')
+            )
+            """,
+            """
+            CREATE TABLE review_session_events (
+                id TEXT PRIMARY KEY,
+                review_session_id TEXT NOT NULL REFERENCES review_sessions(id),
+                entity_version INTEGER NOT NULL CHECK (entity_version > 0),
+                status TEXT NOT NULL CHECK (status IN ('exported', 'imported')),
+                review_run_id TEXT REFERENCES model_runs(id),
+                created_at TEXT NOT NULL,
+                UNIQUE (review_session_id, entity_version),
+                CHECK (
+                    (status = 'exported' AND review_run_id IS NULL)
+                    OR (status = 'imported' AND review_run_id IS NOT NULL)
+                )
+            ) STRICT
+            """,
+            """
+            CREATE TABLE review_activity_snapshots (
+                id TEXT PRIMARY KEY,
+                entity_version INTEGER NOT NULL UNIQUE CHECK (entity_version > 0),
+                trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('review_session', 'scan_run')),
+                trigger_id TEXT NOT NULL,
+                trigger_version INTEGER NOT NULL CHECK (trigger_version > 0),
+                classification_session_count INTEGER NOT NULL
+                    CHECK (classification_session_count >= 0),
+                proposal_session_count INTEGER NOT NULL CHECK (proposal_session_count >= 0),
+                classification_result_count INTEGER NOT NULL
+                    CHECK (classification_result_count >= 0),
+                proposal_result_count INTEGER NOT NULL CHECK (proposal_result_count >= 0),
+                created_at TEXT NOT NULL,
+                UNIQUE (trigger_kind, trigger_id, trigger_version)
+            ) STRICT
+            """,
+            """
+            CREATE TRIGGER review_sessions_no_delete
+            BEFORE DELETE ON review_sessions BEGIN
+                SELECT RAISE(ABORT, 'review_sessions cannot be deleted');
+            END
+            """,
+            """
+            CREATE TRIGGER review_sessions_guard_update
+            BEFORE UPDATE ON review_sessions
+            WHEN OLD.id IS NOT NEW.id
+              OR OLD.batch_id IS NOT NEW.batch_id
+              OR OLD.nonce IS NOT NEW.nonce
+              OR OLD.schema_version IS NOT NEW.schema_version
+              OR OLD.purpose IS NOT NEW.purpose
+              OR OLD.requested_model IS NOT NEW.requested_model
+              OR OLD.requested_effort IS NOT NEW.requested_effort
+              OR OLD.ordered_candidate_ids_json IS NOT NEW.ordered_candidate_ids_json
+              OR OLD.payload_hash IS NOT NEW.payload_hash
+              OR OLD.byte_count IS NOT NEW.byte_count
+              OR OLD.reserved_model_budget IS NOT NEW.reserved_model_budget
+              OR OLD.created_at IS NOT NEW.created_at
+              OR OLD.status != 'exported'
+              OR NEW.status != 'imported'
+              OR OLD.imported_at IS NOT NULL
+              OR NEW.imported_at IS NULL
+              OR NEW.entity_version != OLD.entity_version + 1
+            BEGIN
+                SELECT RAISE(ABORT, 'review session history is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER review_session_events_no_update
+            BEFORE UPDATE ON review_session_events BEGIN
+                SELECT RAISE(ABORT, 'review session events are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER review_session_events_no_delete
+            BEFORE DELETE ON review_session_events BEGIN
+                SELECT RAISE(ABORT, 'review session events are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER review_activity_snapshots_no_update
+            BEFORE UPDATE ON review_activity_snapshots BEGIN
+                SELECT RAISE(ABORT, 'review activity snapshots are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER review_activity_snapshots_no_delete
+            BEFORE DELETE ON review_activity_snapshots BEGIN
+                SELECT RAISE(ABORT, 'review activity snapshots are immutable');
+            END
+            """,
+        ),
+        requires_foreign_keys_disabled=True,
+    ),
 )
 
 

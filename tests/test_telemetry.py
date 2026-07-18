@@ -7,6 +7,7 @@ import pytest
 
 from agent_introspection.database import connect_database
 from agent_introspection.telemetry import (
+    OPERATIONAL_SCOPE,
     DerivedEvent,
     drain_outbox,
     enqueue_event,
@@ -37,6 +38,7 @@ def outbox_database() -> sqlite3.Connection:
 
 def event() -> DerivedEvent:
     return DerivedEvent(
+        scope="generation:generation-1",
         entity_id="finding-1",
         entity_version=2,
         event_sequence=3,
@@ -77,6 +79,7 @@ def test_empty_outbox_drain_is_a_valid_noop() -> None:
 def test_event_batches_commit_all_deterministic_payloads() -> None:
     connection = outbox_database()
     second = DerivedEvent(
+        scope="generation:generation-1",
         entity_id="finding-2",
         entity_version=1,
         event_sequence=1,
@@ -120,6 +123,7 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
         enqueue_event(
             connection,
             DerivedEvent(
+                scope=OPERATIONAL_SCOPE,
                 entity_id="observation-1",
                 entity_version=1,
                 event_sequence=1,
@@ -164,6 +168,7 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
 
 def test_remote_observation_event_preflight_uses_parameterized_candidate_ids() -> None:
     event = DerivedEvent(
+        scope="generation:generation-1",
         entity_id="observation-1",
         entity_version=1,
         event_sequence=1,
@@ -184,8 +189,25 @@ def test_remote_observation_event_preflight_uses_parameterized_candidate_ids() -
 
     remote = Remote()
     assert remote_observation_event_ids(remote, [event]) == {event.event_id}  # type: ignore[arg-type]
+    assert "attributes_string['event.name'] = {event_name:String}" in remote.query_text
     assert "attributes_string['event.id'] IN ({event_0:String})" in remote.query_text
     assert remote.parameters["event_0"] == event.event_id
+    assert remote.parameters["event_name"] == "introspection.observation.detected"
+
+
+def test_event_scope_is_part_of_immutable_event_identity() -> None:
+    generated = event()
+    operational = DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id=generated.entity_id,
+        entity_version=generated.entity_version,
+        event_sequence=generated.event_sequence,
+        event_name=generated.event_name,
+        attributes=generated.attributes,
+        timestamp_ns=generated.timestamp_ns,
+    )
+    assert generated.event_id != operational.event_id
+    assert generated.payload()["event.scope"] == "generation:generation-1"
 
 
 def test_observation_reconciliation_requires_explicit_failed_scan(tmp_path: Path) -> None:

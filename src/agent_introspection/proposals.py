@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from agent_introspection.telemetry import DerivedEvent, enqueue_event
+from agent_introspection.telemetry import REVIEW_SCOPE, DerivedEvent, enqueue_event
 
 
 class ProposalState(StrEnum):
@@ -113,6 +113,7 @@ def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> 
     enqueue_event(
         connection,
         DerivedEvent(
+            scope=REVIEW_SCOPE,
             entity_id=proposal_id,
             entity_version=1,
             event_sequence=1,
@@ -184,6 +185,7 @@ def transition_proposal(
     enqueue_event(
         connection,
         DerivedEvent(
+            scope=REVIEW_SCOPE,
             entity_id=proposal_id,
             entity_version=version,
             event_sequence=version,

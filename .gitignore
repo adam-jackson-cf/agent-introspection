@@ -1,4 +1,5 @@
 .DS_Store
+.enaible/
 .tmp/
 .mypy_cache/
 .pytest_cache/

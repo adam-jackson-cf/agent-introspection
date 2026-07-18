@@ -33,6 +33,7 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
+from agent_introspection.generations import activate_generation, stage_generation
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -165,6 +166,47 @@ def _scan(args: argparse.Namespace) -> dict[str, Any]:
                     "qualifying_run_started_at": completed.started_at,
                 }
         return run_scan(connection, config)
+    finally:
+        connection.close()
+
+
+def _analysis_generation(args: argparse.Namespace) -> dict[str, Any]:
+    config, connection = _open(args)
+    try:
+        quick_check(connection)
+        verify_network_perimeter(docker_context=config.signoz.docker_context)
+        source = _client(config)
+        fingerprint = enforce_approved_schema(connection, discover_source_schema(source))
+        with scan_lease(
+            connection,
+            duration=timedelta(seconds=config.scheduler.lease_seconds),
+        ):
+            if args.analysis_generation_command == "stage":
+                staged = stage_generation(
+                    connection,
+                    source_contract_fingerprint=fingerprint,
+                )
+                return {
+                    "status": "staged",
+                    "generation_id": staged.generation_id,
+                    "ordinal": staged.ordinal,
+                    "window_start_ns": staged.window_start_ns,
+                    "window_end_ns": staged.window_end_ns,
+                    "semantic_hash": staged.semantic_hash,
+                    "projection_events": len(staged.projection_event_ids),
+                }
+            activated = activate_generation(
+                connection,
+                generation_id=args.generation_id,
+                client=source,
+                endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+            )
+            return {
+                "status": "activated",
+                "generation_id": activated.generation_id,
+                "activation_event_id": activated.activation_event_id,
+                "projection_events": activated.projection_count,
+            }
     finally:
         connection.close()
 
@@ -527,6 +569,13 @@ def _parser() -> argparse.ArgumentParser:
     scan = commands.add_parser("scan")
     scan.add_argument("--scheduled", action="store_true")
 
+    generation = commands.add_parser("analysis-generation").add_subparsers(
+        dest="analysis_generation_command", required=True
+    )
+    generation.add_parser("stage")
+    activate = generation.add_parser("activate")
+    activate.add_argument("generation_id")
+
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -597,6 +646,8 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _health(args)
     if args.command == "scan":
         return _scan(args)
+    if args.command == "analysis-generation":
+        return _analysis_generation(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":

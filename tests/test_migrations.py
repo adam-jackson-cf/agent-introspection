@@ -57,8 +57,14 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "proposal_events",
         "otlp_outbox",
         "scheduler_leases",
+        "analysis_generations",
+        "analysis_generation_event_links",
+        "analysis_generation_activations",
+        "analysis_generation_current",
+        "review_session_events",
+        "review_activity_snapshots",
     }
-    assert len(applied) == 2
+    assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
     backup = sqlite3.connect(f"{applied[0].backup_path.as_uri()}?mode=ro", uri=True)
     try:
@@ -92,6 +98,8 @@ def test_schema_matches_review_and_capability_consumers(tmp_path: Path) -> None:
 
     assert review_columns["batch_id"] == "TEXT"
     assert review_columns["schema_version"] == "INTEGER"
+    assert review_columns["purpose"] == "TEXT"
+    assert review_columns["entity_version"] == "INTEGER"
     assert proof_columns["schema_version"] == "INTEGER"
     assert proof_indexes["model_capability_proofs_lookup_idx"] == 0
 
@@ -274,7 +282,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [2]
+        assert [migration.version for migration in applied] == [2, 3, 4]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM trend_evaluations").fetchone()[0] == 1
@@ -289,5 +297,63 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
         )
         with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
             connection.execute("DELETE FROM findings WHERE id = 'finding-1'")
+    finally:
+        connection.close()
+
+
+def test_review_lifecycle_migration_preserves_sessions_and_installs_guards(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    try:
+        apply_migrations(connection, path, MIGRATIONS[:3])
+        connection.execute(
+            """
+            INSERT INTO review_sessions (
+                id, batch_id, nonce, schema_version, kind, requested_model, requested_effort,
+                ordered_candidate_ids_json, payload_hash, byte_count, reserved_model_budget,
+                status, created_at, imported_at
+            ) VALUES (
+                'imported-session', 'batch', 'nonce-imported', 1, 'classification', 'requested',
+                'standard', '[\"candidate\"]', ?, 1, 10, 'imported', 'then', 'now'
+            )
+            """,
+            ("a" * 64,),
+        )
+        connection.execute(
+            """
+            INSERT INTO review_sessions (
+                id, batch_id, nonce, schema_version, kind, requested_model, requested_effort,
+                ordered_candidate_ids_json, payload_hash, byte_count, reserved_model_budget,
+                status, created_at, imported_at
+            ) VALUES (
+                'exported-session', 'batch', 'nonce-exported', 1, 'proposal', 'requested',
+                'standard', '[\"candidate\"]', ?, 1, 10, 'exported', 'then', NULL
+            )
+            """,
+            ("b" * 64,),
+        )
+        connection.commit()
+
+        applied = apply_migrations(connection, path)
+
+        assert [migration.version for migration in applied] == [4]
+        assert connection.execute(
+            "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
+        ).fetchall() == [
+            ("exported-session", "proposal", "exported", 1),
+            ("imported-session", "classification", "imported", 2),
+        ]
+        assert connection.execute("SELECT COUNT(*) FROM review_session_events").fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM review_activity_snapshots").fetchone() == (
+            0,
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE review_sessions SET purpose = 'proposal' WHERE id = 'imported-session'"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
+            connection.execute("DELETE FROM review_sessions WHERE id = 'imported-session'")
     finally:
         connection.close()

@@ -7,6 +7,7 @@ import pytest
 from agent_introspection import cli
 from agent_introspection.cli import EXIT_CAPABILITY, EXIT_CONFIG, main
 from agent_introspection.database import connect_database
+from agent_introspection.generations import ActivatedGeneration, StagedGeneration
 
 
 def config_file(tmp_path: Path) -> Path:
@@ -131,3 +132,60 @@ def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
     assert main(["--config", str(config), "scan", "--scheduled"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "executed"}
     assert calls == ["run", "run", "run"]
+
+
+def test_analysis_generation_commands_require_preflight_and_emit_evidence(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = config_file(tmp_path)
+    source = object()
+    inventory = {"contract": {}, "diagnostics": {}}
+    monkeypatch.setattr(cli, "verify_network_perimeter", lambda **_kwargs: {})
+    monkeypatch.setattr(cli, "_client", lambda _config: source)
+    monkeypatch.setattr(cli, "discover_source_schema", lambda _source: inventory)
+    monkeypatch.setattr(
+        cli,
+        "enforce_approved_schema",
+        lambda _connection, _inventory: "a" * 64,
+    )
+    monkeypatch.setattr(
+        cli,
+        "stage_generation",
+        lambda _connection, *, source_contract_fingerprint: StagedGeneration(
+            generation_id="generation-1",
+            ordinal=1,
+            window_start_ns=1,
+            window_end_ns=2,
+            semantic_hash=source_contract_fingerprint,
+            projection_event_ids=("event-1",),
+        ),
+    )
+    assert main(["--config", str(config), "analysis-generation", "stage"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "generation_id": "generation-1",
+        "ordinal": 1,
+        "projection_events": 1,
+        "semantic_hash": "a" * 64,
+        "status": "staged",
+        "window_end_ns": 2,
+        "window_start_ns": 1,
+    }
+
+    monkeypatch.setattr(
+        cli,
+        "activate_generation",
+        lambda _connection, *, generation_id, client, endpoint: ActivatedGeneration(
+            generation_id=generation_id,
+            activation_event_id=f"{client is source}:{endpoint.endswith('/v1/logs')}",
+            projection_count=1,
+        ),
+    )
+    assert main(["--config", str(config), "analysis-generation", "activate", "generation-1"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "activation_event_id": "True:True",
+        "generation_id": "generation-1",
+        "projection_events": 1,
+        "status": "activated",
+    }

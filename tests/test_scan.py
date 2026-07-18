@@ -1,9 +1,11 @@
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_introspection import generations, scan
 from agent_introspection.capabilities import (
     CapabilityError,
     approve_schema,
@@ -11,8 +13,10 @@ from agent_introspection.capabilities import (
 )
 from agent_introspection.config import AppConfig, DatabaseConfig, SchedulerConfig
 from agent_introspection.database import connect_database
-from agent_introspection.scan import run_scan
-from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
+from agent_introspection.generations import GenerationError
+from agent_introspection.scan import PipelineStream, _pipeline_snapshot_event, run_scan
+from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, SourceError, TraceRow
+from agent_introspection.telemetry import OPERATIONAL_SCOPE, DerivedEvent, enqueue_events
 
 
 class FakeSource(ClickHouseClient):
@@ -119,12 +123,70 @@ def scan_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[A
     return connection, config
 
 
-def approve(connection: Any, source: FakeSource) -> None:
-    approve_schema(
+def approve(connection: Any, source: FakeSource) -> str:
+    return approve_schema(
         connection,
         discover_source_schema(source),
         approved_by="test",
     )
+
+
+def activate_test_generation(connection: Any, *, source_contract_fingerprint: str) -> str:
+    generation_id = "generation-test"
+    marker = DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id=generation_id,
+        entity_version=1,
+        event_sequence=1,
+        event_name="introspection.analysis_generation.activated",
+        attributes={"analysis.generation": generation_id},
+        timestamp_ns=1,
+    )
+    with connection:
+        enqueue_events(connection, [marker])
+        connection.execute(
+            "UPDATE otlp_outbox SET status = 'delivered', delivered_at = 'now' WHERE event_id = ?",
+            (marker.event_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO analysis_generations (
+                id, ordinal, window_start_ns, window_end_ns, source_contract_fingerprint,
+                detector_contract_hash, normalization_contract_hash, semantic_hash, created_at
+            ) VALUES (?, 1, 0, 2, ?, ?, ?, ?, 'now')
+            """,
+            (
+                generation_id,
+                source_contract_fingerprint,
+                "b" * 64,
+                "c" * 64,
+                generations._semantic_contract(source_contract_fingerprint)[2],
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO analysis_generation_event_links (generation_id, event_id, role)
+            VALUES (?, ?, 'activation')
+            """,
+            (generation_id, marker.event_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO analysis_generation_activations (
+                generation_id, activation_event_id, activated_at
+            ) VALUES (?, ?, 'now')
+            """,
+            (generation_id, marker.event_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO analysis_generation_current (
+                singleton, generation_id, activation_event_id, activated_at
+            ) VALUES (1, ?, ?, 'now')
+            """,
+            (generation_id, marker.event_id),
+        )
+    return generation_id
 
 
 def log_row(identifier: str, timestamp_ns: int, *, trace_id: str | None = None) -> LogRow:
@@ -154,8 +216,22 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
     connection, config = scan_environment
     now = datetime(2026, 7, 10, 12, tzinfo=UTC)
     empty = FakeSource()
-    approve(connection, empty)
-    assert run_scan(connection, config, client=empty, end_time=now)["status"] == "no_data"
+    fingerprint = approve(connection, empty)
+    unavailable = run_scan(connection, config, client=empty, end_time=now)
+    assert unavailable["status"] == "failed"
+    snapshot = next(
+        json.loads(row[0])
+        for row in connection.execute("SELECT payload_json FROM otlp_outbox")
+        if json.loads(row[0])["event.name"] == "introspection.pipeline.snapshot"
+    )
+    assert snapshot["event.name"] == "introspection.pipeline.snapshot"
+    assert snapshot["pipeline.error_class"] == "generation_unavailable"
+    assert connection.execute(
+        "SELECT error_code FROM scan_runs WHERE id = ?", (unavailable["scan_run_id"],)
+    ).fetchone() == ("generation_unavailable",)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    second = run_scan(connection, config, client=empty, end_time=now + timedelta(seconds=1))
+    assert second["status"] == "no_data"
 
     trace_only = FakeSource(
         traces=[
@@ -201,7 +277,8 @@ def test_configured_lease_duration_controls_scan_overlap_exclusion(
         scheduler=SchedulerConfig(lease_seconds=123),
     )
     source = FakeSource()
-    approve(connection, source)
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
     durations: list[timedelta] = []
 
     def reject_overlap(_connection: Any, *, duration: timedelta) -> None:
@@ -231,7 +308,8 @@ def test_overlap_is_idempotent_and_hydration_is_batched(
         for index in range(501)
     ]
     source = FakeSource(logs=rows)
-    approve(connection, source)
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
     first = run_scan(connection, config, client=source, end_time=now + timedelta(seconds=1))
     second = run_scan(connection, config, client=source, end_time=now + timedelta(seconds=2))
     assert first["observations"] > 0
@@ -271,7 +349,8 @@ def test_actionable_findings_become_dormant_with_zero_current_window_counts(
         for index, timestamp in enumerate(occurred_at)
     ]
     source = FakeSource(logs=rows, traces=traces)
-    approve(connection, source)
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
 
     first = run_scan(connection, config, client=source, end_time=now)
     assert first["status"] == "succeeded"
@@ -307,7 +386,8 @@ def test_failed_scan_rolls_back_its_extraction_window(
     connection, config = scan_environment
     now = datetime(2026, 7, 10, 12, tzinfo=UTC)
     source = FakeSource(logs=[log_row("log-1", int(now.timestamp() * 1_000_000_000))])
-    approve(connection, source)
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
 
     def fail_after_persistence(*_args: object, **_kwargs: object) -> list[object]:
         raise RuntimeError("trend persistence failed")
@@ -324,3 +404,193 @@ def test_failed_scan_rolls_back_its_extraction_window(
         "failed",
         "RuntimeError",
     )
+    payloads = {
+        json.loads(row[0])["event.name"]
+        for row in connection.execute("SELECT payload_json FROM otlp_outbox").fetchall()
+    }
+    assert {
+        "introspection.pipeline.snapshot",
+        "introspection.review.activity_snapshot",
+    } <= payloads
+
+
+def _assert_failed_extraction_has_no_analytics(connection: Any, error_class: str) -> None:
+    assert connection.execute("SELECT COUNT(*) FROM observations").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM evidence").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM source_watermarks").fetchone() == (0,)
+    payloads = [
+        json.loads(row[0])
+        for row in connection.execute("SELECT payload_json FROM otlp_outbox").fetchall()
+    ]
+    pipeline = next(
+        payload
+        for payload in payloads
+        if payload["event.name"] == "introspection.pipeline.snapshot"
+    )
+    assert pipeline["scan.terminal_status"] == "failed"
+    assert pipeline["pipeline.error_class"] == error_class
+    assert "analysis.generation" not in pipeline
+    names = {payload["event.name"] for payload in payloads}
+    assert {
+        "introspection.pipeline.snapshot",
+        "introspection.review.activity_snapshot",
+    } <= names
+    assert not names & {
+        "introspection.observation.detected",
+        "introspection.trend.evaluated",
+        "introspection.trend.promoted",
+    }
+
+
+def test_source_contract_failure_persists_only_safe_terminal_facts(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    source = FakeSource(logs=[log_row("unread", 1)])
+
+    with pytest.raises(CapabilityError, match="schema drift"):
+        run_scan(
+            connection,
+            config,
+            client=source,
+            end_time=datetime(2026, 7, 10, 12, tzinfo=UTC),
+        )
+
+    assert source.log_reads == 0
+    _assert_failed_extraction_has_no_analytics(connection, "source_contract")
+
+
+def test_trace_and_hydration_failures_persist_no_analytics_or_projections(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+
+    class TraceFailure(FakeSource):
+        def traces(self, **_bounds: object) -> list[TraceRow]:
+            raise SourceError("trace query unavailable")
+
+    trace_failure = TraceFailure(logs=[log_row("log-1", int(now.timestamp() * 1_000_000_000))])
+    fingerprint = approve(connection, trace_failure)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    with pytest.raises(SourceError, match="trace query"):
+        run_scan(connection, config, client=trace_failure, end_time=now)
+    _assert_failed_extraction_has_no_analytics(connection, "traces_query")
+
+    connection.close()
+    hydration_path = config.database.path.with_name("hydration.sqlite3")
+    connection = connect_database(hydration_path)
+    config = AppConfig(database=DatabaseConfig(path=hydration_path))
+
+    class HydrationFailure(FakeSource):
+        def hydrate(self, **_bounds: object) -> list[HydrationRow]:
+            raise SourceError("hydration unavailable")
+
+    hydration_failure = HydrationFailure(
+        logs=[log_row("log-2", int(now.timestamp() * 1_000_000_000))]
+    )
+    fingerprint = approve(connection, hydration_failure)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    with pytest.raises(SourceError, match="hydration"):
+        run_scan(connection, config, client=hydration_failure, end_time=now)
+    _assert_failed_extraction_has_no_analytics(connection, "hydration")
+    connection.close()
+
+
+def test_generation_contract_mismatch_stops_before_extraction(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    source = FakeSource(logs=[log_row("unread", int(now.timestamp() * 1_000_000_000))])
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    changed_source = tmp_path / "source.py"
+    changed_source.write_text("changed source extraction contract\n")
+    monkeypatch.setattr(generations.source, "__file__", str(changed_source))
+    validate_contract = scan.validate_active_generation_contract
+
+    def validate_before_scan_persistence(*args: object, **kwargs: object) -> str | None:
+        assert connection.execute("SELECT COUNT(*) FROM scan_runs").fetchone() == (0,)
+        return validate_contract(*args, **kwargs)
+
+    monkeypatch.setattr(
+        scan, "validate_active_generation_contract", validate_before_scan_persistence
+    )
+
+    with pytest.raises(GenerationError, match="semantic contract is incompatible"):
+        run_scan(connection, config, client=source, end_time=now)
+
+    assert source.log_reads == 0
+    assert source.trace_reads == 0
+    _assert_failed_extraction_has_no_analytics(connection, "generation_contract")
+
+
+def test_active_generation_source_contract_mismatch_stops_before_extraction(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    source = FakeSource(logs=[log_row("unread", int(now.timestamp() * 1_000_000_000))])
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+
+    class ChangedSource(FakeSource):
+        def query(self, sql: str, parameters: object) -> list[dict[str, Any]]:
+            rows = super().query(sql, parameters)
+            if "system.columns" not in sql:
+                return rows
+            changed = [dict(row) for row in rows]
+            changed[0]["type"] = "Array(String)"
+            return changed
+
+    changed_source = ChangedSource(logs=source.log_rows)
+    assert approve(connection, changed_source) != fingerprint
+
+    with pytest.raises(GenerationError, match="source contract is incompatible"):
+        run_scan(connection, config, client=changed_source, end_time=now)
+
+    assert changed_source.log_reads == 0
+    assert changed_source.trace_reads == 0
+    _assert_failed_extraction_has_no_analytics(connection, "generation_contract")
+
+
+def test_pipeline_snapshot_uses_source_timestamps_and_preserves_no_data_semantics() -> None:
+    event = _pipeline_snapshot_event(
+        scan_run_id="scan-1",
+        end_ns=10_000_000_000,
+        terminal_status="succeeded",
+        error_class=None,
+        logs=PipelineStream("available", "records", 9_000_000_000),
+        traces=PipelineStream("available", "records", 8_000_000_000),
+        hydration=PipelineStream("available", "no_data"),
+        finished_ns=10_000_000_000,
+        duration_ms=3.0,
+        rows_processed=2,
+        pending_after_drain=0,
+        active_generation="generation-1",
+    )
+    assert event.attributes["logs.lag_ms"] == 1_000
+    assert event.attributes["traces.lag_ms"] == 2_000
+    assert event.attributes["scan.duration_ms"] == 3.0
+
+    no_data = _pipeline_snapshot_event(
+        scan_run_id="scan-2",
+        end_ns=10_000_000_000,
+        terminal_status="no_data",
+        error_class=None,
+        logs=PipelineStream("available", "no_data"),
+        traces=PipelineStream("available", "no_data"),
+        hydration=PipelineStream("available", "no_data"),
+        finished_ns=10_000_000_000,
+        duration_ms=3.0,
+        rows_processed=0,
+        pending_after_drain=0,
+        active_generation="generation-1",
+    )
+    assert no_data.attributes["pipeline.state"] == "healthy"
+    assert no_data.attributes["logs.lag_state"] == "not_applicable"
+    assert no_data.attributes["traces.lag_state"] == "not_applicable"
+    assert "logs.lag_ms" not in no_data.attributes
+    assert "traces.lag_ms" not in no_data.attributes

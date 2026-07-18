@@ -41,6 +41,8 @@ bash scripts/run-ci-quality-gates.sh
 uv run agent-introspection doctor
 uv run agent-introspection health
 uv run agent-introspection scan
+uv run agent-introspection analysis-generation stage
+uv run agent-introspection analysis-generation activate <generation-id>
 uv run agent-introspection candidates export
 uv run agent-introspection classification import --input-json -
 uv run agent-introspection proposal list
@@ -54,6 +56,11 @@ uv run agent-introspection schedule status
 All command results are structured JSON on stdout. Diagnostics are written to stderr and failures use stable non-zero exit codes.
 
 The installed user LaunchAgent runs every 3,600 seconds and once at load. Scheduled mode permits one successful or no-data scan per UTC interval slot, and the shared configured lease prevents overlapping manual or scheduled scans.
+
+Normal scan projections require a remotely verified active analysis generation
+whose source and runtime semantic contracts match before extraction. Stage the
+bounded local projection and activate it before relying on dashboard signal
+panels. Pipeline health remains available when a generation is not active.
 
 ## Local SigNoz
 
