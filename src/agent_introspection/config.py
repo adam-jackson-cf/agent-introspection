@@ -90,6 +90,13 @@ def _positive_int(value: object, *, field: str) -> int:
     return value
 
 
+def _hourly_interval(value: object, *, field: str) -> int:
+    interval = _positive_int(value, field=field)
+    if interval != 3_600:
+        raise ConfigurationError(f"{field} must be exactly 3600 seconds")
+    return interval
+
+
 def _non_empty_string(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{field} must be a non-empty string")
@@ -186,7 +193,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.scheduler.timezone
         ),
         interval_seconds=(
-            _positive_int(scheduler["interval_seconds"], field="scheduler.interval_seconds")
+            _hourly_interval(scheduler["interval_seconds"], field="scheduler.interval_seconds")
             if "interval_seconds" in scheduler
             else defaults.scheduler.interval_seconds
         ),

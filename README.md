@@ -55,7 +55,7 @@ uv run agent-introspection schedule status
 
 All command results are structured JSON on stdout. Diagnostics are written to stderr and failures use stable non-zero exit codes.
 
-The installed user LaunchAgent runs every 3,600 seconds and once at load. Scheduled mode permits one successful or no-data scan per UTC interval slot, and the shared configured lease prevents overlapping manual or scheduled scans.
+The installed user LaunchAgent runs at minute zero of each hour and once at user-session load. Missed hour boundaries coalesce into one run after wake. Scheduled mode permits one successful or no-data scan per UTC hourly slot, terminalizes interrupted runs before recovery, and uses a shared lease to prevent overlap. Each ClickHouse query has a ten-minute limit and each scan has a fifteen-minute deadline, so a stalled source produces a terminal failure instead of blocking later hourly slots.
 
 Normal scan projections require a remotely verified active analysis generation
 whose source and runtime semantic contracts match before extraction. Stage the

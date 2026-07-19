@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import sqlite3
 import subprocess
 from collections.abc import Iterator
@@ -47,7 +48,7 @@ def acquire_lease(
     name: str = "scan",
     duration: timedelta = timedelta(minutes=15),
 ) -> Lease:
-    """Acquire a lease, reclaiming only when both PID is absent and lease expired."""
+    """Acquire a lease, reclaiming immediately when its owner PID is absent."""
     now = datetime.now(UTC)
     expires = now + duration
     connection.execute("BEGIN IMMEDIATE")
@@ -57,8 +58,7 @@ def acquire_lease(
         ).fetchone()
         if row is not None:
             owner_pid = int(row[0])
-            expired = datetime.fromisoformat(str(row[1])) <= now
-            if _pid_exists(owner_pid) or not expired:
+            if _pid_exists(owner_pid):
                 raise RuntimeError(f"scheduler lease {name!r} is already held")
         connection.execute(
             """
@@ -149,6 +149,38 @@ def completed_in_current_slot(
     return None
 
 
+def recover_interrupted_scan_runs(
+    connection: sqlite3.Connection, *, completed_at: datetime | None = None
+) -> tuple[str, ...]:
+    """Terminalize scan runs left running by an interrupted process under the acquired lease."""
+    terminal_at = completed_at or datetime.now(UTC)
+    if terminal_at.tzinfo is None:
+        raise ValueError("interrupted scan completion time must be timezone-aware")
+    rows = connection.execute(
+        "SELECT id FROM scan_runs WHERE status = 'running' ORDER BY started_at"
+    ).fetchall()
+    recovered = tuple(str(row[0]) for row in rows)
+    if not recovered:
+        return ()
+    with connection:
+        connection.execute(
+            """
+            UPDATE scan_runs
+            SET status = 'failed', completed_at = ?, error_code = 'interrupted'
+            WHERE status = 'running'
+            """,
+            (terminal_at.astimezone(UTC).isoformat(),),
+        )
+    return recovered
+
+
+def _current_slot_start(*, now: datetime, interval_seconds: int) -> str:
+    if now.tzinfo is None:
+        raise ValueError("scheduled scan clock must be timezone-aware")
+    slot_epoch = (int(now.astimezone(UTC).timestamp()) // interval_seconds) * interval_seconds
+    return datetime.fromtimestamp(slot_epoch, UTC).isoformat()
+
+
 def launch_agent_payload(
     *,
     executable: Path,
@@ -160,13 +192,15 @@ def launch_agent_payload(
     timezone: str,
 ) -> dict[str, object]:
     """Build the canonical user LaunchAgent configuration."""
+    if interval_seconds != 3_600:
+        raise ValueError("LaunchAgent interval must be exactly 3600 seconds")
     return {
         "Label": LABEL,
         "ProgramArguments": [str(executable), "scan", "--scheduled"],
         "WorkingDirectory": str(working_directory),
         "RunAtLoad": True,
         "KeepAlive": False,
-        "StartInterval": interval_seconds,
+        "StartCalendarInterval": {"Minute": 0},
         "EnvironmentVariables": {
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
             "DOCKER_HOST": docker_host,
@@ -204,14 +238,75 @@ def install_schedule(payload: dict[str, object], *, home: Path | None = None) ->
     return destination
 
 
-def schedule_status() -> dict[str, object]:
+def schedule_status(
+    connection: sqlite3.Connection,
+    *,
+    now: datetime,
+    interval_seconds: int,
+) -> dict[str, object]:
+    """Return launchd state with the persisted scan freshness and lease evidence."""
+    if interval_seconds != 3_600:
+        raise ValueError("scheduler interval must be exactly 3600 seconds")
     result = subprocess.run(
         ["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"],
         check=False,
         capture_output=True,
         text=True,
     )
-    return {"installed": result.returncode == 0, "label": LABEL}
+    completed = completed_in_current_slot(connection, now=now, interval_seconds=interval_seconds)
+    latest = connection.execute(
+        """
+        SELECT id, status, started_at, completed_at, error_code
+        FROM scan_runs
+        WHERE status IN ('succeeded', 'no_data', 'failed')
+        ORDER BY completed_at DESC, started_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    lease = connection.execute(
+        "SELECT name, owner_pid, heartbeat_at, expires_at FROM scheduler_leases WHERE name = 'scan'"
+    ).fetchone()
+    state = re.search(r"^\s*state = (.+)$", result.stdout, flags=re.MULTILINE)
+    exit_code = re.search(r"^\s*last exit code = (\d+)$", result.stdout, flags=re.MULTILINE)
+    return {
+        "installed": result.returncode == 0,
+        "label": LABEL,
+        "state": state.group(1) if state else None,
+        "last_exit_code": int(exit_code.group(1)) if exit_code else None,
+        "current_slot": (
+            {
+                "status": "satisfied",
+                "slot_start": completed.slot_start,
+                "run_id": completed.run_id,
+                "run_started_at": completed.started_at,
+            }
+            if completed is not None
+            else {
+                "status": "due",
+                "slot_start": _current_slot_start(now=now, interval_seconds=interval_seconds),
+            }
+        ),
+        "latest_terminal": (
+            {
+                "run_id": str(latest[0]),
+                "status": str(latest[1]),
+                "started_at": str(latest[2]),
+                "completed_at": str(latest[3]),
+                "error_code": str(latest[4]) if latest[4] is not None else None,
+            }
+            if latest is not None
+            else None
+        ),
+        "scan_lease": (
+            {
+                "owner_pid": int(lease[1]),
+                "heartbeat_at": str(lease[2]),
+                "expires_at": str(lease[3]),
+            }
+            if lease is not None
+            else None
+        ),
+    }
 
 
 def remove_schedule(*, home: Path | None = None) -> bool:

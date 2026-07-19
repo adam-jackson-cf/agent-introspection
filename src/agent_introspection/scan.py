@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import signal
 import sqlite3
 import time
 import uuid
@@ -14,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from agent_introspection import scheduler
 from agent_introspection.capabilities import (
     CapabilityError,
     discover_source_schema,
@@ -38,7 +40,7 @@ from agent_introspection.identities import (
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
 from agent_introspection.review import record_review_activity_snapshot
-from agent_introspection.scheduler import scan_lease
+from agent_introspection.scheduler import recover_interrupted_scan_runs
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
 from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
@@ -56,6 +58,39 @@ from agent_introspection.trends import (
 
 class ScanError(RuntimeError):
     """A scan cannot safely commit its extraction window."""
+
+
+class ScanDeadlineExceeded(ScanError):
+    """A scan exceeded its bounded execution window."""
+
+
+_SCAN_TIMEOUT_SECONDS = 900.0
+
+
+def _arm_scan_deadline() -> tuple[Any, tuple[float, float]]:
+    """Arm the process-wide deadline that bounds all scan work."""
+
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    if previous_timer != (0.0, 0.0):
+        raise ScanError("scan deadline timer is already active")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def expire(_signum: int, _frame: object) -> None:
+        raise ScanDeadlineExceeded(f"scan exceeded {_SCAN_TIMEOUT_SECONDS:.0f} second deadline")
+
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, _SCAN_TIMEOUT_SECONDS)
+    return previous_handler, previous_timer
+
+
+def _disarm_scan_deadline(state: tuple[Any, tuple[float, float]]) -> None:
+    """Restore the process signal state after a terminal scan outcome."""
+
+    previous_handler, previous_timer = state
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    signal.signal(signal.SIGALRM, previous_handler)
+    if previous_timer != (0.0, 0.0):
+        signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 @dataclass(frozen=True, slots=True)
@@ -678,14 +713,22 @@ def run_scan(
     failure: BaseException | None = None
     terminal_only_failure = False
     scan_run_persisted = False
+    recovered_interrupted_scan_runs: tuple[str, ...] = ()
     telemetry_delivered = 0
     pending_after_drain = 0
-    with scan_lease(
-        connection,
-        duration=timedelta(seconds=config.scheduler.lease_seconds),
-    ):
+    deadline = _arm_scan_deadline()
+    try:
+        lease = scheduler.acquire_lease(
+            connection,
+            duration=timedelta(seconds=config.scheduler.lease_seconds),
+        )
+    except BaseException:
+        _disarm_scan_deadline(deadline)
+        raise
+    deadline_armed = True
+    try:
+        recovered_interrupted_scan_runs = recover_interrupted_scan_runs(connection)
         start_ns, end_ns, start_bucket, end_bucket = _bounds(connection, end_ns)
-        terminal_at = datetime.now(UTC)
         started_at = _iso_now()
         try:
             try:
@@ -894,22 +937,33 @@ def run_scan(
             if connection.in_transaction:
                 connection.rollback()
             terminal_status = "failed"
-            if error_class is None:
+            if isinstance(exc, ScanDeadlineExceeded):
+                error_class = "scan_timeout"
+            elif error_class is None:
                 error_class = "processing"
-        for _ in range(20):
-            drain = drain_outbox(
-                connection,
-                endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
-                limit=500,
+        try:
+            for _ in range(20):
+                drain = drain_outbox(
+                    connection,
+                    endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+                    limit=500,
+                )
+                telemetry_delivered += drain["delivered"]
+                if drain["selected"] == 0 or drain["delivered"] == 0:
+                    break
+            pending_after_drain = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
+                ).fetchone()[0]
             )
-            telemetry_delivered += drain["delivered"]
-            if drain["selected"] == 0 or drain["delivered"] == 0:
-                break
-        pending_after_drain = int(
-            connection.execute(
-                "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
-            ).fetchone()[0]
-        )
+        except BaseException as exc:
+            failure = exc
+            active_generation = None
+            terminal_status = "failed"
+            error_class = "scan_timeout" if isinstance(exc, ScanDeadlineExceeded) else "telemetry"
+        finally:
+            _disarm_scan_deadline(deadline)
+            deadline_armed = False
         finished_ns = time.time_ns()
         duration_ms = (time.monotonic() - started) * 1000
         snapshot = _pipeline_snapshot_event(
@@ -941,6 +995,7 @@ def run_scan(
             else error_class
         )
         details_json = json.dumps(details, sort_keys=True, separators=(",", ":"))
+        terminal_at = datetime.now(UTC)
         with connection:
             if scan_run_persisted:
                 connection.execute(
@@ -1001,6 +1056,11 @@ def run_scan(
             "traces": len(traces),
             "observations": len(records),
             "trend_evaluations": len(trend_events),
+            "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
             "telemetry_delivered": telemetry_delivered,
             "telemetry_pending": pending,
         }
+    finally:
+        if deadline_armed:
+            _disarm_scan_deadline(deadline)
+        scheduler.release_lease(connection, lease)

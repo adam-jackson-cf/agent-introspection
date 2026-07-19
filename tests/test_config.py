@@ -38,7 +38,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
             "signoz": {"compose_directory": "$INTROSPECTION_ROOT/signoz"},
             "scheduler": {
                 "timezone": "Europe/London",
-                "interval_seconds": 1_800,
+                "interval_seconds": 3_600,
                 "lease_seconds": 900,
             },
         }
@@ -47,7 +47,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
     assert config.database.path == tmp_path / "state.sqlite3"
     assert config.database.busy_timeout_ms == 12_000
     assert config.signoz.compose_directory == tmp_path / "signoz"
-    assert config.scheduler.interval_seconds == 1_800
+    assert config.scheduler.interval_seconds == 3_600
     assert config.scheduler.lease_seconds == 900
 
 
@@ -63,6 +63,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
         ({"scheduler": {"interval_seconds": 0}}, "must be a positive integer"),
         ({"scheduler": {"interval_seconds": -1}}, "must be a positive integer"),
         ({"scheduler": {"interval_seconds": True}}, "must be a positive integer"),
+        ({"scheduler": {"interval_seconds": 1_800}}, "must be exactly 3600 seconds"),
         ({"scheduler": {"timezone": "Mars/Olympus"}}, "must name an installed timezone"),
     ],
 )

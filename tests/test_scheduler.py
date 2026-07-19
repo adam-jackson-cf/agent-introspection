@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from agent_introspection.scheduler import (
     completed_in_current_slot,
     launch_agent_payload,
     release_lease,
+    schedule_status,
 )
 
 
@@ -23,7 +25,7 @@ def lease_database() -> sqlite3.Connection:
     return connection
 
 
-def test_live_or_unexpired_leases_cannot_be_reclaimed() -> None:
+def test_live_leases_cannot_be_reclaimed() -> None:
     connection = lease_database()
     connection.execute(
         "INSERT INTO scheduler_leases VALUES (?, ?, ?, ?)",
@@ -39,7 +41,7 @@ def test_live_or_unexpired_leases_cannot_be_reclaimed() -> None:
         acquire_lease(connection)
 
 
-def test_expired_absent_pid_is_reclaimed_and_owner_can_release() -> None:
+def test_absent_pid_is_reclaimed_before_its_lease_expires_and_owner_can_release() -> None:
     connection = lease_database()
     connection.execute(
         "INSERT INTO scheduler_leases VALUES (?, ?, ?, ?)",
@@ -47,7 +49,7 @@ def test_expired_absent_pid_is_reclaimed_and_owner_can_release() -> None:
             "scan",
             999_999_999,
             datetime.now(UTC).isoformat(),
-            (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            (datetime.now(UTC) + timedelta(minutes=59)).isoformat(),
         ),
     )
     connection.commit()
@@ -68,11 +70,80 @@ def test_launch_agent_payload_is_canonical_and_absolute(tmp_path: Path) -> None:
         timezone="Europe/London",
     )
     assert payload["Label"] == LABEL
-    assert payload["StartInterval"] == 3_600
-    assert "StartCalendarInterval" not in payload
+    assert payload["StartCalendarInterval"] == {"Minute": 0}
+    assert "StartInterval" not in payload
     assert payload["RunAtLoad"] is True
     assert payload["KeepAlive"] is False
     assert payload["EnvironmentVariables"]["TZ"] == "Europe/London"
+
+
+def test_schedule_status_exposes_loaded_state_freshness_and_current_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE scan_runs (
+            id TEXT, status TEXT, started_at TEXT, completed_at TEXT, error_code TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE scheduler_leases (
+            name TEXT, owner_pid INTEGER, heartbeat_at TEXT, expires_at TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO scan_runs VALUES (
+            'success-current', 'succeeded', '2026-07-10T12:05:00+00:00',
+            '2026-07-10T12:05:30+00:00', NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO scheduler_leases VALUES (
+            'scan', 123, '2026-07-10T12:06:00+00:00', '2026-07-10T13:06:00+00:00'
+        )
+        """
+    )
+    monkeypatch.setattr(
+        "agent_introspection.scheduler.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, "state = not running\nlast exit code = 0\n", ""
+        ),
+    )
+
+    status = schedule_status(
+        connection,
+        now=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
+        interval_seconds=3_600,
+    )
+
+    assert status["installed"] is True
+    assert status["state"] == "not running"
+    assert status["last_exit_code"] == 0
+    assert status["current_slot"] == {
+        "status": "satisfied",
+        "slot_start": "2026-07-10T12:00:00+00:00",
+        "run_id": "success-current",
+        "run_started_at": "2026-07-10T12:05:00+00:00",
+    }
+    assert status["latest_terminal"] == {
+        "run_id": "success-current",
+        "status": "succeeded",
+        "started_at": "2026-07-10T12:05:00+00:00",
+        "completed_at": "2026-07-10T12:05:30+00:00",
+        "error_code": None,
+    }
+    assert status["scan_lease"] == {
+        "owner_pid": 123,
+        "heartbeat_at": "2026-07-10T12:06:00+00:00",
+        "expires_at": "2026-07-10T13:06:00+00:00",
+    }
 
 
 def test_successful_and_no_data_runs_suppress_only_their_utc_slot() -> None:

@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,13 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
     activate_test_generation(connection, source_contract_fingerprint=fingerprint)
     second = run_scan(connection, config, client=empty, end_time=now + timedelta(seconds=1))
     assert second["status"] == "no_data"
+    terminal_times = connection.execute(
+        "SELECT started_at, completed_at FROM scan_runs WHERE id = ?", (second["scan_run_id"],)
+    ).fetchone()
+    assert terminal_times is not None
+    assert datetime.fromisoformat(str(terminal_times[1])) >= datetime.fromisoformat(
+        str(terminal_times[0])
+    )
 
     trace_only = FakeSource(
         traces=[
@@ -249,6 +257,31 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
     result = run_scan(connection, config, client=log_only, end_time=now + timedelta(seconds=2))
     assert result["logs"] == 1
     assert result["observations"] == 1
+
+
+def test_new_scan_recovers_interrupted_runs_after_acquiring_the_lease(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    source = FakeSource()
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    connection.execute(
+        """
+        INSERT INTO scan_runs (id, status, started_at, details_json)
+        VALUES ('interrupted-run', 'running', '2026-07-10T11:00:00+00:00', '{}')
+        """
+    )
+    connection.commit()
+
+    result = run_scan(connection, config, client=source, end_time=now)
+
+    assert result["status"] == "no_data"
+    assert result["recovered_interrupted_scan_runs"] == 1
+    assert connection.execute(
+        "SELECT status, error_code FROM scan_runs WHERE id = 'interrupted-run'"
+    ).fetchone() == ("failed", "interrupted")
 
 
 def test_unapproved_source_schema_stops_before_extraction(
@@ -459,6 +492,89 @@ def test_source_contract_failure_persists_only_safe_terminal_facts(
 
     assert source.log_reads == 0
     _assert_failed_extraction_has_no_analytics(connection, "source_contract")
+
+
+def test_scan_deadline_terminalizes_stalled_work_without_retaining_the_lease(
+    scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+
+    class SlowSource(FakeSource):
+        def logs(self, **_bounds: object) -> list[LogRow]:
+            time.sleep(0.05)
+            return []
+
+    source = SlowSource()
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+    monkeypatch.setattr(scan, "_SCAN_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(scan.ScanDeadlineExceeded, match="scan exceeded 0 second deadline"):
+        run_scan(connection, config, client=source, end_time=now)
+
+    pipeline = next(
+        json.loads(row[0])
+        for row in connection.execute("SELECT payload_json FROM otlp_outbox")
+        if json.loads(row[0])["event.name"] == "introspection.pipeline.snapshot"
+    )
+    assert pipeline["scan.terminal_status"] == "failed"
+    assert pipeline["pipeline.error_class"] == "scan_timeout"
+    assert connection.execute("SELECT COUNT(*) FROM source_watermarks").fetchone() == (0,)
+    assert connection.execute("SELECT status, error_code FROM scan_runs").fetchone() == (
+        "failed",
+        "ScanDeadlineExceeded",
+    )
+    assert connection.execute("SELECT COUNT(*) FROM scheduler_leases").fetchone() == (0,)
+
+
+def test_scan_deadline_setup_failure_does_not_retain_a_lease(
+    scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, config = scan_environment
+
+    def fail_to_arm() -> tuple[Any, tuple[float, float]]:
+        raise scan.ScanError("scan deadline timer is already active")
+
+    monkeypatch.setattr(scan, "_arm_scan_deadline", fail_to_arm)
+    with pytest.raises(scan.ScanError, match="timer is already active"):
+        run_scan(connection, config, client=FakeSource())
+
+    assert connection.execute("SELECT COUNT(*) FROM scheduler_leases").fetchone() == (0,)
+
+
+def test_delivery_stage_timeout_persists_a_terminal_failure_and_releases_the_lease(
+    scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    source = FakeSource()
+    fingerprint = approve(connection, source)
+    activate_test_generation(connection, source_contract_fingerprint=fingerprint)
+
+    def timeout_delivery(*_args: object, **_kwargs: object) -> dict[str, int]:
+        raise scan.ScanDeadlineExceeded("scan exceeded 900 second deadline")
+
+    monkeypatch.setattr(scan, "drain_outbox", timeout_delivery)
+    with pytest.raises(scan.ScanDeadlineExceeded, match="scan exceeded 900 second deadline"):
+        run_scan(connection, config, client=source, end_time=now)
+
+    pipeline = next(
+        json.loads(row[0])
+        for row in connection.execute("SELECT payload_json FROM otlp_outbox")
+        if json.loads(row[0])["event.name"] == "introspection.pipeline.snapshot"
+    )
+    assert pipeline["scan.terminal_status"] == "failed"
+    assert pipeline["pipeline.error_class"] == "scan_timeout"
+    assert connection.execute("SELECT COUNT(*) FROM source_watermarks").fetchone() == (1,)
+    terminal = connection.execute(
+        "SELECT status, completed_at, error_code FROM scan_runs"
+    ).fetchone()
+    assert terminal is not None
+    assert terminal[0] == "failed"
+    assert terminal[1] is not None
+    assert terminal[2] == "ScanDeadlineExceeded"
+    assert connection.execute("SELECT COUNT(*) FROM scheduler_leases").fetchone() == (0,)
 
 
 def test_trace_and_hydration_failures_persist_no_analytics_or_projections(

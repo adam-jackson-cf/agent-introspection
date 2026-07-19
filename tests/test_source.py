@@ -125,6 +125,19 @@ def test_client_requires_exact_parameter_set_and_uses_clickhouse_parameters(
         list(client.query("SELECT {start:UInt64}", {"end": 7}))
 
 
+def test_client_fails_closed_when_a_query_exceeds_its_bounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["timeout"] == 600.0
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    client = ClickHouseClient(docker_context="orbstack")
+    with pytest.raises(SourceError, match="ClickHouse query exceeded 600 second timeout"):
+        list(client.query("SELECT 1", {}))
+
+
 def test_client_fails_closed_for_invalid_json_and_clickhouse_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

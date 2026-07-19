@@ -9,7 +9,10 @@ The dashboard guides a local operator through three questions:
 3. What has entered the explicit review and intervention loop?
 
 The canonical repository is this project. Deterministic analysis uses a seven-day
-window and scheduled scans run hourly in UTC slots.
+window and scheduled scans run hourly in UTC slots. The LaunchAgent runs on each
+calendar-hour boundary, coalesces missed boundaries after wake, and runs at
+user-session load so restart recovery resumes from persisted watermarks. Bounded
+source work produces a terminal failure before it can block a later hourly slot.
 
 ## Pipeline contract
 

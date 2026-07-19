@@ -516,7 +516,15 @@ def _db_command(args: argparse.Namespace) -> dict[str, Any]:
 def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(_config_path(args.config))
     if args.schedule_command == "status":
-        return schedule_status()
+        connection = connect_database(config.database.path)
+        try:
+            return schedule_status(
+                connection,
+                now=datetime.now(UTC),
+                interval_seconds=config.scheduler.interval_seconds,
+            )
+        finally:
+            connection.close()
     if args.schedule_command == "remove":
         return {"removed": remove_schedule()}
     executable = Path(shutil.which("agent-introspection") or sys.argv[0]).resolve()
@@ -555,7 +563,19 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
         timezone=config.scheduler.timezone,
     )
     destination = install_schedule(payload)
-    return {"installed": True, "path": str(destination), **schedule_status()}
+    connection = connect_database(config.database.path)
+    try:
+        return {
+            "installed": True,
+            "path": str(destination),
+            **schedule_status(
+                connection,
+                now=datetime.now(UTC),
+                interval_seconds=config.scheduler.interval_seconds,
+            ),
+        }
+    finally:
+        connection.close()
 
 
 def _parser() -> argparse.ArgumentParser:

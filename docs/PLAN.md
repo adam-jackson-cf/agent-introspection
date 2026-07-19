@@ -11,7 +11,11 @@ SigNoz dashboard without applying repository changes.
 - This repository is the canonical implementation target.
 - The actionable analysis horizon is seven days.
 - The scheduler permits one succeeded or no-data scan per UTC hourly slot and
-  uses a lease to prevent overlap.
+  uses a lease to prevent overlap. It uses one calendar-hour trigger, runs at
+  user-session load, coalesces missed hour boundaries after wake, and
+  terminalizes interrupted runs before resuming persisted watermarks. Bounded
+  source work converts a stalled scan into a terminal failure before it can
+  block later hourly slots.
 - Source-query structural contracts require explicit approval and fail closed on
   drift.
 - Raw source data never becomes derived telemetry. Hydration remains allowlisted

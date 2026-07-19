@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
 _DURATION_MS = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
+_QUERY_TIMEOUT_SECONDS = 600.0
 
 
 LOG_QUERY = r"""
@@ -354,7 +355,18 @@ class ClickHouseClient:
         argv: list[str] = [*self._prefix, "clickhouse-client", "--format", "JSONEachRow"]
         argv.extend(f"--param_{name}={parameters[name]}" for name in sorted(parameters))
         argv.extend(("--query", sql))
-        completed = subprocess.run(argv, text=True, capture_output=True, check=False)
+        try:
+            completed = subprocess.run(
+                argv,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=_QUERY_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SourceError(
+                f"ClickHouse query exceeded {_QUERY_TIMEOUT_SECONDS:.0f} second timeout"
+            ) from exc
         if completed.returncode != 0:
             lines = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
             diagnostic = next(
