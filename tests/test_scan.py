@@ -251,7 +251,19 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
 
     trace_only = FakeSource(
         traces=[
-            TraceRow("trace-1", "turn-1", "thread-1", None, now - timedelta(seconds=1), now, 10, 0)
+            TraceRow(
+                "trace-1",
+                "turn-1",
+                "thread-1",
+                None,
+                None,
+                None,
+                None,
+                now - timedelta(seconds=1),
+                now,
+                10,
+                0,
+            )
         ]
     )
     assert (
@@ -490,7 +502,10 @@ def test_actionable_findings_become_dormant_with_zero_current_window_counts(
             f"trace-{index}",
             f"turn-{index}",
             f"thread-{index}",
+            "project-1",
+            "Project",
             project.as_posix(),
+            "non_git",
             timestamp - timedelta(seconds=1),
             timestamp,
             0,

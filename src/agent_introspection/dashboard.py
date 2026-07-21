@@ -93,19 +93,19 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
   round(
     100 * toFloat64(uniqExactIf(
       attributes_string['entity.id'],
-      notEmpty(attributes_string['project.id'])
-        AND attributes_string['project.id'] != 'unresolved'
-        AND notEmpty(attributes_string['project.name'])
-        AND attributes_string['project.name'] != 'unresolved'
+      notEmpty(attributes_string['agent.project.id'])
+        AND attributes_string['agent.project.id'] != 'unresolved'
+        AND notEmpty(attributes_string['agent.project.name'])
+        AND attributes_string['agent.project.name'] != 'unresolved'
     )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),
     2
   ) AS `Project attribution coverage`,
   toFloat64(uniqExactIf(
     attributes_string['entity.id'],
-    notEmpty(attributes_string['project.id'])
-      AND attributes_string['project.id'] != 'unresolved'
-      AND notEmpty(attributes_string['project.name'])
-      AND attributes_string['project.name'] != 'unresolved'
+    notEmpty(attributes_string['agent.project.id'])
+      AND attributes_string['agent.project.id'] != 'unresolved'
+      AND notEmpty(attributes_string['agent.project.name'])
+      AND attributes_string['agent.project.name'] != 'unresolved'
   )) AS `Attributed observations`,
   toFloat64(uniqExact(attributes_string['entity.id'])) AS `All observations`""",
             "attributes_string['event.name'] = 'introspection.observation.detected'",
@@ -134,9 +134,9 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
   ) AS `Detector`,
   argMax(
     if(
-      empty(attributes_string['project.name']),
+      empty(attributes_string['agent.project.name']),
       'Unresolved',
-      attributes_string['project.name']
+      attributes_string['agent.project.name']
     ),
     tuple(attributes_number['entity.version'], timestamp)
   ) AS `Project`,

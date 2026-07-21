@@ -9,6 +9,7 @@ import subprocess
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
@@ -51,6 +52,17 @@ ORDER BY timestamp, id
 
 
 TRACE_QUERY = r"""
+WITH
+    attributes_string['agent.project.id'] != '' AS project_id_present,
+    attributes_string['agent.project.name'] != '' AS project_name_present,
+    attributes_string['agent.project.root'] != '' AS project_root_present,
+    attributes_string['agent.project.kind'] != '' AS project_kind_present,
+    (
+      project_id_present OR project_name_present OR project_root_present OR project_kind_present
+    ) AS project_metadata_present,
+    (
+      project_id_present AND project_name_present AND project_root_present AND project_kind_present
+    ) AS complete_project_metadata
 SELECT
     trace_id,
     coalesce(
@@ -63,7 +75,30 @@ SELECT
       anyIf(attributes_string['conversation.id'], attributes_string['conversation.id'] != ''), ''
     )
       AS conversation_id,
-    nullIf(anyIf(attributes_string['cwd'], attributes_string['cwd'] != ''), '') AS cwd,
+    nullIf(anyIf(attributes_string['agent.project.id'], complete_project_metadata), '')
+      AS project_id,
+    nullIf(anyIf(attributes_string['agent.project.name'], complete_project_metadata), '')
+      AS project_name,
+    nullIf(anyIf(attributes_string['agent.project.root'], complete_project_metadata), '')
+      AS project_root,
+    nullIf(anyIf(attributes_string['agent.project.kind'], complete_project_metadata), '')
+      AS project_kind,
+    multiIf(
+      countIf(project_metadata_present) = 0,
+      'absent',
+      countIf(complete_project_metadata) = countIf(project_metadata_present)
+        AND uniqExactIf(
+          tuple(
+            attributes_string['agent.project.id'],
+            attributes_string['agent.project.name'],
+            attributes_string['agent.project.root'],
+            attributes_string['agent.project.kind']
+          ),
+          complete_project_metadata
+        ) = 1,
+      'complete',
+      'invalid'
+    ) AS project_metadata_state,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
     sumIf(attributes_number['codex.usage.total_tokens'],
@@ -174,7 +209,10 @@ class TraceRow:
     trace_id: str
     turn_id: str | None
     thread_id: str | None
-    cwd: str | None
+    project_id: str | None
+    project_name: str | None
+    project_root: str | None
+    project_kind: str | None
     started_at: datetime
     ended_at: datetime
     total_tokens: int
@@ -291,6 +329,11 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     trace_id = _optional_text(data.get("trace_id"))
     if trace_id is None:
         raise SourceError("trace_id is required")
+    project_metadata_state = _optional_text(data.get("project_metadata_state"))
+    if project_metadata_state not in {"absent", "complete", "invalid"}:
+        raise SourceError("project metadata state is required")
+    if project_metadata_state == "invalid":
+        raise SourceError("agent project metadata is invalid")
     try:
         started = datetime.fromisoformat(str(data["started_at"]))
         ended = datetime.fromisoformat(str(data["ended_at"]))
@@ -306,11 +349,31 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
         raise SourceError("trace counters must be non-negative integers")
+    project_id = _optional_text(data.get("project_id"))
+    project_name = _optional_text(data.get("project_name"))
+    project_root = _optional_text(data.get("project_root"))
+    project_kind = _optional_text(data.get("project_kind"))
+    project_attributes = (project_id, project_name, project_root, project_kind)
+    if project_metadata_state == "absent" and any(project_attributes):
+        raise SourceError("absent project metadata cannot contain project attributes")
+    if project_metadata_state == "complete" and not all(project_attributes):
+        raise SourceError("complete project metadata must include every project attribute")
+    if any(project_attributes) and not all(project_attributes):
+        raise SourceError("agent project attributes must be present together")
+    if project_kind is not None and project_kind not in {"git", "non_git"}:
+        raise SourceError("agent.project.kind must be git or non_git")
+    if project_root is not None:
+        project_path = Path(project_root)
+        if not project_path.is_absolute() or project_path.as_posix() != project_root:
+            raise SourceError("agent.project.root must be a normalized absolute path")
     return TraceRow(
         trace_id=trace_id,
         turn_id=_optional_text(data.get("turn_id")),
         thread_id=_optional_text(data.get("thread_id")),
-        cwd=_optional_text(data.get("cwd")),
+        project_id=project_id,
+        project_name=project_name,
+        project_root=project_root,
+        project_kind=project_kind,
         started_at=started,
         ended_at=ended,
         total_tokens=total_tokens,

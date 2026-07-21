@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -105,87 +103,7 @@ class ProjectIdentity:
     kind: str
     root: Path
     identity: str
-    alias_source: str | None = None
-    git_common_dir: Path | None = None
-
-
-def _stable_project_id(kind: str, root: Path) -> str:
-    digest = hashlib.sha256(f"{kind}\0{root.as_posix()}".encode()).hexdigest()
-    return f"{kind}:{digest}"
-
-
-def _parse_project_reference(reference: str) -> tuple[str, Path]:
-    if not isinstance(reference, str):
-        raise IdentityError("project aliases must be text")
-    kind, separator, raw_path = reference.partition(":")
-    if separator != ":" or kind not in {"git", "non_git"}:
-        raise IdentityError("project aliases must use a typed absolute identity")
-    path = Path(raw_path)
-    if not path.is_absolute() or raw_path != os.path.normpath(raw_path):
-        raise IdentityError("project aliases must contain a normalized absolute path")
-    return kind, path
-
-
-def _git_common_dir(cwd: Path) -> Path | None:
-    completed = subprocess.run(
-        ("git", "-C", os.fspath(cwd), "rev-parse", "--git-common-dir"),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return None
-    raw = completed.stdout.strip()
-    if not raw:
-        raise IdentityError("git returned an empty common directory")
-    common = Path(raw)
-    if not common.is_absolute():
-        common = cwd / common
-    return common.resolve(strict=True)
-
-
-def discover_project(
-    cwd: str | Path,
-    *,
-    non_git_root: str | Path | None = None,
-    aliases: Mapping[str, str] | None = None,
-) -> ProjectIdentity:
-    """Group Git worktrees by their real common directory; apply only explicit aliases."""
-
-    real_cwd = Path(cwd).resolve(strict=True)
-    # An explicitly discovered non-Git root is authoritative. This matters when a
-    # standalone project happens to live below an unrelated Git checkout.
-    common = None if non_git_root is not None else _git_common_dir(real_cwd)
-    if common is not None:
-        if common.name != ".git":
-            raise IdentityError("git common directory does not end in .git")
-        kind = "git"
-        root = common.parent
-        git_common_dir = common
-    else:
-        root = Path(non_git_root if non_git_root is not None else real_cwd).resolve(strict=True)
-        if real_cwd != root and root not in real_cwd.parents:
-            raise IdentityError("cwd is outside the declared non-Git project root")
-        git_common_dir = None
-        kind = "non_git"
-    source = f"{kind}:{root.as_posix()}"
-    for alias_key, alias_target in (aliases or {}).items():
-        source_kind, _ = _parse_project_reference(alias_key)
-        target_kind, _ = _parse_project_reference(alias_target)
-        if source_kind != target_kind:
-            raise IdentityError("project aliases cannot change identity kind")
-    canonical_source = (aliases or {}).get(source, source)
-    source_alias = source if canonical_source != source else None
-    canonical_kind, canonical_root = _parse_project_reference(canonical_source)
-    if canonical_kind != kind:
-        raise IdentityError("project aliases cannot change identity kind")
-    return ProjectIdentity(
-        kind=canonical_kind,
-        root=canonical_root,
-        identity=_stable_project_id(canonical_kind, canonical_root),
-        alias_source=source_alias,
-        git_common_dir=git_common_dir,
-    )
+    display_name: str | None = None
 
 
 def normalize_target(target: str | Path, *, project_root: str | Path) -> str:

@@ -51,13 +51,20 @@ def _seed_local_facts(connection: sqlite3.Connection, timestamp_ns: int) -> None
     )
     connection.execute(
         """
+        INSERT INTO project_identities (
+            id, identity_kind, canonical_path, canonical_name, git_common_dir, created_at
+        ) VALUES ('project-1', 'git', '/canonical/project/path', 'Canonical project', NULL, 'now')
+        """
+    )
+    connection.execute(
+        """
         INSERT INTO observations (
             id, scan_run_id, detector_id, detector_version, category, project_identity_id,
             task_identity, turn_identity, occurred_at_ns, fingerprint, operation_kind,
             target_kind, normalized_target, normalized_failure_class, normalization_version,
             membership_explanation, attributes_json, created_at
         ) VALUES (
-            'observation-1', 'scan-1', 'tool_failure', 1, 'tool_failure', NULL,
+            'observation-1', 'scan-1', 'tool_failure', 1, 'tool_failure', 'project-1',
             'task-1', NULL, ?, ?, 'tool', 'command', 'ruff', 'exit_code', 1,
             'deterministic membership', '{}', 'now'
         )
@@ -71,13 +78,40 @@ def _seed_local_facts(connection: sqlite3.Connection, timestamp_ns: int) -> None
             detector_version, first_seen_ns, last_seen_ns, occurrence_count,
             canonical_task_count, local_day_count, entity_version, updated_at
         ) VALUES (
-            'finding-1', ?, 'tool_failure', NULL, 'actionable', 'tool_failure', 1,
+            'finding-1', ?, 'tool_failure', 'project-1', 'actionable', 'tool_failure', 1,
             ?, ?, 1, 1, 1, 2, 'now'
         )
         """,
         ("b" * 64, timestamp_ns, timestamp_ns),
     )
     connection.commit()
+
+
+def test_stage_marks_historical_project_without_name_as_unresolved(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    try:
+        now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+        timestamp_ns = int(now.timestamp() * 1_000_000_000)
+        _seed_local_facts(connection, timestamp_ns)
+        connection.execute(
+            "UPDATE project_identities SET canonical_name = NULL WHERE id = 'project-1'"
+        )
+        connection.commit()
+
+        stage_generation(
+            connection,
+            source_contract_fingerprint="c" * 64,
+            end_time=now,
+        )
+
+        payloads = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT payload_json FROM otlp_outbox").fetchall()
+        ]
+        assert {payload["agent.project.id"] for payload in payloads} == {"unresolved"}
+        assert {payload["agent.project.name"] for payload in payloads} == {"unresolved"}
+    finally:
+        connection.close()
 
 
 def test_stage_and_remote_verified_activation_promote_one_generation(
@@ -103,6 +137,11 @@ def test_stage_and_remote_verified_activation_promote_one_generation(
         assert {payload["event.scope"] for payload in payloads} == {
             f"generation:{staged.generation_id}"
         }
+        assert {payload["agent.project.id"] for payload in payloads} == {"project-1"}
+        assert {payload["agent.project.name"] for payload in payloads} == {"Canonical project"}
+        assert all(
+            "project.id" not in payload and "project.name" not in payload for payload in payloads
+        )
         monkeypatch.setattr("agent_introspection.generations.drain_outbox", _deliver_pending)
 
         activated = activate_generation(

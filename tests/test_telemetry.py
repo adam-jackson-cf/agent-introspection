@@ -100,6 +100,13 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
         connection.execute(
             "INSERT INTO scan_runs (id, status, started_at) VALUES ('failed-scan', 'failed', 'now')"
         )
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, canonical_name, git_common_dir, created_at
+            ) VALUES ('historical-project', 'git', '/historical/project', NULL, NULL, 'now')
+            """
+        )
         for index, event_id in ((1, "event-a"), (2, "event-b")):
             connection.execute(
                 """
@@ -108,8 +115,10 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
                     task_identity, turn_identity, occurred_at_ns, fingerprint, operation_kind,
                     target_kind, normalized_target, normalized_failure_class, normalization_version,
                     membership_explanation, attributes_json, created_at
-                ) VALUES (?, 'failed-scan', 'tool_failure', 1, 'tool_failure', NULL, 'thread:one',
-                    NULL, ?, ?, 'event', 'none', 'operation', 'failure', 1, 'membership', ?, 'now'
+                ) VALUES (
+                    ?, 'failed-scan', 'tool_failure', 1, 'tool_failure', 'historical-project',
+                    'thread:one', NULL, ?, ?, 'event', 'none', 'operation', 'failure', 1,
+                    'membership', ?, 'now'
                 )
                 """,
                 (
@@ -161,7 +170,10 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
         ]
         recovered = next(payload for payload in payloads if payload["entity.id"] == "observation-2")
         assert recovered["event.sequence"] == 2
-        assert recovered["project.id"] == "unresolved"
+        assert recovered["agent.project.id"] == "unresolved"
+        assert recovered["agent.project.name"] == "unresolved"
+        assert "project.id" not in recovered
+        assert "project.name" not in recovered
     finally:
         connection.close()
 

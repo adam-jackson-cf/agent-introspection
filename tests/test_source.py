@@ -29,6 +29,11 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
         assert f"['{raw_key}']" not in LOG_QUERY
     assert "{start:DateTime64(9)}" in TRACE_QUERY
     assert "{end:DateTime64(9)}" in TRACE_QUERY
+    for attribute in ("id", "name", "root", "kind"):
+        assert f"attributes_string['agent.project.{attribute}']" in TRACE_QUERY
+    assert "attributes_string['cwd']" not in TRACE_QUERY
+    assert "project_metadata_state" in TRACE_QUERY
+    assert "uniqExactIf(" in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
@@ -93,10 +98,43 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
             "ended_at": "2026-07-10 14:53:48.565735000",
             "total_tokens": "123",
             "tool_calls": "2",
+            "project_metadata_state": "absent",
         }
     )
     assert parsed.started_at.tzinfo is UTC
     assert parsed.ended_at.tzinfo is UTC
+
+
+def test_trace_parser_requires_complete_normalized_agent_project_metadata() -> None:
+    base: dict[str, object] = {
+        "trace_id": "trace-1",
+        "started_at": "2026-07-10 14:53:47.565735000",
+        "ended_at": "2026-07-10 14:53:48.565735000",
+        "total_tokens": "123",
+        "tool_calls": "2",
+        "project_id": "project-1",
+        "project_name": "Agent Introspection",
+        "project_root": "/workspace/agent-introspection",
+        "project_kind": "git",
+        "project_metadata_state": "complete",
+    }
+    parsed = parse_trace_row(base)
+    assert parsed.project_id == "project-1"
+    assert parsed.project_name == "Agent Introspection"
+    base["project_root"] = "workspace/agent-introspection"
+    with pytest.raises(SourceError, match="normalized absolute path"):
+        parse_trace_row(base)
+    base["project_root"] = "/workspace/agent-introspection"
+    base["project_kind"] = "unknown"
+    with pytest.raises(SourceError, match="git or non_git"):
+        parse_trace_row(base)
+    base["project_kind"] = ""
+    with pytest.raises(SourceError, match="must include every project attribute"):
+        parse_trace_row(base)
+    base["project_kind"] = "git"
+    base["project_metadata_state"] = "invalid"
+    with pytest.raises(SourceError, match="metadata is invalid"):
+        parse_trace_row(base)
 
 
 def test_client_requires_exact_parameter_set_and_uses_clickhouse_parameters(

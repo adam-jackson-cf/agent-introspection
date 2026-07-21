@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,30 +10,9 @@ from agent_introspection.identities import (
     build_conversation_thread_map,
     canonical_task,
     canonical_turn,
-    discover_project,
     london_day,
     normalize_target,
 )
-
-
-def _git(*args: str, cwd: Path) -> None:
-    local_variables = subprocess.run(
-        ("git", "rev-parse", "--local-env-vars"),
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    environment = os.environ.copy()
-    for variable in local_variables:
-        environment.pop(variable, None)
-    subprocess.run(
-        ("git", *args),
-        cwd=cwd,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 def test_task_precedence_mapping_and_episode_threshold_eligibility() -> None:
@@ -97,22 +74,7 @@ def test_conversation_mapping_does_not_promote_ambiguous_trace_evidence() -> Non
         )
 
 
-def test_git_worktrees_share_the_common_project_identity(tmp_path: Path) -> None:
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    _git("init", "-b", "main", cwd=repository)
-    _git("config", "user.email", "test@example.invalid", cwd=repository)
-    _git("config", "user.name", "Test", cwd=repository)
-    (repository / "tracked.txt").write_text("tracked\n")
-    _git("add", "tracked.txt", cwd=repository)
-    _git("commit", "-m", "initial", cwd=repository)
-    worktree = tmp_path / "worktree"
-    _git("worktree", "add", "-b", "branch", str(worktree), cwd=repository)
-    assert discover_project(repository).identity == discover_project(worktree).identity
-    assert discover_project(worktree).root == repository.resolve()
-
-
-def test_realpath_targets_and_explicit_project_aliases(tmp_path: Path) -> None:
+def test_normalize_target_resolves_links_and_rejects_scope_escapes(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
     (root / "src").mkdir()
@@ -122,31 +84,8 @@ def test_realpath_targets_and_explicit_project_aliases(tmp_path: Path) -> None:
     assert normalize_target(link, project_root=root) == "src/module.py"
     with pytest.raises(IdentityError, match="outside"):
         normalize_target(tmp_path / "elsewhere.py", project_root=root)
-    source = f"non_git:{root.resolve().as_posix()}"
-    prior = tmp_path / "prior-name"
-    prior.mkdir()
-    aliased = discover_project(root, non_git_root=root, aliases={source: f"non_git:{prior}"})
-    assert aliased.root == prior
-    assert aliased.alias_source == source
-    assert aliased.kind == "non_git"
-    assert (
-        discover_project(root, non_git_root=root).identity
-        != discover_project(prior, non_git_root=prior).identity
-    )
     assert normalize_target("src\\module.py", project_root=root) == "src/module.py"
     assert normalize_target(root, project_root=root) == "."
-    with pytest.raises(IdentityError, match="normalized"):
-        discover_project(
-            root,
-            non_git_root=root,
-            aliases={source: f"non_git:{prior}/../prior-name"},
-        )
-    with pytest.raises(IdentityError, match="identity kind"):
-        discover_project(
-            root,
-            non_git_root=root,
-            aliases={source: f"git:{prior}"},
-        )
 
 
 def test_london_calendar_days_follow_both_dst_boundaries() -> None:

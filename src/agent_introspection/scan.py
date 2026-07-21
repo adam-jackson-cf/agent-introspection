@@ -12,16 +12,10 @@ from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from agent_introspection import scheduler
-from agent_introspection.attribution import (
-    Attribution,
-    direct_trace_attribution,
-    persist_thread_evidence,
-    resolve_attribution,
-)
+from agent_introspection.attribution import direct_trace_attribution, resolve_attribution
 from agent_introspection.capabilities import (
     CapabilityError,
     discover_source_schema,
@@ -42,11 +36,7 @@ from agent_introspection.generations import (
     semantic_contract_hash,
     validate_active_generation_contract,
 )
-from agent_introspection.identities import (
-    ProjectIdentity,
-    canonical_task,
-    discover_project,
-)
+from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
 from agent_introspection.scheduler import recover_interrupted_scan_runs
@@ -284,15 +274,6 @@ def _trace_indexes(
     return by_trace, conversation_map
 
 
-def _project_for_trace(trace: TraceRow | None) -> ProjectIdentity | None:
-    if trace is None or trace.cwd is None:
-        return None
-    try:
-        return discover_project(trace.cwd)
-    except (OSError, ValueError):
-        return None
-
-
 def _shortlisted_log_ids(logs: list[LogRow], by_trace: dict[str, TraceRow]) -> list[str]:
     explicit: set[str] = set()
     tool_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -342,27 +323,18 @@ def _hydrated_operations(rows: list[HydrationRow]) -> dict[str, Any]:
 
 
 def _detector_events(
-    connection: sqlite3.Connection,
     logs: list[LogRow],
     traces: list[TraceRow],
     hydration: list[HydrationRow],
-    *,
-    window_start_ns: int,
-    window_end_ns: int,
-) -> tuple[list[DetectorEvent], dict[str, ProjectIdentity], list[tuple[TraceRow, Attribution]]]:
+) -> tuple[list[DetectorEvent], dict[str, ProjectIdentity]]:
     by_trace, conversation_map = _trace_indexes(logs, traces)
     hydration_by_id = {row.log_id: row for row in hydration}
     operations = _hydrated_operations(hydration)
     projects: dict[str, ProjectIdentity] = {}
-    trace_attributions: dict[str, Attribution] = {}
-    resolved_attributions: dict[tuple[str | None, str | None, str | None], Attribution] = {}
-    evidence: list[tuple[TraceRow, Attribution]] = []
     for source_trace in traces:
         attribution = direct_trace_attribution(source_trace)
-        trace_attributions[source_trace.trace_id] = attribution
         if attribution.project is not None:
             projects[attribution.project.identity] = attribution.project
-            evidence.append((source_trace, attribution))
     events: list[DetectorEvent] = []
     mutation_tools = {"apply_patch", "write_file", "edit_file", "create_file"}
     for log in logs:
@@ -373,26 +345,7 @@ def _detector_events(
             conversation_id=log.conversation_id,
             conversation_to_thread=conversation_map,
         )
-        conversation_thread_id = conversation_map.get(log.conversation_id or "")
-        attribution_key = (
-            trace.trace_id if trace is not None else None,
-            trace.thread_id if trace is not None else None,
-            conversation_thread_id,
-        )
-        cached_attribution = resolved_attributions.get(attribution_key)
-        if cached_attribution is None:
-            cached_attribution = resolve_attribution(
-                connection,
-                trace=trace,
-                thread_id=trace.thread_id if trace is not None else None,
-                conversation_thread_id=conversation_thread_id,
-                start_ns=window_start_ns,
-                end_ns=window_end_ns,
-            )
-            resolved_attributions[attribution_key] = cached_attribution
-        if cached_attribution is None:
-            raise RuntimeError("attribution resolution must return a value")
-        attribution = cached_attribution
+        attribution = resolve_attribution(trace=trace)
         project_id = attribution.project_id or f"unresolved:{task.canonical}"
         hydrated = hydration_by_id.get(log.log_id)
         operation = operations.get(log.log_id)
@@ -428,21 +381,7 @@ def _detector_events(
             conversation_id=trace.conversation_id,
             conversation_to_thread=conversation_map,
         )
-        conversation_thread_id = conversation_map.get(trace.conversation_id or "")
-        attribution_key = (trace.trace_id, trace.thread_id, conversation_thread_id)
-        trace_attribution = resolved_attributions.get(attribution_key)
-        if trace_attribution is None:
-            trace_attribution = resolve_attribution(
-                connection,
-                trace=trace,
-                thread_id=trace.thread_id,
-                conversation_thread_id=conversation_thread_id,
-                start_ns=window_start_ns,
-                end_ns=window_end_ns,
-            )
-            resolved_attributions[attribution_key] = trace_attribution
-        if trace_attribution is None:
-            raise RuntimeError("trace attribution resolution must return a value")
+        trace_attribution = resolve_attribution(trace=trace)
         project_id = trace_attribution.project_id or f"unresolved:{task.canonical}"
         events.append(
             DetectorEvent(
@@ -456,28 +395,38 @@ def _detector_events(
                 attribution_method=trace_attribution.method,
             )
         )
-    return events, projects, evidence
+    return events, projects
 
 
 def _persist_projects(connection: sqlite3.Connection, projects: dict[str, ProjectIdentity]) -> None:
     now = _iso_now()
     for project in projects.values():
-        identity_kind = "git" if project.kind == "git" else "non_git"
         connection.execute(
             """
             INSERT INTO project_identities (
-                id, identity_kind, canonical_path, git_common_dir, created_at
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO NOTHING
+                id, identity_kind, canonical_path, git_common_dir, canonical_name, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET canonical_name = excluded.canonical_name
+            WHERE project_identities.canonical_name IS NULL
             """,
             (
                 project.identity,
-                identity_kind,
+                project.kind,
                 project.root.as_posix(),
-                (project.root / ".git").as_posix() if identity_kind == "git" else None,
+                (project.root / ".git").as_posix() if project.kind == "git" else None,
+                project.display_name,
                 now,
             ),
         )
+
+
+def _dashboard_project_attributes(
+    project_id: str | None, project_names: dict[str, str]
+) -> dict[str, str]:
+    project_name = project_names.get(project_id or "")
+    if project_id is None or project_name is None:
+        return {"agent.project.id": "unresolved", "agent.project.name": "unresolved"}
+    return {"agent.project.id": project_id, "agent.project.name": project_name}
 
 
 def _records(
@@ -800,14 +749,7 @@ def reanalyse_attribution(
                 end_bucket=end_bucket,
             )
         )
-    events, projects, thread_evidence = _detector_events(
-        connection,
-        logs,
-        traces,
-        hydration,
-        window_start_ns=start_ns,
-        window_end_ns=end_ns,
-    )
+    events, projects = _detector_events(logs, traces, hydration)
     token_baselines: dict[str, list[int]] = defaultdict(list)
     for event in events:
         if event.token_count is not None:
@@ -821,14 +763,6 @@ def reanalyse_attribution(
     try:
         connection.execute("BEGIN IMMEDIATE")
         _persist_projects(connection, projects)
-        for trace, attribution in thread_evidence:
-            persist_thread_evidence(
-                connection,
-                trace=trace,
-                attribution=attribution,
-                source_contract_fingerprint=source_contract_fingerprint,
-                created_at=now,
-            )
         connection.execute(
             """
             INSERT INTO attribution_reanalysis_fact_sets (
@@ -839,8 +773,10 @@ def reanalyse_attribution(
             (fact_set_id, start_ns, end_ns, source_contract_fingerprint, semantic_hash, now),
         )
         project_names = {
-            str(row[0]): Path(str(row[1])).name
-            for row in connection.execute("SELECT id, canonical_path FROM project_identities")
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                "SELECT id, canonical_name FROM project_identities WHERE canonical_name IS NOT NULL"
+            )
         }
         fact_rows: list[tuple[str, str, str, str]] = []
         for record in records:
@@ -1107,14 +1043,7 @@ def run_scan(
                 error_class = "hydration"
                 raise
             try:
-                events, projects, thread_evidence = _detector_events(
-                    connection,
-                    logs,
-                    traces,
-                    hydration,
-                    window_start_ns=start_ns,
-                    window_end_ns=end_ns,
-                )
+                events, projects = _detector_events(logs, traces, hydration)
                 token_baselines: dict[str, list[int]] = defaultdict(list)
                 for event in events:
                     if event.token_count is not None:
@@ -1134,14 +1063,6 @@ def run_scan(
                     records = [record for record in records if record.id not in existing_ids]
                 connection.execute("BEGIN IMMEDIATE")
                 _persist_projects(connection, projects)
-                for trace, attribution in thread_evidence:
-                    persist_thread_evidence(
-                        connection,
-                        trace=trace,
-                        attribution=attribution,
-                        source_contract_fingerprint=source_contract_fingerprint,
-                        created_at=_iso_now(),
-                    )
                 if logs:
                     last_id = logs[-1].log_id
                 elif traces:
@@ -1162,9 +1083,10 @@ def run_scan(
                     manage_transaction=False,
                 )
                 project_names = {
-                    str(row[0]): Path(str(row[1])).name
+                    str(row[0]): str(row[1])
                     for row in connection.execute(
-                        "SELECT id, canonical_path FROM project_identities"
+                        "SELECT id, canonical_name FROM project_identities "
+                        "WHERE canonical_name IS NOT NULL"
                     ).fetchall()
                 }
                 scope = f"generation:{active_generation}"
@@ -1178,11 +1100,9 @@ def run_scan(
                         attributes={
                             "analysis.generation": active_generation,
                             "detector.id": record.detector_id,
-                            "project.id": record.project_identity_id or "unresolved",
-                            "project.name": project_names.get(
-                                record.project_identity_id or "", "unresolved"
+                            **_dashboard_project_attributes(
+                                record.project_identity_id, project_names
                             ),
-                            "finding.id": record.fingerprint,
                             "attribution.method": str(record.attributes["attribution.method"]),
                         },
                         timestamp_ns=record.occurred_at_ns,
@@ -1204,9 +1124,7 @@ def run_scan(
                             "analysis.generation": active_generation,
                             "trend.state": str(trend.evaluation.state),
                             "finding.category": trend.category,
-                            "project.id": trend.project_id or "unresolved",
-                            "project.name": project_names.get(trend.project_id or "", "unresolved"),
-                            "detector.id": trend.detector_id,
+                            **_dashboard_project_attributes(trend.project_id, project_names),
                             "finding.id": trend.evaluation.finding_id,
                             "occurrence.count": trend.evaluation.occurrence_count,
                         },

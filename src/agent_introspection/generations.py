@@ -139,7 +139,7 @@ def _projection_events(
     events: list[DerivedEvent] = []
     observation_rows = connection.execute(
         """
-        SELECT o.id, o.detector_id, o.project_identity_id, p.canonical_path,
+        SELECT o.id, o.detector_id, o.project_identity_id, p.canonical_name,
                o.fingerprint, o.occurred_at_ns
         FROM observations o
         LEFT JOIN project_identities p ON p.id = o.project_identity_id
@@ -149,8 +149,8 @@ def _projection_events(
         (window_start_ns, window_end_ns),
     ).fetchall()
     for row in observation_rows:
-        project_id = str(row[2]) if row[2] is not None else "unresolved"
-        project_name = Path(str(row[3])).name if row[3] is not None else "unresolved"
+        project_name = str(row[3]) if row[3] is not None else None
+        project_id = str(row[2]) if project_name is not None else "unresolved"
         events.append(
             DerivedEvent(
                 scope=scope,
@@ -161,8 +161,8 @@ def _projection_events(
                 attributes={
                     "analysis.generation": generation_id,
                     "detector.id": str(row[1]),
-                    "project.id": project_id,
-                    "project.name": project_name,
+                    "agent.project.id": project_id,
+                    "agent.project.name": project_name or "unresolved",
                     "finding.id": str(row[4]),
                 },
                 timestamp_ns=int(row[5]),
@@ -179,11 +179,19 @@ def _projection_events(
         (window_start_ns, window_end_ns),
     ).fetchall()
     project_names = {
-        str(row[0]): Path(str(row[1])).name
-        for row in connection.execute("SELECT id, canonical_path FROM project_identities")
+        str(row[0]): str(row[1])
+        for row in connection.execute(
+            "SELECT id, canonical_name FROM project_identities WHERE canonical_name IS NOT NULL"
+        )
     }
     for row in trend_rows:
-        project_id = str(row[4]) if row[4] is not None else "unresolved"
+        raw_project_id = str(row[4]) if row[4] is not None else None
+        project_name = project_names.get(raw_project_id or "")
+        if raw_project_id is None or project_name is None:
+            project_id = "unresolved"
+            project_name = "unresolved"
+        else:
+            project_id = raw_project_id
         version = int(row[1])
         events.append(
             DerivedEvent(
@@ -196,8 +204,8 @@ def _projection_events(
                     "analysis.generation": generation_id,
                     "trend.state": str(row[2]),
                     "finding.category": str(row[3]),
-                    "project.id": project_id,
-                    "project.name": project_names.get(project_id, "unresolved"),
+                    "agent.project.id": project_id,
+                    "agent.project.name": project_name,
                     "detector.id": str(row[5]),
                     "finding.id": str(row[0]),
                     "occurrence.count": int(row[6]),
@@ -225,6 +233,12 @@ def _fact_set_projection_events(
     events: list[DerivedEvent] = []
     for kind, raw_payload in rows:
         payload = json.loads(str(raw_payload))
+        project_name = str(payload["project_name"])
+        project_id = (
+            str(payload["project_id"])
+            if project_name and project_name != "unresolved"
+            else "unresolved"
+        )
         if str(kind) == "observation":
             events.append(
                 DerivedEvent(
@@ -236,8 +250,8 @@ def _fact_set_projection_events(
                     attributes={
                         "analysis.generation": generation_id,
                         "detector.id": str(payload["detector_id"]),
-                        "project.id": str(payload["project_id"]),
-                        "project.name": str(payload["project_name"]),
+                        "agent.project.id": project_id,
+                        "agent.project.name": project_name or "unresolved",
                         "finding.id": str(payload["fingerprint"]),
                         "attribution.method": str(payload["attribution_method"]),
                     },
@@ -256,8 +270,8 @@ def _fact_set_projection_events(
                         "analysis.generation": generation_id,
                         "trend.state": str(payload["trend_state"]),
                         "finding.category": str(payload["category"]),
-                        "project.id": str(payload["project_id"]),
-                        "project.name": str(payload["project_name"]),
+                        "agent.project.id": project_id,
+                        "agent.project.name": project_name or "unresolved",
                         "detector.id": str(payload["detector_id"]),
                         "finding.id": str(payload["id"]),
                         "occurrence.count": int(payload["occurrence_count"]),

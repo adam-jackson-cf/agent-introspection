@@ -77,29 +77,23 @@ Health dashboard bootstrap is two-phase:
 
 ## Project attribution contract
 
-1. Keep direct validated trace `cwd` attribution as the highest-confidence
-   method.
-2. Persist append-only `thread_project_evidence` from a trace only when its
-   explicit `thread.id`, source trace ID, source timestamp, source-contract
-   fingerprint, attribution-contract version, and locally validated project
-   identity are available. Its immutable ID is derived from those provenance
-   fields. Exact duplicates coalesce; a second valid project identity for the
-   same thread is retained as conflicting evidence.
-3. A mapping is valid only when every evidence record for its thread, within the
-   fixed reanalysis window, resolves to one project identity. Direct validated
-   trace `cwd` takes precedence; otherwise use a valid unique thread mapping;
-   otherwise use the existing unambiguous conversation-to-thread mapping and
-   then that thread mapping. Conflicting, missing, out-of-window, or invalid
-   evidence resolves to `unresolved`.
-4. Persist the attribution method on derived events as `trace_cwd`,
-   `thread_cwd`, `conversation_thread_cwd`, or `unresolved`.
+1. The source emitter attaches all four attributes to the same relevant span:
+   `agent.project.id`, `agent.project.name`, `agent.project.root`, and
+   `agent.project.kind`.
+2. A trace is attributed only when every span carrying project metadata carries
+   one complete, identical tuple. The consumer rejects partial, conflicting, or
+   invalid metadata. A trace with no project metadata is `unresolved`.
+3. `agent.project.id` is the canonical grouping key. `agent.project.name` is
+   required for every attributed dashboard event. The backend persists the
+   source-supplied name with the project identity and emits both attributes on
+   derived telemetry.
+4. `agent.project.root` is a normalized absolute project root and
+   `agent.project.kind` is `git` or `non_git`. They support local project
+   identity persistence but are not dashboard dimensions.
 5. Do not derive a project from prompts, tool arguments, names, labels, or path
    heuristics. Do not mutate immutable observations or findings.
-6. Before changing upstream telemetry, determine and record the owning emitter
-   and its canonical attributes. If this repository owns it, emit explicit
-   `cwd` and `thread.id` on relevant trace and log records and test that
-   contract. If it does not, preserve unresolved results and do not claim an
-   attribution-coverage improvement from this rollout.
+6. Before enabling a producer, verify that it emits the complete span tuple.
+   Producers without this contract remain `unresolved`.
 
 ## Bounded attribution reanalysis
 

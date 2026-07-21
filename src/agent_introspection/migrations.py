@@ -948,6 +948,17 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
             """,
         ),
     ),
+    Migration(
+        version=8,
+        name="add source project metadata",
+        statements=(
+            "ALTER TABLE project_identities ADD COLUMN canonical_name TEXT",
+            "DROP TRIGGER thread_project_evidence_no_update",
+            "DROP TRIGGER thread_project_evidence_no_delete",
+            "DROP TABLE thread_project_evidence",
+            "DROP TABLE project_aliases",
+        ),
+    ),
 )
 
 

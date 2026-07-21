@@ -117,6 +117,10 @@ def test_dashboard_queries_use_global_time_active_generation_and_plain_language_
     )
     assert "HAVING count() > 0" in attribution
     assert "identity_coverage_pct" not in attribution
+    assert "attributes_string['agent.project.id']" in attribution
+    assert "attributes_string['agent.project.name']" in attribution
+    assert "attributes_string['project.id']" not in attribution
+    assert "attributes_string['project.name']" not in attribution
 
     actionable = insight["actionable-trends"]["query"]["clickhouse_sql"][0]["query"]
     assert all(
@@ -130,6 +134,8 @@ def test_dashboard_queries_use_global_time_active_generation_and_plain_language_
             "`Last evaluated`",
         )
     )
+    assert "attributes_string['agent.project.name']" in actionable
+    assert "attributes_string['project.name']" not in actionable
     for raw, label in DETECTOR_LABELS.items():
         assert raw in actionable
         assert label in actionable

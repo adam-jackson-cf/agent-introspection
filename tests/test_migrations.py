@@ -32,6 +32,9 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         }
+        project_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(project_identities)")
+        }
     finally:
         connection.close()
 
@@ -41,7 +44,6 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "source_schema_snapshots",
         "source_watermarks",
         "project_identities",
-        "project_aliases",
         "observations",
         "evidence",
         "findings",
@@ -61,12 +63,12 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "analysis_generation_event_links",
         "analysis_generation_activations",
         "analysis_generation_current",
-        "thread_project_evidence",
         "attribution_reanalysis_fact_sets",
         "attribution_reanalysis_facts",
     }
     assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
+    assert "canonical_name" in project_columns
     backup = sqlite3.connect(f"{applied[0].backup_path.as_uri()}?mode=ro", uri=True)
     try:
         assert backup.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
@@ -283,7 +285,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7]
+        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7, 8]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM trend_evaluations").fetchone()[0] == 1
@@ -357,7 +359,7 @@ def test_review_lifecycle_telemetry_removal_preserves_sessions_and_installs_guar
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [4, 5, 6, 7]
+        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8]
         assert connection.execute(
             "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
         ).fetchall() == [

@@ -12,7 +12,6 @@ import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Protocol
 
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
@@ -181,7 +180,7 @@ def plan_observation_reconciliation(
     for scan_run_id in selected_scan_run_ids:
         rows = connection.execute(
             """
-            SELECT o.id, o.detector_id, o.project_identity_id, p.canonical_path,
+            SELECT o.id, o.detector_id, o.project_identity_id, p.canonical_name,
                    o.fingerprint, o.occurred_at_ns, o.task_identity, o.attributes_json
             FROM observations o
             LEFT JOIN project_identities p ON p.id = o.project_identity_id
@@ -194,7 +193,8 @@ def plan_observation_reconciliation(
             observation_id = str(row[0])
             detector_id = str(row[1])
             project_id = str(row[2]) if row[2] is not None else None
-            project_path = Path(str(row[3])) if row[3] is not None else None
+            project_name = str(row[3]) if row[3] is not None else None
+            emitted_project_id = project_id if project_name is not None else None
             fingerprint = str(row[4])
             occurred_at_ns = int(row[5])
             task_identity = str(row[6]) if row[6] is not None else None
@@ -225,8 +225,8 @@ def plan_observation_reconciliation(
                         event_name=OBSERVATION_EVENT_NAME,
                         attributes={
                             "detector.id": detector_id,
-                            "project.id": project_id or "unresolved",
-                            "project.name": project_path.name if project_path else "unresolved",
+                            "agent.project.id": emitted_project_id or "unresolved",
+                            "agent.project.name": project_name or "unresolved",
                             "finding.id": fingerprint,
                         },
                         timestamp_ns=occurred_at_ns,
