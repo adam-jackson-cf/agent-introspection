@@ -123,6 +123,20 @@ def test_tool_loop_uses_operation_order_even_when_context_events_are_interleaved
     )
 
 
+def test_tool_loop_preserves_a_long_repeating_cycle() -> None:
+    cycle = (
+        _operation("one", None, "a"),
+        _operation("two", None, "b"),
+        _operation("three", None, "c"),
+    )
+    events = [_event(index, operation=cycle[(index - 1) % len(cycle)]) for index in range(1, 1537)]
+    observations = _by_detector(events)
+    assert len(observations["tool_loop"]) == 1
+    assert observations["tool_loop"][0].event_ids == tuple(  # type: ignore[attr-defined]
+        f"event-{index}" for index in range(1, 1537)
+    )
+
+
 def test_quality_gate_bypass_requires_failure_mutation_and_same_command_pass() -> None:
     failed = _operation("pytest", None, "tests", exit_code=1)
     passed = _operation("pytest", None, "tests", exit_code=0)

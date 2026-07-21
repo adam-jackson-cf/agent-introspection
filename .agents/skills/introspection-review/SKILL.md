@@ -35,12 +35,6 @@ Keep classifications separate from findings and proposals, then state the explic
 
 Workflow: [proposal handoff workflow](references/proposal-handoff-workflow.md)
 
-### Step 6: Interpret review activity
-
-Report the accepted manual-review facts and their dashboard meaning without inferring unavailable values.
-
-Workflow: [review activity workflow](references/review-activity-workflow.md)
-
 ## Output
 
 ### Result Format
@@ -48,5 +42,4 @@ Workflow: [review activity workflow](references/review-activity-workflow.md)
 - Selected operation and capability status
 - Review-session identifiers, counts, and validated provenance
 - Imported or deferred candidates
-- Dashboard review-activity implication
 - Confirmation no repo mutation

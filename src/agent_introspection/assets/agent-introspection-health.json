@@ -1,0 +1,81 @@
+{
+  "description": "Hourly Agent Introspection pipeline health in the selected display range.",
+  "layout": [
+    {
+      "h": 4,
+      "i": "pipeline-health",
+      "moved": false,
+      "static": false,
+      "w": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 6,
+      "i": "recent-scan-runs",
+      "moved": false,
+      "static": false,
+      "w": 12,
+      "x": 0,
+      "y": 4
+    }
+  ],
+  "locked": true,
+  "panelMap": {},
+  "schemaVersion": 1,
+  "tags": [
+    "agent-introspection",
+    "codex"
+  ],
+  "title": "Agent Introspection Health",
+  "uploadedGrafana": false,
+  "uuid": "0500ebd3-0d77-4294-b2b5-352ba884daa7",
+  "variables": {},
+  "version": "v5",
+  "widgets": [
+    {
+      "description": "Current pipeline state from the latest completed scan in the selected display range.",
+      "id": "pipeline-health",
+      "panelTypes": "table",
+      "query": {
+        "builder": {
+          "queryData": [],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "Pipeline health",
+            "name": "A",
+            "query": "SELECT\n  argMax(\n    multiIf(\n    attributes_string['pipeline.state'] = 'succeeded', 'Succeeded',\n    attributes_string['pipeline.state'] = 'no_data', 'No data',\n    attributes_string['pipeline.state'] = 'failed', 'Failed',\n    attributes_string['pipeline.state'] = 'healthy', 'Healthy',\n    attributes_string['pipeline.state'] = 'degraded', 'Degraded',\n    attributes_string['pipeline.state'] = 'unhealthy', 'Unhealthy',\n    attributes_string['pipeline.state']\n  ),\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS `Pipeline state`,\n  formatDateTime(\n    max(fromUnixTimestamp64Nano(timestamp)),\n    '%d %b %H:%i'\n  ) AS `Last completed scan`,\n  concat(\n    toString(round(argMax(\n      attributes_number['scan.duration_ms'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) / 1000, 2)),\n    ' s'\n  ) AS `Last scan duration`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.pipeline.snapshot'\nHAVING count() > 0"
+          }
+        ],
+        "queryType": "clickhouse_sql"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Pipeline health"
+    },
+    {
+      "description": "Up to 24 completed scans in the selected display range, newest first.",
+      "id": "recent-scan-runs",
+      "panelTypes": "table",
+      "query": {
+        "builder": {
+          "queryData": [],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "Recent scan runs",
+            "name": "A",
+            "query": "SELECT\n  formatDateTime(fromUnixTimestamp64Nano(timestamp), '%d %b %H:%i') AS `Started at`,\n  concat(\n    toString(round(toFloat64(attributes_number['scan.duration_ms']) / 1000, 2)),\n    ' s'\n  ) AS `Duration`,\n  multiIf(\n    attributes_string['scan.terminal_status'] = 'succeeded', 'Succeeded',\n    attributes_string['scan.terminal_status'] = 'no_data', 'No data',\n    attributes_string['scan.terminal_status'] = 'failed', 'Failed',\n    attributes_string['scan.terminal_status'] = 'healthy', 'Healthy',\n    attributes_string['scan.terminal_status'] = 'degraded', 'Degraded',\n    attributes_string['scan.terminal_status'] = 'unhealthy', 'Unhealthy',\n    attributes_string['scan.terminal_status']\n  ) AS `Outcome`,\n  toFloat64(attributes_number['rows.processed']) AS `Rows processed`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.pipeline.snapshot'\nORDER BY timestamp DESC\nLIMIT 24"
+          }
+        ],
+        "queryType": "clickhouse_sql"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Recent scan runs"
+    }
+  ]
+}

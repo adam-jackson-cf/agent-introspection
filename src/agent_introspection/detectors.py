@@ -56,6 +56,7 @@ class DetectorEvent:
     is_quality_gate: bool | None = None
     tool_call_count: int | None = None
     counts_as_distinct_task: bool = True
+    attribution_method: str = "unresolved"
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,38 +225,28 @@ def _loop_indexes(task_events: Sequence[DetectorEvent]) -> tuple[int, ...]:
         if operation is None:
             raise ValueError("operation index lost its operation")
         keys.append(operation.membership_key)
-    candidates: list[tuple[int, int, tuple[int, ...]]] = []
-    for start in range(len(keys)):
-        remaining = len(keys) - start
-        for cycle_length in range(1, remaining // 2 + 1):
-            cycle = keys[start : start + cycle_length]
-            if any(key is None for key in cycle):
-                continue
-            repetitions = 2
-            while (
-                start + (repetitions + 1) * cycle_length <= len(keys)
-                and keys[
-                    start + repetitions * cycle_length : start + (repetitions + 1) * cycle_length
-                ]
-                == cycle
-            ):
-                repetitions += 1
+    best_total = 0
+    best_start = 0
+    key_count = len(keys)
+    for cycle_length in range(1, key_count // 2 + 1):
+        matching_prefix_length = 0
+        for index in range(key_count - cycle_length):
+            if keys[index] == keys[index + cycle_length]:
+                matching_prefix_length += 1
+            else:
+                matching_prefix_length = 0
+            repetitions = matching_prefix_length // cycle_length + 1
             total = repetitions * cycle_length
-            if cycle_length == 1 and total < 3:
+            minimum_total = 3 if cycle_length == 1 else 4
+            if total < minimum_total:
                 continue
-            if cycle_length > 1 and total < 4:
-                continue
-            candidates.append(
-                (
-                    total,
-                    start,
-                    tuple(operation_indexes[start : start + total]),
-                )
-            )
-    if not candidates:
+            start = index - matching_prefix_length + 1
+            if total > best_total or (total == best_total and start < best_start):
+                best_total = total
+                best_start = start
+    if best_total == 0:
         return ()
-    _, _, indexes = max(candidates, key=lambda candidate: (candidate[0], -candidate[1]))
-    return indexes
+    return tuple(operation_indexes[best_start : best_start + best_total])
 
 
 class DetectorEngine:

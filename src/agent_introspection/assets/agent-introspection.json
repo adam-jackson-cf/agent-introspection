@@ -1,31 +1,13 @@
 {
-  "description": "Derived agent introspection pipeline, signals, and review activity",
+  "description": "Observed agent behaviours in the selected display range.",
   "layout": [
     {
-      "h": 3,
-      "i": "pipeline-health",
+      "h": 5,
+      "i": "project-data-attribution",
       "moved": false,
       "static": false,
-      "w": 6,
+      "w": 12,
       "x": 0,
-      "y": 0
-    },
-    {
-      "h": 3,
-      "i": "scan-duration",
-      "moved": false,
-      "static": false,
-      "w": 3,
-      "x": 6,
-      "y": 0
-    },
-    {
-      "h": 3,
-      "i": "project-identity-coverage",
-      "moved": false,
-      "static": false,
-      "w": 3,
-      "x": 9,
       "y": 0
     },
     {
@@ -33,45 +15,27 @@
       "i": "actionable-trends",
       "moved": false,
       "static": false,
-      "w": 8,
+      "w": 12,
       "x": 0,
-      "y": 3
+      "y": 5
     },
     {
       "h": 6,
-      "i": "current-trend-context",
+      "i": "observed-signals-by-detector",
       "moved": false,
       "static": false,
-      "w": 4,
-      "x": 8,
-      "y": 3
-    },
-    {
-      "h": 4,
-      "i": "observed-signal-mix",
-      "moved": false,
-      "static": false,
-      "w": 6,
+      "w": 12,
       "x": 0,
-      "y": 9
+      "y": 11
     },
     {
-      "h": 4,
+      "h": 5,
       "i": "detector-signal-yield",
       "moved": false,
       "static": false,
-      "w": 3,
-      "x": 6,
-      "y": 9
-    },
-    {
-      "h": 4,
-      "i": "review-activity",
-      "moved": false,
-      "static": false,
-      "w": 3,
-      "x": 9,
-      "y": 9
+      "w": 12,
+      "x": 0,
+      "y": 17
     }
   ],
   "locked": true,
@@ -88,7 +52,8 @@
   "version": "v5",
   "widgets": [
     {
-      "id": "pipeline-health",
+      "description": "How much of the active seven-day analysis window is linked to a project, filtered by the selected display range.",
+      "id": "project-data-attribution",
       "panelTypes": "table",
       "query": {
         "builder": {
@@ -98,59 +63,18 @@
         "clickhouse_sql": [
           {
             "disabled": false,
-            "legend": "Pipeline health",
+            "legend": "Project data attribution",
             "name": "A",
-            "query": "SELECT\n  argMax(\n    attributes_string['pipeline.state'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS pipeline_state,\n  argMax(\n    attributes_string['scan.terminal_status'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS terminal_status,\n  argMax(\n    attributes_string['pipeline.freshness'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS freshness,\n  concat(\n    argMax(\n      attributes_string['logs.query_status'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ),\n    ' / ',\n    argMax(\n      attributes_string['logs.data_state'],\n      tuple(attributes_number['entity.version'], timestamp)\n    )\n  ) AS logs,\n  concat(\n    argMax(\n      attributes_string['traces.query_status'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ),\n    ' / ',\n    argMax(\n      attributes_string['traces.data_state'],\n      tuple(attributes_number['entity.version'], timestamp)\n    )\n  ) AS traces,\n  formatDateTime(max(fromUnixTimestamp64Nano(timestamp)), '%d %b %H:%i') AS last_snapshot\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.pipeline.snapshot'\nHAVING count() > 0"
+            "query": "SELECT\n  round(\n    100 * toFloat64(uniqExactIf(\n      attributes_string['entity.id'],\n      notEmpty(attributes_string['project.id'])\n        AND attributes_string['project.id'] != 'unresolved'\n        AND notEmpty(attributes_string['project.name'])\n        AND attributes_string['project.name'] != 'unresolved'\n    )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),\n    2\n  ) AS `Project attribution coverage`,\n  toFloat64(uniqExactIf(\n    attributes_string['entity.id'],\n    notEmpty(attributes_string['project.id'])\n      AND attributes_string['project.id'] != 'unresolved'\n      AND notEmpty(attributes_string['project.name'])\n      AND attributes_string['project.name'] != 'unresolved'\n  )) AS `Attributed observations`,\n  toFloat64(uniqExact(attributes_string['entity.id'])) AS `All observations`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.observation.detected'\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nHAVING count() > 0"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Pipeline health"
+      "title": "Project data attribution"
     },
     {
-      "id": "scan-duration",
-      "panelTypes": "graph",
-      "query": {
-        "builder": {
-          "queryData": [],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": "SELECT\n  fromUnixTimestamp64Nano(timestamp) AS ts,\n  toFloat64(attributes_number['scan.duration_ms']) AS value\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.pipeline.snapshot'\nORDER BY ts"
-          }
-        ],
-        "queryType": "clickhouse_sql"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Scan duration (ms)"
-    },
-    {
-      "id": "project-identity-coverage",
-      "panelTypes": "table",
-      "query": {
-        "builder": {
-          "queryData": [],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "Project identity coverage",
-            "name": "A",
-            "query": "SELECT\n  round(\n    100 * toFloat64(uniqExactIf(\n      attributes_string['entity.id'],\n      notEmpty(attributes_string['project.id'])\n        AND attributes_string['project.id'] != 'unresolved'\n        AND notEmpty(attributes_string['project.name'])\n        AND attributes_string['project.name'] != 'unresolved'\n    )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),\n    2\n  ) AS identity_coverage_pct,\n  toFloat64(uniqExactIf(\n    attributes_string['entity.id'],\n    notEmpty(attributes_string['project.id'])\n      AND attributes_string['project.id'] != 'unresolved'\n      AND notEmpty(attributes_string['project.name'])\n      AND attributes_string['project.name'] != 'unresolved'\n  )) AS resolved_observations,\n  toFloat64(uniqExact(attributes_string['entity.id'])) AS observed_observations\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.observation.detected'\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nHAVING count() > 0"
-          }
-        ],
-        "queryType": "clickhouse_sql"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Project identity coverage"
-    },
-    {
+      "description": "Actionable patterns in the active seven-day analysis window, filtered by the selected display range.",
       "id": "actionable-trends",
       "panelTypes": "table",
       "query": {
@@ -161,39 +85,19 @@
         "clickhouse_sql": [
           {
             "disabled": false,
-            "legend": "Actionable trends requiring review",
+            "legend": "Actionable trends",
             "name": "A",
-            "query": "SELECT\n  left(attributes_string['entity.id'], 8) AS finding,\n  argMax(\n    attributes_string['finding.category'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS category,\n  argMax(\n    attributes_string['detector.id'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS detector,\n  argMax(\n    if(\n      empty(attributes_string['project.name']),\n      'unresolved',\n      attributes_string['project.name']\n    ),\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS project,\n  argMax(\n    attributes_number['occurrence.count'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS occurrences,\n  formatDateTime(\n    max(fromUnixTimestamp64Nano(timestamp)),\n    '%d %b %H:%i'\n  ) AS last_evaluated\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] IN (\n  'introspection.trend.evaluated', 'introspection.trend.promoted'\n)\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nGROUP BY attributes_string['entity.id']\nHAVING argMax(\n  attributes_string['trend.state'],\n  tuple(attributes_number['entity.version'], timestamp)\n) = 'actionable'\nORDER BY occurrences DESC, last_evaluated DESC"
+            "query": "SELECT\n  left(attributes_string['entity.id'], 8) AS `Finding`,\n  argMax(\n    multiIf(\n    attributes_string['finding.category'] = 'tool_failure', 'Tool failure',\n    attributes_string['finding.category'] = 'repeated_attempt', 'Repeated attempt',\n    attributes_string['finding.category'] = 'transport_instability', 'Transport instability',\n    attributes_string['finding.category'] = 'sandbox_friction', 'Sandbox friction',\n    attributes_string['finding.category'] = 'turn_correction', 'Turn correction',\n    attributes_string['finding.category'] = 'quality_gate_bypass', 'Quality gate bypass',\n    attributes_string['finding.category'] = 'command_churn', 'Command churn',\n    attributes_string['finding.category'] = 'tool_loop', 'Tool loop',\n    attributes_string['finding.category'] = 'token_outlier', 'Token outlier',\n    attributes_string['finding.category'] = 'skill_adherence', 'Skill adherence',\n    attributes_string['finding.category'] = 'scope_recurrence', 'Scope recurrence',\n    attributes_string['finding.category']\n  ),\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS `Category`,\n  argMax(\n    multiIf(\n    attributes_string['detector.id'] = 'tool_failure', 'Tool failure',\n    attributes_string['detector.id'] = 'repeated_attempt', 'Repeated attempt',\n    attributes_string['detector.id'] = 'transport_instability', 'Transport instability',\n    attributes_string['detector.id'] = 'sandbox_friction', 'Sandbox friction',\n    attributes_string['detector.id'] = 'turn_correction', 'Turn correction',\n    attributes_string['detector.id'] = 'quality_gate_bypass', 'Quality gate bypass',\n    attributes_string['detector.id'] = 'command_churn', 'Command churn',\n    attributes_string['detector.id'] = 'tool_loop', 'Tool loop',\n    attributes_string['detector.id'] = 'token_outlier', 'Token outlier',\n    attributes_string['detector.id'] = 'skill_adherence', 'Skill adherence',\n    attributes_string['detector.id'] = 'scope_recurrence', 'Scope recurrence',\n    attributes_string['detector.id']\n  ),\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS `Detector`,\n  argMax(\n    if(\n      empty(attributes_string['project.name']),\n      'Unresolved',\n      attributes_string['project.name']\n    ),\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS `Project`,\n  argMax(\n    attributes_number['occurrence.count'],\n    tuple(attributes_number['entity.version'], timestamp)\n  ) AS `Occurrences`,\n  formatDateTime(\n    max(fromUnixTimestamp64Nano(timestamp)),\n    '%d %b %H:%i'\n  ) AS `Last evaluated`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] IN (\n  'introspection.trend.evaluated', 'introspection.trend.promoted'\n)\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nGROUP BY attributes_string['entity.id']\nHAVING argMax(\n  attributes_string['trend.state'],\n  tuple(attributes_number['entity.version'], timestamp)\n) = 'actionable'\nORDER BY `Occurrences` DESC, `Last evaluated` DESC"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Actionable trends requiring review"
+      "title": "Actionable trends"
     },
     {
-      "id": "current-trend-context",
-      "panelTypes": "bar",
-      "query": {
-        "builder": {
-          "queryData": [],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": "SELECT\n  toStartOfMinute(max(last_evaluated_at)) AS ts,\n  trend_state,\n  toFloat64(count()) AS value\nFROM (\n  SELECT\n    attributes_string['entity.id'] AS finding_id,\n    argMax(\n      attributes_string['trend.state'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) AS trend_state,\n    max(fromUnixTimestamp64Nano(timestamp)) AS last_evaluated_at\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] IN (\n    'introspection.trend.evaluated', 'introspection.trend.promoted'\n  )\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\n  GROUP BY finding_id\n)\nGROUP BY trend_state\nORDER BY trend_state"
-          }
-        ],
-        "queryType": "clickhouse_sql"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Current trend context"
-    },
-    {
-      "id": "observed-signal-mix",
+      "description": "Daily observations by detector in the active seven-day analysis window, filtered by the selected display range.",
+      "id": "observed-signals-by-detector",
       "panelTypes": "graph",
       "query": {
         "builder": {
@@ -205,15 +109,16 @@
             "disabled": false,
             "legend": "",
             "name": "A",
-            "query": "SELECT\n  toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,\n  attributes_string['detector.id'] AS detector,\n  toFloat64(uniqExact(attributes_string['entity.id'])) AS value\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.observation.detected'\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nGROUP BY ts, detector\nORDER BY ts, detector"
+            "query": "SELECT\n  toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,\n  multiIf(\n    attributes_string['detector.id'] = 'tool_failure', 'Tool failure',\n    attributes_string['detector.id'] = 'repeated_attempt', 'Repeated attempt',\n    attributes_string['detector.id'] = 'transport_instability', 'Transport instability',\n    attributes_string['detector.id'] = 'sandbox_friction', 'Sandbox friction',\n    attributes_string['detector.id'] = 'turn_correction', 'Turn correction',\n    attributes_string['detector.id'] = 'quality_gate_bypass', 'Quality gate bypass',\n    attributes_string['detector.id'] = 'command_churn', 'Command churn',\n    attributes_string['detector.id'] = 'tool_loop', 'Tool loop',\n    attributes_string['detector.id'] = 'token_outlier', 'Token outlier',\n    attributes_string['detector.id'] = 'skill_adherence', 'Skill adherence',\n    attributes_string['detector.id'] = 'scope_recurrence', 'Scope recurrence',\n    attributes_string['detector.id']\n  ) AS detector,\n  toFloat64(uniqExact(attributes_string['entity.id'])) AS value\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.observation.detected'\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\nGROUP BY ts, detector\nORDER BY ts, detector"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Observed signal mix by detector"
+      "title": "Observed signals by detector"
     },
     {
+      "description": "Of distinct findings in the active seven-day analysis window, the share that becomes actionable, filtered by the selected display range.",
       "id": "detector-signal-yield",
       "panelTypes": "table",
       "query": {
@@ -226,34 +131,13 @@
             "disabled": false,
             "legend": "Detector signal yield",
             "name": "A",
-            "query": "SELECT\n  detector,\n  toFloat64(uniqExactIf(finding_id, trend_state = 'actionable')) AS actionable_findings,\n  toFloat64(uniqExact(finding_id)) AS all_findings,\n  round(\n    100 * toFloat64(uniqExactIf(finding_id, trend_state = 'actionable'))\n      / greatest(toFloat64(uniqExact(finding_id)), 1),\n    2\n  ) AS actionable_yield_pct\nFROM (\n  SELECT\n    attributes_string['entity.id'] AS finding_id,\n    argMax(\n      attributes_string['detector.id'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) AS detector,\n    argMax(\n      attributes_string['trend.state'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) AS trend_state\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] IN (\n    'introspection.trend.evaluated', 'introspection.trend.promoted'\n  )\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\n  GROUP BY finding_id\n)\nGROUP BY detector\nORDER BY actionable_yield_pct DESC, detector"
+            "query": "SELECT\n  multiIf(\n    detector = 'tool_failure', 'Tool failure',\n    detector = 'repeated_attempt', 'Repeated attempt',\n    detector = 'transport_instability', 'Transport instability',\n    detector = 'sandbox_friction', 'Sandbox friction',\n    detector = 'turn_correction', 'Turn correction',\n    detector = 'quality_gate_bypass', 'Quality gate bypass',\n    detector = 'command_churn', 'Command churn',\n    detector = 'tool_loop', 'Tool loop',\n    detector = 'token_outlier', 'Token outlier',\n    detector = 'skill_adherence', 'Skill adherence',\n    detector = 'scope_recurrence', 'Scope recurrence',\n    detector\n  ) AS `Detector`,\n  toFloat64(uniqExactIf(finding_id, trend_state = 'actionable')) AS `Actionable findings`,\n  toFloat64(uniqExact(finding_id)) AS `All findings`,\n  round(\n    100 * toFloat64(uniqExactIf(finding_id, trend_state = 'actionable'))\n      / greatest(toFloat64(uniqExact(finding_id)), 1),\n    2\n  ) AS `Actionable yield`\nFROM (\n  SELECT\n    attributes_string['entity.id'] AS finding_id,\n    argMax(\n      attributes_string['detector.id'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) AS detector,\n    argMax(\n      attributes_string['trend.state'],\n      tuple(attributes_number['entity.version'], timestamp)\n    ) AS trend_state\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] IN (\n    'introspection.trend.evaluated', 'introspection.trend.promoted'\n  )\n  AND notEmpty(attributes_string['analysis.generation'])\n  AND attributes_string['analysis.generation'] = (\n  SELECT argMax(\n    attributes_string['analysis.generation'],\n    tuple(attributes_number['entity.version'], timestamp)\n  )\n  FROM signoz_logs.distributed_logs_v2\n  WHERE resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'\n)\n  GROUP BY finding_id\n)\nGROUP BY detector\nORDER BY `Actionable yield` DESC, `Detector`"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
       "title": "Detector signal yield"
-    },
-    {
-      "id": "review-activity",
-      "panelTypes": "table",
-      "query": {
-        "builder": {
-          "queryData": [],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "Review activity",
-            "name": "A",
-            "query": "SELECT\n  argMax(\n    attributes_number['review.classification.session_count'],\n    tuple(\n    attributes_number['entity.version'],\n    attributes_number['event.sequence'],\n    attributes_string['event.id']\n  )\n  ) AS classification_sessions,\n  argMax(\n    attributes_number['review.proposal.session_count'],\n    tuple(\n    attributes_number['entity.version'],\n    attributes_number['event.sequence'],\n    attributes_string['event.id']\n  )\n  ) AS proposal_sessions,\n  argMax(\n    attributes_number['review.classification.result_count'],\n    tuple(\n    attributes_number['entity.version'],\n    attributes_number['event.sequence'],\n    attributes_string['event.id']\n  )\n  ) AS classification_results,\n  argMax(\n    attributes_number['review.proposal.result_count'],\n    tuple(\n    attributes_number['entity.version'],\n    attributes_number['event.sequence'],\n    attributes_string['event.id']\n  )\n  ) AS proposal_results\nFROM signoz_logs.distributed_logs_v2\nWHERE resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.review.activity_snapshot'\n  AND attributes_string['review.activity.availability'] = 'available'\n  AND notEmpty(attributes_string['snapshot.trigger.kind'])\nHAVING count() > 0"
-          }
-        ],
-        "queryType": "clickhouse_sql"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Review activity"
     }
   ]
 }

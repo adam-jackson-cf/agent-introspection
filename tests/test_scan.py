@@ -15,7 +15,12 @@ from agent_introspection.capabilities import (
 from agent_introspection.config import AppConfig, DatabaseConfig, SchedulerConfig
 from agent_introspection.database import connect_database
 from agent_introspection.generations import GenerationError
-from agent_introspection.scan import PipelineStream, _pipeline_snapshot_event, run_scan
+from agent_introspection.scan import (
+    PipelineStream,
+    _pipeline_snapshot_event,
+    reanalyse_attribution,
+    run_scan,
+)
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, SourceError, TraceRow
 from agent_introspection.telemetry import OPERATIONAL_SCOPE, DerivedEvent, enqueue_events
 
@@ -82,6 +87,9 @@ class FakeSource(ClickHouseClient):
     def traces(self, **_bounds: object) -> list[TraceRow]:
         self.trace_reads += 1
         return self.trace_rows
+
+    def prove_retained_window(self, **_bounds: object) -> None:
+        return None
 
     def hydrate(self, *, identifiers: list[str], **_bounds: object) -> list[HydrationRow]:
         self.hydration_batch_sizes.append(len(identifiers))
@@ -257,6 +265,115 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
     result = run_scan(connection, config, client=log_only, end_time=now + timedelta(seconds=2))
     assert result["logs"] == 1
     assert result["observations"] == 1
+
+
+def test_attribution_reanalysis_creates_isolated_facts_without_legacy_mutation(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    end = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    start = end - timedelta(hours=1)
+    source = FakeSource(
+        logs=[log_row("log-1", int((end - timedelta(minutes=1)).timestamp() * 1e9))]
+    )
+    fingerprint = approve(connection, source)
+    result = reanalyse_attribution(
+        connection,
+        config,
+        start_time=start,
+        end_time=end,
+        source_contract_fingerprint=fingerprint,
+        client=source,
+    )
+    assert result["observations"] == 1
+    assert connection.execute("SELECT COUNT(*) FROM observations").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM findings").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM source_watermarks").fetchone() == (0,)
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM attribution_reanalysis_facts WHERE fact_set_id = ?",
+            (result["fact_set_id"],),
+        ).fetchone()[0]
+        >= 4
+    )
+
+
+def test_attribution_reanalysis_deduplicates_repeated_source_events(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    end = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    start = end - timedelta(hours=1)
+    repeated = log_row("log-1", int((end - timedelta(minutes=1)).timestamp() * 1e9))
+    source = FakeSource(logs=[repeated, repeated])
+    fingerprint = approve(connection, source)
+
+    result = reanalyse_attribution(
+        connection,
+        config,
+        start_time=start,
+        end_time=end,
+        source_contract_fingerprint=fingerprint,
+        client=source,
+    )
+
+    fact_ids = [
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM attribution_reanalysis_facts WHERE fact_set_id = ?",
+            (result["fact_set_id"],),
+        )
+    ]
+    assert result["observations"] > 0
+    assert result["facts"] == len(fact_ids)
+    assert len(fact_ids) == len(set(fact_ids))
+
+
+def test_attribution_reanalysis_scopes_facts_to_each_immutable_fact_set(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    end = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    start = end - timedelta(hours=1)
+    source = FakeSource(
+        logs=[log_row("log-1", int((end - timedelta(minutes=1)).timestamp() * 1e9))]
+    )
+    fingerprint = approve(connection, source)
+
+    first = reanalyse_attribution(
+        connection,
+        config,
+        start_time=start,
+        end_time=end,
+        source_contract_fingerprint=fingerprint,
+        client=source,
+    )
+    second = reanalyse_attribution(
+        connection,
+        config,
+        start_time=start,
+        end_time=end,
+        source_contract_fingerprint=fingerprint,
+        client=source,
+    )
+
+    first_ids = {
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM attribution_reanalysis_facts WHERE fact_set_id = ?",
+            (first["fact_set_id"],),
+        )
+    }
+    second_ids = {
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM attribution_reanalysis_facts WHERE fact_set_id = ?",
+            (second["fact_set_id"],),
+        )
+    }
+    assert first_ids
+    assert second_ids
+    assert first_ids.isdisjoint(second_ids)
 
 
 def test_new_scan_recovers_interrupted_runs_after_acquiring_the_lease(
@@ -441,10 +558,8 @@ def test_failed_scan_rolls_back_its_extraction_window(
         json.loads(row[0])["event.name"]
         for row in connection.execute("SELECT payload_json FROM otlp_outbox").fetchall()
     }
-    assert {
-        "introspection.pipeline.snapshot",
-        "introspection.review.activity_snapshot",
-    } <= payloads
+    assert "introspection.pipeline.snapshot" in payloads
+    assert "introspection.review.activity_snapshot" not in payloads
 
 
 def _assert_failed_extraction_has_no_analytics(connection: Any, error_class: str) -> None:
@@ -465,10 +580,8 @@ def _assert_failed_extraction_has_no_analytics(connection: Any, error_class: str
     assert pipeline["pipeline.error_class"] == error_class
     assert "analysis.generation" not in pipeline
     names = {payload["event.name"] for payload in payloads}
-    assert {
-        "introspection.pipeline.snapshot",
-        "introspection.review.activity_snapshot",
-    } <= names
+    assert "introspection.pipeline.snapshot" in names
+    assert "introspection.review.activity_snapshot" not in names
     assert not names & {
         "introspection.observation.detected",
         "introspection.trend.evaluated",

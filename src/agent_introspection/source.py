@@ -59,6 +59,10 @@ SELECT
     ) AS turn_id,
     nullIf(anyIf(attributes_string['thread.id'], attributes_string['thread.id'] != ''), '')
       AS thread_id,
+    nullIf(
+      anyIf(attributes_string['conversation.id'], attributes_string['conversation.id'] != ''), ''
+    )
+      AS conversation_id,
     nullIf(anyIf(attributes_string['cwd'], attributes_string['cwd'] != ''), '') AS cwd,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
@@ -77,6 +81,20 @@ WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
   )
 GROUP BY trace_id
 ORDER BY started_at, trace_id
+""".strip()
+
+
+RETENTION_PROOF_QUERY = r"""
+SELECT
+  (SELECT count() > 0 FROM signoz_logs.distributed_logs_v2
+   WHERE timestamp <= {start_ns:UInt64}
+     AND ts_bucket_start <= {start_bucket:UInt64}
+     AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server'))
+  AND
+  (SELECT count() > 0 FROM signoz_traces.distributed_signoz_index_v3
+   WHERE timestamp <= {start:DateTime64(9)}
+     AND ts_bucket_start <= {start_bucket:UInt64}
+     AND serviceName IN ('codex_cli_rs', 'codex-app-server')) AS retained
 """.strip()
 
 
@@ -161,6 +179,7 @@ class TraceRow:
     ended_at: datetime
     total_tokens: int
     tool_calls: int
+    conversation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +315,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         ended_at=ended,
         total_tokens=total_tokens,
         tool_calls=tool_calls,
+        conversation_id=_optional_text(data.get("conversation_id")),
     )
 
 
@@ -414,6 +434,22 @@ class ClickHouseClient:
         }
         for row in self.query(TRACE_QUERY, parameters):
             yield parse_trace_row(row)
+
+    def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
+        """Fail closed unless both source streams retain data at the requested start."""
+
+        rows = list(
+            self.query(
+                RETENTION_PROOF_QUERY,
+                {
+                    "start": _clickhouse_datetime64(start),
+                    "start_ns": start_ns,
+                    "start_bucket": start_bucket,
+                },
+            )
+        )
+        if len(rows) != 1 or rows[0].get("retained") not in (1, True):
+            raise SourceError("source retention is not proven for the requested reanalysis window")
 
     def hydrate(
         self,

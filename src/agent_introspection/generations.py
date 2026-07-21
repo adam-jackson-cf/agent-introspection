@@ -89,6 +89,12 @@ def _semantic_contract(source_contract_fingerprint: str) -> tuple[str, str, str]
     )
 
 
+def semantic_contract_hash(source_contract_fingerprint: str) -> str:
+    """Return the current immutable analysis semantic-contract hash."""
+
+    return _semantic_contract(source_contract_fingerprint)[2]
+
+
 def current_generation_id(connection: sqlite3.Connection) -> str | None:
     """Return the sole remotely verified canonical projection generation."""
 
@@ -202,19 +208,102 @@ def _projection_events(
     return events
 
 
+def _fact_set_projection_events(
+    connection: sqlite3.Connection, *, generation_id: str, fact_set_id: str
+) -> list[DerivedEvent]:
+    """Project an immutable reanalysis fact set without reading legacy facts."""
+
+    rows = connection.execute(
+        """
+        SELECT fact_kind, payload_json FROM attribution_reanalysis_facts
+        WHERE fact_set_id = ? AND fact_kind IN ('observation', 'finding')
+        ORDER BY fact_kind, id
+        """,
+        (fact_set_id,),
+    ).fetchall()
+    scope = f"generation:{generation_id}"
+    events: list[DerivedEvent] = []
+    for kind, raw_payload in rows:
+        payload = json.loads(str(raw_payload))
+        if str(kind) == "observation":
+            events.append(
+                DerivedEvent(
+                    scope=scope,
+                    entity_id=str(payload["id"]),
+                    entity_version=1,
+                    event_sequence=1,
+                    event_name="introspection.observation.detected",
+                    attributes={
+                        "analysis.generation": generation_id,
+                        "detector.id": str(payload["detector_id"]),
+                        "project.id": str(payload["project_id"]),
+                        "project.name": str(payload["project_name"]),
+                        "finding.id": str(payload["fingerprint"]),
+                        "attribution.method": str(payload["attribution_method"]),
+                    },
+                    timestamp_ns=int(payload["occurred_at_ns"]),
+                )
+            )
+        else:
+            events.append(
+                DerivedEvent(
+                    scope=scope,
+                    entity_id=str(payload["id"]),
+                    entity_version=1,
+                    event_sequence=1,
+                    event_name="introspection.trend.evaluated",
+                    attributes={
+                        "analysis.generation": generation_id,
+                        "trend.state": str(payload["trend_state"]),
+                        "finding.category": str(payload["category"]),
+                        "project.id": str(payload["project_id"]),
+                        "project.name": str(payload["project_name"]),
+                        "detector.id": str(payload["detector_id"]),
+                        "finding.id": str(payload["id"]),
+                        "occurrence.count": int(payload["occurrence_count"]),
+                    },
+                    timestamp_ns=int(payload["last_seen_ns"]),
+                )
+            )
+    return events
+
+
 def stage_generation(
     connection: sqlite3.Connection,
     *,
     source_contract_fingerprint: str,
     end_time: datetime | None = None,
+    fact_set_id: str | None = None,
+    window_start_ns: int | None = None,
+    window_end_ns: int | None = None,
 ) -> StagedGeneration:
     """Stage one seven-day projection from already validated SQLite facts."""
 
     now = end_time or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("generation end_time must be timezone-aware")
-    end_ns = int(now.astimezone(UTC).timestamp() * 1_000_000_000)
-    start_ns = max(0, end_ns - int(timedelta(days=7).total_seconds() * 1_000_000_000))
+    end_ns = window_end_ns or int(now.astimezone(UTC).timestamp() * 1_000_000_000)
+    start_ns = window_start_ns or max(
+        0, end_ns - int(timedelta(days=7).total_seconds() * 1_000_000_000)
+    )
+    if start_ns < 0 or end_ns <= start_ns:
+        raise ValueError("generation bounds must be ordered non-negative nanoseconds")
+    if fact_set_id is not None:
+        fact_set = connection.execute(
+            """
+            SELECT window_start_ns, window_end_ns, source_contract_fingerprint
+            FROM attribution_reanalysis_fact_sets WHERE id = ?
+            """,
+            (fact_set_id,),
+        ).fetchone()
+        if fact_set is None:
+            raise GenerationError("attribution reanalysis fact set is unavailable")
+        if (int(fact_set[0]), int(fact_set[1]), str(fact_set[2])) != (
+            start_ns,
+            end_ns,
+            source_contract_fingerprint,
+        ):
+            raise GenerationError("attribution reanalysis fact set provenance is incompatible")
     detector_hash, normalization_hash, semantic_hash = _semantic_contract(
         source_contract_fingerprint
     )
@@ -228,11 +317,19 @@ def stage_generation(
         if str(current[0]) == semantic_hash:
             raise GenerationError("active analysis generation already has this semantic contract")
     generation_id = str(uuid.uuid4())
-    projection_events = _projection_events(
-        connection,
-        generation_id=generation_id,
-        window_start_ns=start_ns,
-        window_end_ns=end_ns,
+    projection_events = (
+        _fact_set_projection_events(
+            connection,
+            generation_id=generation_id,
+            fact_set_id=fact_set_id,
+        )
+        if fact_set_id is not None
+        else _projection_events(
+            connection,
+            generation_id=generation_id,
+            window_start_ns=start_ns,
+            window_end_ns=end_ns,
+        )
     )
     created_at = datetime.now(UTC).isoformat()
     try:
@@ -246,8 +343,9 @@ def stage_generation(
             """
             INSERT INTO analysis_generations (
                 id, ordinal, window_start_ns, window_end_ns, source_contract_fingerprint,
-                detector_contract_hash, normalization_contract_hash, semantic_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                detector_contract_hash, normalization_contract_hash, semantic_hash, created_at,
+                fact_set_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 generation_id,
@@ -259,6 +357,7 @@ def stage_generation(
                 normalization_hash,
                 semantic_hash,
                 created_at,
+                fact_set_id,
             ),
         )
         enqueue_events(connection, projection_events)

@@ -826,6 +826,128 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         ),
         requires_foreign_keys_disabled=True,
     ),
+    Migration(
+        version=5,
+        name="remove review activity telemetry",
+        statements=(
+            "DROP TABLE review_activity_snapshots",
+            "DROP TABLE review_session_events",
+        ),
+    ),
+    Migration(
+        version=6,
+        name="purge retired review telemetry",
+        statements=(
+            "DROP TRIGGER otlp_outbox_no_delete",
+            """
+            DELETE FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.name"') IN (
+                'introspection.review.activity_snapshot',
+                'introspection.review.session_changed'
+            )
+            """,
+            """
+            CREATE TRIGGER otlp_outbox_no_delete
+            BEFORE DELETE ON otlp_outbox BEGIN
+                SELECT RAISE(ABORT, 'otlp_outbox cannot be deleted');
+            END
+            """,
+        ),
+    ),
+    Migration(
+        version=7,
+        name="add source-backed project attribution evidence",
+        statements=(
+            """
+            CREATE TABLE thread_project_evidence (
+                id TEXT PRIMARY KEY CHECK (length(id) = 64),
+                thread_id TEXT NOT NULL,
+                source_trace_id TEXT NOT NULL,
+                source_timestamp_ns INTEGER NOT NULL CHECK (source_timestamp_ns >= 0),
+                source_contract_fingerprint TEXT NOT NULL
+                    CHECK (length(source_contract_fingerprint) = 64),
+                attribution_contract_version INTEGER NOT NULL CHECK (
+                    attribution_contract_version > 0
+                ),
+                project_identity_id TEXT NOT NULL REFERENCES project_identities(id),
+                created_at TEXT NOT NULL,
+                UNIQUE(
+                    thread_id, source_trace_id, source_timestamp_ns,
+                    source_contract_fingerprint, attribution_contract_version,
+                    project_identity_id
+                )
+            ) STRICT
+            """,
+            """
+            CREATE INDEX thread_project_evidence_window_idx
+            ON thread_project_evidence(thread_id, source_timestamp_ns, project_identity_id)
+            """,
+            """
+            CREATE TRIGGER thread_project_evidence_no_update
+            BEFORE UPDATE ON thread_project_evidence BEGIN
+                SELECT RAISE(ABORT, 'thread project evidence is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER thread_project_evidence_no_delete
+            BEFORE DELETE ON thread_project_evidence BEGIN
+                SELECT RAISE(ABORT, 'thread project evidence is immutable');
+            END
+            """,
+            "ALTER TABLE analysis_generations ADD COLUMN fact_set_id TEXT",
+            """
+            CREATE TABLE attribution_reanalysis_fact_sets (
+                id TEXT PRIMARY KEY,
+                window_start_ns INTEGER NOT NULL CHECK (window_start_ns >= 0),
+                window_end_ns INTEGER NOT NULL CHECK (window_end_ns > window_start_ns),
+                source_contract_fingerprint TEXT NOT NULL
+                    CHECK (length(source_contract_fingerprint) = 64),
+                semantic_hash TEXT NOT NULL CHECK (length(semantic_hash) = 64),
+                created_at TEXT NOT NULL
+            ) STRICT
+            """,
+            """
+            CREATE TABLE attribution_reanalysis_facts (
+                id TEXT PRIMARY KEY CHECK (length(id) = 64),
+                fact_set_id TEXT NOT NULL REFERENCES attribution_reanalysis_fact_sets(id),
+                fact_kind TEXT NOT NULL CHECK (
+                    fact_kind IN ('observation', 'evidence', 'membership', 'finding', 'trend')
+                ),
+                payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+                created_at TEXT NOT NULL,
+                UNIQUE (fact_set_id, fact_kind, id)
+            ) STRICT
+            """,
+            """
+            CREATE INDEX attribution_reanalysis_facts_kind_idx
+            ON attribution_reanalysis_facts(fact_set_id, fact_kind)
+            """,
+            """
+            CREATE TRIGGER attribution_reanalysis_fact_sets_no_update
+            BEFORE UPDATE ON attribution_reanalysis_fact_sets BEGIN
+                SELECT RAISE(ABORT, 'attribution reanalysis fact sets are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER attribution_reanalysis_fact_sets_no_delete
+            BEFORE DELETE ON attribution_reanalysis_fact_sets BEGIN
+                SELECT RAISE(ABORT, 'attribution reanalysis fact sets are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER attribution_reanalysis_facts_no_update
+            BEFORE UPDATE ON attribution_reanalysis_facts BEGIN
+                SELECT RAISE(ABORT, 'attribution reanalysis facts are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER attribution_reanalysis_facts_no_delete
+            BEFORE DELETE ON attribution_reanalysis_facts BEGIN
+                SELECT RAISE(ABORT, 'attribution reanalysis facts are immutable');
+            END
+            """,
+        ),
+    ),
 )
 
 

@@ -6,7 +6,7 @@ The dashboard guides a local operator through three questions:
 
 1. Can the pipeline be trusted now?
 2. Which observed agent behaviours require attention?
-3. What has entered the explicit review and intervention loop?
+3. Which actionable patterns are ready for investigation?
 
 The canonical repository is this project. Deterministic analysis uses a seven-day
 window and scheduled scans run hourly in UTC slots. The LaunchAgent runs on each
@@ -63,39 +63,28 @@ detector, normalisation, trend-rule, identity, or outcome-model change. Normal
 projection scans require the active generation to match both current contracts
 before extraction. Validate the bounded result before promotion.
 
-## Canonical dashboard
+## Canonical dashboards
 
-| Panel | Data contract | Operator decision |
-| --- | --- | --- |
-| Pipeline health | Latest terminal pipeline snapshot | Trust, repair, or wait for the pipeline |
-| Scan duration (ms) | Terminal pipeline snapshot time series | Detect scan cost or performance drift |
-| Project identity coverage | Active-generation observations | Decide whether project comparison is trustworthy |
-| Actionable trends requiring review | Active-generation current findings | Select a concrete behaviour for review |
-| Current trend context | Active-generation current finding states | Judge signal distribution and urgency |
-| Observed signal mix by detector | Active-generation observations | See which detector families dominate |
-| Detector signal yield | Active-generation actionable versus all findings | Assess detector usefulness |
-| Review activity | Latest accepted review aggregate | See reviewed classification and proposal throughput |
+| Dashboard | Panel | Data contract | Operator decision |
+| --- | --- | --- | --- |
+| Agent Introspection Health | Pipeline health | Latest terminal pipeline snapshot | Trust, repair, or wait for the pipeline |
+| Agent Introspection Health | Recent scan runs | Terminal pipeline snapshots in the selected range | Detect scan cost, failures, or performance drift |
+| Agent Introspection | Project data attribution | Active-generation observations | Decide whether project comparison is trustworthy |
+| Agent Introspection | Actionable trends | Active-generation current findings | Select a concrete behaviour for review |
+| Agent Introspection | Observed signals by detector | Active-generation observations | See which detector families dominate |
+| Agent Introspection | Detector signal yield | Active-generation actionable versus all findings | Assess detector usefulness |
 
 Project concentration is withheld until the current active generation has at
 least 80% resolved identity coverage, 100 resolved observations, and three
 distinct projects. Identity resolution uses only allowlisted explicit source
 fields; unresolved observations remain unresolved.
 
-## Review activity and lifecycle roadmap
+## Lifecycle roadmap
 
-Review telemetry uses immutable session changes and activity snapshots. Activity
-counts accepted classification and proposal facts only. Capability probes,
-exported sessions, absent token fields, and proposal state transitions do not
-become review activity. An absent current snapshot is unavailable; a persisted
-zero is factual.
-
-The removed lifecycle views can return only after these gates are met:
+The lifecycle view can return only after this gate is met:
 
 | Future panel | Data and purpose | Reintroduction gate |
 | --- | --- | --- |
-| Pending review queue | Concurrent accepted review sessions and age | Three concurrent sessions across two snapshots, or a 168-hour service-level breach |
-| Review outcomes | Terminal accepted proposal outcomes by intervention type | Ten terminal proposals across two intervention types |
-| Review token ledger | Immutable accepted run token fields | Five accepted runs across two sessions |
 | Post-application observation change | Application generation plus exact seven-day baseline and follow-up observation windows | Five closed evaluable applications; aggregate view at ten |
 
 An application stores its immutable application generation. Its baseline is the
@@ -108,9 +97,9 @@ Otherwise the result is not evaluable.
 
 1. Run migrations and verify SQLite integrity.
 2. Stage and remotely activate the initial analysis generation.
-3. Update the existing dashboard entity in place from the generated asset.
-4. Run a normal scan and confirm terminal pipeline and review snapshots.
-5. Validate the eight panels in the in-app browser over the seven-day range.
+3. Update both canonical dashboard entities from their generated assets.
+4. Run a normal scan and confirm the terminal pipeline snapshot.
+5. Validate all six panels in the in-app browser over the seven-day range.
 6. Record any material contract change, stage its replacement generation, and
    promote it only after delivery and remote-verification evidence.
 
@@ -121,6 +110,6 @@ Otherwise the result is not evaluable.
 - stage and activation identifiers plus remote event verification;
 - a succeeded or no-data normal scan and terminal snapshot;
 - an hourly schedule status with the configured interval;
-- dashboard update proof for the existing route and browser confirmation for all
-  eight panels;
+- dashboard update proof for both routes and browser confirmation for all six
+  panels;
 - a completion review with no objective-relevant unresolved issue.

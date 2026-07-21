@@ -21,4 +21,3 @@ Manual bounded classification workflow for persisted Agent Introspection candida
 - [Preflight workflow](references/preflight-workflow.md)
 - [Proposal handoff workflow](references/proposal-handoff-workflow.md)
 - [Provenance import workflow](references/provenance-import-workflow.md)
-- [Review activity workflow](references/review-activity-workflow.md)

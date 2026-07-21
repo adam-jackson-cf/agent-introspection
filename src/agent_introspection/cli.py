@@ -22,7 +22,11 @@ from agent_introspection.capabilities import (
     verify_network_perimeter,
 )
 from agent_introspection.config import ConfigurationError, load_config
-from agent_introspection.dashboard import load_dashboard, verify_dashboard
+from agent_introspection.dashboard import (
+    load_dashboard,
+    verify_dashboard,
+    verify_health_dashboard,
+)
 from agent_introspection.database import (
     DatabaseError,
     backup_database,
@@ -45,7 +49,7 @@ from agent_introspection.review import (
     import_model_output,
     validate_model_output,
 )
-from agent_introspection.scan import run_scan
+from agent_introspection.scan import reanalyse_attribution, run_scan
 from agent_introspection.scheduler import (
     completed_in_current_slot,
     install_schedule,
@@ -207,6 +211,54 @@ def _analysis_generation(args: argparse.Namespace) -> dict[str, Any]:
                 "activation_event_id": activated.activation_event_id,
                 "projection_events": activated.projection_count,
             }
+    finally:
+        connection.close()
+
+
+def _parse_utc_bound(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("reanalysis bounds must be ISO-8601 UTC timestamps") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ValueError("reanalysis bounds must use an explicit UTC offset")
+    return parsed.astimezone(UTC)
+
+
+def _analysis_reanalyse_attribution(args: argparse.Namespace) -> dict[str, Any]:
+    config, connection = _open(args)
+    try:
+        quick_check(connection)
+        verify_network_perimeter(docker_context=config.signoz.docker_context)
+        source = _client(config)
+        fingerprint = enforce_approved_schema(connection, discover_source_schema(source))
+        start = _parse_utc_bound(args.start)
+        end = _parse_utc_bound(args.end)
+        with scan_lease(
+            connection,
+            duration=timedelta(seconds=config.scheduler.lease_seconds),
+        ):
+            result = reanalyse_attribution(
+                connection,
+                config,
+                start_time=start,
+                end_time=end,
+                source_contract_fingerprint=fingerprint,
+                client=source,
+            )
+            staged = stage_generation(
+                connection,
+                source_contract_fingerprint=fingerprint,
+                fact_set_id=str(result["fact_set_id"]),
+                window_start_ns=int(result["window_start_ns"]),
+                window_end_ns=int(result["window_end_ns"]),
+            )
+        return {
+            "status": "staged",
+            **result,
+            "generation_id": staged.generation_id,
+            "projection_events": len(staged.projection_event_ids),
+        }
     finally:
         connection.close()
 
@@ -442,17 +494,28 @@ def _telemetry_command(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _dashboard_verify(args: argparse.Namespace) -> dict[str, Any]:
-    resource = files("agent_introspection").joinpath("assets/agent-introspection.json")
-    with as_file(resource) as path:
-        document = load_dashboard(path)
-    issues = verify_dashboard(document)
+    insight_resource = files("agent_introspection").joinpath("assets/agent-introspection.json")
+    health_resource = files("agent_introspection").joinpath(
+        "assets/agent-introspection-health.json"
+    )
+    with as_file(insight_resource) as insight_path, as_file(health_resource) as health_path:
+        insight = load_dashboard(insight_path)
+        health = load_dashboard(health_path)
+    issues = verify_dashboard(insight) + verify_health_dashboard(health)
     if issues:
         raise ValueError("; ".join(issues))
     return {
         "status": "verified",
-        "uuid": document["uuid"],
-        "schema_version": document["schemaVersion"],
-        "panel_count": len(document["widgets"]),
+        "insight": {
+            "uuid": insight["uuid"],
+            "schema_version": insight["schemaVersion"],
+            "panel_count": len(insight["widgets"]),
+        },
+        "health": {
+            "uuid": health["uuid"],
+            "schema_version": health["schemaVersion"],
+            "panel_count": len(health["widgets"]),
+        },
     }
 
 
@@ -596,6 +659,10 @@ def _parser() -> argparse.ArgumentParser:
     activate = generation.add_parser("activate")
     activate.add_argument("generation_id")
 
+    reanalyse = commands.add_parser("analysis-reanalyse-attribution")
+    reanalyse.add_argument("--start", required=True)
+    reanalyse.add_argument("--end", required=True)
+
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -668,6 +735,8 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _scan(args)
     if args.command == "analysis-generation":
         return _analysis_generation(args)
+    if args.command == "analysis-reanalyse-attribution":
+        return _analysis_reanalyse_attribution(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":

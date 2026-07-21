@@ -61,8 +61,9 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "analysis_generation_event_links",
         "analysis_generation_activations",
         "analysis_generation_current",
-        "review_session_events",
-        "review_activity_snapshots",
+        "thread_project_evidence",
+        "attribution_reanalysis_fact_sets",
+        "attribution_reanalysis_facts",
     }
     assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
@@ -282,7 +283,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [2, 3, 4]
+        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM trend_evaluations").fetchone()[0] == 1
@@ -301,7 +302,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
         connection.close()
 
 
-def test_review_lifecycle_migration_preserves_sessions_and_installs_guards(
+def test_review_lifecycle_telemetry_removal_preserves_sessions_and_installs_guards(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "introspection.sqlite3"
@@ -336,19 +337,44 @@ def test_review_lifecycle_migration_preserves_sessions_and_installs_guards(
         )
         connection.commit()
 
+        connection.execute(
+            """
+            INSERT INTO otlp_outbox (
+                event_id, payload_json, status, attempt_count, next_attempt_at, created_at
+            ) VALUES ('retired-review-event', ?, 'delivered', 1, 'then', 'then')
+            """,
+            ('{"event.name":"introspection.review.activity_snapshot"}',),
+        )
+        connection.execute(
+            """
+            INSERT INTO otlp_outbox (
+                event_id, payload_json, status, attempt_count, next_attempt_at, created_at
+            ) VALUES ('retained-event', ?, 'delivered', 1, 'then', 'then')
+            """,
+            ('{"event.name":"introspection.pipeline.snapshot"}',),
+        )
+        connection.commit()
+
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [4]
+        assert [migration.version for migration in applied] == [4, 5, 6, 7]
         assert connection.execute(
             "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
         ).fetchall() == [
             ("exported-session", "proposal", "exported", 1),
             ("imported-session", "classification", "imported", 2),
         ]
-        assert connection.execute("SELECT COUNT(*) FROM review_session_events").fetchone() == (0,)
-        assert connection.execute("SELECT COUNT(*) FROM review_activity_snapshots").fetchone() == (
-            0,
-        )
+        removed_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('review_session_events', 'review_activity_snapshots')"
+            )
+        }
+        assert removed_tables == set()
+        assert connection.execute(
+            "SELECT event_id FROM otlp_outbox ORDER BY event_id"
+        ).fetchall() == [("retained-event",)]
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             connection.execute(
                 "UPDATE review_sessions SET purpose = 'proposal' WHERE id = 'imported-session'"

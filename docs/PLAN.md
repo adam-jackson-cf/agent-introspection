@@ -34,7 +34,7 @@ SigNoz dashboard without applying repository changes.
 4. Emit generation-scoped observation and trend projections only when a
    remotely verified active analysis generation exists.
 5. Drain preceding outbox work, then atomically persist the terminal pipeline
-   snapshot and terminal review-activity snapshot.
+   snapshot.
 
 On a source, hydration, contract, or processing failure, the analytical
 transaction is rolled back. The scan records only safe terminal operational
@@ -61,21 +61,16 @@ It verifies health, source-contract, and capability proof before candidate expor
 preserves envelope provenance; validates accepted imports; and never changes a
 repository, finding, or proposal during classification.
 
-Review activity contains accepted classification and proposal facts only. It
-distinguishes factual zero, unavailable, and not applicable states. Capability
-probes are excluded.
-
 ## Dashboard
 
-The existing SigNoz dashboard entity remains the canonical route. It has eight
-panels: pipeline health, scan duration, project identity coverage, actionable
-trends, current trend context, observed signal mix, detector signal yield, and
-review activity.
+Agent Introspection is the canonical insight dashboard route. It has four
+panels: project data attribution, actionable trends, observed signals by
+detector, and detector signal yield.
 
-Operational panels read terminal snapshots. Projection panels select the active
-analysis generation using an activation-marker lookup outside the dashboard time
-filter. The review panel selects the latest review aggregate outside the time
-filter; no aggregate produces an unavailable state rather than a synthetic zero.
+Agent Introspection Health is the canonical operational dashboard. It has two
+panels: pipeline health and recent scan runs. Operational panels read terminal
+snapshots. Insight panels select the active analysis generation using an
+activation-marker lookup outside the dashboard time filter.
 
 Detailed rollout, historical convergence, panel contracts, and lifecycle
 reintroduction gates are in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).

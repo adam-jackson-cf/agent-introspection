@@ -1,17 +1,8 @@
-import json
 import sqlite3
-from datetime import UTC, datetime
 
 import pytest
 
-from agent_introspection.review import (
-    REVIEW_ACTIVITY_SNAPSHOT_EVENT,
-    REVIEW_SESSION_CHANGED_EVENT,
-    ReviewEnvelope,
-    create_review_session,
-    import_model_output,
-    record_review_activity_snapshot,
-)
+from agent_introspection.review import ReviewEnvelope, create_review_session, import_model_output
 
 
 def review_database() -> sqlite3.Connection:
@@ -34,16 +25,6 @@ def review_database() -> sqlite3.Connection:
           input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, status TEXT,
           total_tokens INTEGER, token_availability TEXT, created_at TEXT
         );
-        CREATE TABLE review_session_events (
-          id TEXT PRIMARY KEY, review_session_id TEXT, entity_version INTEGER, status TEXT,
-          review_run_id TEXT, created_at TEXT
-        );
-        CREATE TABLE review_activity_snapshots (
-          id TEXT PRIMARY KEY, entity_version INTEGER, trigger_kind TEXT, trigger_id TEXT,
-          trigger_version INTEGER, classification_session_count INTEGER,
-          proposal_session_count INTEGER, classification_result_count INTEGER,
-          proposal_result_count INTEGER, created_at TEXT
-        );
         CREATE TABLE semantic_classifications (
           id TEXT PRIMARY KEY, review_session_id TEXT, candidate_id TEXT, payload_json TEXT,
           created_at TEXT
@@ -51,10 +32,6 @@ def review_database() -> sqlite3.Connection:
         CREATE TABLE proposal_drafts (
           id TEXT PRIMARY KEY, review_session_id TEXT, candidate_id TEXT, payload_json TEXT,
           created_at TEXT
-        );
-        CREATE TABLE otlp_outbox (
-          event_id TEXT PRIMARY KEY, payload_json TEXT, status TEXT, attempt_count INTEGER,
-          next_attempt_at TEXT, created_at TEXT, delivered_at TEXT
         );
         """
     )
@@ -170,77 +147,6 @@ def test_valid_output_is_imported_once_with_budget_ledger() -> None:
         import_model_output(connection, document, provenance=provenance(envelope))
 
 
-def _event_payloads(connection: sqlite3.Connection, event_name: str) -> list[dict[str, object]]:
-    return [
-        json.loads(str(row[0]))
-        for row in connection.execute(
-            "SELECT payload_json FROM otlp_outbox ORDER BY created_at, event_id"
-        ).fetchall()
-        if json.loads(str(row[0]))["event.name"] == event_name
-    ]
-
-
-def test_review_lifecycle_events_are_atomic_allowlisted_and_versioned() -> None:
-    connection = review_database()
-    envelope = create_review_session(
-        connection,
-        kind="classification",
-        candidates=[{"id": "c1"}, {"id": "c2"}],
-        reserved_model_budget=100,
-    )
-
-    exported = _event_payloads(connection, REVIEW_SESSION_CHANGED_EVENT)
-    assert len(exported) == 1
-    assert exported[0]["event.scope"] == "review"
-    assert exported[0]["entity.id"] == envelope.session_id
-    assert exported[0]["entity.version"] == 1
-    assert exported[0]["event.sequence"] == 1
-    assert exported[0]["review.purpose"] == "classification"
-    assert exported[0]["review.status"] == "exported"
-    assert exported[0]["review.candidate.count"] == 2
-    assert exported[0]["review.token.availability"] == "not_applicable"
-    assert (
-        not {
-            "nonce",
-            "payload_hash",
-            "requested_model",
-            "requested_effort",
-            "trace.id",
-        }
-        & exported[0].keys()
-    )
-
-    import_model_output(connection, output_for(envelope), provenance=provenance(envelope))
-
-    imported = _event_payloads(connection, REVIEW_SESSION_CHANGED_EVENT)[1]
-    assert imported["entity.version"] == 2
-    assert imported["event.sequence"] == 2
-    assert imported["review.status"] == "imported"
-    assert imported["review.result.count"] == 2
-    assert imported["review.token.availability"] == "complete"
-    assert imported["review.token.input"] == 80
-    assert imported["review.token.output"] == 15
-    assert imported["review.token.reasoning"] == 5
-    assert imported["review.token.total"] == 100
-    assert connection.execute(
-        "SELECT entity_version, status FROM review_sessions WHERE id = ?", (envelope.session_id,)
-    ).fetchone() == (2, "imported")
-    assert connection.execute(
-        "SELECT entity_version, status FROM review_session_events "
-        "WHERE review_session_id = ? ORDER BY entity_version",
-        (envelope.session_id,),
-    ).fetchall() == [(1, "exported"), (2, "imported")]
-
-    snapshots = _event_payloads(connection, REVIEW_ACTIVITY_SNAPSHOT_EVENT)
-    assert len(snapshots) == 2
-    assert snapshots[-1]["review.activity.availability"] == "available"
-    assert snapshots[-1]["review.classification.session_count"] == 1
-    assert snapshots[-1]["review.proposal.session_count"] == 0
-    assert snapshots[-1]["review.classification.result_count"] == 2
-    assert snapshots[-1]["review.proposal.result_count"] == 0
-    assert snapshots[-1]["snapshot.trigger.kind"] == "review_session"
-
-
 @pytest.mark.parametrize(
     ("components", "availability", "expected_fields"),
     [
@@ -275,18 +181,6 @@ def test_review_tokens_remain_nullable_without_synthetic_zeroes(
 
     import_model_output(connection, output_for(envelope), provenance=run_provenance)
 
-    payload = _event_payloads(connection, REVIEW_SESSION_CHANGED_EVENT)[1]
-    assert payload["review.token.availability"] == availability
-    for field in (
-        "review.token.input",
-        "review.token.output",
-        "review.token.reasoning",
-        "review.token.total",
-    ):
-        if field in expected_fields:
-            assert payload[field] == expected_fields[field]
-        else:
-            assert field not in payload
     run = connection.execute(
         "SELECT input_tokens, output_tokens, reasoning_tokens, total_tokens, token_availability "
         "FROM model_runs"
@@ -318,7 +212,6 @@ def test_invalid_token_component_rolls_back_the_import() -> None:
     assert connection.execute(
         "SELECT status, entity_version FROM review_sessions WHERE id = ?", (envelope.session_id,)
     ).fetchone() == ("exported", 1)
-    assert len(_event_payloads(connection, REVIEW_SESSION_CHANGED_EVENT)) == 1
 
 
 @pytest.mark.parametrize(
@@ -351,59 +244,18 @@ def test_total_tokens_requires_complete_matching_components(token_fields: dict[s
     ).fetchone() == ("exported", 1)
 
 
-def test_capability_probes_are_excluded_from_review_activity() -> None:
+def test_export_rolls_back_when_its_budget_reservation_cannot_be_persisted() -> None:
     connection = review_database()
     connection.execute(
         """
-        INSERT INTO review_sessions (
-            id, batch_id, nonce, schema_version, purpose, requested_model, requested_effort,
-            ordered_candidate_ids_json, payload_hash, byte_count, reserved_model_budget, status,
-            entity_version, created_at, imported_at
-        ) VALUES (
-            'probe', 'batch', 'nonce', 1, 'capability_probe', 'requested', 'standard', '[]', ?,
-            0, 1, 'imported', 2, '2026-07-17T12:00:00+00:00', '2026-07-17T12:00:00+00:00'
-        )
-        """,
-        ("a" * 64,),
-    )
-    connection.execute(
-        """
-        INSERT INTO semantic_classifications (
-            id, review_session_id, candidate_id, payload_json, created_at
-        ) VALUES ('probe-result', 'probe', 'candidate', '{}', '2026-07-17T12:00:00+00:00')
-        """
-    )
-    timestamp = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
-    event = record_review_activity_snapshot(
-        connection,
-        trigger_kind="scan_run",
-        trigger_id="scan-1",
-        trigger_version=1,
-        timestamp=timestamp,
-    )
-
-    assert event.attributes == {
-        "review.activity.availability": "available",
-        "review.classification.session_count": 0,
-        "review.proposal.session_count": 0,
-        "review.classification.result_count": 0,
-        "review.proposal.result_count": 0,
-        "snapshot.trigger.kind": "scan_run",
-    }
-
-
-def test_export_rolls_back_when_its_outbox_event_cannot_be_persisted() -> None:
-    connection = review_database()
-    connection.execute(
-        """
-        CREATE TRIGGER fail_review_outbox
-        BEFORE INSERT ON otlp_outbox BEGIN
-            SELECT RAISE(ABORT, 'outbox unavailable');
+        CREATE TRIGGER fail_review_budget
+        BEFORE INSERT ON model_budget_ledger BEGIN
+            SELECT RAISE(ABORT, 'budget ledger unavailable');
         END
         """
     )
 
-    with pytest.raises(sqlite3.IntegrityError, match="outbox unavailable"):
+    with pytest.raises(sqlite3.IntegrityError, match="budget ledger unavailable"):
         create_review_session(
             connection,
             kind="classification",
@@ -413,9 +265,6 @@ def test_export_rolls_back_when_its_outbox_event_cannot_be_persisted() -> None:
 
     for table in (
         "review_sessions",
-        "review_session_events",
-        "review_activity_snapshots",
         "model_budget_ledger",
-        "otlp_outbox",
     ):
         assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone() == (0,)

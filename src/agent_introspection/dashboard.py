@@ -1,4 +1,4 @@
-"""Stable SigNoz dashboard JSON for derived introspection telemetry."""
+"""Canonical SigNoz dashboard JSON for Agent Introspection."""
 
 from __future__ import annotations
 
@@ -7,6 +7,17 @@ from pathlib import Path
 from typing import Any
 
 DASHBOARD_UUID = "576f5068-d183-5cab-88b7-395f65cf1094"
+"""The stable nested UUID of the existing Agent Introspection dashboard."""
+
+INSIGHT_DASHBOARD_ROUTE_ID = "019f4da0-4a13-7c62-9ac9-fc6d850d633b"
+"""The stable SigNoz entity ID of the Agent Introspection dashboard."""
+
+HEALTH_DASHBOARD_UUID = "0500ebd3-0d77-4294-b2b5-352ba884daa7"
+"""The stable nested UUID of the Agent Introspection Health dashboard."""
+
+HEALTH_DASHBOARD_ROUTE_ID = "019f7fb0-6f30-77e0-ad12-6d2e44964a7d"
+"""The stable SigNoz entity ID of the Agent Introspection Health dashboard."""
+
 DASHBOARD_SCHEMA_VERSION = 1
 COMMON_FILTER = """timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano
 AND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
@@ -26,21 +37,35 @@ ACTIVE_GENERATION_PREDICATE = (
     + ACTIVE_GENERATION_MARKER_QUERY
 )
 PIPELINE_SNAPSHOT_EVENT = "introspection.pipeline.snapshot"
-REVIEW_ACTIVITY_SNAPSHOT_EVENT = "introspection.review.activity_snapshot"
-CURRENT_REVIEW_ACTIVITY_ORDER = """tuple(
-    attributes_number['entity.version'],
-    attributes_number['event.sequence'],
-    attributes_string['event.id']
-  )"""
-PROJECTION_PANEL_IDS = frozenset(
-    {
-        "project-identity-coverage",
-        "actionable-trends",
-        "current-trend-context",
-        "observed-signal-mix",
-        "detector-signal-yield",
-    }
-)
+
+DETECTOR_LABELS = {
+    "tool_failure": "Tool failure",
+    "repeated_attempt": "Repeated attempt",
+    "transport_instability": "Transport instability",
+    "sandbox_friction": "Sandbox friction",
+    "turn_correction": "Turn correction",
+    "quality_gate_bypass": "Quality gate bypass",
+    "command_churn": "Command churn",
+    "tool_loop": "Tool loop",
+    "token_outlier": "Token outlier",
+    "skill_adherence": "Skill adherence",
+    "scope_recurrence": "Scope recurrence",
+}
+STATUS_LABELS = {
+    "succeeded": "Succeeded",
+    "no_data": "No data",
+    "failed": "Failed",
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "unhealthy": "Unhealthy",
+}
+
+
+def _label_sql(value: str, labels: dict[str, str]) -> str:
+    """Return a deterministic label expression while retaining unknown values."""
+
+    clauses = ",\n    ".join(f"{value} = '{raw}', '{label}'" for raw, label in labels.items())
+    return f"multiIf(\n    {clauses},\n    {value}\n  )"
 
 
 def _query(select: str, event_filter: str = "") -> str:
@@ -49,76 +74,20 @@ def _query(select: str, event_filter: str = "") -> str:
 
 
 def _projection_query(select: str, where_filter: str, query_tail: str = "") -> str:
-    return _query(
-        select,
-        f"{where_filter}\n  AND {ACTIVE_GENERATION_PREDICATE}{query_tail}",
-    )
+    return _query(select, f"{where_filter}\n  AND {ACTIVE_GENERATION_PREDICATE}{query_tail}")
 
 
-Panel = tuple[str, str, str, str, tuple[int, int, int, int]]
+Panel = tuple[str, str, str, str, str, tuple[int, int, int, int]]
 
-PANELS: tuple[Panel, ...] = (
+INSIGHT_PANELS: tuple[Panel, ...] = (
     (
-        "pipeline-health",
-        "Pipeline health",
+        "project-data-attribution",
+        "Project data attribution",
         "table",
-        _query(
-            """SELECT
-  argMax(
-    attributes_string['pipeline.state'],
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS pipeline_state,
-  argMax(
-    attributes_string['scan.terminal_status'],
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS terminal_status,
-  argMax(
-    attributes_string['pipeline.freshness'],
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS freshness,
-  concat(
-    argMax(
-      attributes_string['logs.query_status'],
-      tuple(attributes_number['entity.version'], timestamp)
-    ),
-    ' / ',
-    argMax(
-      attributes_string['logs.data_state'],
-      tuple(attributes_number['entity.version'], timestamp)
-    )
-  ) AS logs,
-  concat(
-    argMax(
-      attributes_string['traces.query_status'],
-      tuple(attributes_number['entity.version'], timestamp)
-    ),
-    ' / ',
-    argMax(
-      attributes_string['traces.data_state'],
-      tuple(attributes_number['entity.version'], timestamp)
-    )
-  ) AS traces,
-  formatDateTime(max(fromUnixTimestamp64Nano(timestamp)), '%d %b %H:%i') AS last_snapshot""",
-            f"attributes_string['event.name'] = '{PIPELINE_SNAPSHOT_EVENT}'\nHAVING count() > 0",
+        (
+            "How much of the active seven-day analysis window is linked to a project, "
+            "filtered by the selected display range."
         ),
-        (0, 0, 6, 3),
-    ),
-    (
-        "scan-duration",
-        "Scan duration (ms)",
-        "graph",
-        _query(
-            """SELECT
-  fromUnixTimestamp64Nano(timestamp) AS ts,
-  toFloat64(attributes_number['scan.duration_ms']) AS value""",
-            f"attributes_string['event.name'] = '{PIPELINE_SNAPSHOT_EVENT}'\nORDER BY ts",
-        ),
-        (6, 0, 3, 3),
-    ),
-    (
-        "project-identity-coverage",
-        "Project identity coverage",
-        "table",
         _projection_query(
             """SELECT
   round(
@@ -130,51 +99,55 @@ PANELS: tuple[Panel, ...] = (
         AND attributes_string['project.name'] != 'unresolved'
     )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),
     2
-  ) AS identity_coverage_pct,
+  ) AS `Project attribution coverage`,
   toFloat64(uniqExactIf(
     attributes_string['entity.id'],
     notEmpty(attributes_string['project.id'])
       AND attributes_string['project.id'] != 'unresolved'
       AND notEmpty(attributes_string['project.name'])
       AND attributes_string['project.name'] != 'unresolved'
-  )) AS resolved_observations,
-  toFloat64(uniqExact(attributes_string['entity.id'])) AS observed_observations""",
+  )) AS `Attributed observations`,
+  toFloat64(uniqExact(attributes_string['entity.id'])) AS `All observations`""",
             "attributes_string['event.name'] = 'introspection.observation.detected'",
             "\nHAVING count() > 0",
         ),
-        (9, 0, 3, 3),
+        (0, 0, 12, 5),
     ),
     (
         "actionable-trends",
-        "Actionable trends requiring review",
+        "Actionable trends",
         "table",
+        (
+            "Actionable patterns in the active seven-day analysis window, filtered by the "
+            "selected display range."
+        ),
         _projection_query(
-            """SELECT
-  left(attributes_string['entity.id'], 8) AS finding,
+            f"""SELECT
+  left(attributes_string['entity.id'], 8) AS `Finding`,
   argMax(
-    attributes_string['finding.category'],
+    {_label_sql("attributes_string['finding.category']", DETECTOR_LABELS)},
     tuple(attributes_number['entity.version'], timestamp)
-  ) AS category,
+  ) AS `Category`,
   argMax(
-    attributes_string['detector.id'],
+    {_label_sql("attributes_string['detector.id']", DETECTOR_LABELS)},
     tuple(attributes_number['entity.version'], timestamp)
-  ) AS detector,
+  ) AS `Detector`,
   argMax(
     if(
       empty(attributes_string['project.name']),
-      'unresolved',
+      'Unresolved',
       attributes_string['project.name']
     ),
     tuple(attributes_number['entity.version'], timestamp)
-  ) AS project,
+  ) AS `Project`,
   argMax(
     attributes_number['occurrence.count'],
     tuple(attributes_number['entity.version'], timestamp)
-  ) AS occurrences,
+  ) AS `Occurrences`,
   formatDateTime(
     max(fromUnixTimestamp64Nano(timestamp)),
     '%d %b %H:%i'
-  ) AS last_evaluated""",
+  ) AS `Last evaluated`""",
             """attributes_string['event.name'] IN (
   'introspection.trend.evaluated', 'introspection.trend.promoted'
 )""",
@@ -184,68 +157,48 @@ HAVING argMax(
   attributes_string['trend.state'],
   tuple(attributes_number['entity.version'], timestamp)
 ) = 'actionable'
-ORDER BY occurrences DESC, last_evaluated DESC""",
+ORDER BY `Occurrences` DESC, `Last evaluated` DESC""",
         ),
-        (0, 3, 8, 6),
+        (0, 5, 12, 6),
     ),
     (
-        "current-trend-context",
-        "Current trend context",
-        "bar",
-        _projection_query(
-            """SELECT
-  toStartOfMinute(max(last_evaluated_at)) AS ts,
-  trend_state,
-  toFloat64(count()) AS value
-FROM (
-  SELECT
-    attributes_string['entity.id'] AS finding_id,
-    argMax(
-      attributes_string['trend.state'],
-      tuple(attributes_number['entity.version'], timestamp)
-    ) AS trend_state,
-    max(fromUnixTimestamp64Nano(timestamp)) AS last_evaluated_at""",
-            """attributes_string['event.name'] IN (
-    'introspection.trend.evaluated', 'introspection.trend.promoted'
-  )""",
-            """
-  GROUP BY finding_id
-)
-GROUP BY trend_state
-ORDER BY trend_state""",
-        ),
-        (8, 3, 4, 6),
-    ),
-    (
-        "observed-signal-mix",
-        "Observed signal mix by detector",
+        "observed-signals-by-detector",
+        "Observed signals by detector",
         "graph",
+        (
+            "Daily observations by detector in the active seven-day analysis window, filtered "
+            "by the selected display range."
+        ),
         _projection_query(
-            """SELECT
+            f"""SELECT
   toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,
-  attributes_string['detector.id'] AS detector,
+  {_label_sql("attributes_string['detector.id']", DETECTOR_LABELS)} AS detector,
   toFloat64(uniqExact(attributes_string['entity.id'])) AS value""",
             "attributes_string['event.name'] = 'introspection.observation.detected'",
             """
 GROUP BY ts, detector
 ORDER BY ts, detector""",
         ),
-        (0, 9, 6, 4),
+        (0, 11, 12, 6),
     ),
     (
         "detector-signal-yield",
         "Detector signal yield",
         "table",
+        (
+            "Of distinct findings in the active seven-day analysis window, the share that "
+            "becomes actionable, filtered by the selected display range."
+        ),
         _projection_query(
-            """SELECT
-  detector,
-  toFloat64(uniqExactIf(finding_id, trend_state = 'actionable')) AS actionable_findings,
-  toFloat64(uniqExact(finding_id)) AS all_findings,
+            f"""SELECT
+  {_label_sql("detector", DETECTOR_LABELS)} AS `Detector`,
+  toFloat64(uniqExactIf(finding_id, trend_state = 'actionable')) AS `Actionable findings`,
+  toFloat64(uniqExact(finding_id)) AS `All findings`,
   round(
     100 * toFloat64(uniqExactIf(finding_id, trend_state = 'actionable'))
       / greatest(toFloat64(uniqExact(finding_id)), 1),
     2
-  ) AS actionable_yield_pct
+  ) AS `Actionable yield`
 FROM (
   SELECT
     attributes_string['entity.id'] AS finding_id,
@@ -264,60 +217,83 @@ FROM (
   GROUP BY finding_id
 )
 GROUP BY detector
-ORDER BY actionable_yield_pct DESC, detector""",
+ORDER BY `Actionable yield` DESC, `Detector`""",
         ),
-        (6, 9, 3, 4),
-    ),
-    (
-        "review-activity",
-        "Review activity",
-        "table",
-        """SELECT
-  argMax(
-    attributes_number['review.classification.session_count'],
-    """
-        + CURRENT_REVIEW_ACTIVITY_ORDER
-        + """
-  ) AS classification_sessions,
-  argMax(
-    attributes_number['review.proposal.session_count'],
-    """
-        + CURRENT_REVIEW_ACTIVITY_ORDER
-        + """
-  ) AS proposal_sessions,
-  argMax(
-    attributes_number['review.classification.result_count'],
-    """
-        + CURRENT_REVIEW_ACTIVITY_ORDER
-        + """
-  ) AS classification_results,
-  argMax(
-    attributes_number['review.proposal.result_count'],
-    """
-        + CURRENT_REVIEW_ACTIVITY_ORDER
-        + """
-  ) AS proposal_results
-FROM signoz_logs.distributed_logs_v2
-WHERE resource.`service.name`::String = 'agent-introspection'
-  AND attributes_string['event.name'] = '"""
-        + REVIEW_ACTIVITY_SNAPSHOT_EVENT
-        + """'
-  AND attributes_string['review.activity.availability'] = 'available'
-  AND notEmpty(attributes_string['snapshot.trigger.kind'])
-HAVING count() > 0""",
-        (9, 9, 3, 4),
+        (0, 17, 12, 5),
     ),
 )
 
+HEALTH_PANELS: tuple[Panel, ...] = (
+    (
+        "pipeline-health",
+        "Pipeline health",
+        "table",
+        "Current pipeline state from the latest completed scan in the selected display range.",
+        _query(
+            f"""SELECT
+  argMax(
+    {_label_sql("attributes_string['pipeline.state']", STATUS_LABELS)},
+    tuple(attributes_number['entity.version'], timestamp)
+  ) AS `Pipeline state`,
+  formatDateTime(
+    max(fromUnixTimestamp64Nano(timestamp)),
+    '%d %b %H:%i'
+  ) AS `Last completed scan`,
+  concat(
+    toString(round(argMax(
+      attributes_number['scan.duration_ms'],
+      tuple(attributes_number['entity.version'], timestamp)
+    ) / 1000, 2)),
+    ' s'
+  ) AS `Last scan duration`""",
+            f"attributes_string['event.name'] = '{PIPELINE_SNAPSHOT_EVENT}'\nHAVING count() > 0",
+        ),
+        (0, 0, 12, 4),
+    ),
+    (
+        "recent-scan-runs",
+        "Recent scan runs",
+        "table",
+        "Up to 24 completed scans in the selected display range, newest first.",
+        _query(
+            f"""SELECT
+  formatDateTime(fromUnixTimestamp64Nano(timestamp), '%d %b %H:%i') AS `Started at`,
+  concat(
+    toString(round(toFloat64(attributes_number['scan.duration_ms']) / 1000, 2)),
+    ' s'
+  ) AS `Duration`,
+  {_label_sql("attributes_string['scan.terminal_status']", STATUS_LABELS)} AS `Outcome`,
+  toFloat64(attributes_number['rows.processed']) AS `Rows processed`""",
+            (
+                f"attributes_string['event.name'] = '{PIPELINE_SNAPSHOT_EVENT}'"
+                "\nORDER BY timestamp DESC\nLIMIT 24"
+            ),
+        ),
+        (0, 4, 12, 6),
+    ),
+)
 
-def _widget(panel_id: str, title: str, panel_type: str, query: str) -> dict[str, Any]:
-    legend = "" if panel_type in {"bar", "graph"} else title
+PANELS = INSIGHT_PANELS
+PROJECTION_PANEL_IDS = frozenset(panel[0] for panel in INSIGHT_PANELS)
+
+
+def _widget(
+    panel_id: str, title: str, panel_type: str, description: str, query: str
+) -> dict[str, Any]:
     return {
+        "description": description,
         "id": panel_id,
         "panelTypes": panel_type,
         "query": {
             "builder": {"queryData": [], "queryFormulas": []},
-            "clickhouse_sql": [{"disabled": False, "legend": legend, "name": "A", "query": query}],
+            "clickhouse_sql": [
+                {
+                    "disabled": False,
+                    "legend": "" if panel_type == "graph" else title,
+                    "name": "A",
+                    "query": query,
+                }
+            ],
             "queryType": "clickhouse_sql",
         },
         "timePreferance": "GLOBAL_TIME",
@@ -325,56 +301,91 @@ def _widget(panel_id: str, title: str, panel_type: str, query: str) -> dict[str,
     }
 
 
-def build_dashboard() -> dict[str, Any]:
-    widgets = [_widget(*panel[:4]) for panel in PANELS]
-    layout = [
-        {
-            "h": panel[4][3],
-            "i": panel[0],
-            "moved": False,
-            "static": False,
-            "w": panel[4][2],
-            "x": panel[4][0],
-            "y": panel[4][1],
-        }
-        for panel in PANELS
-    ]
-    return {
-        "description": "Derived agent introspection pipeline, signals, and review activity",
-        "layout": layout,
+def _build_dashboard(
+    *,
+    title: str,
+    description: str,
+    panels: tuple[Panel, ...],
+    uuid: str | None,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "description": description,
+        "layout": [
+            {
+                "h": panel[5][3],
+                "i": panel[0],
+                "moved": False,
+                "static": False,
+                "w": panel[5][2],
+                "x": panel[5][0],
+                "y": panel[5][1],
+            }
+            for panel in panels
+        ],
         "panelMap": {},
         "tags": ["agent-introspection", "codex"],
-        "title": "Agent Introspection",
+        "title": title,
         "uploadedGrafana": False,
-        "uuid": DASHBOARD_UUID,
         "variables": {},
         "version": "v5",
-        "widgets": widgets,
+        "widgets": [_widget(*panel[:5]) for panel in panels],
         "schemaVersion": DASHBOARD_SCHEMA_VERSION,
         "locked": True,
     }
+    if uuid is not None:
+        document["uuid"] = uuid
+    return document
 
 
-def verify_dashboard(document: dict[str, Any]) -> list[str]:
-    """Report dashboard identity, panel, layout, and query-contract drift."""
+def build_dashboard() -> dict[str, Any]:
+    """Build the stable existing insight dashboard."""
 
+    return _build_dashboard(
+        title="Agent Introspection",
+        description="Observed agent behaviours in the selected display range.",
+        panels=INSIGHT_PANELS,
+        uuid=DASHBOARD_UUID,
+    )
+
+
+def build_health_dashboard() -> dict[str, Any]:
+    """Build the bootstrap-safe Health dashboard without inventing its identity."""
+
+    return _build_dashboard(
+        title="Agent Introspection Health",
+        description="Hourly Agent Introspection pipeline health in the selected display range.",
+        panels=HEALTH_PANELS,
+        uuid=HEALTH_DASHBOARD_UUID,
+    )
+
+
+def _verify_dashboard(
+    document: dict[str, Any],
+    *,
+    panels: tuple[Panel, ...],
+    expected_uuid: str | None,
+    identity_name: str,
+) -> list[str]:
     issues: list[str] = []
-    if document.get("uuid") != DASHBOARD_UUID:
-        issues.append("dashboard identity changed")
+    if expected_uuid is None:
+        if "uuid" in document:
+            issues.append(f"{identity_name} dashboard identity is not bootstrapped")
+    elif document.get("uuid") != expected_uuid:
+        issues.append(f"{identity_name} dashboard identity changed")
     if document.get("schemaVersion") != DASHBOARD_SCHEMA_VERSION:
-        issues.append("dashboard schema version changed")
+        issues.append(f"{identity_name} dashboard schema version changed")
     widgets = document.get("widgets")
-    if not isinstance(widgets, list) or len(widgets) != len(PANELS):
-        issues.append("dashboard panel set is incomplete")
+    if not isinstance(widgets, list) or len(widgets) != len(panels):
+        issues.append(f"{identity_name} dashboard panel set is incomplete")
         return issues
-    expected = {panel[0]: panel for panel in PANELS}
+    expected = {panel[0]: panel for panel in panels}
     actual = {
         widget.get("id"): widget
         for widget in widgets
         if isinstance(widget, dict) and isinstance(widget.get("id"), str)
     }
     if set(actual) != set(expected):
-        issues.append("dashboard panel identities changed")
+        issues.append(f"{identity_name} dashboard panel identities changed")
         return issues
     layouts = document.get("layout")
     layout_by_id = (
@@ -387,12 +398,15 @@ def verify_dashboard(document: dict[str, Any]) -> list[str]:
         else {}
     )
     if set(layout_by_id) != set(expected):
-        issues.append("dashboard layout identities changed")
-
+        issues.append(f"{identity_name} dashboard layout identities changed")
     for panel_id, panel in expected.items():
-        _expected_id, expected_title, expected_type, _expected_query, expected_layout = panel
+        _expected_id, title, panel_type, description, _query_text, expected_layout = panel
         widget = actual[panel_id]
-        if widget.get("title") != expected_title or widget.get("panelTypes") != expected_type:
+        if (
+            widget.get("title") != title
+            or widget.get("panelTypes") != panel_type
+            or widget.get("description") != description
+        ):
             issues.append(f"panel {panel_id} presentation changed")
         layout = layout_by_id.get(panel_id)
         if (
@@ -405,17 +419,10 @@ def verify_dashboard(document: dict[str, Any]) -> list[str]:
             issues.append(f"panel {panel_id} has an invalid query definition")
             continue
         query = queries[0].get("query", "")
-        if panel_id != "review-activity" and (
-            not isinstance(query, str) or COMMON_FILTER not in query
-        ):
+        if not isinstance(query, str) or COMMON_FILTER not in query:
             issues.append(f"panel {panel_id} does not use the common filter")
             continue
-        if panel_id == "review-activity" and (not isinstance(query, str) or COMMON_FILTER in query):
-            issues.append("review activity current snapshot is time filtered")
-            continue
-        if expected_type in {"bar", "graph"} and (
-            " AS ts" not in query or " AS value" not in query
-        ):
+        if panel_type == "graph" and (" AS ts" not in query or " AS value" not in query):
             issues.append(f"visual panel {panel_id} lacks ts and value columns")
         if panel_id in PROJECTION_PANEL_IDS:
             if ACTIVE_GENERATION_PREDICATE not in query:
@@ -426,92 +433,31 @@ def verify_dashboard(document: dict[str, Any]) -> list[str]:
                 issues.append(f"projection panel {panel_id} filters generation after aggregation")
             if COMMON_FILTER in ACTIVE_GENERATION_MARKER_QUERY:
                 issues.append("active generation marker is time filtered")
-
-    def canonical_query(panel_id: str) -> str | None:
-        query_data = actual[panel_id].get("query")
-        if not isinstance(query_data, dict):
-            return None
-        clickhouse_queries = query_data.get("clickhouse_sql")
-        if (
-            not isinstance(clickhouse_queries, list)
-            or len(clickhouse_queries) != 1
-            or not isinstance(clickhouse_queries[0], dict)
-        ):
-            return None
-        query = clickhouse_queries[0].get("query")
-        return query if isinstance(query, str) else None
-
-    pipeline_query = canonical_query("pipeline-health")
-    if (
-        pipeline_query is None
-        or PIPELINE_SNAPSHOT_EVENT not in pipeline_query
-        or not all(
-            field in pipeline_query
-            for field in (
-                "pipeline.state",
-                "scan.terminal_status",
-                "pipeline.freshness",
-                "logs.query_status",
-                "traces.query_status",
-                "HAVING count() > 0",
-            )
-        )
-    ):
-        issues.append("pipeline health lacks terminal pipeline evidence")
-    duration_query = canonical_query("scan-duration")
-    if (
-        duration_query is None
-        or PIPELINE_SNAPSHOT_EVENT not in duration_query
-        or "toFloat64(attributes_number['scan.duration_ms']) AS value" not in duration_query
-        or "source.lag" in duration_query
-        or "rows.processed" in duration_query
-    ):
-        issues.append("scan duration is not a duration-only numeric series")
-    identity_query = canonical_query("project-identity-coverage")
-    if identity_query is None or not all(
-        field in identity_query
-        for field in (
-            "identity_coverage_pct",
-            "resolved_observations",
-            "observed_observations",
-            "HAVING count() > 0",
-        )
-    ):
-        issues.append("project identity coverage lacks canonical columns")
-    yield_query = canonical_query("detector-signal-yield")
-    if yield_query is None or not all(
-        field in yield_query
-        for field in ("actionable_findings", "all_findings", "actionable_yield_pct")
-    ):
-        issues.append("detector signal yield lacks canonical columns")
-    review_query = canonical_query("review-activity")
-    if (
-        review_query is None
-        or REVIEW_ACTIVITY_SNAPSHOT_EVENT not in review_query
-        or CURRENT_REVIEW_ACTIVITY_ORDER not in review_query
-        or "HAVING count() > 0" not in review_query
-        or not all(
-            field in review_query
-            for field in (
-                "review.activity.availability",
-                "review.classification.session_count",
-                "review.proposal.session_count",
-                "review.classification.result_count",
-                "review.proposal.result_count",
-                "snapshot.trigger.kind",
-                "classification_sessions",
-                "proposal_sessions",
-                "classification_results",
-                "proposal_results",
-            )
-        )
-    ):
-        issues.append("review activity does not use its snapshot event")
     return issues
+
+
+def verify_dashboard(document: dict[str, Any]) -> list[str]:
+    """Report insight-dashboard identity, presentation, layout, and query drift."""
+
+    return _verify_dashboard(
+        document, panels=INSIGHT_PANELS, expected_uuid=DASHBOARD_UUID, identity_name="insight"
+    )
+
+
+def verify_health_dashboard(document: dict[str, Any]) -> list[str]:
+    """Report Health-dashboard bootstrap, presentation, layout, and query drift."""
+
+    return _verify_dashboard(
+        document, panels=HEALTH_PANELS, expected_uuid=HEALTH_DASHBOARD_UUID, identity_name="health"
+    )
 
 
 def render_dashboard_json() -> str:
     return json.dumps(build_dashboard(), indent=2, sort_keys=True) + "\n"
+
+
+def render_health_dashboard_json() -> str:
+    return json.dumps(build_health_dashboard(), indent=2, sort_keys=True) + "\n"
 
 
 def load_dashboard(path: Path) -> dict[str, Any]:

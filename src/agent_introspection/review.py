@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from agent_introspection.telemetry import REVIEW_SCOPE, DerivedEvent, enqueue_events
-
 LUNA_MODEL = "gpt-5.6-luna"
 LUNA_EFFORT = "medium"
 PROPOSAL_MODEL = "gpt-5.5"
@@ -32,9 +30,6 @@ class ReviewLimits:
 LUNA_LIMITS = ReviewLimits(40, 4, 10, 24_000, 8_000)
 PROPOSAL_LIMITS = ReviewLimits(8, 8, 1, 48_000, 16_000)
 COMBINED_CALL_LIMIT = 12
-REVIEW_SESSION_CHANGED_EVENT = "introspection.review.session_changed"
-REVIEW_ACTIVITY_SNAPSHOT_EVENT = "introspection.review.activity_snapshot"
-REVIEW_ACTIVITY_ENTITY_ID = "review-activity"
 
 
 @dataclass(frozen=True)
@@ -82,10 +77,6 @@ def _canonical_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _timestamp_ns(value: datetime) -> int:
-    return int(value.timestamp() * 1_000_000_000)
-
-
 def _parse_token_component(provenance: dict[str, Any], field: str) -> int | None:
     value = provenance.get(field)
     if value is None:
@@ -131,196 +122,6 @@ def _token_usage(provenance: dict[str, Any]) -> TokenUsage:
         total_tokens=None,
         availability="unavailable",
     )
-
-
-def _session_changed_event(
-    *,
-    session_id: str,
-    entity_version: int,
-    purpose: str,
-    status: Literal["exported", "imported"],
-    candidate_count: int,
-    timestamp: datetime,
-    result_count: int | None = None,
-    token_usage: TokenUsage | None = None,
-) -> DerivedEvent:
-    attributes: dict[str, str | int | float | bool] = {
-        "review.purpose": purpose,
-        "review.status": status,
-        "review.candidate.count": candidate_count,
-        "review.token.availability": (
-            "not_applicable" if token_usage is None else token_usage.availability
-        ),
-    }
-    if result_count is not None:
-        attributes["review.result.count"] = result_count
-    if token_usage is not None:
-        for attribute, value in (
-            ("review.token.input", token_usage.input_tokens),
-            ("review.token.output", token_usage.output_tokens),
-            ("review.token.reasoning", token_usage.reasoning_tokens),
-            ("review.token.total", token_usage.total_tokens),
-        ):
-            if value is not None:
-                attributes[attribute] = value
-    return DerivedEvent(
-        scope=REVIEW_SCOPE,
-        entity_id=session_id,
-        entity_version=entity_version,
-        event_sequence=entity_version,
-        event_name=REVIEW_SESSION_CHANGED_EVENT,
-        attributes=attributes,
-        timestamp_ns=_timestamp_ns(timestamp),
-    )
-
-
-def _review_activity_counts(connection: sqlite3.Connection) -> tuple[int, int, int, int]:
-    session_rows = connection.execute(
-        """
-        SELECT purpose, COUNT(*)
-        FROM review_sessions
-        WHERE status = 'imported' AND purpose IN ('classification', 'proposal')
-        GROUP BY purpose
-        """
-    ).fetchall()
-    session_counts = {str(row[0]): int(row[1]) for row in session_rows}
-    classification_results = int(
-        connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM semantic_classifications classification
-            JOIN review_sessions session ON session.id = classification.review_session_id
-            WHERE session.status = 'imported' AND session.purpose = 'classification'
-            """
-        ).fetchone()[0]
-    )
-    proposal_results = int(
-        connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM proposal_drafts draft
-            JOIN review_sessions session ON session.id = draft.review_session_id
-            WHERE session.status = 'imported' AND session.purpose = 'proposal'
-            """
-        ).fetchone()[0]
-    )
-    return (
-        session_counts.get("classification", 0),
-        session_counts.get("proposal", 0),
-        classification_results,
-        proposal_results,
-    )
-
-
-def _review_activity_snapshot_event(
-    *,
-    entity_version: int,
-    trigger_kind: Literal["review_session", "scan_run"],
-    classification_session_count: int,
-    proposal_session_count: int,
-    classification_result_count: int,
-    proposal_result_count: int,
-    timestamp: datetime,
-) -> DerivedEvent:
-    return DerivedEvent(
-        scope=REVIEW_SCOPE,
-        entity_id=REVIEW_ACTIVITY_ENTITY_ID,
-        entity_version=entity_version,
-        event_sequence=entity_version,
-        event_name=REVIEW_ACTIVITY_SNAPSHOT_EVENT,
-        attributes={
-            "review.activity.availability": "available",
-            "review.classification.session_count": classification_session_count,
-            "review.proposal.session_count": proposal_session_count,
-            "review.classification.result_count": classification_result_count,
-            "review.proposal.result_count": proposal_result_count,
-            "snapshot.trigger.kind": trigger_kind,
-        },
-        timestamp_ns=_timestamp_ns(timestamp),
-    )
-
-
-def record_review_activity_snapshot(
-    connection: sqlite3.Connection,
-    *,
-    trigger_kind: Literal["review_session", "scan_run"],
-    trigger_id: str,
-    trigger_version: int,
-    timestamp: datetime,
-) -> DerivedEvent:
-    """Persist one immutable current-review aggregate and return its derived event."""
-    existing = connection.execute(
-        """
-        SELECT entity_version, trigger_kind, classification_session_count,
-               proposal_session_count, classification_result_count, proposal_result_count,
-               created_at, id
-        FROM review_activity_snapshots
-        WHERE trigger_kind = ? AND trigger_id = ? AND trigger_version = ?
-        """,
-        (trigger_kind, trigger_id, trigger_version),
-    ).fetchone()
-    if existing is not None:
-        existing_timestamp = datetime.fromisoformat(str(existing[6]))
-        existing_trigger_kind = str(existing[1])
-        if existing_trigger_kind not in {"review_session", "scan_run"}:
-            raise RuntimeError("review activity snapshot has an invalid trigger kind")
-        valid_trigger_kind: Literal["review_session", "scan_run"] = (
-            "review_session" if existing_trigger_kind == "review_session" else "scan_run"
-        )
-        event = _review_activity_snapshot_event(
-            entity_version=int(existing[0]),
-            trigger_kind=valid_trigger_kind,
-            classification_session_count=int(existing[2]),
-            proposal_session_count=int(existing[3]),
-            classification_result_count=int(existing[4]),
-            proposal_result_count=int(existing[5]),
-            timestamp=existing_timestamp,
-        )
-        if event.event_id != str(existing[7]):
-            raise RuntimeError("review activity snapshot identity mismatch")
-        return event
-    entity_version = int(
-        connection.execute(
-            "SELECT COALESCE(MAX(entity_version), 0) + 1 FROM review_activity_snapshots"
-        ).fetchone()[0]
-    )
-    (
-        classification_session_count,
-        proposal_session_count,
-        classification_result_count,
-        proposal_result_count,
-    ) = _review_activity_counts(connection)
-    event = _review_activity_snapshot_event(
-        entity_version=entity_version,
-        trigger_kind=trigger_kind,
-        classification_session_count=classification_session_count,
-        proposal_session_count=proposal_session_count,
-        classification_result_count=classification_result_count,
-        proposal_result_count=proposal_result_count,
-        timestamp=timestamp,
-    )
-    connection.execute(
-        """
-        INSERT INTO review_activity_snapshots (
-            id, entity_version, trigger_kind, trigger_id, trigger_version,
-            classification_session_count, proposal_session_count,
-            classification_result_count, proposal_result_count, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event.event_id,
-            entity_version,
-            trigger_kind,
-            trigger_id,
-            trigger_version,
-            classification_session_count,
-            proposal_session_count,
-            classification_result_count,
-            proposal_result_count,
-            timestamp.isoformat(),
-        ),
-    )
-    return event
 
 
 def create_review_session(
@@ -408,31 +209,6 @@ def create_review_session(
             """,
             (str(uuid.uuid4()), envelope.session_id, reserved_model_budget, now),
         )
-        timestamp = datetime.fromisoformat(now)
-        session_event = _session_changed_event(
-            session_id=envelope.session_id,
-            entity_version=1,
-            purpose=purpose,
-            status="exported",
-            candidate_count=len(ids),
-            timestamp=timestamp,
-        )
-        connection.execute(
-            """
-            INSERT INTO review_session_events (
-                id, review_session_id, entity_version, status, review_run_id, created_at
-            ) VALUES (?, ?, 1, 'exported', NULL, ?)
-            """,
-            (session_event.event_id, envelope.session_id, now),
-        )
-        activity_snapshot = record_review_activity_snapshot(
-            connection,
-            trigger_kind="review_session",
-            trigger_id=envelope.session_id,
-            trigger_version=1,
-            timestamp=timestamp,
-        )
-        enqueue_events(connection, [session_event, activity_snapshot])
     return envelope
 
 
@@ -508,7 +284,6 @@ def import_model_output(
     purpose, results = validate_model_output(connection, document, provenance=provenance)
     token_usage = _token_usage(provenance)
     now = datetime.now(UTC).isoformat()
-    timestamp = datetime.fromisoformat(now)
     with connection:
         run_id = str(uuid.uuid4())
         connection.execute(
@@ -563,29 +338,3 @@ def import_model_output(
             """,
             (str(uuid.uuid4()), document["session_id"], -int(provenance["token_count"]), now),
         )
-        session_event = _session_changed_event(
-            session_id=str(document["session_id"]),
-            entity_version=2,
-            purpose=purpose,
-            status="imported",
-            candidate_count=len(results),
-            result_count=len(results),
-            token_usage=token_usage,
-            timestamp=timestamp,
-        )
-        connection.execute(
-            """
-            INSERT INTO review_session_events (
-                id, review_session_id, entity_version, status, review_run_id, created_at
-            ) VALUES (?, ?, 2, 'imported', ?, ?)
-            """,
-            (session_event.event_id, document["session_id"], run_id, now),
-        )
-        activity_snapshot = record_review_activity_snapshot(
-            connection,
-            trigger_kind="review_session",
-            trigger_id=str(document["session_id"]),
-            trigger_version=2,
-            timestamp=timestamp,
-        )
-        enqueue_events(connection, [session_event, activity_snapshot])
