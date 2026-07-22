@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.source import (
     LOG_QUERY,
     TRACE_QUERY,
@@ -29,8 +30,8 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
         assert f"['{raw_key}']" not in LOG_QUERY
     assert "{start:DateTime64(9)}" in TRACE_QUERY
     assert "{end:DateTime64(9)}" in TRACE_QUERY
-    for attribute in ("id", "name", "root", "kind"):
-        assert f"attributes_string['agent.project.{attribute}']" in TRACE_QUERY
+    for key in AGENT_PROJECT_SCHEMA.attribute_keys.values():
+        assert f"attributes_string['{key}']" in TRACE_QUERY
     assert "attributes_string['cwd']" not in TRACE_QUERY
     assert "project_metadata_state" in TRACE_QUERY
     assert "uniqExactIf(" in TRACE_QUERY

@@ -39,6 +39,7 @@ from agent_introspection.generations import (
 from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.scheduler import recover_interrupted_scan_runs
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
 from agent_introspection.telemetry import (
@@ -53,6 +54,8 @@ from agent_introspection.trends import (
     TrendState,
     evaluate_findings,
 )
+
+_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
 
 
 class ScanError(RuntimeError):
@@ -425,8 +428,14 @@ def _dashboard_project_attributes(
 ) -> dict[str, str]:
     project_name = project_names.get(project_id or "")
     if project_id is None or project_name is None:
-        return {"agent.project.id": "unresolved", "agent.project.name": "unresolved"}
-    return {"agent.project.id": project_id, "agent.project.name": project_name}
+        return {
+            _PROJECT_ATTRIBUTE_KEYS["id"]: "unresolved",
+            _PROJECT_ATTRIBUTE_KEYS["name"]: "unresolved",
+        }
+    return {
+        _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
+        _PROJECT_ATTRIBUTE_KEYS["name"]: project_name,
+    }
 
 
 def _records(

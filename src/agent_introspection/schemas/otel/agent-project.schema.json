@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-project-otel",
+  "version": 1,
+  "scope": "span",
+  "attributes": {
+    "id": {
+      "key": "agent.project.id",
+      "type": "string",
+      "required": true
+    },
+    "name": {
+      "key": "agent.project.name",
+      "type": "string",
+      "required": true
+    },
+    "root": {
+      "key": "agent.project.root",
+      "type": "string",
+      "required": true,
+      "format": "normalized-absolute-path"
+    },
+    "kind": {
+      "key": "agent.project.kind",
+      "type": "string",
+      "required": true,
+      "enum": ["git", "non_git"]
+    }
+  },
+  "metadata_states": ["absent", "complete", "invalid"],
+  "tuple_requirements": {
+    "same_span": true,
+    "same_trace": true,
+    "conflicts_invalid": true
+  },
+  "dashboard_attributes": {
+    "id": "agent.project.id",
+    "name": "agent.project.name",
+    "paired": true
+  },
+  "prohibited_attribution_sources": [
+    "cwd",
+    "project_alias",
+    "path_heuristic",
+    "thread_inference"
+  ]
+}

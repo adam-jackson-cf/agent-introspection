@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from agent_introspection import detectors, identities, normalization, outcomes, source, trends
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
     DerivedEvent,
@@ -20,6 +21,8 @@ from agent_introspection.telemetry import (
     enqueue_events,
     remote_event_ids,
 )
+
+_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
 
 
 class GenerationError(RuntimeError):
@@ -161,8 +164,8 @@ def _projection_events(
                 attributes={
                     "analysis.generation": generation_id,
                     "detector.id": str(row[1]),
-                    "agent.project.id": project_id,
-                    "agent.project.name": project_name or "unresolved",
+                    _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
+                    _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
                     "finding.id": str(row[4]),
                 },
                 timestamp_ns=int(row[5]),
@@ -204,8 +207,8 @@ def _projection_events(
                     "analysis.generation": generation_id,
                     "trend.state": str(row[2]),
                     "finding.category": str(row[3]),
-                    "agent.project.id": project_id,
-                    "agent.project.name": project_name,
+                    _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
+                    _PROJECT_ATTRIBUTE_KEYS["name"]: project_name,
                     "detector.id": str(row[5]),
                     "finding.id": str(row[0]),
                     "occurrence.count": int(row[6]),
@@ -250,8 +253,8 @@ def _fact_set_projection_events(
                     attributes={
                         "analysis.generation": generation_id,
                         "detector.id": str(payload["detector_id"]),
-                        "agent.project.id": project_id,
-                        "agent.project.name": project_name or "unresolved",
+                        _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
+                        _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
                         "finding.id": str(payload["fingerprint"]),
                         "attribution.method": str(payload["attribution_method"]),
                     },
@@ -270,8 +273,8 @@ def _fact_set_projection_events(
                         "analysis.generation": generation_id,
                         "trend.state": str(payload["trend_state"]),
                         "finding.category": str(payload["category"]),
-                        "agent.project.id": project_id,
-                        "agent.project.name": project_name or "unresolved",
+                        _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
+                        _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
                         "detector.id": str(payload["detector_id"]),
                         "finding.id": str(payload["id"]),
                         "occurrence.count": int(payload["occurrence_count"]),

@@ -19,7 +19,10 @@ from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
 from opentelemetry.proto.logs.v1.logs_pb2 import LogRecord, ResourceLogs, ScopeLogs
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.source import SourceError
+
+_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
 
 SERVICE_NAME = "agent-introspection"
 OBSERVATION_EVENT_NAME = "introspection.observation.detected"
@@ -225,8 +228,8 @@ def plan_observation_reconciliation(
                         event_name=OBSERVATION_EVENT_NAME,
                         attributes={
                             "detector.id": detector_id,
-                            "agent.project.id": emitted_project_id or "unresolved",
-                            "agent.project.name": project_name or "unresolved",
+                            _PROJECT_ATTRIBUTE_KEYS["id"]: emitted_project_id or "unresolved",
+                            _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
                             "finding.id": fingerprint,
                         },
                         timestamp_ns=occurred_at_ns,

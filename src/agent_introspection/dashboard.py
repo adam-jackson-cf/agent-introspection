@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
+
+_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.dashboard_attribute_keys
+
+
 DASHBOARD_UUID = "576f5068-d183-5cab-88b7-395f65cf1094"
 """The stable nested UUID of the existing Agent Introspection dashboard."""
 
@@ -89,23 +94,23 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
             "filtered by the selected display range."
         ),
         _projection_query(
-            """SELECT
+            f"""SELECT
   round(
     100 * toFloat64(uniqExactIf(
       attributes_string['entity.id'],
-      notEmpty(attributes_string['agent.project.id'])
-        AND attributes_string['agent.project.id'] != 'unresolved'
-        AND notEmpty(attributes_string['agent.project.name'])
-        AND attributes_string['agent.project.name'] != 'unresolved'
+      notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
+        AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
+        AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
+        AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
     )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),
     2
   ) AS `Project attribution coverage`,
   toFloat64(uniqExactIf(
     attributes_string['entity.id'],
-    notEmpty(attributes_string['agent.project.id'])
-      AND attributes_string['agent.project.id'] != 'unresolved'
-      AND notEmpty(attributes_string['agent.project.name'])
-      AND attributes_string['agent.project.name'] != 'unresolved'
+    notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
+      AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
+      AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
+      AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
   )) AS `Attributed observations`,
   toFloat64(uniqExact(attributes_string['entity.id'])) AS `All observations`""",
             "attributes_string['event.name'] = 'introspection.observation.detected'",
@@ -134,9 +139,9 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
   ) AS `Detector`,
   argMax(
     if(
-      empty(attributes_string['agent.project.name']),
+      empty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}']),
       'Unresolved',
-      attributes_string['agent.project.name']
+      attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}']
     ),
     tuple(attributes_number['entity.version'], timestamp)
   ) AS `Project`,

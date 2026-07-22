@@ -12,6 +12,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
+
+_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
+_PROJECT_METADATA_STATES = AGENT_PROJECT_SCHEMA.metadata_states
+_PROJECT_KIND_VALUES = AGENT_PROJECT_SCHEMA.kind_values
+_PROJECT_ID = _PROJECT_ATTRIBUTE_KEYS["id"]
+_PROJECT_NAME = _PROJECT_ATTRIBUTE_KEYS["name"]
+_PROJECT_ROOT = _PROJECT_ATTRIBUTE_KEYS["root"]
+_PROJECT_KIND = _PROJECT_ATTRIBUTE_KEYS["kind"]
+
+
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
 _DURATION_MS = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
 _QUERY_TIMEOUT_SECONDS = 600.0
@@ -51,12 +62,12 @@ ORDER BY timestamp, id
 """.strip()
 
 
-TRACE_QUERY = r"""
+TRACE_QUERY = f"""
 WITH
-    attributes_string['agent.project.id'] != '' AS project_id_present,
-    attributes_string['agent.project.name'] != '' AS project_name_present,
-    attributes_string['agent.project.root'] != '' AS project_root_present,
-    attributes_string['agent.project.kind'] != '' AS project_kind_present,
+    attributes_string['{_PROJECT_ID}'] != '' AS project_id_present,
+    attributes_string['{_PROJECT_NAME}'] != '' AS project_name_present,
+    attributes_string['{_PROJECT_ROOT}'] != '' AS project_root_present,
+    attributes_string['{_PROJECT_KIND}'] != '' AS project_kind_present,
     (
       project_id_present OR project_name_present OR project_root_present OR project_kind_present
     ) AS project_metadata_present,
@@ -75,13 +86,13 @@ SELECT
       anyIf(attributes_string['conversation.id'], attributes_string['conversation.id'] != ''), ''
     )
       AS conversation_id,
-    nullIf(anyIf(attributes_string['agent.project.id'], complete_project_metadata), '')
+    nullIf(anyIf(attributes_string['{_PROJECT_ID}'], complete_project_metadata), '')
       AS project_id,
-    nullIf(anyIf(attributes_string['agent.project.name'], complete_project_metadata), '')
+    nullIf(anyIf(attributes_string['{_PROJECT_NAME}'], complete_project_metadata), '')
       AS project_name,
-    nullIf(anyIf(attributes_string['agent.project.root'], complete_project_metadata), '')
+    nullIf(anyIf(attributes_string['{_PROJECT_ROOT}'], complete_project_metadata), '')
       AS project_root,
-    nullIf(anyIf(attributes_string['agent.project.kind'], complete_project_metadata), '')
+    nullIf(anyIf(attributes_string['{_PROJECT_KIND}'], complete_project_metadata), '')
       AS project_kind,
     multiIf(
       countIf(project_metadata_present) = 0,
@@ -89,10 +100,10 @@ SELECT
       countIf(complete_project_metadata) = countIf(project_metadata_present)
         AND uniqExactIf(
           tuple(
-            attributes_string['agent.project.id'],
-            attributes_string['agent.project.name'],
-            attributes_string['agent.project.root'],
-            attributes_string['agent.project.kind']
+            attributes_string['{_PROJECT_ID}'],
+            attributes_string['{_PROJECT_NAME}'],
+            attributes_string['{_PROJECT_ROOT}'],
+            attributes_string['{_PROJECT_KIND}']
           ),
           complete_project_metadata
         ) = 1,
@@ -105,8 +116,8 @@ SELECT
           mapContains(attributes_number, 'codex.usage.total_tokens')) AS total_tokens,
     countIf(attributes_string['tool_name'] != '') AS tool_calls
 FROM signoz_traces.distributed_signoz_index_v3
-WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
-  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+WHERE timestamp BETWEEN {{start:DateTime64(9)}} AND {{end:DateTime64(9)}}
+  AND ts_bucket_start BETWEEN {{start_bucket:UInt64}} AND {{end_bucket:UInt64}}
   AND serviceName IN ('codex_cli_rs', 'codex-app-server')
   AND (
     name IN ('run_sampling_request', 'session_task.turn', 'turn/start', 'turn/steer',
@@ -330,7 +341,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     if trace_id is None:
         raise SourceError("trace_id is required")
     project_metadata_state = _optional_text(data.get("project_metadata_state"))
-    if project_metadata_state not in {"absent", "complete", "invalid"}:
+    if project_metadata_state not in _PROJECT_METADATA_STATES:
         raise SourceError("project metadata state is required")
     if project_metadata_state == "invalid":
         raise SourceError("agent project metadata is invalid")
@@ -360,7 +371,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         raise SourceError("complete project metadata must include every project attribute")
     if any(project_attributes) and not all(project_attributes):
         raise SourceError("agent project attributes must be present together")
-    if project_kind is not None and project_kind not in {"git", "non_git"}:
+    if project_kind is not None and project_kind not in _PROJECT_KIND_VALUES:
         raise SourceError("agent.project.kind must be git or non_git")
     if project_root is not None:
         project_path = Path(project_root)

@@ -20,6 +20,7 @@ from agent_introspection.dashboard import (
     verify_dashboard,
     verify_health_dashboard,
 )
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 
 
 def _panels(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -117,8 +118,8 @@ def test_dashboard_queries_use_global_time_active_generation_and_plain_language_
     )
     assert "HAVING count() > 0" in attribution
     assert "identity_coverage_pct" not in attribution
-    assert "attributes_string['agent.project.id']" in attribution
-    assert "attributes_string['agent.project.name']" in attribution
+    for key in AGENT_PROJECT_SCHEMA.dashboard_attribute_keys.values():
+        assert f"attributes_string['{key}']" in attribution
     assert "attributes_string['project.id']" not in attribution
     assert "attributes_string['project.name']" not in attribution
 
@@ -134,7 +135,10 @@ def test_dashboard_queries_use_global_time_active_generation_and_plain_language_
             "`Last evaluated`",
         )
     )
-    assert "attributes_string['agent.project.name']" in actionable
+    assert (
+        f"attributes_string['{AGENT_PROJECT_SCHEMA.dashboard_attribute_keys['name']}']"
+        in actionable
+    )
     assert "attributes_string['project.name']" not in actionable
     for raw, label in DETECTOR_LABELS.items():
         assert raw in actionable
