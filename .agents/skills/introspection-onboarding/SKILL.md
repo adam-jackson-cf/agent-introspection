@@ -1,5 +1,5 @@
 ---
-name: "signoz-telemetry-onboarding"
+name: "introspection-onboarding"
 description: "Onboard local SigNoz telemetry with verified producer project attribution. USE WHEN you need to bootstrap local SigNoz telemetry or onboard requested agent harnesses."
 ---
 

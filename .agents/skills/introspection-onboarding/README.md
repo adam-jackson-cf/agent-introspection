@@ -1,4 +1,4 @@
-# signoz-telemetry-onboarding
+# introspection-onboarding
 
 ## Overview
 
