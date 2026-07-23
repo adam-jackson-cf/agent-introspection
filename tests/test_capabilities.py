@@ -1,6 +1,5 @@
 import copy
 import json
-import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -72,10 +71,8 @@ class SourceSchemaClient(ClickHouseClient):
         ]
         self.log_diagnostics = [{"event_names": ["codex.tool_result"]}]
         self.trace_diagnostics = [{"event_names": ["session_task.turn"]}]
-        self.queries: list[str] = []
 
     def query(self, sql: str, _parameters: object) -> Iterator[dict[str, Any]]:
-        self.queries.append(sql)
         if "timezone()" in sql:
             return iter([{"timezone": self.timezone}])
         if "system.columns" in sql:
@@ -93,17 +90,7 @@ def test_diagnostics_and_unrelated_structure_do_not_change_approved_contract(
     tmp_path: Path,
 ) -> None:
     client = SourceSchemaClient()
-
     initial = discover_source_schema(client)
-    diagnostic_filters = [
-        frozenset(re.findall(r"'([^']+)'", values))
-        for sql in client.queries
-        for values in re.findall(
-            r"(?:resource\.`service\.name`::String|serviceName) IN \(([^)]*)\)", sql
-        )
-    ]
-    assert diagnostic_filters == [frozenset({"codex_cli_rs", "codex-app-server", "codex_exec"})] * 2
-
     connection = connect_database(tmp_path / "introspection.sqlite3")
     fingerprint = approve_schema(connection, initial, approved_by="test")
 

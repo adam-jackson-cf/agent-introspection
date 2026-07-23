@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from importlib.resources import as_file, files
@@ -22,7 +21,6 @@ from agent_introspection.capabilities import (
     ensure_health,
     verify_network_perimeter,
 )
-from agent_introspection.codex_producer import build_codex_command, discover_git_project
 from agent_introspection.config import ConfigurationError, load_config
 from agent_introspection.dashboard import (
     load_dashboard,
@@ -643,42 +641,6 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
 
 
-def _codex_launch(args: argparse.Namespace) -> dict[str, Any]:
-    executable = args.executable
-    if "/" in executable:
-        executable_path = Path(executable)
-        if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
-            raise ValueError("Codex executable path is unavailable or not executable")
-    elif shutil.which(executable) is None:
-        raise ValueError("Codex executable is unavailable on PATH")
-
-    try:
-        workspace = Path(args.workspace).resolve(strict=True)
-    except OSError as exc:
-        raise ValueError("Codex workspace is unavailable or not a directory") from exc
-    if not workspace.is_dir():
-        raise ValueError("Codex workspace is unavailable or not a directory")
-
-    metadata = discover_git_project(workspace)
-    command = build_codex_command(
-        executable=executable,
-        workspace=workspace,
-        metadata=metadata,
-        arguments=args.arguments[1:]
-        if args.arguments and args.arguments[0] == "--"
-        else args.arguments,
-    )
-    completed = subprocess.run(command, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Codex exited with status {completed.returncode}")
-    return {
-        "command": "codex.launch",
-        "executable": executable,
-        "status": "completed",
-        "attribution_status": "attributed" if metadata is not None else "unresolved",
-    }
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
@@ -761,11 +723,6 @@ def _parser() -> argparse.ArgumentParser:
     schedule.add_parser("install")
     schedule.add_parser("status")
     schedule.add_parser("remove")
-    codex = commands.add_parser("codex").add_subparsers(dest="codex_command", required=True)
-    launch = codex.add_parser("launch")
-    launch.add_argument("--workspace", default=Path.cwd(), type=Path)
-    launch.add_argument("--executable", default="codex")
-    launch.add_argument("arguments", nargs=argparse.REMAINDER)
     return parser
 
 
@@ -800,8 +757,6 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _db_command(args)
     if args.command == "schedule":
         return _schedule_command(args)
-    if args.command == "codex":
-        return _codex_launch(args)
     raise AssertionError(args.command)
 
 

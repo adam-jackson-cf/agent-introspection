@@ -57,7 +57,7 @@ FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')
+  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
 ORDER BY timestamp, id
 """.strip()
 
@@ -118,7 +118,7 @@ SELECT
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE timestamp BETWEEN {{start:DateTime64(9)}} AND {{end:DateTime64(9)}}
   AND ts_bucket_start BETWEEN {{start_bucket:UInt64}} AND {{end_bucket:UInt64}}
-  AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')
+  AND serviceName IN ('codex_cli_rs', 'codex-app-server')
   AND (
     name IN ('run_sampling_request', 'session_task.turn', 'turn/start', 'turn/steer',
              'turn/interrupt', 'handle_responses')
@@ -135,12 +135,12 @@ SELECT
   (SELECT count() > 0 FROM signoz_logs.distributed_logs_v2
    WHERE timestamp <= {start_ns:UInt64}
      AND ts_bucket_start <= {start_bucket:UInt64}
-     AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server', 'codex_exec'))
+     AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server'))
   AND
   (SELECT count() > 0 FROM signoz_traces.distributed_signoz_index_v3
    WHERE timestamp <= {start:DateTime64(9)}
      AND ts_bucket_start <= {start_bucket:UInt64}
-     AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')) AS retained
+     AND serviceName IN ('codex_cli_rs', 'codex-app-server')) AS retained
 """.strip()
 
 
@@ -171,7 +171,7 @@ WHERE {predicate}
   AND timestamp > {start_ns:UInt64}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')
+  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
 ORDER BY timestamp, id
 """.strip()
 
