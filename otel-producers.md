@@ -74,6 +74,22 @@ During onboarding, the skill:
 
 The hook configuration must never invoke a mutable skill source path, prompt fragment, shell alias, or ad hoc inline command. The managed runtime path is stable for the producer, while the onboarding skill remains the canonical distribution source.
 
+## Onboarding workflow replacement
+
+This replaces the producer-implementation workflow that configures or changes each producer to emit the project tuple directly.
+
+It does not replace stack health, producer capability discovery, canonical-schema validation, or end-to-end validation. Those workflows remain required.
+
+The replacement producer-onboarding workflow is:
+
+1. load the canonical session-hook event contract;
+2. classify the producer's lifecycle-hook payload and correlation capability;
+3. install the managed shared runtime from the onboarding skill;
+4. configure the producer adapter and hook target;
+5. start a fresh producer session;
+6. verify the hook context event and matching agent telemetry arrive with the explicit session correlation key;
+7. retain unsupported producers as unresolved.
+
 ### Context ledger
 
 Agent Introspection stores accepted context events as immutable session intervals.
