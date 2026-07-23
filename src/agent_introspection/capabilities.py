@@ -191,7 +191,7 @@ def discover_source_schema(client: ClickHouseClient) -> dict[str, Any]:
       arraySort(groupUniqArrayArray(mapKeys(attributes_bool))) AS bool_attribute_keys
     FROM signoz_logs.distributed_logs_v2
     WHERE ts_bucket_start >= toUInt64(toUnixTimestamp(now() - INTERVAL 15 DAY))
-      AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
+      AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')
     """
     trace_semantics_sql = """
     SELECT
@@ -200,7 +200,7 @@ def discover_source_schema(client: ClickHouseClient) -> dict[str, Any]:
       arraySort(groupUniqArrayArray(mapKeys(attributes_number))) AS number_attribute_keys
     FROM signoz_traces.distributed_signoz_index_v3
     WHERE timestamp >= now64(9) - INTERVAL 15 DAY
-      AND serviceName IN ('codex_cli_rs', 'codex-app-server')
+      AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'codex_exec')
     """
     server = list(client.query("SELECT timezone() AS timezone", {}))
     columns = list(client.query(columns_sql, {}))

@@ -14,10 +14,10 @@ The tuple is source-owned. Agent Introspection must not reconstruct it from the 
 ## Constraints
 
 - A tuple is valid only when all four fields are present together on the same span and consistently across its trace.
-- `agent.project.root` is a normalized absolute path and `agent.project.kind` is `git` or `non_git`.
+- `agent.project.root` is a normalized absolute path and `agent.project.kind` is `git`.
 - Never write project attributes globally in `~/.codex/config.toml`; Codex applications can host different workspaces.
-- Do not infer a project in Agent Introspection from CWD, a path heuristic, aliases, prompts, or thread history.
-- Retained telemetry without the tuple remains unresolved. Do not backfill it through a new inference path.
+- Codex resolves Git project context at session creation. A non-Git workspace remains unresolved and emits no project tuple.
+- Agent Introspection does not reconstruct project identity from exported CWD, a path heuristic, aliases, prompts, or thread history.
 
 ## Phase 1 — Codex CLI producer rollout
 
@@ -28,12 +28,12 @@ Implement a local producer adapter in this repository for one-workspace Codex CL
 ### Deliverables
 
 1. Add an `agent-introspection codex` command that launches Codex with invocation-scoped `otel.span_attributes`.
-2. Require an explicit project metadata document as command input. It must contain the complete canonical tuple; the command validates it against `agent-project.schema.json` before starting Codex.
-3. Validate the requested Codex executable and preserve all remaining arguments without shell interpolation.
-4. Reject absent, partial, malformed, or conflicting metadata. Do not derive IDs or display names from CWD, directory names, Git remotes, or paths.
-5. Emit structured launch evidence that identifies the executable and validated project identifier without recording prompts, credentials, or arbitrary arguments.
-6. Add behavioral tests for accepted full tuples and rejected absent, partial, invalid-root, and invalid-kind metadata.
-7. Start a fresh Codex CLI session using a known project document. Query recent SigNoz spans and require the full tuple on all relevant source spans for that session.
+2. Resolve Git context in the producer from the requested workspace: use Git's common directory to establish a stable project root, derive the canonical ID as `git:` plus the SHA-256 digest of `git`, a NUL separator, and that normalized root, and use the root basename as the display name.
+3. For a workspace outside Git, launch Codex without project attributes so the session remains unresolved.
+4. Validate the requested Codex executable and preserve all remaining arguments without shell interpolation.
+5. Emit structured launch evidence that identifies the executable and attribution state without recording prompts, credentials, arbitrary arguments, or project paths.
+6. Add behavioral tests for Git discovery, worktree identity stability, non-Git unresolved operation, invalid Git output, command construction, and argument preservation.
+7. Start a fresh Codex CLI session in a known Git project. Query recent SigNoz spans and require the full tuple on all relevant source spans for that session.
 8. Run Agent Introspection scan and verify resulting observations carry paired project ID and project name.
 
 ### Success criteria
@@ -48,12 +48,12 @@ Implement session-scoped project telemetry in the upstream `openai/codex` source
 
 ### Required upstream change
 
-1. Add a validated `AgentProjectMetadata` type with the four canonical fields.
-2. Carry it in `SessionTelemetryMetadata` from session creation through resumed sessions and subagents.
-3. Attach it to all relevant session/action spans and telemetry events, including `run_sampling_request`, `session_task.turn`, `turn/start`, `turn/steer`, `turn/interrupt`, and `handle_responses`.
+1. Add a validated Git project-context resolver with the same identity rules as Phase 1.
+2. Carry its `AgentProjectMetadata` result in `SessionTelemetryMetadata` from session creation through resumed sessions and subagents; non-Git sessions remain unresolved.
+3. Attach a complete tuple to all relevant session/action spans and telemetry events, including `run_sampling_request`, `session_task.turn`, `turn/start`, `turn/steer`, `turn/interrupt`, and `handle_responses`.
 4. Do not use the process-level `SpanAttributesProcessor` for this metadata.
-5. Reject sessions whose explicit metadata is absent, partial, invalid, or conflicts within a trace.
-6. Add concurrent multi-workspace app-server tests proving no project tuple crosses a session boundary.
+5. Reject malformed or conflicting Git resolution results within a trace.
+6. Add concurrent multi-workspace app-server tests proving no project tuple crosses a session boundary and non-Git sessions remain unresolved.
 7. Release or build a Codex version containing the upstream change, configure the local app-server to use it, and repeat Phase 1's SigNoz and Agent Introspection validation.
 
 ### Success criteria

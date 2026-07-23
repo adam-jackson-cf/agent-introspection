@@ -22,7 +22,7 @@ from agent_introspection.capabilities import (
     ensure_health,
     verify_network_perimeter,
 )
-from agent_introspection.codex_producer import build_codex_command, load_project_metadata
+from agent_introspection.codex_producer import build_codex_command, discover_git_project
 from agent_introspection.config import ConfigurationError, load_config
 from agent_introspection.dashboard import (
     load_dashboard,
@@ -652,9 +652,17 @@ def _codex_launch(args: argparse.Namespace) -> dict[str, Any]:
     elif shutil.which(executable) is None:
         raise ValueError("Codex executable is unavailable on PATH")
 
-    metadata = load_project_metadata(Path(args.project_metadata))
+    try:
+        workspace = Path(args.workspace).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Codex workspace is unavailable or not a directory") from exc
+    if not workspace.is_dir():
+        raise ValueError("Codex workspace is unavailable or not a directory")
+
+    metadata = discover_git_project(workspace)
     command = build_codex_command(
         executable=executable,
+        workspace=workspace,
         metadata=metadata,
         arguments=args.arguments[1:]
         if args.arguments and args.arguments[0] == "--"
@@ -663,7 +671,12 @@ def _codex_launch(args: argparse.Namespace) -> dict[str, Any]:
     completed = subprocess.run(command, check=False)
     if completed.returncode != 0:
         raise RuntimeError(f"Codex exited with status {completed.returncode}")
-    return {"command": "codex.launch", "status": "completed"}
+    return {
+        "command": "codex.launch",
+        "executable": executable,
+        "status": "completed",
+        "attribution_status": "attributed" if metadata is not None else "unresolved",
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -750,7 +763,7 @@ def _parser() -> argparse.ArgumentParser:
     schedule.add_parser("remove")
     codex = commands.add_parser("codex").add_subparsers(dest="codex_command", required=True)
     launch = codex.add_parser("launch")
-    launch.add_argument("--project-metadata", required=True)
+    launch.add_argument("--workspace", default=Path.cwd(), type=Path)
     launch.add_argument("--executable", default="codex")
     launch.add_argument("arguments", nargs=argparse.REMAINDER)
     return parser

@@ -1,140 +1,227 @@
-import json
+from __future__ import annotations
+
+import hashlib
+import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
 
+import agent_introspection.codex_producer as codex_producer
 from agent_introspection.codex_producer import (
     CodexProjectMetadata,
     build_codex_command,
-    load_project_metadata,
+    discover_git_project,
 )
 
-CANONICAL_METADATA = {
-    "agent.project.id": "project-123",
-    "agent.project.name": "Introspection",
-    "agent.project.root": "/workspace/introspection",
-    "agent.project.kind": "git",
-}
+
+def mock_git_common_dir(
+    monkeypatch: pytest.MonkeyPatch, result: subprocess.CompletedProcess[str]
+) -> list[tuple[object, ...]]:
+    calls: list[tuple[object, ...]] = []
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return result
+
+    monkeypatch.setattr(codex_producer.subprocess, "run", run)
+    return calls
 
 
-def write_metadata(tmp_path: Path, content: str) -> Path:
-    path = tmp_path / "project-metadata.json"
-    path.write_text(content)
-    return path
+def test_discover_git_project_derives_canonical_metadata_from_common_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "repository" / "src"
+    workspace.mkdir(parents=True)
+    common_dir = tmp_path / "repository" / ".git"
+    common_dir.mkdir()
+    calls = mock_git_common_dir(
+        monkeypatch,
+        subprocess.CompletedProcess(("git",), 0, f"{common_dir}\n", ""),
+    )
+
+    metadata = discover_git_project(workspace)
+
+    expected_root = common_dir.parent.resolve()
+    assert metadata == CodexProjectMetadata(
+        id=f"git:{hashlib.sha256(f'git\0{expected_root.as_posix()}'.encode()).hexdigest()}",
+        name=expected_root.name,
+        root=expected_root.as_posix(),
+        kind="git",
+    )
+    assert calls == [(("git", "-C", str(workspace), "rev-parse", "--git-common-dir"),)]
 
 
-def test_load_project_metadata_accepts_complete_canonical_tuple(tmp_path: Path) -> None:
-    metadata_path = write_metadata(tmp_path, json.dumps(CANONICAL_METADATA))
+def test_discover_git_project_resolves_relative_common_directory_against_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "repository" / "nested" / "workspace"
+    workspace.mkdir(parents=True)
+    common_dir = tmp_path / "repository" / ".git"
+    common_dir.mkdir()
+    mock_git_common_dir(
+        monkeypatch,
+        subprocess.CompletedProcess(("git",), 0, "../../.git\n", ""),
+    )
 
-    metadata = load_project_metadata(metadata_path)
+    metadata = discover_git_project(workspace)
 
     assert metadata == CodexProjectMetadata(
-        id="project-123",
-        name="Introspection",
-        root="/workspace/introspection",
+        id=f"git:{hashlib.sha256(f'git\0{common_dir.parent.resolve().as_posix()}'.encode()).hexdigest()}",
+        name="repository",
+        root=common_dir.parent.resolve().as_posix(),
         kind="git",
     )
 
 
+def test_discover_git_project_uses_root_identity_for_worktrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = tmp_path / "repository"
+    common_dir = repository / ".git"
+    common_dir.mkdir(parents=True)
+    worktree_a = tmp_path / "worktree-a"
+    worktree_b = tmp_path / "worktree-b"
+    worktree_a.mkdir()
+    worktree_b.mkdir()
+    outputs = iter((f"{common_dir}\n", f"{common_dir}\n"))
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(("git",), 0, next(outputs), "")
+
+    monkeypatch.setattr(codex_producer.subprocess, "run", run)
+
+    first = discover_git_project(worktree_a)
+    second = discover_git_project(worktree_b)
+
+    assert first == second
+    assert first == CodexProjectMetadata(
+        id=f"git:{hashlib.sha256(f'git\0{repository.resolve().as_posix()}'.encode()).hexdigest()}",
+        name="repository",
+        root=repository.resolve().as_posix(),
+        kind="git",
+    )
+
+
+def test_discover_git_project_returns_none_for_non_git_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "not-a-repository"
+    workspace.mkdir()
+    mock_git_common_dir(
+        monkeypatch,
+        subprocess.CompletedProcess(("git",), 128, "", "fatal: not a git repository"),
+    )
+
+    assert discover_git_project(workspace) is None
+
+
+@pytest.mark.parametrize("output", ["", "not-git-dir\n", ".git/extra\n", ".git\nextra\n"])
+def test_discover_git_project_fails_closed_for_malformed_common_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    mock_git_common_dir(monkeypatch, subprocess.CompletedProcess(("git",), 0, output, ""))
+
+    with pytest.raises(ValueError):
+        discover_git_project(workspace)
+
+
+def test_discover_git_project_fails_closed_for_missing_common_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    mock_git_common_dir(
+        monkeypatch,
+        subprocess.CompletedProcess(("git",), 0, f"{workspace / '.git'}\n", ""),
+    )
+
+    with pytest.raises(ValueError):
+        discover_git_project(workspace)
+
+
 @pytest.mark.parametrize(
-    "document",
+    "failure",
     [
-        {},
-        {"agent.project.id": "project-123"},
-        {
-            "agent.project.id": "project-123",
-            "agent.project.name": "Introspection",
-            "agent.project.root": "/workspace/introspection",
-        },
+        FileNotFoundError("git"),
+        subprocess.CalledProcessError(1, ("git",)),
     ],
 )
-def test_load_project_metadata_rejects_absent_or_partial_tuple(
-    tmp_path: Path, document: dict[str, str]
+def test_discover_git_project_fails_closed_when_git_cannot_resolve_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
-    metadata_path = write_metadata(tmp_path, json.dumps(document))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise failure
+
+    monkeypatch.setattr(codex_producer.subprocess, "run", run)
 
     with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
+        discover_git_project(workspace)
 
 
-@pytest.mark.parametrize(
-    "root",
-    ["workspace/introspection", "/workspace/../introspection", ""],
-)
-def test_load_project_metadata_rejects_invalid_project_root(tmp_path: Path, root: str) -> None:
-    document = {**CANONICAL_METADATA, "agent.project.root": root}
-    metadata_path = write_metadata(tmp_path, json.dumps(document))
-
-    with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
-
-
-@pytest.mark.parametrize("kind", ["", "workspace", "Git"])
-def test_load_project_metadata_rejects_invalid_project_kind(tmp_path: Path, kind: str) -> None:
-    document = {**CANONICAL_METADATA, "agent.project.kind": kind}
-    metadata_path = write_metadata(tmp_path, json.dumps(document))
-
-    with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
-
-
-@pytest.mark.parametrize("key", ["agent.project.id", "agent.project.name"])
-def test_load_project_metadata_rejects_empty_required_string(tmp_path: Path, key: str) -> None:
-    document = {**CANONICAL_METADATA, key: ""}
-    metadata_path = write_metadata(tmp_path, json.dumps(document))
-
-    with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
-
-
-def test_load_project_metadata_rejects_unknown_keys(tmp_path: Path) -> None:
-    document = {**CANONICAL_METADATA, "agent.project.owner": "someone"}
-    metadata_path = write_metadata(tmp_path, json.dumps(document))
-
-    with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
-
-
-def test_load_project_metadata_rejects_malformed_json(tmp_path: Path) -> None:
-    metadata_path = write_metadata(tmp_path, '{"agent.project.id":')
-
-    with pytest.raises(ValueError):
-        load_project_metadata(metadata_path)
-
-
-def test_build_codex_command_uses_scoped_attributes_and_preserves_arguments() -> None:
+def test_build_codex_command_adds_attribution_and_preserves_exact_arguments() -> None:
+    workspace = Path("/requested/workspace")
     metadata = CodexProjectMetadata(
-        id="project-123",
+        id="git:project-123",
         name="Introspection",
-        root="/workspace/introspection",
+        root="/canonical/repository",
         kind="git",
     )
     arguments = ("exec", "--full-auto", "prompt with spaces", "--", "$(unexpanded)")
 
     command = build_codex_command(
         executable="/Applications/Codex CLI/codex",
+        workspace=workspace,
         metadata=metadata,
         arguments=arguments,
     )
 
     assert command[0] == "/Applications/Codex CLI/codex"
     assert command[1] == "-c"
-    assert command[3:5] == ("-C", "/workspace/introspection")
+    assert command[3:5] == ("-C", "/canonical/repository")
     assert command[5:] == arguments
-    assert tomllib.loads(command[2]) == {"otel": {"span_attributes": CANONICAL_METADATA}}
+    assert tomllib.loads(command[2]) == {
+        "otel": {
+            "span_attributes": {
+                "agent.project.id": "git:project-123",
+                "agent.project.name": "Introspection",
+                "agent.project.root": "/canonical/repository",
+                "agent.project.kind": "git",
+            }
+        }
+    }
+
+
+def test_build_codex_command_omits_attributes_for_unresolved_workspace() -> None:
+    workspace = Path("/requested/not-a-repository")
+    arguments = ("exec", "--", "literal $input")
+
+    command = build_codex_command(
+        executable="codex",
+        workspace=workspace,
+        metadata=None,
+        arguments=arguments,
+    )
+
+    assert command == ("codex", "-C", str(workspace), *arguments)
 
 
 def test_build_codex_command_toml_escapes_attribute_values() -> None:
     metadata = CodexProjectMetadata(
-        id='project-"quoted"\\path',
+        id='git:project-"quoted"\\path',
         name="Line\nbreak",
         root="/workspace/introspection",
-        kind="non_git",
+        kind="git",
     )
 
     command = build_codex_command(
         executable="codex",
+        workspace=Path("/requested/workspace"),
         metadata=metadata,
         arguments=(),
     )
@@ -142,10 +229,10 @@ def test_build_codex_command_toml_escapes_attribute_values() -> None:
     assert tomllib.loads(command[2]) == {
         "otel": {
             "span_attributes": {
-                "agent.project.id": 'project-"quoted"\\path',
+                "agent.project.id": 'git:project-"quoted"\\path',
                 "agent.project.name": "Line\nbreak",
                 "agent.project.root": "/workspace/introspection",
-                "agent.project.kind": "non_git",
+                "agent.project.kind": "git",
             }
         }
     }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import subprocess
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
@@ -35,6 +37,51 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "attributes_string['cwd']" not in TRACE_QUERY
     assert "project_metadata_state" in TRACE_QUERY
     assert "uniqExactIf(" in TRACE_QUERY
+
+
+def test_extraction_queries_accept_the_complete_codex_producer_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+
+    def query(
+        _client: ClickHouseClient, sql: str, _parameters: object
+    ) -> Iterator[dict[str, object]]:
+        queries.append(sql)
+        return iter([{"retained": True}] if "AS retained" in sql else [])
+
+    monkeypatch.setattr(ClickHouseClient, "query", query)
+    client = ClickHouseClient(docker_context="orbstack")
+    list(client.logs(start_ns=1, end_ns=2, start_bucket=1, end_bucket=2))
+    list(
+        client.traces(
+            start=datetime(2026, 1, 1, tzinfo=UTC),
+            end=datetime(2026, 1, 2, tzinfo=UTC),
+            start_bucket=1,
+            end_bucket=2,
+        )
+    )
+    client.prove_retained_window(start=datetime(2026, 1, 1, tzinfo=UTC), start_ns=1, start_bucket=1)
+    for identity_kind in ("log_id", "trace_id", "call_id"):
+        list(
+            client.hydrate(
+                identity_kind=identity_kind,
+                identifiers=("id-1",),
+                start_ns=1,
+                end_ns=2,
+                start_bucket=1,
+                end_bucket=2,
+            )
+        )
+
+    filters = [
+        frozenset(re.findall(r"'([^']+)'", values))
+        for sql in queries
+        for values in re.findall(
+            r"(?:resource\.`service\.name`::String|serviceName) IN \(([^)]*)\)", sql
+        )
+    ]
+    assert filters == [frozenset({"codex_cli_rs", "codex-app-server", "codex_exec"})] * 7
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])

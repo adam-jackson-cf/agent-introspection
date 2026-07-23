@@ -1,30 +1,24 @@
-"""Build invocation-scoped Codex telemetry commands from explicit metadata."""
+"""Discover Git project attribution and build Codex telemetry commands."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Any
+from pathlib import Path
 
 __all__ = [
     "CodexProjectMetadata",
     "build_codex_command",
-    "load_project_metadata",
+    "discover_git_project",
 ]
-
-_METADATA_KEYS = (
-    "agent.project.id",
-    "agent.project.name",
-    "agent.project.root",
-    "agent.project.kind",
-)
 
 
 @dataclass(frozen=True)
 class CodexProjectMetadata:
-    """Explicit project attributes to attach to one Codex invocation."""
+    """Canonical Git project attributes for one Codex invocation."""
 
     id: str
     name: str
@@ -32,39 +26,45 @@ class CodexProjectMetadata:
     kind: str
 
 
-def load_project_metadata(path: Path) -> CodexProjectMetadata:
-    """Load and validate a canonical project metadata JSON document."""
+def discover_git_project(workspace: Path) -> CodexProjectMetadata | None:
+    """Resolve canonical Git project attribution for a requested workspace."""
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_json_constant,
+        result = subprocess.run(
+            ("git", "-C", str(workspace), "rev-parse", "--git-common-dir"),
+            capture_output=True,
+            check=False,
+            text=True,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("project metadata JSON is unreadable or invalid") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("unable to resolve Git project context") from exc
 
-    if not isinstance(value, dict):
-        raise ValueError("project metadata JSON must contain an object")
-    if set(value) != set(_METADATA_KEYS):
-        raise ValueError("project metadata JSON must contain exactly the canonical fields")
+    if result.returncode:
+        if _is_non_git_repository(result):
+            return None
+        raise ValueError("unable to resolve Git project context")
 
-    project_id = _require_nonempty_string(value["agent.project.id"], "agent.project.id")
-    name = _require_nonempty_string(value["agent.project.name"], "agent.project.name")
-    root = _require_normalized_absolute_posix_path(value["agent.project.root"])
-    kind = _require_nonempty_string(value["agent.project.kind"], "agent.project.kind")
-    if kind not in {"git", "non_git"}:
-        raise ValueError("agent.project.kind must be git or non_git")
-
-    return CodexProjectMetadata(id=project_id, name=name, root=root, kind=kind)
+    common_dir = _resolve_common_dir(workspace, result.stdout)
+    project_root = common_dir.parent
+    project_root_path = project_root.as_posix()
+    return CodexProjectMetadata(
+        id=f"git:{hashlib.sha256(b'git\x00' + project_root_path.encode('utf-8')).hexdigest()}",
+        name=project_root.name,
+        root=project_root.as_posix(),
+        kind="git",
+    )
 
 
 def build_codex_command(
     *,
     executable: str,
-    metadata: CodexProjectMetadata,
+    workspace: Path,
+    metadata: CodexProjectMetadata | None,
     arguments: Sequence[str],
 ) -> tuple[str, ...]:
-    """Build a shell-free argv tuple for one attributed Codex invocation."""
+    """Build a shell-free argv tuple for a Codex invocation."""
+    if metadata is None:
+        return (executable, "-C", str(workspace), *arguments)
+
     attributes = (
         ("agent.project.id", metadata.id),
         ("agent.project.name", metadata.name),
@@ -79,32 +79,30 @@ def build_codex_command(
     return (executable, "-c", assignment, "-C", metadata.root, *arguments)
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
+def _is_non_git_repository(result: subprocess.CompletedProcess[str]) -> bool:
+    return result.returncode == 128 and "not a git repository" in result.stderr.lower()
 
 
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"invalid JSON constant: {value}")
-
-
-def _require_nonempty_string(value: object, key: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{key} must be a non-empty string")
-    return value
-
-
-def _require_normalized_absolute_posix_path(value: object) -> str:
-    root = _require_nonempty_string(value, "agent.project.root")
-    path = PurePosixPath(root)
+def _resolve_common_dir(workspace: Path, output: str) -> Path:
+    common_dir_value = output.removesuffix("\n").removesuffix("\r")
     if (
-        not path.is_absolute()
-        or path.as_posix() != root
-        or any(part in {".", ".."} for part in path.parts)
+        not common_dir_value
+        or "\x00" in common_dir_value
+        or "\n" in common_dir_value
+        or "\r" in common_dir_value
     ):
-        raise ValueError("agent.project.root must be a normalized absolute POSIX path")
-    return root
+        raise ValueError("Git returned an invalid common directory")
+
+    workspace_path = workspace.resolve(strict=False)
+    common_dir = Path(common_dir_value)
+    if not common_dir.is_absolute():
+        common_dir = workspace_path / common_dir
+
+    try:
+        common_dir = common_dir.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Git common directory does not exist") from exc
+
+    if common_dir.name != ".git":
+        raise ValueError("Git common directory is not a .git directory")
+    return common_dir
