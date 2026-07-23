@@ -1,63 +1,47 @@
 ---
 name: "introspection-onboarding"
-description: "Onboard deterministic Agent Introspection session context. USE WHEN you need to configure supported local producer lifecycle capture."
+description: "Onboard bounded Agent Introspection session-context capture from producer-owned artifacts."
 ---
 
 # Workflow
 
 ### Step 1: Establish local telemetry health
 
-**Purpose:** Prove the local SigNoz stack can receive and retain OTLP before configuring producers.
+**Purpose:** Prove the local SigNoz stack can receive and retain OTLP before configuring capture.
 
 **When:** Before first setup or any producer onboarding.
 
 **Actions:** Verify loopback-only UI and listener health, collector pipelines, synthetic trace/metric/log ingestion, and newly retained backend records. Stop at the first failed boundary without weakening security. Follow [stack bootstrap](references/stack-bootstrap-workflow.md).
 
-### Step 2: Discover producer capability
+### Step 2: Discover a native command-hook surface
 
-**Purpose:** Classify every requested producer by authoritative lifecycle context and end-to-end telemetry correlation availability.
+**Purpose:** Separate producers that can safely request bounded artifact backfill from scheduled capture.
 
-**When:** After stack health passes and before installing or configuring a producer.
+**When:** Before changing a producer configuration.
 
-**Actions:** Classify Claude Code as unsupported and attribution unresolved because its hook payload does not provide an authoritative event timestamp and installed Claude trace/log telemetry does not document the same explicit producer/session correlation key. Classify Codex app-server as conditionally supported only when its OTLP spans expose the same session ID supplied by its lifecycle API. Classify direct Codex CLI and OMP as unsupported and unresolved. Follow [producer discovery](references/producer-discovery-workflow.md).
+**Actions:** A hook may invoke only `agent-introspection session-context backfill` with no hook payload, prompt content, static project value, or telemetry CWD. The command reads only producer-owned session metadata and tool-target records under its configured roots and is idempotent. Configure a native local-command hook only when the installed producer configuration surface documents it; do not patch a binary or invent a setting. Follow [producer configuration](references/producer-implementation-workflow.md).
 
-### Step 3: Apply the canonical session-context contract
+### Step 3: Configure the supported hook or retain scheduled capture
 
-**Purpose:** Use one deterministic event and project identity contract across every supported producer.
+**Purpose:** Trigger bounded backfill after a safe lifecycle event when a documented local-command hook exists.
 
-**When:** Before managed runtime installation or producer configuration.
+**When:** After the producer capability boundary is recorded.
 
-**Actions:** Require normalized producer, session ID, lifecycle event, RFC 3339 timestamp, and absolute workspace inputs. Use the canonical event record and Git project tuple without CWD, prompt, path, alias, or static-attribute inference. Follow [canonical schema](references/canonical-schema-workflow.md).
+**Actions:** Configure Claude Code `SessionStart` to invoke the backfill command. Configure Codex app-server only when its installed documented configuration surface, rather than an API request surface, binds a local command. Do not configure direct Codex CLI. Use an OMP extension lifecycle surface only when it natively and safely launches a local command without static project values; otherwise leave it to scheduled harvesting. Record every intentionally unsupported surface and its exact boundary.
 
-### Step 4: Install the managed runtime
+### Step 4: Validate configuration without triggering producers
 
-**Purpose:** Copy the skill-local distribution into a stable, versioned managed location before any hook invokes it.
+**Purpose:** Ensure changed configuration is syntactically valid while preserving lifecycle-only execution.
 
-**When:** After the contract is accepted and before configuring supported producers.
+**When:** After configuration authoring.
 
-**Actions:** Copy the runtime and adapters to `$HOME/.local/lib/agent-introspection/session-context-runtime-v1/`; configure hooks to execute only that copied location, never the mutable skill source. Follow [managed runtime installation](references/session-hook-runtime-workflow.md).
-
-### Step 5: Configure supported producers
-
-**Purpose:** Configure only native lifecycle integrations that can preserve the canonical contract.
-
-**When:** After the managed runtime is installed.
-
-**Actions:** Configure only Codex app-server through its normalized lifecycle adapter when it meets the conditional support criteria. Do not configure Claude Code, direct Codex CLI, or OMP; leave them unresolved. Follow [producer configuration](references/producer-implementation-workflow.md).
-
-### Step 6: Validate operation and scheduler handling
-
-**Purpose:** Prove the managed runtime produces one canonical inbox event and that scheduler processing preserves it.
-
-**When:** After every supported-producer configuration change.
-
-**Actions:** Start a fresh supported producer session, validate the managed inbox record, then validate the scheduler's resulting telemetry and retained records. Do not run hooks or install the runtime when only authoring this skill. Follow [session-context validation](references/session-context-validation-workflow.md).
+**Actions:** Parse the producer configuration format without printing secrets. Do not run producers, hooks, backfill, scans, or telemetry queries while only authoring configuration. Scheduled harvesting remains the capture path for unsupported surfaces.
 
 ## Output
 
 ### Result Format
 
-- Producer capability classification and unresolved producer boundaries
-- Managed runtime version and installed location
-- Canonical event-record and scheduler-operation validation evidence
-- Failed boundary and corrective action when validation does not pass
+- Enabled native producer hooks and their lifecycle events
+- Intentionally unsupported producer surfaces and exact boundaries
+- Configuration syntax-validation evidence
+- Scheduled-capture producers

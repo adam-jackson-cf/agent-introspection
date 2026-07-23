@@ -41,6 +41,7 @@ from agent_introspection.normalization import NormalizationError, normalize_tool
 from agent_introspection.outcomes import derive_outcome
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.scheduler import recover_interrupted_scan_runs
+from agent_introspection.session_backfill import DEFAULT_ROOTS, backfill
 from agent_introspection.session_context import correlated_project, drain_inbox, inbox_path
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
 from agent_introspection.telemetry import (
@@ -265,7 +266,7 @@ def _correlated_trace_project(
     connection: sqlite3.Connection, trace: TraceRow
 ) -> ProjectIdentity | None:
     if (
-        trace.producer != "codex-app-server"
+        trace.producer not in {"codex-cli", "codex-app-server", "omp", "claude-code"}
         or trace.session_id is None
         or trace.source_correlation_started_at is None
         or trace.source_correlation_ended_at is None
@@ -955,6 +956,13 @@ def run_scan(
     records: list[ObservationRecord] = []
     trend_events: list[TrendEventRecord] = []
     context_events: tuple[DerivedEvent, ...] = ()
+    backfill_counts: dict[str, object] = {
+        "scanned": 0,
+        "eligible": 0,
+        "spooled": 0,
+        "unresolved": 0,
+        "rejections": {},
+    }
     active_generation: str | None = None
     terminal_status = "failed"
     error_class: str | None = None
@@ -1015,6 +1023,7 @@ def run_scan(
                     (scan_run_id, started_at, start_ns, end_ns),
                 )
             scan_run_persisted = True
+            backfill_counts = backfill(roots=DEFAULT_ROOTS, inbox=inbox_path(config.database.path))
             with connection:
                 context_events = drain_inbox(connection, directory=inbox_path(config.database.path))
                 enqueue_events(connection, list(context_events))
@@ -1333,6 +1342,7 @@ def run_scan(
             "observations": len(records),
             "trend_evaluations": len(trend_events),
             "session_context_events": len(context_events),
+            "session_context_backfill": backfill_counts,
             "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
             "telemetry_delivered": telemetry_delivered,
             "telemetry_pending": pending,

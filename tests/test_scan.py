@@ -221,7 +221,52 @@ def log_row(identifier: str, timestamp_ns: int, *, trace_id: str | None = None) 
     )
 
 
-def test_session_context_correlation_requires_unique_codex_source_interval(
+def test_session_context_correlation_accepts_each_supported_producer(
+    scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, _config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    source_started_at = now + timedelta(seconds=5)
+    source_ended_at = now + timedelta(seconds=10)
+    calls: list[dict[str, object]] = []
+
+    def capture(_connection: Any, **kwargs: object) -> None:
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(scan, "correlated_project", capture)
+    producers = ("codex-cli", "codex-app-server", "omp", "claude-code")
+    for producer in producers:
+        trace = TraceRow(
+            trace_id=f"{producer}-session",
+            turn_id=None,
+            thread_id=None,
+            project_id=None,
+            project_name=None,
+            project_root=None,
+            project_kind=None,
+            started_at=now,
+            ended_at=now + timedelta(seconds=30),
+            total_tokens=0,
+            tool_calls=0,
+            producer=producer,
+            session_id="session-1",
+            source_correlation_started_at=source_started_at,
+            source_correlation_ended_at=source_ended_at,
+        )
+        assert scan._correlated_trace_project(connection, trace) is None
+    assert calls == [
+        {
+            "producer": producer,
+            "session_id": "session-1",
+            "started_at": source_started_at,
+            "ended_at": source_ended_at,
+        }
+        for producer in producers
+    ]
+
+
+def test_session_context_correlation_rejects_missing_mixed_and_duplicate_sessions(
     scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection, _config = scan_environment
@@ -233,64 +278,51 @@ def test_session_context_correlation_requires_unique_codex_source_interval(
         return None
 
     monkeypatch.setattr(scan, "correlated_project", capture)
-    mixed_service_session = TraceRow(
-        trace_id="mixed-service-session",
-        turn_id=None,
-        thread_id=None,
-        project_id=None,
-        project_name=None,
-        project_root=None,
-        project_kind=None,
-        started_at=now,
-        ended_at=now + timedelta(seconds=30),
-        total_tokens=0,
-        tool_calls=0,
+    rejected_traces = (
+        TraceRow(
+            trace_id="missing-session",
+            turn_id=None,
+            thread_id=None,
+            project_id=None,
+            project_name=None,
+            project_root=None,
+            project_kind=None,
+            started_at=now,
+            ended_at=now + timedelta(seconds=30),
+            total_tokens=0,
+            tool_calls=0,
+            producer="omp",
+        ),
+        TraceRow(
+            trace_id="mixed-producer-sessions",
+            turn_id=None,
+            thread_id=None,
+            project_id=None,
+            project_name=None,
+            project_root=None,
+            project_kind=None,
+            started_at=now,
+            ended_at=now + timedelta(seconds=30),
+            total_tokens=0,
+            tool_calls=0,
+        ),
+        TraceRow(
+            trace_id="duplicate-producer-sessions",
+            turn_id=None,
+            thread_id=None,
+            project_id=None,
+            project_name=None,
+            project_root=None,
+            project_kind=None,
+            started_at=now,
+            ended_at=now + timedelta(seconds=30),
+            total_tokens=0,
+            tool_calls=0,
+        ),
     )
-    duplicate_app_server_sessions = TraceRow(
-        trace_id="duplicate-app-server-sessions",
-        turn_id=None,
-        thread_id=None,
-        project_id=None,
-        project_name=None,
-        project_root=None,
-        project_kind=None,
-        started_at=now,
-        ended_at=now + timedelta(seconds=30),
-        total_tokens=0,
-        tool_calls=0,
-    )
-    assert scan._correlated_trace_project(connection, mixed_service_session) is None
-    assert scan._correlated_trace_project(connection, duplicate_app_server_sessions) is None
+    for trace in rejected_traces:
+        assert scan._correlated_trace_project(connection, trace) is None
     assert calls == []
-
-    source_started_at = now + timedelta(seconds=5)
-    source_ended_at = now + timedelta(seconds=10)
-    valid_app_server_session = TraceRow(
-        trace_id="valid-app-server-session",
-        turn_id=None,
-        thread_id=None,
-        project_id=None,
-        project_name=None,
-        project_root=None,
-        project_kind=None,
-        started_at=now,
-        ended_at=now + timedelta(seconds=30),
-        total_tokens=0,
-        tool_calls=0,
-        producer="codex-app-server",
-        session_id="session-1",
-        source_correlation_started_at=source_started_at,
-        source_correlation_ended_at=source_ended_at,
-    )
-    assert scan._correlated_trace_project(connection, valid_app_server_session) is None
-    assert calls == [
-        {
-            "producer": "codex-app-server",
-            "session_id": "session-1",
-            "started_at": source_started_at,
-            "ended_at": source_ended_at,
-        }
-    ]
 
 
 def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, AppConfig]) -> None:

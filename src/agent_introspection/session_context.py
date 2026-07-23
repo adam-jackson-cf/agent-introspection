@@ -16,7 +16,7 @@ from agent_introspection.identities import ProjectIdentity
 from agent_introspection.telemetry import DerivedEvent
 
 _EVENT_ID = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
-Producer = Literal["claude-code", "codex-app-server"]
+Producer = Literal["claude-code", "codex-cli", "codex-app-server", "omp"]
 EventType = Literal["session_start", "session_end"]
 _OPEN_INTERVAL_QUERY = (
     "SELECT event_id FROM session_context_intervals "
@@ -107,7 +107,7 @@ def parse_event(value: object) -> SessionContextEvent:
     if _EVENT_ID.fullmatch(event_id) is None:
         raise SessionContextError("event_id must be 64 lowercase hexadecimal characters")
     producer = _text(value["producer"], "producer")
-    if producer not in ("claude-code", "codex-app-server"):
+    if producer not in ("claude-code", "codex-cli", "codex-app-server", "omp"):
         raise SessionContextError("producer is unsupported")
     event_type = _text(value["event_type"], "event_type")
     if event_type not in ("session_start", "session_end"):
@@ -286,7 +286,7 @@ def correlated_project(
     started_at: datetime,
     ended_at: datetime,
 ) -> ProjectIdentity | None:
-    if producer not in ("claude-code", "codex-app-server") or not session_id:
+    if producer not in ("claude-code", "codex-cli", "codex-app-server", "omp") or not session_id:
         return None
     rows = connection.execute(
         (

@@ -73,7 +73,19 @@ WITH
     ) AS project_metadata_present,
     (
       project_id_present AND project_name_present AND project_root_present AND project_kind_present
-    ) AS complete_project_metadata
+    ) AS complete_project_metadata,
+    multiIf(
+      serviceName = 'codex_cli_rs', 'codex-cli',
+      serviceName = 'codex-app-server', 'codex-app-server',
+      serviceName = 'oh-my-pi', 'omp',
+      serviceName = 'claude-code', 'claude-code',
+      NULL
+    ) AS correlation_producer,
+    multiIf(
+      serviceName = 'oh-my-pi', attributes_string['sessionId'],
+      attributes_string['session.id']
+    ) AS correlation_session_id,
+    correlation_session_id != '' AS has_correlation_session
 SELECT
     trace_id,
     coalesce(
@@ -84,21 +96,18 @@ SELECT
       AS thread_id,
     multiIf(
       uniqExactIf(
-        attributes_string['session.id'],
-        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+        tuple(correlation_producer, correlation_session_id),
+        has_correlation_session
       ) = 1,
-      anyIf(
-        attributes_string['session.id'],
-        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
-      ),
+      anyIf(correlation_session_id, has_correlation_session),
       NULL
     ) AS session_id,
     multiIf(
       uniqExactIf(
-        attributes_string['session.id'],
-        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+        tuple(correlation_producer, correlation_session_id),
+        has_correlation_session
       ) = 1,
-      'codex-app-server',
+      anyIf(correlation_producer, has_correlation_session),
       NULL
     ) AS producer,
     nullIf(anyIf(attributes_string['{_PROJECT_ID}'], complete_project_metadata), '')
@@ -129,18 +138,18 @@ SELECT
     max(timestamp) AS ended_at,
     multiIf(
       uniqExactIf(
-        attributes_string['session.id'],
-        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+        tuple(correlation_producer, correlation_session_id),
+        has_correlation_session
       ) = 1,
-      minIf(timestamp, serviceName = 'codex-app-server'),
+      minIf(timestamp, has_correlation_session),
       NULL
     ) AS source_correlation_started_at,
     multiIf(
       uniqExactIf(
-        attributes_string['session.id'],
-        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+        tuple(correlation_producer, correlation_session_id),
+        has_correlation_session
       ) = 1,
-      maxIf(timestamp, serviceName = 'codex-app-server'),
+      maxIf(timestamp, has_correlation_session),
       NULL
     ) AS source_correlation_ended_at,
     sumIf(attributes_number['codex.usage.total_tokens'],
@@ -149,7 +158,7 @@ SELECT
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE timestamp BETWEEN {{start:DateTime64(9)}} AND {{end:DateTime64(9)}}
   AND ts_bucket_start BETWEEN {{start_bucket:UInt64}} AND {{end_bucket:UInt64}}
-  AND serviceName IN ('codex_cli_rs', 'codex-app-server')
+  AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code')
   AND (
     name IN ('run_sampling_request', 'session_task.turn', 'turn/start', 'turn/steer',
              'turn/interrupt', 'handle_responses')
@@ -166,12 +175,14 @@ SELECT
   (SELECT count() > 0 FROM signoz_logs.distributed_logs_v2
    WHERE timestamp <= {start_ns:UInt64}
      AND ts_bucket_start <= {start_bucket:UInt64}
-     AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server'))
+     AND resource.`service.name`::String IN (
+         'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+     ))
   AND
   (SELECT count() > 0 FROM signoz_traces.distributed_signoz_index_v3
    WHERE timestamp <= {start:DateTime64(9)}
      AND ts_bucket_start <= {start_bucket:UInt64}
-     AND serviceName IN ('codex_cli_rs', 'codex-app-server')) AS retained
+     AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code')) AS retained
 """.strip()
 
 
@@ -202,7 +213,9 @@ WHERE {predicate}
   AND timestamp > {start_ns:UInt64}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
+  AND resource.`service.name`::String IN (
+      'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+  )
 ORDER BY timestamp, id
 """.strip()
 

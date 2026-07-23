@@ -50,6 +50,15 @@ def _event(root: Path, event_type: str, moment: datetime):
     )
 
 
+@pytest.mark.parametrize("producer", ("claude-code", "codex-cli", "codex-app-server", "omp"))
+def test_context_parser_accepts_only_canonical_producers(tmp_path: Path, producer: str) -> None:
+    event = _event(tmp_path / "project", "session_start", datetime(2026, 1, 1, tzinfo=UTC))
+    payload = event_payload(event)
+    payload["producer"] = producer
+
+    assert parse_event(payload).producer == producer
+
+
 def test_context_lifecycle_is_idempotent_immutable_and_correlates_exact_session(
     tmp_path: Path,
 ) -> None:

@@ -34,14 +34,35 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
         assert f"attributes_string['{key}']" in TRACE_QUERY
     assert "attributes_string['cwd']" not in TRACE_QUERY
     assert "project_metadata_state" in TRACE_QUERY
-    assert "uniqExactIf(" in TRACE_QUERY
     assert (
-        "serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''" in TRACE_QUERY
+        "uniqExactIf(\n"
+        "        tuple(correlation_producer, correlation_session_id),\n"
+        "        has_correlation_session\n"
+        "      ) = 1" in TRACE_QUERY
     )
-    assert "minIf(timestamp, serviceName = 'codex-app-server')" in TRACE_QUERY
-    assert "maxIf(timestamp, serviceName = 'codex-app-server')" in TRACE_QUERY
+    assert "serviceName = 'codex_cli_rs', 'codex-cli'" in TRACE_QUERY
+    assert "serviceName = 'codex-app-server', 'codex-app-server'" in TRACE_QUERY
+    assert "serviceName = 'oh-my-pi', 'omp'" in TRACE_QUERY
+    assert "serviceName = 'claude-code', 'claude-code'" in TRACE_QUERY
+    assert "serviceName = 'oh-my-pi', attributes_string['sessionId']" in TRACE_QUERY
+    assert "attributes_string['session.id']" in TRACE_QUERY
+    assert "minIf(timestamp, has_correlation_session)" in TRACE_QUERY
+    assert "maxIf(timestamp, has_correlation_session)" in TRACE_QUERY
     assert "source_correlation_started_at" in TRACE_QUERY
     assert "source_correlation_ended_at" in TRACE_QUERY
+
+
+def test_trace_query_leaves_missing_mixed_and_duplicate_sessions_unresolved() -> None:
+    unique_session = (
+        "uniqExactIf(\n"
+        "        tuple(correlation_producer, correlation_session_id),\n"
+        "        has_correlation_session\n"
+        "      ) = 1"
+    )
+    assert TRACE_QUERY.count(unique_session) == 4
+    assert "correlation_session_id != '' AS has_correlation_session" in TRACE_QUERY
+    assert "NULL\n    ) AS session_id" in TRACE_QUERY
+    assert "NULL\n    ) AS producer" in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])

@@ -1,18 +1,19 @@
-# Supported producer configuration workflow
+# Producer configuration workflow
 
 ## Objective
 
-Connect supported native lifecycle APIs to the installed managed runtime without changing producer binaries or inventing attribution.
+Use only installed, documented native local-command hooks to request idempotent bounded artifact backfill. Producers without that configuration surface remain on scheduled harvesting.
 
 ## Required actions
 
-1. Set `managed_dir` to `$HOME/.local/lib/agent-introspection/session-context-runtime-v1`.
-2. Configure Codex app-server's supported lifecycle callback with `$managed_dir/adapters/codex-app-server.sh` followed by normalized native `SESSION_ID EVENT_TYPE OCCURRED_AT ABSOLUTE_WORKSPACE` arguments.
-3. Require Codex app-server to pass only `session_start` or `session_end` event types and expose that same session ID in its OTLP spans.
-4. Do not configure Claude Code because it lacks an authoritative event timestamp and its installed trace/log telemetry does not document the matching correlation key.
-5. Do not configure direct Codex CLI or OMP. Record each as unresolved until a native lifecycle API and matching source telemetry are available.
-6. Do not execute the skill source scripts after installation, parse producer JSON in shell, patch producer binaries, or add fallback attribution.
+1. Use exactly `agent-introspection session-context backfill`; do not pass lifecycle payloads, prompts, CWD, static project values, or telemetry attributes.
+2. The command reads only producer-owned session metadata and tool-target records under its configured roots.
+3. Configure Claude Code `SessionStart` with a command hook. If `agent-introspection` is not on `PATH`, use the installed virtualenv executable without adding backfill options or producer values.
+4. Do not add a direct Codex CLI hook. Codex app-server's documented request-level `hooks/list` surface is not a persistent local configuration surface; leave app-server capture to the scheduled scan unless such a documented configuration surface is installed.
+5. Do not configure OMP when its extensions expose no native lifecycle callback that safely launches a local command without static project values. Leave OMP capture to the scheduled scan; do not use the external extension bridge as a substitute.
+6. Do not patch producer binaries, invoke the command from shell wrappers that parse producer payloads, or add fallback identity inference.
 
 ## Done when
 
-- Codex app-server invokes only the managed adapter with authoritative native lifecycle values and matching source telemetry correlation.
+- Every enabled hook invokes only bounded artifact backfill after its documented lifecycle event.
+- Every unsupported producer surface is explicitly assigned to scheduled harvesting.
