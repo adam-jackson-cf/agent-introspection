@@ -2,11 +2,11 @@
 
 ## Objective
 
-Provision and verify local SigNoz ingestion safely before onboarding producers.
+Prove the local SigNoz stack can receive and retain OTLP before configuring session-context producers.
 
 ## Required actions
 
-1. Check UI health, collector health, OTLP gRPC and HTTP listeners, and loopback-only exposure.
+1. Check loopback-only UI, collector health, and OTLP listeners.
 2. Inspect effective collector pipelines without exposing secrets.
 3. Run synthetic trace, metric, and log probes.
 4. Verify that new backend records arrived after each probe.

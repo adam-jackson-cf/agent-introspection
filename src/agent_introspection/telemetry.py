@@ -102,8 +102,38 @@ def enqueue_event(connection: sqlite3.Connection, event: DerivedEvent) -> str:
 
 
 def enqueue_events(connection: sqlite3.Connection, events: list[DerivedEvent]) -> list[str]:
-    """Persist a deterministic event batch in one transaction."""
+    """Persist a deterministic batch and diagnose immutable payload conflicts before insert."""
     now = datetime.now(UTC).isoformat()
+    payloads = [
+        (event, json.dumps(event.payload(), sort_keys=True, separators=(",", ":")))
+        for event in events
+    ]
+    incoming_by_id: dict[str, tuple[DerivedEvent, str]] = {}
+    for event, payload_json in payloads:
+        previous = incoming_by_id.get(event.event_id)
+        if previous is not None and previous[1] != payload_json:
+            raise ValueError(
+                "immutable OTLP event conflict "
+                f"event_id={event.event_id} event_name={event.event_name} "
+                f"entity_id={event.entity_id} differing_fields=incoming_batch"
+            )
+        incoming_by_id[event.event_id] = (event, payload_json)
+    for event, payload_json in payloads:
+        row = connection.execute(
+            "SELECT payload_json FROM otlp_outbox WHERE event_id = ?", (event.event_id,)
+        ).fetchone()
+        if row is None or str(row[0]) == payload_json:
+            continue
+        existing = json.loads(str(row[0]))
+        incoming = json.loads(payload_json)
+        differing = sorted(
+            key for key in set(existing) | set(incoming) if existing.get(key) != incoming.get(key)
+        )
+        raise ValueError(
+            "immutable OTLP event conflict "
+            f"event_id={event.event_id} event_name={event.event_name} "
+            f"entity_id={event.entity_id} differing_fields={','.join(differing)}"
+        )
 
     def write() -> None:
         connection.executemany(
@@ -113,15 +143,7 @@ def enqueue_events(connection: sqlite3.Connection, events: list[DerivedEvent]) -
             ) VALUES (?, ?, 'pending', 0, ?, ?)
             ON CONFLICT(event_id) DO NOTHING
             """,
-            [
-                (
-                    event.event_id,
-                    json.dumps(event.payload(), sort_keys=True, separators=(",", ":")),
-                    now,
-                    now,
-                )
-                for event in events
-            ],
+            [(event.event_id, payload_json, now, now) for event, payload_json in payloads],
         )
 
     if connection.in_transaction:

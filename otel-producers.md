@@ -74,6 +74,32 @@ During onboarding, the skill:
 
 The hook configuration must never invoke a mutable skill source path, prompt fragment, shell alias, or ad hoc inline command. The managed runtime path is stable for the producer, while the onboarding skill remains the canonical distribution source.
 
+### Script and spool layout
+
+The skill-local distribution source is:
+
+```text
+introspection-onboarding/
+  scripts/
+    session-context-runtime.sh
+    adapters/
+      claude-code.sh
+      codex-cli.sh
+      codex-app-server.sh
+      omp.sh
+```
+
+`session-context-runtime.sh` accepts normalized arguments only: producer, session ID, lifecycle event, RFC3339 timestamp, and absolute workspace. It uses Bash and Git only. It resolves the Git common directory, derives a deterministic Git ID with `git hash-object --stdin`, and atomically creates one immutable JSON record in the managed local inbox:
+
+```text
+~/.local/share/agent-introspection/session-context-inbox/
+  <producer>--<session-id>--<event-id>.json
+```
+
+The runtime makes no network request, parses no arbitrary producer JSON, and does not invoke a shell alias. Producer adapters are responsible for converting native hook payloads into the normalized argument contract. An adapter that cannot obtain both authoritative session ID and workspace is unsupported.
+
+The existing Agent Introspection scheduler consumes inbox records, validates and persists interval transitions, then uses the existing SQLite OTLP outbox for duplicate-tolerant delivery.
+
 ## Onboarding workflow replacement
 
 This replaces the producer-implementation workflow that configures or changes each producer to emit the project tuple directly.

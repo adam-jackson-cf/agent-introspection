@@ -29,6 +29,8 @@ class GenerationError(RuntimeError):
     """An analysis generation cannot be staged or activated safely."""
 
 
+GENERATION_PROJECTION_CONTRACT_VERSION = 2
+
 _SCAN_EXTRACTION_PATH = Path(__file__).with_name("scan.py")
 
 
@@ -79,6 +81,7 @@ def _semantic_contract(source_contract_fingerprint: str) -> tuple[str, str, str]
         json.dumps(
             {
                 **contract_hashes,
+                "generation_projection_contract_version": GENERATION_PROJECTION_CONTRACT_VERSION,
                 "source_contract_fingerprint": source_contract_fingerprint,
             },
             sort_keys=True,
@@ -166,7 +169,12 @@ def _projection_events(
                     "detector.id": str(row[1]),
                     _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
                     _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
-                    "finding.id": str(row[4]),
+                    "finding.id": str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"agent-introspection:{row[4]}",
+                        )
+                    ),
                 },
                 timestamp_ns=int(row[5]),
             )
@@ -255,7 +263,12 @@ def _fact_set_projection_events(
                         "detector.id": str(payload["detector_id"]),
                         _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
                         _PROJECT_ATTRIBUTE_KEYS["name"]: project_name or "unresolved",
-                        "finding.id": str(payload["fingerprint"]),
+                        "finding.id": str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                f"agent-introspection:{payload['fingerprint']}",
+                            )
+                        ),
                         "attribution.method": str(payload["attribution_method"]),
                     },
                     timestamp_ns=int(payload["occurred_at_ns"]),

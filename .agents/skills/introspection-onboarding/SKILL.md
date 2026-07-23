@@ -1,11 +1,11 @@
 ---
 name: "introspection-onboarding"
-description: "Onboard local SigNoz telemetry with verified producer project attribution. USE WHEN you need to bootstrap local SigNoz telemetry or onboard requested agent harnesses."
+description: "Onboard deterministic Agent Introspection session context. USE WHEN you need to configure supported local producer lifecycle capture."
 ---
 
 # Workflow
 
-## Step 1: Establish local telemetry health
+### Step 1: Establish local telemetry health
 
 **Purpose:** Prove the local SigNoz stack can receive and retain OTLP before configuring producers.
 
@@ -13,51 +13,51 @@ description: "Onboard local SigNoz telemetry with verified producer project attr
 
 **Actions:** Verify loopback-only UI and listener health, collector pipelines, synthetic trace/metric/log ingestion, and newly retained backend records. Stop at the first failed boundary without weakening security. Follow [stack bootstrap](references/stack-bootstrap-workflow.md).
 
-## Step 2: Discover requested producer capabilities
+### Step 2: Discover producer capability
 
-**Purpose:** Classify every harness named by the user, plus explicitly requested local auto-detection, by its project-metadata emission capability.
+**Purpose:** Classify every requested producer by authoritative lifecycle context and end-to-end telemetry correlation availability.
 
-**When:** After stack health passes and before any producer configuration change.
+**When:** After stack health passes and before installing or configuring a producer.
 
-**Actions:** Read the request for named harnesses. If none are named, ask before discovering local harnesses. Inspect each requested configuration, extension API, launcher, or source surface without exposing secrets. Classify it as natively configurable, source-change-required, or unsupported. Reject static process-level attributes for multiplexed or multi-workspace producers. Follow [producer discovery](references/producer-discovery-workflow.md).
+**Actions:** Classify Claude Code as unsupported and attribution unresolved because its hook payload does not provide an authoritative event timestamp and installed Claude trace/log telemetry does not document the same explicit producer/session correlation key. Classify Codex app-server as conditionally supported only when its OTLP spans expose the same session ID supplied by its lifecycle API. Classify direct Codex CLI and OMP as unsupported and unresolved. Follow [producer discovery](references/producer-discovery-workflow.md).
 
-## Step 3: Load the canonical project schema
+### Step 3: Apply the canonical session-context contract
 
-**Purpose:** Resolve the repository-owned project-attribution contract before evaluating or changing a producer.
+**Purpose:** Use one deterministic event and project identity contract across every supported producer.
 
-**When:** Before any producer implementation or end-to-end validation.
+**When:** Before managed runtime installation or producer configuration.
 
-**Actions:** Resolve the declared repository-relative schema path, verify it exists and parses as JSON, and use only its fields and constraints for the rest of the operation. Follow [canonical schema](references/canonical-schema-workflow.md).
+**Actions:** Require normalized producer, session ID, lifecycle event, RFC 3339 timestamp, and absolute workspace inputs. Use the canonical event record and Git project tuple without CWD, prompt, path, alias, or static-attribute inference. Follow [canonical schema](references/canonical-schema-workflow.md).
 
-## Step 4: Implement canonical producer attributes
+### Step 4: Install the managed runtime
 
-**Purpose:** Configure or change the producer to emit source-owned project metadata on relevant spans.
+**Purpose:** Copy the skill-local distribution into a stable, versioned managed location before any hook invokes it.
 
-**When:** Only when the harness is natively configurable or has an available source implementation.
+**When:** After the contract is accepted and before configuring supported producers.
 
-**Actions:** Emit the complete schema tuple on each relevant session or action span. Require a canonical project ID and non-empty display name. Do not derive attribution from CWD, paths, aliases, prompts, or thread inference. Follow [producer implementation](references/producer-implementation-workflow.md).
+**Actions:** Copy the runtime and adapters to `$HOME/.local/lib/agent-introspection/session-context-runtime-v1/`; configure hooks to execute only that copied location, never the mutable skill source. Follow [managed runtime installation](references/session-hook-runtime-workflow.md).
 
-## Step 5: Validate end-to-end attribution
+### Step 5: Configure supported producers
 
-**Purpose:** Prove each producer emits metadata accepted by SigNoz and Agent Introspection.
+**Purpose:** Configure only native lifecycle integrations that can preserve the canonical contract.
 
-**When:** After every producer configuration or source change.
+**When:** After the managed runtime is installed.
 
-**Actions:** Start a fresh session in a known project. Query recent SigNoz spans and derived events. Reject absent, partial, conflicting, or invalid tuples. Follow [end-to-end validation](references/end-to-end-validation-workflow.md).
+**Actions:** Configure only Codex app-server through its normalized lifecycle adapter when it meets the conditional support criteria. Do not configure Claude Code, direct Codex CLI, or OMP; leave them unresolved. Follow [producer configuration](references/producer-implementation-workflow.md).
 
-## Step 6: Escalate unsupported producers
+### Step 6: Validate operation and scheduler handling
 
-**Purpose:** Create a bounded, evidence-backed upstream handoff when configuration cannot implement correct attribution.
+**Purpose:** Prove the managed runtime produces one canonical inbox event and that scheduler processing preserves it.
 
-**When:** When a requested harness has no safe native configuration or source surface.
+**When:** After every supported-producer configuration change.
 
-**Actions:** Record the unavailable capability and observed telemetry fields, specify the required producer-side contract, and leave attribution unresolved rather than adding static or inferred attribution. Follow [upstream escalation](references/upstream-escalation-workflow.md).
+**Actions:** Start a fresh supported producer session, validate the managed inbox record, then validate the scheduler's resulting telemetry and retained records. Do not run hooks or install the runtime when only authoring this skill. Follow [session-context validation](references/session-context-validation-workflow.md).
 
 ## Output
 
 ### Result Format
 
-- Selected operation and requested-producer capability classification
-- Stack, configuration, and end-to-end verification evidence
-- Canonical schema path and producer attributes observed
-- Unsupported boundaries, upstream handoffs, and unresolved risks
+- Producer capability classification and unresolved producer boundaries
+- Managed runtime version and installed location
+- Canonical event-record and scheduler-operation validation evidence
+- Failed boundary and corrective action when validation does not pass

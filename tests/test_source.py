@@ -35,6 +35,13 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "attributes_string['cwd']" not in TRACE_QUERY
     assert "project_metadata_state" in TRACE_QUERY
     assert "uniqExactIf(" in TRACE_QUERY
+    assert (
+        "serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''" in TRACE_QUERY
+    )
+    assert "minIf(timestamp, serviceName = 'codex-app-server')" in TRACE_QUERY
+    assert "maxIf(timestamp, serviceName = 'codex-app-server')" in TRACE_QUERY
+    assert "source_correlation_started_at" in TRACE_QUERY
+    assert "source_correlation_ended_at" in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
@@ -104,6 +111,27 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
     )
     assert parsed.started_at.tzinfo is UTC
     assert parsed.ended_at.tzinfo is UTC
+
+
+def test_trace_parser_preserves_source_correlation_interval() -> None:
+    parsed = parse_trace_row(
+        {
+            "trace_id": "trace-1",
+            "started_at": "2026-07-10 14:53:47.565735000",
+            "ended_at": "2026-07-10 14:53:48.565735000",
+            "source_correlation_started_at": "2026-07-10 14:53:47.765735000",
+            "source_correlation_ended_at": "2026-07-10 14:53:48.365735000",
+            "total_tokens": "123",
+            "tool_calls": "2",
+            "project_metadata_state": "absent",
+        }
+    )
+    assert parsed.source_correlation_started_at == datetime(
+        2026, 7, 10, 14, 53, 47, 765735, tzinfo=UTC
+    )
+    assert parsed.source_correlation_ended_at == datetime(
+        2026, 7, 10, 14, 53, 48, 365735, tzinfo=UTC
+    )
 
 
 def test_trace_parser_requires_complete_normalized_agent_project_metadata() -> None:

@@ -221,6 +221,78 @@ def log_row(identifier: str, timestamp_ns: int, *, trace_id: str | None = None) 
     )
 
 
+def test_session_context_correlation_requires_unique_codex_source_interval(
+    scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, _config = scan_environment
+    now = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    calls: list[dict[str, object]] = []
+
+    def capture(_connection: Any, **kwargs: object) -> None:
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(scan, "correlated_project", capture)
+    mixed_service_session = TraceRow(
+        trace_id="mixed-service-session",
+        turn_id=None,
+        thread_id=None,
+        project_id=None,
+        project_name=None,
+        project_root=None,
+        project_kind=None,
+        started_at=now,
+        ended_at=now + timedelta(seconds=30),
+        total_tokens=0,
+        tool_calls=0,
+    )
+    duplicate_app_server_sessions = TraceRow(
+        trace_id="duplicate-app-server-sessions",
+        turn_id=None,
+        thread_id=None,
+        project_id=None,
+        project_name=None,
+        project_root=None,
+        project_kind=None,
+        started_at=now,
+        ended_at=now + timedelta(seconds=30),
+        total_tokens=0,
+        tool_calls=0,
+    )
+    assert scan._correlated_trace_project(connection, mixed_service_session) is None
+    assert scan._correlated_trace_project(connection, duplicate_app_server_sessions) is None
+    assert calls == []
+
+    source_started_at = now + timedelta(seconds=5)
+    source_ended_at = now + timedelta(seconds=10)
+    valid_app_server_session = TraceRow(
+        trace_id="valid-app-server-session",
+        turn_id=None,
+        thread_id=None,
+        project_id=None,
+        project_name=None,
+        project_root=None,
+        project_kind=None,
+        started_at=now,
+        ended_at=now + timedelta(seconds=30),
+        total_tokens=0,
+        tool_calls=0,
+        producer="codex-app-server",
+        session_id="session-1",
+        source_correlation_started_at=source_started_at,
+        source_correlation_ended_at=source_ended_at,
+    )
+    assert scan._correlated_trace_project(connection, valid_app_server_session) is None
+    assert calls == [
+        {
+            "producer": "codex-app-server",
+            "session_id": "session-1",
+            "started_at": source_started_at,
+            "ended_at": source_ended_at,
+        }
+    ]
+
+
 def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, AppConfig]) -> None:
     connection, config = scan_environment
     now = datetime(2026, 7, 10, 12, tzinfo=UTC)
@@ -277,6 +349,25 @@ def test_valid_no_data_and_each_single_source_scan(scan_environment: tuple[Any, 
     result = run_scan(connection, config, client=log_only, end_time=now + timedelta(seconds=2))
     assert result["logs"] == 1
     assert result["observations"] == 1
+    observation_payload = json.loads(
+        connection.execute(
+            """
+            SELECT payload_json FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.name"')
+                = 'introspection.observation.detected'
+            ORDER BY created_at DESC LIMIT 1
+            """
+        ).fetchone()[0]
+    )
+    membership = connection.execute(
+        """
+        SELECT finding_id FROM finding_membership
+        WHERE observation_id = ?
+        """,
+        (observation_payload["entity.id"],),
+    ).fetchone()
+    assert membership is not None
+    assert observation_payload["finding.id"] == membership[0]
 
 
 def test_attribution_reanalysis_creates_isolated_facts_without_legacy_mutation(
@@ -308,6 +399,17 @@ def test_attribution_reanalysis_creates_isolated_facts_without_legacy_mutation(
         ).fetchone()[0]
         >= 4
     )
+    finding_payload = json.loads(
+        connection.execute(
+            """
+            SELECT payload_json FROM attribution_reanalysis_facts
+            WHERE fact_set_id = ? AND fact_kind = 'finding'
+            """,
+            (result["fact_set_id"],),
+        ).fetchone()[0]
+    )
+    assert finding_payload["trend_state"] == "isolated"
+    assert finding_payload["occurrence_count"] == 1
 
 
 def test_attribution_reanalysis_deduplicates_repeated_source_events(

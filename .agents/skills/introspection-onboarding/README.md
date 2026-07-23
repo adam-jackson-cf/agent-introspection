@@ -2,25 +2,25 @@
 
 ## Overview
 
-A repository-local workflow for bootstrapping SigNoz, onboarding requested agent harnesses, loading the canonical project-attribution schema, and proving attribution from producer emission through dashboard-facing telemetry.
+A portable workflow for installing and operating deterministic Agent Introspection session-context capture from supported producer lifecycle hooks.
 
 ## When to use it
 
-- Bootstrapping local SigNoz telemetry from scratch
-- Onboarding Codex, Claude Code, OMP, or another user-requested agent harness
-- Replacing CWD-based attribution with canonical source-owned project metadata
+- Onboarding conditionally supported Codex app-server session-context capture
+- Establishing a managed local session-context runtime
+- Validating session-context inbox and scheduler operation
 
 ## Example prompts
 
-- Set up local SigNoz telemetry and onboard Codex project attribution.
-- Check whether OMP can emit the canonical project span attributes.
-- Validate Claude Code project attribution from a fresh session through the dashboard.
+- Determine whether Codex app-server spans carry their authoritative lifecycle session ID.
+- Configure Codex app-server lifecycle capture for Agent Introspection.
+- Classify whether OMP can provide authoritative session context.
 
 ## References
 
 - [Stack bootstrap](references/stack-bootstrap-workflow.md)
 - [Producer discovery](references/producer-discovery-workflow.md)
 - [Canonical schema](references/canonical-schema-workflow.md)
-- [Producer implementation](references/producer-implementation-workflow.md)
-- [End-to-end validation](references/end-to-end-validation-workflow.md)
-- [Upstream escalation](references/upstream-escalation-workflow.md)
+- [Managed runtime installation](references/session-hook-runtime-workflow.md)
+- [Producer configuration](references/producer-implementation-workflow.md)
+- [Session-context validation](references/session-context-validation-workflow.md)

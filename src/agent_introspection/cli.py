@@ -58,6 +58,12 @@ from agent_introspection.scheduler import (
     scan_lease,
     schedule_status,
 )
+from agent_introspection.session_context import (
+    SessionContextError,
+    inbox_path,
+    parse_event,
+    spool_event,
+)
 from agent_introspection.source import ClickHouseClient, SourceError
 from agent_introspection.telemetry import (
     drain_outbox,
@@ -641,6 +647,18 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
 
 
+def _session_context_hook(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.stdin:
+        raise ValueError("session-context hook requires --stdin")
+    payload = _read_json("-")
+    event = parse_event(payload)
+    if event.producer != args.producer:
+        raise SessionContextError("producer does not match the canonical record")
+    config = load_config(_config_path(args.config))
+    path = spool_event(event, directory=inbox_path(config.database.path))
+    return {"event_id": event.event_id, "spooled": str(path)}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
@@ -650,6 +668,12 @@ def _parser() -> argparse.ArgumentParser:
     doctor.add_argument("--approve-schema", action="store_true")
     commands.add_parser("health")
     scan = commands.add_parser("scan")
+    session_context = commands.add_parser("session-context").add_subparsers(
+        dest="session_context_command", required=True
+    )
+    hook = session_context.add_parser("hook")
+    hook.add_argument("--producer", choices=("claude-code", "codex-app-server"), required=True)
+    hook.add_argument("--stdin", action="store_true")
     scan.add_argument("--scheduled", action="store_true")
 
     generation = commands.add_parser("analysis-generation").add_subparsers(
@@ -733,6 +757,8 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _health(args)
     if args.command == "scan":
         return _scan(args)
+    if args.command == "session-context":
+        return _session_context_hook(args)
     if args.command == "analysis-generation":
         return _analysis_generation(args)
     if args.command == "analysis-reanalyse-attribution":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from agent_introspection.generations import (
     GenerationError,
     activate_generation,
     current_generation_id,
+    semantic_contract_hash,
     stage_generation,
 )
 
@@ -141,6 +143,18 @@ def test_stage_and_remote_verified_activation_promote_one_generation(
         assert {payload["agent.project.name"] for payload in payloads} == {"Canonical project"}
         assert all(
             "project.id" not in payload and "project.name" not in payload for payload in payloads
+        )
+        observation_payload = next(
+            payload
+            for payload in payloads
+            if payload["event.name"] == "introspection.observation.detected"
+        )
+        observation_fingerprint = connection.execute(
+            "SELECT fingerprint FROM observations WHERE id = ?",
+            (observation_payload["entity.id"],),
+        ).fetchone()[0]
+        assert observation_payload["finding.id"] == str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"agent-introspection:{observation_fingerprint}")
         )
         monkeypatch.setattr("agent_introspection.generations.drain_outbox", _deliver_pending)
 
@@ -328,3 +342,16 @@ def test_material_semantic_contract_change_stages_a_new_generation(
         assert current_generation_id(connection) == initial.generation_id
     finally:
         connection.close()
+
+
+def test_projection_contract_version_invalidates_generation_semantic_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_fingerprint = "c" * 64
+    current = semantic_contract_hash(source_fingerprint)
+    monkeypatch.setattr(
+        generations,
+        "GENERATION_PROJECTION_CONTRACT_VERSION",
+        generations.GENERATION_PROJECTION_CONTRACT_VERSION + 1,
+    )
+    assert semantic_contract_hash(source_fingerprint) != current

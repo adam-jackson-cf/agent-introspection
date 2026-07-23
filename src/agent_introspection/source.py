@@ -82,10 +82,25 @@ SELECT
     ) AS turn_id,
     nullIf(anyIf(attributes_string['thread.id'], attributes_string['thread.id'] != ''), '')
       AS thread_id,
-    nullIf(
-      anyIf(attributes_string['conversation.id'], attributes_string['conversation.id'] != ''), ''
-    )
-      AS conversation_id,
+    multiIf(
+      uniqExactIf(
+        attributes_string['session.id'],
+        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+      ) = 1,
+      anyIf(
+        attributes_string['session.id'],
+        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+      ),
+      NULL
+    ) AS session_id,
+    multiIf(
+      uniqExactIf(
+        attributes_string['session.id'],
+        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+      ) = 1,
+      'codex-app-server',
+      NULL
+    ) AS producer,
     nullIf(anyIf(attributes_string['{_PROJECT_ID}'], complete_project_metadata), '')
       AS project_id,
     nullIf(anyIf(attributes_string['{_PROJECT_NAME}'], complete_project_metadata), '')
@@ -112,6 +127,22 @@ SELECT
     ) AS project_metadata_state,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
+    multiIf(
+      uniqExactIf(
+        attributes_string['session.id'],
+        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+      ) = 1,
+      minIf(timestamp, serviceName = 'codex-app-server'),
+      NULL
+    ) AS source_correlation_started_at,
+    multiIf(
+      uniqExactIf(
+        attributes_string['session.id'],
+        serviceName = 'codex-app-server' AND attributes_string['session.id'] != ''
+      ) = 1,
+      maxIf(timestamp, serviceName = 'codex-app-server'),
+      NULL
+    ) AS source_correlation_ended_at,
     sumIf(attributes_number['codex.usage.total_tokens'],
           mapContains(attributes_number, 'codex.usage.total_tokens')) AS total_tokens,
     countIf(attributes_string['tool_name'] != '') AS tool_calls
@@ -229,6 +260,10 @@ class TraceRow:
     total_tokens: int
     tool_calls: int
     conversation_id: str | None = None
+    session_id: str | None = None
+    producer: str | None = None
+    source_correlation_started_at: datetime | None = None
+    source_correlation_ended_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,8 +294,20 @@ def _optional_text(value: object) -> str | None:
     if value is None or value == "":
         return None
     if not isinstance(value, str):
-        raise SourceError(f"expected text or null, got {type(value).__name__}")
+        raise SourceError("optional text value must be a string")
     return value
+
+
+def _optional_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(str(value))
+    except ValueError as exc:
+        raise SourceError("trace correlation timestamps must be ISO-8601 values") from exc
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
 
 
 def _optional_int(value: object) -> int | None:
@@ -354,8 +401,20 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         started = started.replace(tzinfo=UTC)
     if ended.tzinfo is None:
         ended = ended.replace(tzinfo=UTC)
+    started = started.astimezone(UTC)
+    ended = ended.astimezone(UTC)
     if ended < started:
         raise SourceError("trace timestamps must be ordered")
+    source_correlation_started_at = _optional_timestamp(data.get("source_correlation_started_at"))
+    source_correlation_ended_at = _optional_timestamp(data.get("source_correlation_ended_at"))
+    if (source_correlation_started_at is None) != (source_correlation_ended_at is None):
+        raise SourceError("trace correlation timestamps must be present together")
+    if (
+        source_correlation_started_at is not None
+        and source_correlation_ended_at is not None
+        and source_correlation_ended_at < source_correlation_started_at
+    ):
+        raise SourceError("trace correlation timestamps must be ordered")
     total_tokens = _optional_int(data.get("total_tokens"))
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
@@ -390,6 +449,10 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         total_tokens=total_tokens,
         tool_calls=tool_calls,
         conversation_id=_optional_text(data.get("conversation_id")),
+        session_id=_optional_text(data.get("session_id")),
+        producer=_optional_text(data.get("producer")),
+        source_correlation_started_at=source_correlation_started_at,
+        source_correlation_ended_at=source_correlation_ended_at,
     )
 
 

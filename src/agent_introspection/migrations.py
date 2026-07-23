@@ -959,6 +959,84 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
             "DROP TABLE project_aliases",
         ),
     ),
+    Migration(
+        version=9,
+        name="add immutable session context ledger",
+        statements=(
+            """
+            CREATE TABLE session_context_events (
+                event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
+                producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-app-server')),
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL CHECK (event_type IN ('session_start', 'session_end')),
+                occurred_at TEXT NOT NULL,
+                project_id TEXT NOT NULL CHECK (length(project_id) = 64),
+                project_name TEXT NOT NULL,
+                project_root TEXT NOT NULL,
+                project_kind TEXT NOT NULL CHECK (project_kind IN ('git', 'non_git'))
+            ) STRICT
+            """,
+            """
+            CREATE TABLE session_context_intervals (
+                event_id TEXT PRIMARY KEY REFERENCES session_context_events(event_id),
+                producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-app-server')),
+                session_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                end_event_id TEXT UNIQUE REFERENCES session_context_events(event_id),
+                project_id TEXT NOT NULL CHECK (length(project_id) = 64),
+                project_name TEXT NOT NULL,
+                project_root TEXT NOT NULL,
+                project_kind TEXT NOT NULL CHECK (project_kind IN ('git', 'non_git')),
+                CHECK (ended_at IS NULL OR ended_at >= started_at)
+            ) STRICT
+            """,
+            """
+            CREATE UNIQUE INDEX session_context_open_interval_idx
+            ON session_context_intervals(producer, session_id) WHERE ended_at IS NULL
+            """,
+            """
+            CREATE INDEX session_context_correlation_idx
+            ON session_context_intervals(session_id, started_at, ended_at)
+            """,
+            """
+            CREATE TRIGGER session_context_events_no_update
+            BEFORE UPDATE ON session_context_events BEGIN
+                SELECT RAISE(ABORT, 'session context events are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER session_context_events_no_delete
+            BEFORE DELETE ON session_context_events BEGIN
+                SELECT RAISE(ABORT, 'session context events are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER session_context_intervals_guard_update
+            BEFORE UPDATE ON session_context_intervals
+            WHEN OLD.event_id IS NOT NEW.event_id
+              OR OLD.producer IS NOT NEW.producer
+              OR OLD.session_id IS NOT NEW.session_id
+              OR OLD.started_at IS NOT NEW.started_at
+              OR OLD.project_id IS NOT NEW.project_id
+              OR OLD.project_name IS NOT NEW.project_name
+              OR OLD.project_root IS NOT NEW.project_root
+              OR OLD.project_kind IS NOT NEW.project_kind
+              OR OLD.ended_at IS NOT NULL
+              OR NEW.ended_at IS NULL
+              OR NEW.end_event_id IS NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'session context interval history is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER session_context_intervals_no_delete
+            BEFORE DELETE ON session_context_intervals BEGIN
+                SELECT RAISE(ABORT, 'session context intervals are immutable');
+            END
+            """,
+        ),
+    ),
 )
 
 

@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -41,6 +41,7 @@ from agent_introspection.normalization import NormalizationError, normalize_tool
 from agent_introspection.outcomes import derive_outcome
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.scheduler import recover_interrupted_scan_runs
+from agent_introspection.session_context import correlated_project, drain_inbox, inbox_path
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
 from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
@@ -258,6 +259,25 @@ def _bounds(connection: sqlite3.Connection, end_ns: int) -> tuple[int, int, int,
     start_bucket = max(0, start_ns // 1_000_000_000 - 1800)
     end_bucket = end_ns // 1_000_000_000
     return start_ns, end_ns, start_bucket, end_bucket
+
+
+def _correlated_trace_project(
+    connection: sqlite3.Connection, trace: TraceRow
+) -> ProjectIdentity | None:
+    if (
+        trace.producer != "codex-app-server"
+        or trace.session_id is None
+        or trace.source_correlation_started_at is None
+        or trace.source_correlation_ended_at is None
+    ):
+        return None
+    return correlated_project(
+        connection,
+        producer=trace.producer,
+        session_id=trace.session_id,
+        started_at=trace.source_correlation_started_at,
+        ended_at=trace.source_correlation_ended_at,
+    )
 
 
 def _trace_indexes(
@@ -852,15 +872,21 @@ def reanalyse_attribution(
         }
         for fingerprint, grouped in occurrences_by_finding.items():
             first = grouped[0]
-            evaluation = evaluations[finding_ids[fingerprint]]
+            evaluation = evaluations.get(finding_ids[fingerprint])
+            occurrence_count = (
+                evaluation.occurrence_count if evaluation is not None else len(grouped)
+            )
+            trend_state = (
+                str(evaluation.state) if evaluation is not None else str(TrendState.ISOLATED)
+            )
             finding_payload = {
                 "id": finding_ids[fingerprint],
                 "category": first.category,
                 "project_id": first.project_identity_id or "unresolved",
                 "project_name": project_names.get(first.project_identity_id or "", "unresolved"),
                 "detector_id": first.detector_id,
-                "trend_state": str(evaluation.state),
-                "occurrence_count": evaluation.occurrence_count,
+                "trend_state": trend_state,
+                "occurrence_count": occurrence_count,
                 "last_seen_ns": max(record.occurred_at_ns for record in grouped),
             }
             fact_rows.append(
@@ -928,6 +954,7 @@ def run_scan(
     hydration: list[HydrationRow] = []
     records: list[ObservationRecord] = []
     trend_events: list[TrendEventRecord] = []
+    context_events: tuple[DerivedEvent, ...] = ()
     active_generation: str | None = None
     terminal_status = "failed"
     error_class: str | None = None
@@ -988,6 +1015,9 @@ def run_scan(
                     (scan_run_id, started_at, start_ns, end_ns),
                 )
             scan_run_persisted = True
+            with connection:
+                context_events = drain_inbox(connection, directory=inbox_path(config.database.path))
+                enqueue_events(connection, list(context_events))
             try:
                 logs = list(
                     source.logs(
@@ -1017,6 +1047,18 @@ def run_scan(
                         end_bucket=end_bucket,
                     )
                 )
+                traces = [
+                    replace(
+                        trace,
+                        project_id=project.identity,
+                        project_name=project.display_name,
+                        project_root=project.root.as_posix(),
+                        project_kind=project.kind,
+                    )
+                    if (project := _correlated_trace_project(connection, trace))
+                    else trace
+                    for trace in traces
+                ]
                 traces_stream = PipelineStream(
                     query_status="available",
                     data_state="records" if traces else "no_data",
@@ -1091,6 +1133,26 @@ def run_scan(
                     now=now,
                     manage_transaction=False,
                 )
+                finding_ids_by_record: dict[str, str] = {}
+                if records:
+                    placeholders = ",".join("?" for _ in records)
+                    memberships = connection.execute(
+                        f"""
+                        SELECT observation_id, finding_id FROM finding_membership
+                        WHERE observation_id IN ({placeholders})
+                        """,
+                        tuple(record.id for record in records),
+                    ).fetchall()
+                    grouped_memberships: dict[str, list[str]] = defaultdict(list)
+                    for observation_id, finding_id in memberships:
+                        grouped_memberships[str(observation_id)].append(str(finding_id))
+                    for record in records:
+                        memberships_for_record = grouped_memberships.get(record.id, [])
+                        if len(memberships_for_record) != 1:
+                            raise ScanError(
+                                f"observation {record.id} must have exactly one finding membership"
+                            )
+                        finding_ids_by_record[record.id] = memberships_for_record[0]
                 project_names = {
                     str(row[0]): str(row[1])
                     for row in connection.execute(
@@ -1113,6 +1175,7 @@ def run_scan(
                                 record.project_identity_id, project_names
                             ),
                             "attribution.method": str(record.attributes["attribution.method"]),
+                            "finding.id": finding_ids_by_record[record.id],
                         },
                         timestamp_ns=record.occurred_at_ns,
                     )
@@ -1205,6 +1268,7 @@ def run_scan(
             "observations": len(records),
             "traces": len(traces),
             "trends": len(trend_events),
+            "session_context_events": len(context_events),
         }
         error_code = (
             error_class
@@ -1268,6 +1332,7 @@ def run_scan(
             "traces": len(traces),
             "observations": len(records),
             "trend_evaluations": len(trend_events),
+            "session_context_events": len(context_events),
             "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
             "telemetry_delivered": telemetry_delivered,
             "telemetry_pending": pending,

@@ -59,6 +59,22 @@ def test_duplicate_enqueue_reuses_identical_event_id_and_payload() -> None:
     assert json.loads(rows[0][1])["event.id"] == first
 
 
+def test_conflicting_payload_reports_immutable_identity_and_changed_fields() -> None:
+    connection = outbox_database()
+    enqueue_event(connection, event())
+    conflicting = DerivedEvent(
+        scope="generation:generation-1",
+        entity_id="finding-1",
+        entity_version=2,
+        event_sequence=3,
+        event_name="introspection.trend.promoted",
+        attributes={"trend.state": "isolated", "occurrence.count": 3},
+        timestamp_ns=1_700_000_000_000_000_000,
+    )
+    with pytest.raises(ValueError, match=r"entity_id=finding-1.*trend.state"):
+        enqueue_event(connection, conflicting)
+
+
 def test_failed_delivery_retains_identical_payload_for_retry() -> None:
     connection = outbox_database()
     enqueue_event(connection, event())
