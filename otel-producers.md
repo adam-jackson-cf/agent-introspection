@@ -61,6 +61,19 @@ The runtime:
 
 The runtime emits one OTLP project-context event for each accepted lifecycle event. The planned schema amendment defines the canonical tuple, explicit session correlation key, producer identity, lifecycle event type, and interval semantics. This event is producer-hook evidence, not a copy of arbitrary trace fields.
 
+### Runtime distribution
+
+The onboarding skill owns the canonical runtime process code in its `scripts/` directory. It does not generate producer-specific implementations.
+
+During onboarding, the skill:
+
+1. identifies only producers with a supported authoritative lifecycle-hook payload;
+2. copies the versioned shared runtime into the managed local Agent Introspection hook directory;
+3. writes or updates the producer's hook configuration so it invokes that managed copy;
+4. records the installed runtime identity, producer adapter, hook target, and validation result.
+
+The hook configuration must never invoke a mutable skill source path, prompt fragment, shell alias, or ad hoc inline command. The managed runtime path is stable for the producer, while the onboarding skill remains the canonical distribution source.
+
 ### Context ledger
 
 Agent Introspection stores accepted context events as immutable session intervals.
