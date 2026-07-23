@@ -1,71 +1,119 @@
-# Sustainable Codex Project Attribution Decision Plan
+# Deterministic Session-Hook Attribution Design
 
-## Purpose
+## Decision required
 
-Determine whether Codex can provide canonical project attribution without a locally maintained binary patch, process-global project configuration, a proxy, or downstream inference.
+Use a lightweight, harness-agnostic session-hook protocol to emit explicit project-context events. Shared deterministic code resolves, validates, emits, stores, and correlates context. Each producer supplies only hook scaffolding that maps its supported lifecycle payload into the shared protocol.
 
-No implementation begins until this plan is approved and its upstream release gate is met.
+No implementation begins until the canonical schema, event contract, and producer capability matrix are approved.
 
-## Learned constraints
+## Design goal
 
-- Codex CLI and Codex Desktop/app-server both own the workspace context required for safe attribution.
-- Codex's existing `otel.span_attributes` configuration is process-global. It cannot safely attribute a multi-workspace Desktop app-server process.
-- An external CLI launcher can scope values to one CLI invocation, but cannot attribute Codex Desktop app-server sessions.
-- A local Codex source patch can cover both clients, but every Codex upgrade would require patch maintenance, rebuild, and revalidation.
-- The installed Codex release has no supported per-session project-attribution configuration or extension point.
+Increase project-attribution coverage without modifying harness binaries, using static process-level OpenTelemetry attributes, a proxy, or reconstructing project identity from arbitrary telemetry.
 
-## Non-negotiable rules
+## Safety model
 
-- The canonical contract remains `src/agent_introspection/schemas/otel/agent-project.schema.json`.
-- Project identity must be producer-owned and must not be inferred by Agent Introspection from CWD, paths, aliases, prompts, thread state, or historical telemetry.
-- Static process-level OpenTelemetry project attributes must not be used.
-- No local fork, binary replacement, upgrade-time patch replay, launcher, proxy, or compatibility attribution path is an acceptable production solution.
-- Unsupported producer contexts remain unresolved rather than receiving guessed attribution.
+A hook event is authoritative only when the producer provides both:
 
-## Decision gates
+1. a stable producer session identifier that also appears in ingested agent telemetry; and
+2. the active workspace supplied directly by a session lifecycle payload.
 
-### Gate 1: Upstream maintainership
+The shared integration resolves project identity from that hook-provided workspace. It never derives identity from raw span CWD fields, paths, prompts, aliases, tool commands, or historical trace patterns.
 
-Create an evidence-backed upstream Codex proposal for a supported per-session project-attribution capability.
+```mermaid
+flowchart LR
+    Producer["Producer hook scaffolding"] --> Payload["Canonical hook payload"]
+    Payload --> Runtime["Shared hook runtime"]
+    Runtime --> Resolver["Deterministic project resolver"]
+    Resolver --> Context["Project-context OTLP event"]
+    Context --> SigNoz["SigNoz"]
+    Producer --> Traces["Existing agent telemetry"]
+    Traces --> SigNoz
+    SigNoz --> Consumer["Agent Introspection context ledger"]
+    Consumer --> Dashboard["Project-filtered dashboard events"]
+```
 
-The proposal must establish:
+## Shared deterministic runtime
 
-1. The authoritative source of workspace identity for CLI and Desktop app-server sessions.
-2. The supported public API or configuration contract for carrying canonical project metadata.
-3. Session and multi-workspace isolation semantics.
-4. A maintainer-approved delivery path and target released Codex version.
-5. A migration and deprecation path that does not require users to maintain a local fork.
+The shared runtime owns all behavior that must remain identical across harnesses.
 
-Stop if maintainers reject the capability, decline a release commitment, or require an unsupported local patch.
+### Hook input
 
-### Gate 2: Released native capability
+Each adapter provides a normalized payload containing:
 
-After an official Codex release exposes the approved capability:
+- producer identifier;
+- stable producer session identifier;
+- lifecycle event type;
+- event timestamp;
+- authoritative active workspace.
 
-1. Configure only the supported producer interface.
-2. Start fresh Git and non-Git sessions through direct CLI and Codex Desktop.
-3. Verify source spans carry the complete canonical tuple only in authoritative Git contexts.
-4. Verify concurrent Desktop workspaces cannot leak or conflict.
-5. Verify resumed sessions and action spans preserve valid attribution semantics.
+The runtime rejects absent, malformed, or partial payloads. It records no prompt, response, tool input, command, or credential value.
 
-Stop if the released capability is process-global, CLI-only, or cannot isolate Desktop sessions.
+### Project resolution
 
-### Gate 3: Consumer verification
+The runtime:
 
-After producer verification:
+1. resolves the hook-provided workspace through Git common-directory semantics;
+2. validates the complete canonical project tuple using the repository-owned schema;
+3. emits no project context for non-Git, ambiguous, invalid, or inaccessible workspaces;
+4. emits a complete tuple or nothing.
 
-1. Verify Agent Introspection accepts the complete native tuple without a Codex-specific inference path.
-2. Verify derived dashboard-facing events retain paired project ID and name.
-3. Measure attribution from fresh, producer-emitted sessions separately from historical unresolved data.
-4. Remove no producer feature until the released native capability has passed end-to-end validation.
+### Context events
 
-## Current operating state
+The runtime emits one OTLP project-context event for each accepted lifecycle event. The planned schema amendment defines the canonical tuple, explicit session correlation key, producer identity, lifecycle event type, and interval semantics. This event is producer-hook evidence, not a copy of arbitrary trace fields.
 
-Codex project attribution is unsupported in the installed release for the required CLI-and-Desktop scope. Codex telemetry remains ingested and unresolved. Agent Introspection must report that limitation accurately.
+### Context ledger
+
+Agent Introspection stores accepted context events as immutable session intervals.
+
+- `session_start` opens an interval.
+- `workspace_changed` closes the active interval and opens a replacement interval.
+- `session_end`, where supported, closes the interval.
+- An unknown or ambiguous workspace closes attribution rather than retaining the prior project.
+- Raw agent telemetry is associated only when it has the same producer identity and explicit session correlation key within an active interval.
+- No matching context interval leaves telemetry unresolved.
+
+## Producer-specific scaffolding
+
+Only this layer varies by harness.
+
+| Producer | Adapter responsibility | Required capability |
+|---|---|---|
+| Claude Code | Map lifecycle-hook payload to the shared payload and invoke the runtime. | Session ID and workspace in session lifecycle hooks. |
+| Codex CLI | Map supported session hook payload to the shared payload and invoke the runtime. | Session ID and workspace exposed by a supported CLI lifecycle hook. |
+| Codex Desktop/app-server | Map supported thread/session lifecycle payload to the shared payload and invoke the runtime. | Thread/session ID and active workspace exposed by a supported hook or extension boundary. |
+| OMP | Map lifecycle-hook payload to the shared payload and invoke the runtime. | Session ID and workspace in session lifecycle hooks. |
+| Any future harness | Add a small adapter only. | The same two authoritative fields. |
+
+A producer without both required fields is unsupported and remains unresolved. A prompt hook, text-only hook, or hook that cannot reach the shared runtime is not sufficient.
+
+## Workspace changes
+
+Project changes are explicit lifecycle transitions, not trace-derived guesses.
+
+- An adapter emits `workspace_changed` only when the harness lifecycle API reports a new active workspace.
+- Ordinary shell commands, tool events, CWD fields, and trace content do not create a transition.
+- Producers that cannot report workspace changes retain their declared session-start context until a supported end event or an explicit unknown-context transition.
+- Coverage reporting distinguishes stable session-start attribution from producers that support explicit workspace transitions.
+
+## Schema and consumer changes
+
+Before implementation, amend the canonical schema to define the session-hook context event and allow explicit producer-session correlation. The existing prohibition on raw `cwd`, path heuristic, alias, prompt, and unbounded thread inference remains intact.
+
+The consumer must validate the event, preserve interval provenance, reject conflicting context, and derive dashboard attribution only through the explicit event/session contract.
+
+## Validation
+
+1. Unit tests cover payload validation, Git resolution, interval transitions, conflict rejection, and unresolved behavior.
+2. Each supported producer has a fixture proving its adapter maps authoritative hook fields without prompts or ambient process assumptions.
+3. Fresh producer sessions prove a context event and matching raw telemetry arrive in SigNoz with the same explicit session key.
+4. Workspace-change-capable producers prove interval replacement without cross-project leakage.
+5. Dashboard events prove paired project identity from ledger-backed context only.
+6. Coverage reports separate hook-attributed, unresolved, invalid, and unsupported telemetry.
 
 ## Acceptance criteria
 
-- An upstream-maintained, released Codex capability supports session-scoped project attribution for both CLI and Codex Desktop.
-- The capability satisfies the canonical schema without static process attributes or downstream inference.
-- No locally patched Codex binary, external launcher, proxy, or upgrade-time patch maintenance is required.
-- Fresh producer telemetry is validated end to end before any dashboard coverage claim.
+- Shared runtime behavior is identical for every producer.
+- Per-producer work is limited to lifecycle-payload adaptation and runtime invocation.
+- No harness binary patch, local fork, static process-level project configuration, proxy, or downstream project inference is required.
+- Every accepted attribution has explicit hook-event provenance and session correlation.
+- Unsupported or ambiguous producer contexts remain unresolved.
