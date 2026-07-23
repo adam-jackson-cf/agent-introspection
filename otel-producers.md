@@ -1,90 +1,71 @@
-# Codex Unified Project Attribution Plan
+# Sustainable Codex Project Attribution Decision Plan
 
-## Decision required
+## Purpose
 
-Implement project attribution once in upstream Codex core, at session creation. Codex CLI and Codex Desktop use that same implementation through `SessionConfiguration` and `SessionTelemetry`.
+Determine whether Codex can provide canonical project attribution without a locally maintained binary patch, process-global project configuration, a proxy, or downstream inference.
 
-This replaces an external CLI launcher and an app-server-only attribution path. No implementation begins until this plan is approved.
+No implementation begins until this plan is approved and its upstream release gate is met.
 
-## Contract
+## Learned constraints
 
-The canonical contract is `src/agent_introspection/schemas/otel/agent-project.schema.json`.
+- Codex CLI and Codex Desktop/app-server both own the workspace context required for safe attribution.
+- Codex's existing `otel.span_attributes` configuration is process-global. It cannot safely attribute a multi-workspace Desktop app-server process.
+- An external CLI launcher can scope values to one CLI invocation, but cannot attribute Codex Desktop app-server sessions.
+- A local Codex source patch can cover both clients, but every Codex upgrade would require patch maintenance, rebuild, and revalidation.
+- The installed Codex release has no supported per-session project-attribution configuration or extension point.
 
-Codex emits the complete canonical project tuple together on relevant telemetry only when it has an authoritative project context. A non-Git, missing, invalid, or ambiguous context emits no project tuple and remains unresolved.
+## Non-negotiable rules
 
-## Invariants
+- The canonical contract remains `src/agent_introspection/schemas/otel/agent-project.schema.json`.
+- Project identity must be producer-owned and must not be inferred by Agent Introspection from CWD, paths, aliases, prompts, thread state, or historical telemetry.
+- Static process-level OpenTelemetry project attributes must not be used.
+- No local fork, binary replacement, upgrade-time patch replay, launcher, proxy, or compatibility attribution path is an acceptable production solution.
+- Unsupported producer contexts remain unresolved rather than receiving guessed attribution.
 
-- Project identity is resolved by Codex at the session or action boundary, never reconstructed downstream.
-- Project identity is immutable for the telemetry context to which it is attached.
-- A single trace must not contain conflicting project tuples.
-- Static process-level OpenTelemetry attributes must not carry project identity.
-- CWD, paths, aliases, prompts, and thread inference must not be used by Agent Introspection to create attribution.
-- The existing canonical schema is the sole definition of fields and validation constraints.
+## Decision gates
 
-## Implementation phases
+### Gate 1: Upstream maintainership
 
-### 1. Shared Codex project-context resolver
+Create an evidence-backed upstream Codex proposal for a supported per-session project-attribution capability.
 
-Add a shared core value for validated project metadata and a worktree-safe Git resolver.
+The proposal must establish:
 
-- Resolve the selected source-owned workspace through Git's common directory.
-- Normalize the canonical repository root and derive the canonical Git identity from it.
-- Return either a complete validated tuple or no tuple.
-- Reuse or extend Codex's existing Git utility surface; do not add parallel Git-discovery logic.
-- Cover normal repositories, linked worktrees, nested paths, non-Git directories, malformed Git output, and resolution failures.
+1. The authoritative source of workspace identity for CLI and Desktop app-server sessions.
+2. The supported public API or configuration contract for carrying canonical project metadata.
+3. Session and multi-workspace isolation semantics.
+4. A maintainer-approved delivery path and target released Codex version.
+5. A migration and deprecation path that does not require users to maintain a local fork.
 
-### 2. Core session telemetry propagation
+Stop if maintainers reject the capability, decline a release commitment, or require an unsupported local patch.
 
-Construct the project context when core creates a `SessionConfiguration` / `SessionTelemetry` pair.
+### Gate 2: Released native capability
 
-- Store the tuple in session-owned telemetry state.
-- Apply it consistently to relevant session and action telemetry builders.
-- Preserve the tuple through cloned request, tool, hook, compaction, and resumed-session telemetry paths.
-- Keep all tuple fields absent together when resolution is unavailable.
-- Do not configure `otel.span_attributes` with project fields.
+After an official Codex release exposes the approved capability:
 
-### 3. Codex Desktop and app-server safety
+1. Configure only the supported producer interface.
+2. Start fresh Git and non-Git sessions through direct CLI and Codex Desktop.
+3. Verify source spans carry the complete canonical tuple only in authoritative Git contexts.
+4. Verify concurrent Desktop workspaces cannot leak or conflict.
+5. Verify resumed sessions and action spans preserve valid attribution semantics.
 
-Use the existing Desktop app-server thread lifecycle as an input path, not as a second implementation.
+Stop if the released capability is process-global, CLI-only, or cannot isolate Desktop sessions.
 
-- `thread/start` and `thread/resume` provide source-owned `cwd`, workspace roots, and thread identity to core session construction.
-- Associate telemetry with a single authoritative workspace only.
-- For a multi-workspace thread without one authoritative active workspace, emit no project tuple.
-- For an action whose selected workspace differs from the session project, do not reuse the session tuple. Resolve an action-local tuple only if its trace cannot conflict; otherwise leave the action unresolved.
-- Validate two simultaneous Desktop threads in distinct Git workspaces cannot leak or conflict.
+### Gate 3: Consumer verification
 
-### 4. Codex CLI adoption
+After producer verification:
 
-Use the same core resolver and telemetry propagation for direct `codex` CLI sessions.
+1. Verify Agent Introspection accepts the complete native tuple without a Codex-specific inference path.
+2. Verify derived dashboard-facing events retain paired project ID and name.
+3. Measure attribution from fresh, producer-emitted sessions separately from historical unresolved data.
+4. Remove no producer feature until the released native capability has passed end-to-end validation.
 
-- Resolve the CLI session's source-owned workspace during normal session creation.
-- Emit native Codex telemetry without an external launcher or per-invocation configuration injection.
-- Preserve non-Git unresolved behavior.
+## Current operating state
 
-### 5. Agent Introspection consumption and cutover
-
-Keep Agent Introspection a validator and consumer of producer-emitted attribution.
-
-- Verify native CLI and Desktop spans satisfy the canonical schema in SigNoz.
-- Verify derived dashboard-facing events retain paired project ID and name.
-- Remove the temporary CLI launcher and its command-specific source handling once the upstream Codex build is deployed and verified.
-- Retain no compatibility path that writes project identity through static Codex configuration or downstream inference.
-
-## Validation
-
-1. Core unit tests prove canonical Git resolution and all unresolved boundaries.
-2. CLI integration test starts a Git session and verifies complete native span tuples.
-3. Desktop/app-server integration test starts concurrent threads in different Git workspaces and proves isolation.
-4. Resume and subagent scenarios preserve the originating canonical project tuple.
-5. SigNoz queries verify complete, consistent tuples on fresh source spans.
-6. Agent Introspection scan verifies derived events with paired dashboard project fields.
-7. Run the upstream Codex quality gates and this repository's quality gates after each repository changes.
+Codex project attribution is unsupported in the installed release for the required CLI-and-Desktop scope. Codex telemetry remains ingested and unresolved. Agent Introspection must report that limitation accurately.
 
 ## Acceptance criteria
 
-- Direct Codex CLI and Codex Desktop both emit producer-owned canonical project tuples without external project-attribute configuration.
-- No process-global OTel project attributes exist.
-- No span trace contains conflicting tuples.
-- Non-Git and ambiguous contexts remain unresolved.
-- Fresh native telemetry is accepted by Agent Introspection and appears in project-filtered dashboard data.
-- The temporary launcher has been removed after verified native cutover.
+- An upstream-maintained, released Codex capability supports session-scoped project attribution for both CLI and Codex Desktop.
+- The capability satisfies the canonical schema without static process attributes or downstream inference.
+- No locally patched Codex binary, external launcher, proxy, or upgrade-time patch maintenance is required.
+- Fresh producer telemetry is validated end to end before any dashboard coverage claim.
