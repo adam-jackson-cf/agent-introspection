@@ -1,4 +1,5 @@
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -189,3 +190,202 @@ def test_analysis_generation_commands_require_preflight_and_emit_evidence(
         "projection_events": 1,
         "status": "activated",
     }
+
+
+def test_codex_launch_requires_project_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["codex", "launch"])
+
+    captured = capsys.readouterr()
+    assert raised.value.code == 2
+    assert captured.out == ""
+    assert "--project-metadata" in captured.err
+
+
+def test_codex_launch_validates_executable_delegates_command_and_emits_safe_evidence(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    metadata_path = tmp_path / "project.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "agent.project.id": "project-123",
+                "agent.project.name": "Private Project",
+                "agent.project.root": str(project_root),
+                "agent.project.kind": "non_git",
+            }
+        )
+    )
+    executable = tmp_path / "codex"
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
+    launched: list[tuple[tuple[str, ...], bool]] = []
+
+    def launch(command: tuple[str, ...], *, check: bool) -> subprocess.CompletedProcess[str]:
+        launched.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", launch)
+
+    assert (
+        main(
+            [
+                "codex",
+                "launch",
+                "--project-metadata",
+                str(metadata_path),
+                "--executable",
+                str(executable),
+                "exec",
+                "--model",
+                "gpt-5",
+                "--api-key",
+                "private-token; still-an-argument",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert launched == [
+        (
+            (
+                str(executable),
+                "-c",
+                'otel.span_attributes = { "agent.project.id" = "project-123", '
+                '"agent.project.name" = "Private Project", "agent.project.root" = '
+                f'"{project_root}", "agent.project.kind" = "non_git" }}',
+                "-C",
+                str(project_root),
+                "exec",
+                "--model",
+                "gpt-5",
+                "--api-key",
+                "private-token; still-an-argument",
+            ),
+            False,
+        )
+    ]
+    assert json.loads(captured.out) == {"command": "codex.launch", "status": "completed"}
+    assert captured.err == ""
+    assert "private-token" not in captured.out
+
+
+def test_codex_launch_omits_explicit_passthrough_separator(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    metadata_path = tmp_path / "project.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "agent.project.id": "project-123",
+                "agent.project.name": "Private Project",
+                "agent.project.root": str(project_root),
+                "agent.project.kind": "non_git",
+            }
+        )
+    )
+    executable = tmp_path / "codex"
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
+    launched: list[tuple[tuple[str, ...], bool]] = []
+
+    def launch(command: tuple[str, ...], *, check: bool) -> subprocess.CompletedProcess[str]:
+        launched.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", launch)
+
+    assert (
+        main(
+            [
+                "codex",
+                "launch",
+                "--project-metadata",
+                str(metadata_path),
+                "--executable",
+                str(executable),
+                "--",
+                "--strict-config",
+                "--version",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert launched == [
+        (
+            (
+                str(executable),
+                "-c",
+                'otel.span_attributes = { "agent.project.id" = "project-123", '
+                '"agent.project.name" = "Private Project", "agent.project.root" = '
+                f'"{project_root}", "agent.project.kind" = "non_git" }}',
+                "-C",
+                str(project_root),
+                "--strict-config",
+                "--version",
+            ),
+            False,
+        )
+    ]
+    assert json.loads(captured.out) == {"command": "codex.launch", "status": "completed"}
+    assert captured.err == ""
+
+
+def test_codex_launch_rejects_non_executable_requested_path(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "codex"
+    executable.write_text("not executable")
+
+    with pytest.raises(SystemExit) as raised:
+        main(
+            [
+                "codex",
+                "launch",
+                "--project-metadata",
+                str(tmp_path / "project.json"),
+                "--executable",
+                str(executable),
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert raised.value.code == 50
+    assert captured.out == ""
+    assert captured.err == "ValueError: Codex executable path is unavailable or not executable\n"
+
+
+def test_codex_launch_rejects_unresolvable_executable_name(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(
+            [
+                "codex",
+                "launch",
+                "--project-metadata",
+                str(tmp_path / "project.json"),
+                "--executable",
+                "agent-introspection-test-codex-executable-unavailable",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert raised.value.code == 50
+    assert captured.out == ""
+    assert captured.err == "ValueError: Codex executable is unavailable on PATH\n"
