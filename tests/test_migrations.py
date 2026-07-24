@@ -67,6 +67,7 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "attribution_reanalysis_facts",
         "session_context_events",
         "session_context_intervals",
+        "project_evidence_intervals",
     }
     assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
@@ -287,7 +288,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7, 8, 9, 10]
+        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM trend_evaluations").fetchone()[0] == 1
@@ -361,7 +362,7 @@ def test_review_lifecycle_telemetry_removal_preserves_sessions_and_installs_guar
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8, 9, 10]
+        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8, 9, 10, 11]
         assert connection.execute(
             "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
         ).fetchall() == [

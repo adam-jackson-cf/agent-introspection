@@ -14,7 +14,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from agent_introspection.source import HYDRATION_QUERIES, LOG_QUERY, TRACE_QUERY, ClickHouseClient
+from agent_introspection.source import (
+    HYDRATION_QUERIES,
+    LOG_QUERY,
+    PROJECT_EVIDENCE_QUERY,
+    TRACE_QUERY,
+    ClickHouseClient,
+)
 
 _REQUIRED_SOURCE_COLUMNS = {
     ("signoz_logs", "distributed_logs_v2"): frozenset(
@@ -238,6 +244,7 @@ def discover_source_schema(client: ClickHouseClient) -> dict[str, Any]:
     query_hashes = {
         "log": hashlib.sha256(LOG_QUERY.encode()).hexdigest(),
         "trace": hashlib.sha256(TRACE_QUERY.encode()).hexdigest(),
+        "project_evidence": hashlib.sha256(PROJECT_EVIDENCE_QUERY.encode()).hexdigest(),
         "hydration": {
             identity: hashlib.sha256(query.encode()).hexdigest()
             for identity, query in sorted(HYDRATION_QUERIES.items())

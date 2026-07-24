@@ -22,6 +22,10 @@ def test_documented_defaults_are_canonical() -> None:
     assert config.signoz.docker_context == "orbstack"
     assert config.signoz.docker_host == "unix:///Users/adamjackson/.orbstack/run/docker.sock"
     assert config.scheduler.interval_seconds == 3_600
+    assert config.attribution.project_roots == (
+        Path.home() / "Projects",
+        Path.home() / "orca/workspaces",
+    )
 
 
 def test_parse_config_expands_paths_and_preserves_explicit_values(
@@ -41,6 +45,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
                 "interval_seconds": 3_600,
                 "lease_seconds": 900,
             },
+            "attribution": {"project_roots": ["$INTROSPECTION_ROOT/projects"]},
         }
     )
 
@@ -49,6 +54,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
     assert config.signoz.compose_directory == tmp_path / "signoz"
     assert config.scheduler.interval_seconds == 3_600
     assert config.scheduler.lease_seconds == 900
+    assert config.attribution.project_roots == (tmp_path / "projects",)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +71,9 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
         ({"scheduler": {"interval_seconds": True}}, "must be a positive integer"),
         ({"scheduler": {"interval_seconds": 1_800}}, "must be exactly 3600 seconds"),
         ({"scheduler": {"timezone": "Mars/Olympus"}}, "must name an installed timezone"),
+        ({"attribution": {"project_roots": []}}, "must be a non-empty TOML list"),
+        ({"attribution": {"project_roots": ["relative/project"]}}, "must be an absolute path"),
+        ({"attribution": {"project_roots": [42]}}, "must be a non-empty path string"),
     ],
 )
 def test_invalid_configuration_fails_closed(document: dict[str, object], message: str) -> None:

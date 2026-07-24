@@ -8,6 +8,7 @@ import pytest
 from agent_introspection.identities import (
     IdentityError,
     build_conversation_thread_map,
+    canonical_git_project,
     canonical_task,
     canonical_turn,
     london_day,
@@ -86,6 +87,20 @@ def test_normalize_target_resolves_links_and_rejects_scope_escapes(tmp_path: Pat
         normalize_target(tmp_path / "elsewhere.py", project_root=root)
     assert normalize_target("src\\module.py", project_root=root) == "src/module.py"
     assert normalize_target(root, project_root=root) == "."
+
+
+def test_canonical_git_project_normalizes_existing_root_and_hashes_it(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+
+    project = canonical_git_project(root / ".")
+
+    assert project.kind == "git"
+    assert project.root == root
+    assert project.display_name == "project"
+    assert len(project.identity) == 68
+    with pytest.raises(IdentityError, match="directory"):
+        canonical_git_project(tmp_path / "missing")
 
 
 def test_london_calendar_days_follow_both_dst_boundaries() -> None:

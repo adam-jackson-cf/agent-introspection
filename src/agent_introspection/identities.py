@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -104,6 +105,19 @@ class ProjectIdentity:
     root: Path
     identity: str
     display_name: str | None = None
+
+
+def canonical_git_project(root: str | Path) -> ProjectIdentity:
+    """Construct the canonical Git project identity for an existing repository root."""
+
+    try:
+        normalized = Path(root).resolve(strict=True)
+    except OSError as exc:
+        raise IdentityError("Git project root must be an existing directory") from exc
+    if not normalized.is_dir():
+        raise IdentityError("Git project root must be a directory")
+    identity = "git:" + hashlib.sha256(b"git\0" + normalized.as_posix().encode()).hexdigest()
+    return ProjectIdentity("git", normalized, identity, normalized.name)
 
 
 def normalize_target(target: str | Path, *, project_root: str | Path) -> str:

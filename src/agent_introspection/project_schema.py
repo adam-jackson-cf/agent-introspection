@@ -17,6 +17,8 @@ class AgentProjectSchema:
     metadata_states: frozenset[str]
     kind_values: frozenset[str]
     dashboard_attribute_keys: dict[str, str]
+    derived_attribution_sources: frozenset[str]
+    prohibited_attribution_sources: frozenset[str]
 
 
 def _load_schema() -> AgentProjectSchema:
@@ -49,11 +51,45 @@ def _load_schema() -> AgentProjectSchema:
         or dashboard.get("name") != attribute_keys["name"]
     ):
         raise ProjectSchemaError("dashboard attributes must pair the project ID and name")
+    derived = data.get("derived_attribution")
+    if not isinstance(derived, dict):
+        raise ProjectSchemaError("derived attribution must be an object")
+    allowed_sources = derived.get("allowed_sources")
+    if not isinstance(allowed_sources, list) or set(allowed_sources) != {
+        "complete_span_tuple",
+        "immutable_session_context",
+        "git_validated_tool_workspace",
+    }:
+        raise ProjectSchemaError("derived attribution sources are invalid")
+    workspace_source = derived.get("git_validated_tool_workspace")
+    if (
+        not isinstance(workspace_source, dict)
+        or workspace_source.get("field_scope") != "tool_invocation"
+        or set(workspace_source.get("requires", []))
+        != {
+            "absolute_path",
+            "configured_project_collection",
+            "resolved_git_root",
+            "single_project_closed_interval",
+        }
+    ):
+        raise ProjectSchemaError("Git-validated tool workspace requirements are invalid")
+    prohibited_sources = data.get("prohibited_attribution_sources")
+    if not isinstance(prohibited_sources, list) or set(prohibited_sources) != {
+        "process_cwd",
+        "project_alias",
+        "unvalidated_path",
+        "prompt_content",
+        "thread_inference",
+    }:
+        raise ProjectSchemaError("prohibited attribution sources are invalid")
     return AgentProjectSchema(
         attribute_keys=attribute_keys,
         metadata_states=frozenset(states),
         kind_values=frozenset(kind),
         dashboard_attribute_keys={"id": attribute_keys["id"], "name": attribute_keys["name"]},
+        derived_attribution_sources=frozenset(allowed_sources),
+        prohibited_attribution_sources=frozenset(prohibited_sources),
     )
 
 

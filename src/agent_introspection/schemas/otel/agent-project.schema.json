@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "agent-project-otel",
-  "version": 1,
+  "version": 2,
   "scope": "span",
   "attributes": {
     "id": {
@@ -38,10 +38,27 @@
     "name": "agent.project.name",
     "paired": true
   },
+  "derived_attribution": {
+    "allowed_sources": [
+      "complete_span_tuple",
+      "immutable_session_context",
+      "git_validated_tool_workspace"
+    ],
+    "git_validated_tool_workspace": {
+      "field_scope": "tool_invocation",
+      "requires": [
+        "absolute_path",
+        "configured_project_collection",
+        "resolved_git_root",
+        "single_project_closed_interval"
+      ]
+    }
+  },
   "prohibited_attribution_sources": [
-    "cwd",
+    "process_cwd",
     "project_alias",
-    "path_heuristic",
+    "unvalidated_path",
+    "prompt_content",
     "thread_inference"
   ]
 }

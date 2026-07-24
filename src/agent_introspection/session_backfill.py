@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_introspection.identities import IdentityError, ProjectIdentity, normalize_target
+from agent_introspection.identities import IdentityError, canonical_git_project, normalize_target
 from agent_introspection.session_context import Producer, SessionContextEvent, spool_event
 
 SCAFFOLD_BASENAMES = frozenset(
@@ -177,10 +177,6 @@ def _event_id(producer: str, session_id: str, occurred_at: datetime, root: Path)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _project_id(root: Path) -> str:
-    return hashlib.sha256(b"git\0" + root.as_posix().encode()).hexdigest()
-
-
 def _iter_jsonl(roots: Iterable[Path]) -> Iterable[Path]:
     for root in roots:
         if root.exists():
@@ -260,7 +256,7 @@ def backfill(*, roots: Mapping[Producer, Iterable[Path]], inbox: Path) -> dict[s
             session_id,
             "session_start",
             occurred_at,
-            ProjectIdentity("git", root, _project_id(root), root.name),
+            canonical_git_project(root),
         )
         eligible += 1
         before = (inbox / f"{event.event_id}.json").exists()

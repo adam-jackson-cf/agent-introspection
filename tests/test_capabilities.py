@@ -15,7 +15,13 @@ from agent_introspection.capabilities import (
     schema_fingerprint,
 )
 from agent_introspection.database import connect_database
-from agent_introspection.source import HYDRATION_QUERIES, LOG_QUERY, TRACE_QUERY, ClickHouseClient
+from agent_introspection.source import (
+    HYDRATION_QUERIES,
+    LOG_QUERY,
+    PROJECT_EVIDENCE_QUERY,
+    TRACE_QUERY,
+    ClickHouseClient,
+)
 
 
 class SourceSchemaClient(ClickHouseClient):
@@ -160,7 +166,14 @@ def test_missing_required_column_fails_discovery() -> None:
 
 @pytest.mark.parametrize(
     "query_class",
-    ["log", "trace", "hydration.log_id", "hydration.trace_id", "hydration.call_id"],
+    [
+        "log",
+        "trace",
+        "project_evidence",
+        "hydration.log_id",
+        "hydration.trace_id",
+        "hydration.call_id",
+    ],
 )
 def test_each_extraction_query_class_participates_in_contract(
     monkeypatch: pytest.MonkeyPatch,
@@ -171,10 +184,15 @@ def test_each_extraction_query_class_participates_in_contract(
         monkeypatch.setattr(capabilities, "LOG_QUERY", LOG_QUERY + "\n-- contract mutation")
     elif query_class == "trace":
         monkeypatch.setattr(capabilities, "TRACE_QUERY", TRACE_QUERY + "\n-- contract mutation")
+    elif query_class == "project_evidence":
+        monkeypatch.setattr(
+            capabilities,
+            "PROJECT_EVIDENCE_QUERY",
+            PROJECT_EVIDENCE_QUERY + "\n-- contract mutation",
+        )
     else:
         identity = query_class.removeprefix("hydration.")
         queries: dict[str, str] = dict(HYDRATION_QUERIES)
         queries[identity] += "\n-- contract mutation"
         monkeypatch.setattr(capabilities, "HYDRATION_QUERIES", queries)
-
     assert schema_fingerprint(discover_source_schema(SourceSchemaClient())) != baseline

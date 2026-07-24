@@ -8,11 +8,13 @@ import pytest
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.source import (
     LOG_QUERY,
+    PROJECT_EVIDENCE_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
     SourceError,
     parse_duration_ms,
     parse_log_row,
+    parse_project_evidence_row,
     parse_trace_row,
     query_selected_ids,
 )
@@ -26,6 +28,7 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "attributes_string['duration_ms']" in LOG_QUERY
     assert "AS duration_ms" in LOG_QUERY
     assert "attributes_number['duration_ms']" not in LOG_QUERY
+    assert "AS producer" in LOG_QUERY
     for raw_key in ("prompt", "arguments", "output", "error.message", "body"):
         assert f"['{raw_key}']" not in LOG_QUERY
     assert "{start:DateTime64(9)}" in TRACE_QUERY
@@ -50,6 +53,10 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "maxIf(timestamp, has_correlation_session)" in TRACE_QUERY
     assert "source_correlation_started_at" in TRACE_QUERY
     assert "source_correlation_ended_at" in TRACE_QUERY
+    assert "AS tool_workspace" in PROJECT_EVIDENCE_QUERY
+    assert "isValidJSON(tool_payload)" in PROJECT_EVIDENCE_QUERY
+    assert "SELECT\n    timestamp,\n    id,\n    trace_id" in PROJECT_EVIDENCE_QUERY
+    assert "tool_payload" not in PROJECT_EVIDENCE_QUERY.split("FROM", 1)[0].split("SELECT", 1)[1]
 
 
 def test_trace_query_leaves_missing_mixed_and_duplicate_sessions_unresolved() -> None:
@@ -59,10 +66,10 @@ def test_trace_query_leaves_missing_mixed_and_duplicate_sessions_unresolved() ->
         "        has_correlation_session\n"
         "      ) = 1"
     )
-    assert TRACE_QUERY.count(unique_session) == 4
+    assert TRACE_QUERY.count(unique_session) == 3
     assert "correlation_session_id != '' AS has_correlation_session" in TRACE_QUERY
     assert "NULL\n    ) AS session_id" in TRACE_QUERY
-    assert "NULL\n    ) AS producer" in TRACE_QUERY
+    assert "uniqExactIf(correlation_producer, has_correlation_producer) = 1" in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
@@ -112,11 +119,38 @@ def test_log_parser_accepts_clickhouse_json_64_bit_integer_text() -> None:
     with pytest.raises(SourceError, match="unsigned integer text"):
         parse_log_row({"timestamp": "+1", "id": "log-1", "event_name": "codex.api_request"})
 
+    assert parsed.producer is None
+
 
 def test_log_parser_retains_tool_rows_without_event_name() -> None:
     parsed = parse_log_row({"timestamp": "1", "id": "log-1", "tool_name": "exec_command"})
     assert parsed.event_name == ""
     assert parsed.tool_name == "exec_command"
+
+
+def test_project_evidence_parser_requires_complete_allowlisted_metadata() -> None:
+    parsed = parse_project_evidence_row(
+        {
+            "timestamp": "1783695231067293000",
+            "id": "log-1",
+            "trace_id": "trace-1",
+            "producer": "codex-app-server",
+            "conversation_id": "conversation-1",
+            "tool_workspace": "/project",
+        }
+    )
+    assert parsed.producer == "codex-app-server"
+    assert parsed.tool_workspace == "/project"
+    with pytest.raises(SourceError, match="producer is invalid"):
+        parse_project_evidence_row(
+            {
+                "timestamp": "1",
+                "id": "log-1",
+                "producer": "unknown",
+                "conversation_id": "conversation-1",
+                "tool_workspace": "/project",
+            }
+        )
 
 
 def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() -> None:

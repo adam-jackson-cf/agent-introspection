@@ -12,10 +12,15 @@ from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from agent_introspection import scheduler
-from agent_introspection.attribution import direct_trace_attribution, resolve_attribution
+from agent_introspection.attribution import (
+    Attribution,
+    direct_trace_attribution,
+    resolve_attribution,
+)
 from agent_introspection.capabilities import (
     CapabilityError,
     discover_source_schema,
@@ -39,11 +44,25 @@ from agent_introspection.generations import (
 from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
+from agent_introspection.project_evidence import (
+    ConversationProjectInterval,
+    DirectProjectEvidence,
+    GitWorkspaceResolver,
+    ProjectEvidence,
+    ToolWorkspaceInvocation,
+    build_project_evidence,
+)
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.scheduler import recover_interrupted_scan_runs
 from agent_introspection.session_backfill import DEFAULT_ROOTS, backfill
 from agent_introspection.session_context import correlated_project, drain_inbox, inbox_path
-from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
+from agent_introspection.source import (
+    ClickHouseClient,
+    HydrationRow,
+    LogRow,
+    ProjectEvidenceRow,
+    TraceRow,
+)
 from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
     DerivedEvent,
@@ -346,19 +365,105 @@ def _hydrated_operations(rows: list[HydrationRow]) -> dict[str, Any]:
     return operations
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectEvidenceIndex:
+    direct: dict[str, ProjectIdentity]
+    intervals: dict[tuple[str, str], ConversationProjectInterval]
+
+    def attribution(
+        self,
+        *,
+        log_id: str | None,
+        producer: str | None,
+        conversation_id: str | None,
+        occurred_at: datetime,
+    ) -> Attribution:
+        direct = self.direct.get(log_id or "")
+        if direct is not None:
+            return Attribution(
+                direct.identity,
+                "git_validated_tool_workspace",
+                direct,
+            )
+        if producer is None or conversation_id is None:
+            return Attribution(None, "unresolved")
+        interval = self.intervals.get((producer, conversation_id))
+        if interval is None or occurred_at < interval.started_at or occurred_at > interval.ended_at:
+            return Attribution(None, "unresolved")
+        return Attribution(
+            interval.project.identity,
+            "git_validated_tool_workspace_interval",
+            interval.project,
+        )
+
+
+def _index_project_evidence(evidence: ProjectEvidence) -> _ProjectEvidenceIndex:
+    return _ProjectEvidenceIndex(
+        direct={item.log_id: item.project for item in evidence.direct},
+        intervals={(item.producer, item.conversation_id): item for item in evidence.intervals},
+    )
+
+
+def _build_project_evidence(
+    rows: list[ProjectEvidenceRow],
+    *,
+    project_roots: tuple[Path, ...],
+) -> ProjectEvidence:
+    invocations = (
+        ToolWorkspaceInvocation(
+            log_id=row.log_id,
+            producer=row.producer,
+            conversation_id=row.conversation_id,
+            occurred_at=datetime.fromtimestamp(row.timestamp_ns / 1_000_000_000, tz=UTC),
+            workspace=row.tool_workspace,
+        )
+        for row in rows
+    )
+    return build_project_evidence(
+        invocations,
+        resolver=GitWorkspaceResolver(project_roots=project_roots),
+    )
+
+
+def _event_attribution(
+    *,
+    trace: TraceRow | None,
+    evidence: _ProjectEvidenceIndex,
+    log_id: str | None,
+    producer: str | None,
+    conversation_id: str | None,
+    occurred_at: datetime,
+) -> Attribution:
+    direct = resolve_attribution(trace=trace)
+    if direct.project is not None:
+        return direct
+    return evidence.attribution(
+        log_id=log_id,
+        producer=producer,
+        conversation_id=conversation_id,
+        occurred_at=occurred_at,
+    )
+
+
 def _detector_events(
     logs: list[LogRow],
     traces: list[TraceRow],
     hydration: list[HydrationRow],
+    project_evidence: ProjectEvidence | None = None,
 ) -> tuple[list[DetectorEvent], dict[str, ProjectIdentity]]:
     by_trace, conversation_map = _trace_indexes(logs, traces)
     hydration_by_id = {row.log_id: row for row in hydration}
     operations = _hydrated_operations(hydration)
+    evidence = _index_project_evidence(project_evidence or ProjectEvidence((), ()))
     projects: dict[str, ProjectIdentity] = {}
     for source_trace in traces:
         attribution = direct_trace_attribution(source_trace)
         if attribution.project is not None:
             projects[attribution.project.identity] = attribution.project
+    for direct in evidence.direct.values():
+        projects[direct.identity] = direct
+    for interval in evidence.intervals.values():
+        projects[interval.project.identity] = interval.project
     events: list[DetectorEvent] = []
     mutation_tools = {"apply_patch", "write_file", "edit_file", "create_file"}
     for log in logs:
@@ -369,7 +474,15 @@ def _detector_events(
             conversation_id=log.conversation_id,
             conversation_to_thread=conversation_map,
         )
-        attribution = resolve_attribution(trace=trace)
+        occurred_at = datetime.fromtimestamp(log.timestamp_ns / 1_000_000_000, tz=UTC)
+        attribution = _event_attribution(
+            trace=trace,
+            evidence=evidence,
+            log_id=log.log_id,
+            producer=log.producer,
+            conversation_id=log.conversation_id,
+            occurred_at=occurred_at,
+        )
         project_id = attribution.project_id or f"unresolved:{task.canonical}"
         hydrated = hydration_by_id.get(log.log_id)
         operation = operations.get(log.log_id)
@@ -382,7 +495,7 @@ def _detector_events(
         events.append(
             DetectorEvent(
                 event_id=log.log_id,
-                timestamp=datetime.fromtimestamp(log.timestamp_ns / 1_000_000_000, tz=UTC),
+                timestamp=occurred_at,
                 project_id=project_id,
                 task_id=task.canonical,
                 event_name=event_name,
@@ -405,7 +518,14 @@ def _detector_events(
             conversation_id=trace.conversation_id,
             conversation_to_thread=conversation_map,
         )
-        trace_attribution = resolve_attribution(trace=trace)
+        trace_attribution = _event_attribution(
+            trace=trace,
+            evidence=evidence,
+            log_id=None,
+            producer=trace.producer,
+            conversation_id=trace.conversation_id,
+            occurred_at=trace.ended_at,
+        )
         project_id = trace_attribution.project_id or f"unresolved:{task.canonical}"
         events.append(
             DetectorEvent(
@@ -440,6 +560,60 @@ def _persist_projects(connection: sqlite3.Connection, projects: dict[str, Projec
                 (project.root / ".git").as_posix() if project.kind == "git" else None,
                 project.display_name,
                 now,
+            ),
+        )
+
+
+def _persist_project_evidence(
+    connection: sqlite3.Connection,
+    evidence: ProjectEvidence,
+) -> None:
+    direct_by_conversation: dict[tuple[str, str], list[DirectProjectEvidence]] = defaultdict(list)
+    for item in evidence.direct:
+        direct_by_conversation[(item.producer, item.conversation_id)].append(item)
+    created_at = _iso_now()
+    for interval in evidence.intervals:
+        anchors = sorted(
+            direct_by_conversation[(interval.producer, interval.conversation_id)],
+            key=lambda item: (item.occurred_at, item.log_id),
+        )
+        first = anchors[0]
+        last = anchors[-1]
+        started_at_ns = int(interval.started_at.timestamp() * 1_000_000_000)
+        ended_at_ns = int(interval.ended_at.timestamp() * 1_000_000_000)
+        evidence_id = _stable_id(
+            "git_validated_tool_workspace_interval",
+            interval.producer,
+            interval.conversation_id,
+            str(started_at_ns),
+            str(ended_at_ns),
+            interval.project.identity,
+            first.log_id,
+            last.log_id,
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO project_evidence_intervals (
+                evidence_id, producer, conversation_id, started_at_ns, ended_at_ns,
+                first_log_id, last_log_id, anchor_count, project_id, project_name,
+                project_root, project_kind, attribution_method, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                interval.producer,
+                interval.conversation_id,
+                started_at_ns,
+                ended_at_ns,
+                first.log_id,
+                last.log_id,
+                len(anchors),
+                interval.project.identity,
+                interval.project.display_name,
+                interval.project.root.as_posix(),
+                interval.project.kind,
+                "git_validated_tool_workspace_interval",
+                created_at,
             ),
         )
 
@@ -761,6 +935,17 @@ def reanalyse_attribution(
             end_bucket=end_bucket,
         )
     )
+    workspace_evidence = _build_project_evidence(
+        list(
+            source.project_evidence(
+                start_ns=start_ns,
+                end_ns=end_ns,
+                start_bucket=start_bucket,
+                end_bucket=end_bucket,
+            )
+        ),
+        project_roots=config.attribution.project_roots,
+    )
     traces = list(
         source.traces(start=start, end=end, start_bucket=start_bucket, end_bucket=end_bucket)
     )
@@ -779,7 +964,7 @@ def reanalyse_attribution(
                 end_bucket=end_bucket,
             )
         )
-    events, projects = _detector_events(logs, traces, hydration)
+    events, projects = _detector_events(logs, traces, hydration, workspace_evidence)
     token_baselines: dict[str, list[int]] = defaultdict(list)
     for event in events:
         if event.token_count is not None:
@@ -793,6 +978,7 @@ def reanalyse_attribution(
     try:
         connection.execute("BEGIN IMMEDIATE")
         _persist_projects(connection, projects)
+        _persist_project_evidence(connection, workspace_evidence)
         connection.execute(
             """
             INSERT INTO attribution_reanalysis_fact_sets (
@@ -953,6 +1139,7 @@ def run_scan(
     logs: list[LogRow] = []
     traces: list[TraceRow] = []
     hydration: list[HydrationRow] = []
+    workspace_evidence = ProjectEvidence((), ())
     records: list[ObservationRecord] = []
     trend_events: list[TrendEventRecord] = []
     context_events: tuple[DerivedEvent, ...] = ()
@@ -1046,6 +1233,21 @@ def run_scan(
                 error_class = "logs_query"
                 raise
             try:
+                workspace_evidence = _build_project_evidence(
+                    list(
+                        source.project_evidence(
+                            start_ns=start_ns,
+                            end_ns=end_ns,
+                            start_bucket=start_bucket,
+                            end_bucket=end_bucket,
+                        )
+                    ),
+                    project_roots=config.attribution.project_roots,
+                )
+            except BaseException:
+                error_class = "project_evidence_query"
+                raise
+            try:
                 start_dt = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
                 end_dt = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
                 traces = list(
@@ -1103,7 +1305,12 @@ def run_scan(
                 error_class = "hydration"
                 raise
             try:
-                events, projects = _detector_events(logs, traces, hydration)
+                events, projects = _detector_events(
+                    logs,
+                    traces,
+                    hydration,
+                    workspace_evidence,
+                )
                 token_baselines: dict[str, list[int]] = defaultdict(list)
                 for event in events:
                     if event.token_count is not None:
@@ -1123,6 +1330,7 @@ def run_scan(
                     records = [record for record in records if record.id not in existing_ids]
                 connection.execute("BEGIN IMMEDIATE")
                 _persist_projects(connection, projects)
+                _persist_project_evidence(connection, workspace_evidence)
                 if logs:
                     last_id = logs[-1].log_id
                 elif traces:
@@ -1343,6 +1551,8 @@ def run_scan(
             "trend_evaluations": len(trend_events),
             "session_context_events": len(context_events),
             "session_context_backfill": backfill_counts,
+            "project_evidence_direct": len(workspace_evidence.direct),
+            "project_evidence_intervals": len(workspace_evidence.intervals),
             "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
             "telemetry_delivered": telemetry_delivered,
             "telemetry_pending": pending,

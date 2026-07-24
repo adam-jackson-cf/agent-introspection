@@ -1132,6 +1132,54 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
             """,
         ),
     ),
+    Migration(
+        version=11,
+        name="add immutable project evidence intervals",
+        statements=(
+            """
+            CREATE TABLE project_evidence_intervals (
+                evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 64),
+                producer TEXT NOT NULL CHECK (
+                    producer IN ('codex-cli', 'codex-app-server')
+                ),
+                conversation_id TEXT NOT NULL,
+                started_at_ns INTEGER NOT NULL CHECK (started_at_ns >= 0),
+                ended_at_ns INTEGER NOT NULL CHECK (ended_at_ns >= started_at_ns),
+                first_log_id TEXT NOT NULL,
+                last_log_id TEXT NOT NULL,
+                anchor_count INTEGER NOT NULL CHECK (anchor_count > 0),
+                project_id TEXT NOT NULL REFERENCES project_identities(id),
+                project_name TEXT NOT NULL,
+                project_root TEXT NOT NULL,
+                project_kind TEXT NOT NULL CHECK (project_kind = 'git'),
+                attribution_method TEXT NOT NULL CHECK (
+                    attribution_method = 'git_validated_tool_workspace_interval'
+                ),
+                created_at TEXT NOT NULL,
+                UNIQUE (
+                    producer, conversation_id, started_at_ns, ended_at_ns,
+                    project_id, first_log_id, last_log_id
+                )
+            ) STRICT
+            """,
+            """
+            CREATE INDEX project_evidence_intervals_correlation_idx
+            ON project_evidence_intervals(producer, conversation_id, started_at_ns, ended_at_ns)
+            """,
+            """
+            CREATE TRIGGER project_evidence_intervals_no_update
+            BEFORE UPDATE ON project_evidence_intervals BEGIN
+                SELECT RAISE(ABORT, 'project evidence intervals are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER project_evidence_intervals_no_delete
+            BEFORE DELETE ON project_evidence_intervals BEGIN
+                SELECT RAISE(ABORT, 'project evidence intervals are immutable');
+            END
+            """,
+        ),
+    ),
 )
 
 

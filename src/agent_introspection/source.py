@@ -36,6 +36,11 @@ SELECT
     span_id,
     attributes_string['event.name'] AS event_name,
     attributes_string['conversation.id'] AS conversation_id,
+    multiIf(
+      resource.`service.name`::String = 'codex_cli_rs', 'codex-cli',
+      resource.`service.name`::String = 'codex-app-server', 'codex-app-server',
+      NULL
+    ) AS producer,
     attributes_string['call_id'] AS call_id,
     attributes_string['tool_name'] AS tool_name,
     attributes_string['success'] AS success_string,
@@ -58,6 +63,41 @@ WHERE timestamp > {start_ns:UInt64}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
   AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
+ORDER BY timestamp, id
+""".strip()
+
+
+PROJECT_EVIDENCE_QUERY = r"""
+WITH
+    coalesce(
+      nullIf(attributes_string['arguments'], ''),
+      nullIf(attributes_string['args'], ''),
+      attributes_string['argv']
+    ) AS tool_payload,
+    coalesce(
+      nullIf(JSONExtractString(tool_payload, 'cwd'), ''),
+      nullIf(JSONExtractString(tool_payload, 'workdir'), '')
+    ) AS tool_workspace
+SELECT
+    timestamp,
+    id,
+    trace_id,
+    multiIf(
+      resource.`service.name`::String = 'codex_cli_rs', 'codex-cli',
+      resource.`service.name`::String = 'codex-app-server', 'codex-app-server',
+      NULL
+    ) AS producer,
+    attributes_string['conversation.id'] AS conversation_id,
+    tool_workspace
+FROM signoz_logs.distributed_logs_v2
+WHERE timestamp > {start_ns:UInt64}
+  AND timestamp <= {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
+  AND attributes_string['tool_name'] != ''
+  AND attributes_string['conversation.id'] != ''
+  AND isValidJSON(tool_payload)
+  AND tool_workspace != ''
 ORDER BY timestamp, id
 """.strip()
 
@@ -85,7 +125,8 @@ WITH
       serviceName = 'oh-my-pi', attributes_string['sessionId'],
       attributes_string['session.id']
     ) AS correlation_session_id,
-    correlation_session_id != '' AS has_correlation_session
+    correlation_session_id != '' AS has_correlation_session,
+    correlation_producer IS NOT NULL AS has_correlation_producer
 SELECT
     trace_id,
     coalesce(
@@ -96,6 +137,17 @@ SELECT
       AS thread_id,
     multiIf(
       uniqExactIf(
+        attributes_string['conversation.id'],
+        attributes_string['conversation.id'] != ''
+      ) = 1,
+      anyIf(
+        attributes_string['conversation.id'],
+        attributes_string['conversation.id'] != ''
+      ),
+      NULL
+    ) AS conversation_id,
+    multiIf(
+      uniqExactIf(
         tuple(correlation_producer, correlation_session_id),
         has_correlation_session
       ) = 1,
@@ -103,11 +155,8 @@ SELECT
       NULL
     ) AS session_id,
     multiIf(
-      uniqExactIf(
-        tuple(correlation_producer, correlation_session_id),
-        has_correlation_session
-      ) = 1,
-      anyIf(correlation_producer, has_correlation_session),
+      uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      anyIf(correlation_producer, has_correlation_producer),
       NULL
     ) AS producer,
     nullIf(anyIf(attributes_string['{_PROJECT_ID}'], complete_project_metadata), '')
@@ -257,6 +306,19 @@ class LogRow:
     output_tokens: int | None
     reasoning_tokens: int | None
     prompt_length: int | None
+    producer: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectEvidenceRow:
+    """Allowlisted producer workspace evidence without raw tool content."""
+
+    timestamp_ns: int
+    log_id: str
+    trace_id: str | None
+    producer: str
+    conversation_id: str
+    tool_workspace: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +443,7 @@ def parse_log_row(data: Mapping[str, object]) -> LogRow:
         span_id=_optional_text(data.get("span_id")),
         event_name=event_name,
         conversation_id=_optional_text(data.get("conversation_id")),
+        producer=_optional_text(data.get("producer")),
         call_id=_optional_text(data.get("call_id")),
         tool_name=_optional_text(data.get("tool_name")),
         success_string=_optional_text(data.get("success_string")),
@@ -393,6 +456,30 @@ def parse_log_row(data: Mapping[str, object]) -> LogRow:
         output_tokens=_optional_int(data.get("output_tokens")),
         reasoning_tokens=_optional_int(data.get("reasoning_tokens")),
         prompt_length=_optional_int(data.get("prompt_length")),
+    )
+
+
+def parse_project_evidence_row(data: Mapping[str, object]) -> ProjectEvidenceRow:
+    timestamp = _optional_int(data.get("timestamp"))
+    if timestamp is None or timestamp < 0:
+        raise SourceError("timestamp must be an unsigned integer")
+    log_id = _optional_text(data.get("id"))
+    producer = _optional_text(data.get("producer"))
+    conversation_id = _optional_text(data.get("conversation_id"))
+    tool_workspace = _optional_text(data.get("tool_workspace"))
+    if log_id is None:
+        raise SourceError("id is required")
+    if producer not in {"codex-cli", "codex-app-server"}:
+        raise SourceError("project evidence producer is invalid")
+    if conversation_id is None or tool_workspace is None:
+        raise SourceError("project evidence requires conversation and workspace")
+    return ProjectEvidenceRow(
+        timestamp_ns=timestamp,
+        log_id=log_id,
+        trace_id=_optional_text(data.get("trace_id")),
+        producer=producer,
+        conversation_id=conversation_id,
+        tool_workspace=tool_workspace,
     )
 
 
@@ -568,6 +655,24 @@ class ClickHouseClient:
             },
         ):
             yield parse_log_row(row)
+
+    def project_evidence(
+        self, *, start_ns: int, end_ns: int, start_bucket: int, end_bucket: int
+    ) -> Iterator[ProjectEvidenceRow]:
+        """Extract only explicit producer workspace fields needed for attribution."""
+
+        if not (0 <= start_ns < end_ns and 0 <= start_bucket <= end_bucket):
+            raise ValueError("invalid project evidence bounds")
+        for row in self.query(
+            PROJECT_EVIDENCE_QUERY,
+            {
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "start_bucket": start_bucket,
+                "end_bucket": end_bucket,
+            },
+        ):
+            yield parse_project_evidence_row(row)
 
     def traces(
         self, *, start: datetime, end: datetime, start_bucket: int, end_bucket: int

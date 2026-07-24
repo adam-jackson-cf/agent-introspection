@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,22 +16,40 @@ from agent_introspection.capabilities import (
 from agent_introspection.config import AppConfig, DatabaseConfig, SchedulerConfig
 from agent_introspection.database import connect_database
 from agent_introspection.generations import GenerationError
+from agent_introspection.identities import ProjectIdentity
+from agent_introspection.project_evidence import (
+    ConversationProjectInterval,
+    DirectProjectEvidence,
+    ProjectEvidence,
+)
 from agent_introspection.scan import (
     PipelineStream,
+    _detector_events,
     _pipeline_snapshot_event,
     reanalyse_attribution,
     run_scan,
 )
-from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, SourceError, TraceRow
+from agent_introspection.source import (
+    ClickHouseClient,
+    HydrationRow,
+    LogRow,
+    ProjectEvidenceRow,
+    SourceError,
+    TraceRow,
+)
 from agent_introspection.telemetry import OPERATIONAL_SCOPE, DerivedEvent, enqueue_events
 
 
 class FakeSource(ClickHouseClient):
     def __init__(
-        self, logs: list[LogRow] | None = None, traces: list[TraceRow] | None = None
+        self,
+        logs: list[LogRow] | None = None,
+        traces: list[TraceRow] | None = None,
+        project_evidence: list[ProjectEvidenceRow] | None = None,
     ) -> None:
         self.log_rows = logs or []
         self.trace_rows = traces or []
+        self.project_evidence_rows = project_evidence or []
         self.log_reads = 0
         self.trace_reads = 0
         self.hydration_batch_sizes: list[int] = []
@@ -83,6 +102,9 @@ class FakeSource(ClickHouseClient):
     def logs(self, **_bounds: object) -> list[LogRow]:
         self.log_reads += 1
         return self.log_rows
+
+    def project_evidence(self, **_bounds: object) -> list[ProjectEvidenceRow]:
+        return self.project_evidence_rows
 
     def traces(self, **_bounds: object) -> list[TraceRow]:
         self.trace_reads += 1
@@ -198,14 +220,21 @@ def activate_test_generation(connection: Any, *, source_contract_fingerprint: st
     return generation_id
 
 
-def log_row(identifier: str, timestamp_ns: int, *, trace_id: str | None = None) -> LogRow:
+def log_row(
+    identifier: str,
+    timestamp_ns: int,
+    *,
+    trace_id: str | None = None,
+    conversation_id: str | None = None,
+    producer: str | None = None,
+) -> LogRow:
     return LogRow(
         timestamp_ns=timestamp_ns,
         log_id=identifier,
         trace_id=trace_id,
         span_id=None,
         event_name="codex.tool_result",
-        conversation_id=None,
+        conversation_id=conversation_id,
         call_id=identifier,
         tool_name="exec_command",
         success_string="false",
@@ -218,6 +247,7 @@ def log_row(identifier: str, timestamp_ns: int, *, trace_id: str | None = None) 
         output_tokens=None,
         reasoning_tokens=None,
         prompt_length=None,
+        producer=producer,
     )
 
 
@@ -442,6 +472,155 @@ def test_attribution_reanalysis_creates_isolated_facts_without_legacy_mutation(
     )
     assert finding_payload["trend_state"] == "isolated"
     assert finding_payload["occurrence_count"] == 1
+
+
+def test_detector_events_use_direct_and_closed_interval_workspace_evidence(
+    tmp_path: Path,
+) -> None:
+    project = ProjectIdentity("git", tmp_path, "a" * 64, "project")
+    first = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    last = first + timedelta(seconds=20)
+    evidence = ProjectEvidence(
+        direct=(
+            DirectProjectEvidence(
+                "first",
+                "codex-cli",
+                "conversation",
+                first,
+                tmp_path,
+                project,
+            ),
+            DirectProjectEvidence(
+                "last",
+                "codex-cli",
+                "conversation",
+                last,
+                tmp_path,
+                project,
+            ),
+        ),
+        intervals=(
+            ConversationProjectInterval(
+                "codex-cli",
+                "conversation",
+                first,
+                last,
+                project,
+            ),
+        ),
+    )
+    rows = [
+        log_row(
+            identifier,
+            int(timestamp.timestamp() * 1_000_000_000),
+            conversation_id="conversation",
+            producer="codex-cli",
+        )
+        for identifier, timestamp in (
+            ("before", first - timedelta(microseconds=1)),
+            ("first", first),
+            ("middle", first + timedelta(seconds=10)),
+            ("last", last),
+            ("after", last + timedelta(microseconds=1)),
+        )
+    ]
+
+    events, projects = _detector_events(rows, [], [], evidence)
+    by_id = {event.event_id: event for event in events}
+
+    assert by_id["before"].project_id.startswith("unresolved:")
+    assert by_id["first"].attribution_method == "git_validated_tool_workspace"
+    assert by_id["middle"].attribution_method == "git_validated_tool_workspace_interval"
+    assert by_id["last"].attribution_method == "git_validated_tool_workspace"
+    assert by_id["after"].project_id.startswith("unresolved:")
+    assert set(projects) == {project.identity}
+
+
+def test_reanalysis_persists_idempotent_immutable_workspace_intervals(
+    scan_environment: tuple[Any, AppConfig],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connection, config = scan_environment
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project = ProjectIdentity("git", project_root, "b" * 64, "project")
+    end = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    start = end - timedelta(hours=1)
+    first = end - timedelta(minutes=2)
+    last = end - timedelta(minutes=1)
+    evidence = ProjectEvidence(
+        direct=(
+            DirectProjectEvidence(
+                "first",
+                "codex-app-server",
+                "conversation",
+                first,
+                project_root,
+                project,
+            ),
+            DirectProjectEvidence(
+                "last",
+                "codex-app-server",
+                "conversation",
+                last,
+                project_root,
+                project,
+            ),
+        ),
+        intervals=(
+            ConversationProjectInterval(
+                "codex-app-server",
+                "conversation",
+                first,
+                last,
+                project,
+            ),
+        ),
+    )
+    source = FakeSource(
+        logs=[
+            log_row(
+                identifier,
+                int(timestamp.timestamp() * 1_000_000_000),
+                conversation_id="conversation",
+                producer="codex-app-server",
+            )
+            for identifier, timestamp in (
+                ("first", first),
+                ("middle", first + timedelta(seconds=10)),
+                ("last", last),
+            )
+        ]
+    )
+    monkeypatch.setattr(scan, "_build_project_evidence", lambda *_args, **_kwargs: evidence)
+    fingerprint = approve(connection, source)
+
+    for _ in range(2):
+        result = reanalyse_attribution(
+            connection,
+            config,
+            start_time=start,
+            end_time=end,
+            source_contract_fingerprint=fingerprint,
+            client=source,
+        )
+
+    observation_payloads = [
+        json.loads(str(row[0]))
+        for row in connection.execute(
+            """
+            SELECT payload_json FROM attribution_reanalysis_facts
+            WHERE fact_set_id = ? AND fact_kind = 'observation'
+            """,
+            (result["fact_set_id"],),
+        )
+    ]
+    assert observation_payloads
+    assert {payload["project_id"] for payload in observation_payloads} == {project.identity}
+    assert connection.execute("SELECT COUNT(*) FROM project_evidence_intervals").fetchone() == (1,)
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        connection.execute("UPDATE project_evidence_intervals SET anchor_count = 3")
 
 
 def test_attribution_reanalysis_deduplicates_repeated_source_events(
