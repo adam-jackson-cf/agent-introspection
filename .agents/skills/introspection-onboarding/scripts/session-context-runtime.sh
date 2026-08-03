@@ -1,5 +1,59 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
+
+contains_ascii_control() {
+  case $1 in
+    *[[:cntrl:]]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+resolve_git_common_dir() {
+  python3 - "$1" <<'PY'
+import subprocess
+import sys
+
+workspace = sys.argv[1]
+result = subprocess.run(
+    ["git", "-C", workspace, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    check=False,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+if result.returncode != 0 or not result.stdout.endswith(b"\n"):
+    print("Git common directory could not be resolved", file=sys.stderr)
+    raise SystemExit(1)
+
+common_dir = result.stdout[:-1]
+if not common_dir or any(byte < 32 or byte == 127 for byte in common_dir):
+    print("Git common directory must not contain ASCII control characters", file=sys.stderr)
+    raise SystemExit(1)
+
+sys.stdout.buffer.write(common_dir)
+PY
+}
+
+
+validate_occurred_at() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+from datetime import datetime
+
+timestamp = sys.argv[1]
+if not re.fullmatch(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+    timestamp,
+):
+    raise SystemExit(1)
+
+try:
+    datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+except ValueError:
+    raise SystemExit(1)
+PY
+}
+
 json_escape() {
   local value=$1
   value=${value//\\/\\\\}
@@ -27,36 +81,39 @@ case $producer in
   claude-code|codex-cli|codex-app-server|omp) ;;
   *) printf '%s\n' 'producer must be claude-code, codex-cli, codex-app-server, or omp' >&2; exit 64 ;;
 esac
-case $session_id in
-  ''|*$'\n'*|*$'\r'*) printf '%s\n' 'session ID must be a single non-empty line' >&2; exit 64 ;;
-esac
+if [ -z "$session_id" ] || contains_ascii_control "$session_id"; then
+  printf '%s\n' 'session ID must be non-empty and contain no ASCII control characters' >&2
+  exit 64
+fi
 case $event_type in
   session_start|workspace_changed|session_end) ;;
   *) printf '%s\n' 'event type must be session_start, workspace_changed, or session_end' >&2; exit 64 ;;
 esac
-case $occurred_at in
-  ????-??-??T??:??:??*Z|????-??-??T??:??:??*+??:??|????-??-??T??:??:??*-??:??) ;;
-  *) printf '%s\n' 'occurred-at must be an RFC 3339 timestamp with an offset' >&2; exit 64 ;;
-esac
+if contains_ascii_control "$occurred_at" || ! validate_occurred_at "$occurred_at"; then
+  printf '%s\n' 'occurred-at must be an RFC 3339 timestamp with an offset and no ASCII control characters' >&2
+  exit 64
+fi
+if contains_ascii_control "$workspace"; then
+  printf '%s\n' 'workspace must not contain ASCII control characters' >&2
+  exit 64
+fi
 case $workspace in
   /*) ;;
   *) printf '%s\n' 'workspace must be an absolute path' >&2; exit 64 ;;
 esac
 [ -d "$workspace" ] || { printf '%s\n' 'workspace must name an existing directory' >&2; exit 64; }
 
-common_dir=$(git -C "$workspace" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
-  printf '%s\n' 'Git common directory could not be resolved' >&2
-  exit 65
-}
+common_dir=$(resolve_git_common_dir "$workspace") || exit 65
 [ -d "$common_dir" ] || { printf '%s\n' 'Git common directory does not exist' >&2; exit 65; }
 case ${common_dir##*/} in
   .git) ;;
   *) printf '%s\n' 'Git common directory must be named .git' >&2; exit 65 ;;
 esac
 root=$(cd "$common_dir/.." && pwd -P)
-case $root in
-  *[[:cntrl:]]*) printf '%s\n' 'Git root must not contain control characters' >&2; exit 65 ;;
-esac
+if contains_ascii_control "$root"; then
+  printf '%s\n' 'Git root must not contain ASCII control characters' >&2
+  exit 65
+fi
 project_name=${root##*/}
 project_id=$(printf 'git\0%s' "$root" | shasum -a 256)
 project_id=${project_id%% *}

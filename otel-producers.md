@@ -1,174 +1,74 @@
 # Deterministic Session-Hook Attribution Design
 
-## Decision required
+## Canonical design
 
-Use a lightweight, harness-agnostic session-hook protocol to emit explicit project-context events. Shared deterministic code resolves, validates, emits, stores, and correlates context. Each producer supplies only hook scaffolding that maps its supported lifecycle payload into the shared protocol.
+One shared runtime owns project resolution and session-context event creation. Thin producer-specific hook adapters only normalize a native lifecycle envelope and invoke that runtime. They never infer project identity, scan artifacts, read prompts, retain arbitrary payloads, or make project-attribution decisions.
 
-No implementation begins until the canonical schema, event contract, and producer capability matrix are approved.
+The shared runtime accepts exactly:
 
-## Design goal
+```text
+PRODUCER SESSION_ID EVENT_TYPE OCCURRED_AT WORKSPACE
+```
 
-Increase project-attribution coverage without modifying harness binaries, using static process-level OpenTelemetry attributes, a proxy, or reconstructing project identity from arbitrary telemetry.
+`PRODUCER` is one of `claude-code`, `codex-cli`, `codex-app-server`, or `omp`. `SESSION_ID` is a non-empty single-line native producer session identifier. `EVENT_TYPE` is `session_start`, `workspace_changed`, or `session_end`. `OCCURRED_AT` is an RFC3339 timestamp with an offset. `WORKSPACE` is an existing absolute directory supplied by the native lifecycle envelope.
 
-## Safety model
-
-A hook event is authoritative only when the producer provides both:
-
-1. a stable producer session identifier that also appears in ingested agent telemetry; and
-2. the active workspace supplied directly by a session lifecycle payload.
-
-The shared integration resolves project identity from that hook-provided workspace. It never derives identity from raw span CWD fields, paths, prompts, aliases, tool commands, or historical trace patterns.
+An adapter fails closed before runtime invocation when any required authoritative value is absent, malformed, ambiguous, or unsupported. If a native envelope has no timestamp, an adapter may capture the synchronous UTC invocation time for `OCCURRED_AT`. It forwards no value beyond the five canonical arguments.
 
 ```mermaid
 flowchart LR
-    Producer["Producer hook scaffolding"] --> Payload["Canonical hook payload"]
-    Payload --> Runtime["Shared hook runtime"]
-    Runtime --> Resolver["Deterministic project resolver"]
-    Resolver --> Context["Project-context OTLP event"]
-    Context --> SigNoz["SigNoz"]
-    Producer --> Traces["Existing agent telemetry"]
-    Traces --> SigNoz
-    SigNoz --> Consumer["Agent Introspection context ledger"]
-    Consumer --> Dashboard["Project-filtered dashboard events"]
+    Native["Native lifecycle envelope"] --> Adapter["Thin producer hook adapter"]
+    Adapter --> Runtime["Shared session-context runtime"]
+    Runtime --> Git["Git common-directory resolution"]
+    Git --> Record["Canonical session-context record"]
+    Record --> Ledger["Agent Introspection context ledger"]
+    Telemetry["Existing agent telemetry"] --> Ledger
+    Ledger --> Dashboard["Project-filtered dashboard events"]
 ```
 
-## Shared deterministic runtime
+## Shared session-context runtime
 
-The shared runtime owns all behavior that must remain identical across harnesses.
+The shared runtime validates all five arguments, resolves `WORKSPACE` through Git common-directory semantics, and creates a complete canonical record or nothing. It rejects non-Git, inaccessible, ambiguous, malformed, or partial inputs. It retains no prompt, response, tool input, command, environment data, credential, or arbitrary native payload.
 
-### Hook input
-
-Each adapter provides a normalized payload containing:
-
-- producer identifier;
-- stable producer session identifier;
-- lifecycle event type;
-- event timestamp;
-- authoritative active workspace.
-
-The runtime rejects absent, malformed, or partial payloads. It records no prompt, response, tool input, command, or credential value.
-
-### Project resolution
-
-The runtime:
-
-1. resolves the hook-provided workspace through Git common-directory semantics;
-2. validates the complete canonical project tuple using the repository-owned schema;
-3. emits no project context for non-Git, ambiguous, invalid, or inaccessible workspaces;
-4. emits a complete tuple or nothing.
-
-### Context events
-
-The runtime emits one OTLP project-context event for each accepted lifecycle event. The planned schema amendment defines the canonical tuple, explicit session correlation key, producer identity, lifecycle event type, and interval semantics. This event is producer-hook evidence, not a copy of arbitrary trace fields.
-
-### Runtime distribution
-
-The onboarding skill owns the canonical runtime process code in its `scripts/` directory. It does not generate producer-specific implementations.
-
-During onboarding, the skill:
-
-1. identifies only producers with a supported authoritative lifecycle-hook payload;
-2. copies the versioned shared runtime into the managed local Agent Introspection hook directory;
-3. writes or updates the producer's hook configuration so it invokes that managed copy;
-4. records the installed runtime identity, producer adapter, hook target, and validation result.
-
-The hook configuration must never invoke a mutable skill source path, prompt fragment, shell alias, or ad hoc inline command. The managed runtime path is stable for the producer, while the onboarding skill remains the canonical distribution source.
-
-### Script and spool layout
-
-The skill-local distribution source is:
-
-```text
-introspection-onboarding/
-  scripts/
-    session-context-runtime.sh
-    adapters/
-      claude-code.sh
-      codex-cli.sh
-      codex-app-server.sh
-      omp.sh
-```
-
-`session-context-runtime.sh` accepts normalized arguments only: producer, session ID, lifecycle event, RFC3339 timestamp, and absolute workspace. It uses Bash and Git only. It resolves the Git common directory, derives a deterministic Git ID with `git hash-object --stdin`, and atomically creates one immutable JSON record in the managed local inbox:
-
-```text
-~/.local/share/agent-introspection/session-context-inbox/
-  <producer>--<session-id>--<event-id>.json
-```
-
-The runtime makes no network request, parses no arbitrary producer JSON, and does not invoke a shell alias. Producer adapters are responsible for converting native hook payloads into the normalized argument contract. An adapter that cannot obtain both authoritative session ID and workspace is unsupported.
-
-The existing Agent Introspection scheduler consumes inbox records, validates and persists interval transitions, then uses the existing SQLite OTLP outbox for duplicate-tolerant delivery.
-
-## Onboarding workflow replacement
-
-This replaces the producer-implementation workflow that configures or changes each producer to emit the project tuple directly.
-
-It does not replace stack health, producer capability discovery, canonical-schema validation, or end-to-end validation. Those workflows remain required.
-
-The replacement producer-onboarding workflow is:
-
-1. load the canonical session-hook event contract;
-2. classify the producer's lifecycle-hook payload and correlation capability;
-3. install the managed shared runtime from the onboarding skill;
-4. configure the producer adapter and hook target;
-5. start a fresh producer session;
-6. verify the hook context event and matching agent telemetry arrive with the explicit session correlation key;
-7. retain unsupported producers as unresolved.
-
-### Context ledger
-
-Agent Introspection stores accepted context events as immutable session intervals.
+The canonical record contains the event identity, producer, session ID, event type, occurred-at timestamp, and complete Git project tuple. It is written to the managed local session-context inbox. The context ledger consumes accepted records as immutable intervals:
 
 - `session_start` opens an interval.
 - `workspace_changed` closes the active interval and opens a replacement interval.
-- `session_end`, where supported, closes the interval.
-- An unknown or ambiguous workspace closes attribution rather than retaining the prior project.
-- Raw agent telemetry is associated only when it has the same producer identity and explicit session correlation key within an active interval.
+- `session_end` closes the active interval.
+- An unknown or invalid context closes attribution rather than retaining prior project context.
+- Agent telemetry is associated only when its producer and explicit session correlation key match an active interval.
 - No matching context interval leaves telemetry unresolved.
 
-## Producer-specific scaffolding
+The runtime is the only live project-attribution path. The legacy-project-attribution workflow remains the only legacy recovery workflow; it uses `project_evidence` and reanalysis.
 
-Only this layer varies by harness.
+## Managed installation and configuration
 
-| Producer | Adapter responsibility | Required capability |
-|---|---|---|
-| Claude Code | Map lifecycle-hook payload to the shared payload and invoke the runtime. | Session ID and workspace in session lifecycle hooks. |
-| Codex CLI | Map supported session hook payload to the shared payload and invoke the runtime. | Session ID and workspace exposed by a supported CLI lifecycle hook. |
-| Codex Desktop/app-server | Map supported thread/session lifecycle payload to the shared payload and invoke the runtime. | Thread/session ID and active workspace exposed by a supported hook or extension boundary. |
-| OMP | Map lifecycle-hook payload to the shared payload and invoke the runtime. | Session ID and workspace in session lifecycle hooks. |
-| Any future harness | Add a small adapter only. | The same two authoritative fields. |
+The onboarding skill distributes the shared runtime and producer adapters from its `scripts/` directory into a stable versioned managed directory under `$HOME/.local/lib/agent-introspection`. Hook configuration references only that managed adapter path, never a mutable skill source path, shell alias, prompt fragment, inline command, or static project value.
 
-A producer without both required fields is unsupported and remains unresolved. A prompt hook, text-only hook, or hook that cannot reach the shared runtime is not sufficient.
+Managed configuration is producer-specific:
 
-## Workspace changes
+| Producer | Managed native configuration | Native lifecycle mapping | Lifecycle limitation |
+|---|---|---|---|
+| Claude Code | Configure documented `SessionStart` and `SessionEnd` command hooks. | `SessionStart` → `session_start`; `SessionEnd` → `session_end`; use authoritative native session ID and absolute workspace. | No `workspace_changed` event. |
+| Codex | Configure the documented persistent `notify` hook. | `agent-turn-complete` with authoritative `thread-id` and absolute `cwd` → `session_start` on first observation; a changed normalized `cwd` → `workspace_changed`. | `session_end` is unsupported; a notification without the required values emits no event. |
+| OMP | Configure the native extension lifecycle callback. | Native `session_start` → `session_start`; native `session_shutdown` → `session_end`; use the extension session ID and absolute `cwd`. | No `workspace_changed` event. |
 
-Project changes are explicit lifecycle transitions, not trace-derived guesses.
+The Codex adapter invokes the runtime as `codex-cli` only when its authoritative native `notify` envelope satisfies the adapter contract. The shared runtime recognizes all canonical producer values; a producer identity is never inferred from telemetry, process state, request content, or workspace.
 
-- An adapter emits `workspace_changed` only when the harness lifecycle API reports a new active workspace.
-- Ordinary shell commands, tool events, CWD fields, and trace content do not create a transition.
-- Producers that cannot report workspace changes retain their declared session-start context until a supported end event or an explicit unknown-context transition.
-- Coverage reporting distinguishes stable session-start attribution from producers that support explicit workspace transitions.
+## Capability matrix
 
-## Schema and consumer changes
+| Producer | Required authoritative native fields | Accepted event types | Unsupported boundary |
+|---|---|---|---|
+| Claude Code | `hook_event_name`, session ID, absolute `cwd`; native timestamp when supplied | `SessionStart` → `session_start`; `SessionEnd` → `session_end` | Missing or malformed values; workspace changes are not reported. |
+| Codex | `type=agent-turn-complete`, `thread-id`, absolute `cwd`; valid native timestamp when supplied | First observation → `session_start`; changed normalized `cwd` → `workspace_changed` | `session_end` is unsupported; missing, malformed, ambiguous, or non-lifecycle notification values emit no event. |
+| OMP | extension session ID and absolute `cwd` | native `session_start` → `session_start`; native `session_shutdown` → `session_end` | Missing, malformed, or ambiguous values emit no event; workspace changes are not reported. |
 
-Before implementation, amend the canonical schema to define the session-hook context event and allow explicit producer-session correlation. The existing prohibition on raw `cwd`, path heuristic, alias, prompt, and unbounded thread inference remains intact.
-
-The consumer must validate the event, preserve interval provenance, reject conflicting context, and derive dashboard attribution only through the explicit event/session contract.
+An unsupported producer event remains unresolved. Prompt hooks, text-only hooks, telemetry CWD, paths, aliases, shell commands, static values, request content, and thread inference are not authoritative inputs.
 
 ## Validation
 
-1. Unit tests cover payload validation, Git resolution, interval transitions, conflict rejection, and unresolved behavior.
-2. Each supported producer has a fixture proving its adapter maps authoritative hook fields without prompts or ambient process assumptions.
-3. Fresh producer sessions prove a context event and matching raw telemetry arrive in SigNoz with the same explicit session key.
-4. Workspace-change-capable producers prove interval replacement without cross-project leakage.
-5. Dashboard events prove paired project identity from ledger-backed context only.
-6. Coverage reports separate hook-attributed, unresolved, invalid, and unsupported telemetry.
-
-## Acceptance criteria
-
-- Shared runtime behavior is identical for every producer.
-- Per-producer work is limited to lifecycle-payload adaptation and runtime invocation.
-- No harness binary patch, local fork, static process-level project configuration, proxy, or downstream project inference is required.
-- Every accepted attribution has explicit hook-event provenance and session correlation.
-- Unsupported or ambiguous producer contexts remain unresolved.
+1. Validate the native configuration syntax without triggering a producer or hook.
+2. Confirm each managed hook references only its managed adapter path.
+3. Confirm each adapter accepts only its documented lifecycle envelope and invokes the shared runtime with observable canonical argv.
+4. Start a fresh supported producer session and verify a context record and matching telemetry share the explicit producer/session correlation key.
+5. Verify supported workspace transitions create interval replacement without cross-project leakage.
+6. Verify unsupported, malformed, or incomplete native envelopes emit no context record and leave telemetry unresolved.
