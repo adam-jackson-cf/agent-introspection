@@ -24,15 +24,15 @@ occurred_at=$4
 workspace=$5
 
 case $producer in
-  codex-app-server) ;;
-  *) printf '%s\n' 'producer must be codex-app-server' >&2; exit 64 ;;
+  claude-code|codex-cli|codex-app-server|omp) ;;
+  *) printf '%s\n' 'producer must be claude-code, codex-cli, codex-app-server, or omp' >&2; exit 64 ;;
 esac
 case $session_id in
   ''|*$'\n'*|*$'\r'*) printf '%s\n' 'session ID must be a single non-empty line' >&2; exit 64 ;;
 esac
 case $event_type in
-  session_start|session_end) ;;
-  *) printf '%s\n' 'event type must be session_start or session_end' >&2; exit 64 ;;
+  session_start|workspace_changed|session_end) ;;
+  *) printf '%s\n' 'event type must be session_start, workspace_changed, or session_end' >&2; exit 64 ;;
 esac
 case $occurred_at in
   ????-??-??T??:??:??*Z|????-??-??T??:??:??*+??:??|????-??-??T??:??:??*-??:??) ;;

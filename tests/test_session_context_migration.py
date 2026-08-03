@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from agent_introspection.migrations import MIGRATIONS, apply_migrations
 
 
@@ -42,5 +44,24 @@ def test_session_context_producer_rebuild_preserves_rows_and_expands_enum(tmp_pa
             """,
             ("c" * 64, project_id),
         )
+        connection.execute(
+            """
+            INSERT INTO session_context_events VALUES (
+                ?, 'omp', 'session-2', 'workspace_changed',
+                '2026-01-02T00:01:00+00:00', ?, 'project', '/project', 'git'
+            )
+            """,
+            ("d" * 64, project_id),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO session_context_events VALUES (
+                    ?, 'omp', 'session-2', 'workspace_change',
+                    '2026-01-02T00:02:00+00:00', ?, 'project', '/project', 'git'
+                )
+                """,
+                ("e" * 64, project_id),
+            )
     finally:
         connection.close()

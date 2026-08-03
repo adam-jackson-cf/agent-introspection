@@ -58,9 +58,7 @@ from agent_introspection.scheduler import (
     scan_lease,
     schedule_status,
 )
-from agent_introspection.session_backfill import DEFAULT_ROOTS, backfill
 from agent_introspection.session_context import (
-    Producer,
     SessionContextError,
     inbox_path,
     parse_event,
@@ -661,21 +659,6 @@ def _session_context_hook(args: argparse.Namespace) -> dict[str, Any]:
     return {"event_id": event.event_id, "spooled": str(path)}
 
 
-def _session_context_backfill(args: argparse.Namespace) -> dict[str, object]:
-    config = load_config(_config_path(args.config))
-    roots: dict[Producer, tuple[Path, ...]] = {
-        "claude-code": tuple(
-            Path(root).expanduser() for root in (args.claude_root or DEFAULT_ROOTS["claude-code"])
-        ),
-        "codex-cli": tuple(
-            Path(root).expanduser() for root in (args.codex_root or DEFAULT_ROOTS["codex-cli"])
-        ),
-        "omp": tuple(Path(root).expanduser() for root in (args.omp_root or DEFAULT_ROOTS["omp"])),
-    }
-    directory = Path(args.inbox).expanduser() if args.inbox else inbox_path(config.database.path)
-    return backfill(roots=roots, inbox=directory)
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
@@ -692,11 +675,6 @@ def _parser() -> argparse.ArgumentParser:
     hook.add_argument(
         "--producer", choices=("claude-code", "codex-cli", "codex-app-server", "omp"), required=True
     )
-    backfill = session_context.add_parser("backfill")
-    backfill.add_argument("--claude-root", action="append")
-    backfill.add_argument("--codex-root", action="append")
-    backfill.add_argument("--omp-root", action="append")
-    backfill.add_argument("--inbox")
     hook.add_argument("--stdin", action="store_true")
     scan.add_argument("--scheduled", action="store_true")
 
@@ -782,8 +760,6 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "scan":
         return _scan(args)
     if args.command == "session-context":
-        if args.session_context_command == "backfill":
-            return _session_context_backfill(args)
         return _session_context_hook(args)
     if args.command == "analysis-generation":
         return _analysis_generation(args)

@@ -17,7 +17,7 @@ from agent_introspection.telemetry import DerivedEvent
 
 _EVENT_ID = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 Producer = Literal["claude-code", "codex-cli", "codex-app-server", "omp"]
-EventType = Literal["session_start", "session_end"]
+EventType = Literal["session_start", "workspace_changed", "session_end"]
 _OPEN_INTERVAL_QUERY = (
     "SELECT event_id FROM session_context_intervals "
     "WHERE producer = ? AND session_id = ? AND ended_at IS NULL"
@@ -110,7 +110,7 @@ def parse_event(value: object) -> SessionContextEvent:
     if producer not in ("claude-code", "codex-cli", "codex-app-server", "omp"):
         raise SessionContextError("producer is unsupported")
     event_type = _text(value["event_type"], "event_type")
-    if event_type not in ("session_start", "session_end"):
+    if event_type not in ("session_start", "workspace_changed", "session_end"):
         raise SessionContextError("event_type is unsupported")
     producer = cast(Producer, producer)
     agent = value["agent"]
@@ -189,11 +189,15 @@ def drain_inbox(connection: sqlite3.Connection, *, directory: Path) -> tuple[Der
     if not directory.exists():
         return ()
     events: list[DerivedEvent] = []
-    for path in sorted(directory.glob("*.json")):
+    pending: list[tuple[Path, SessionContextEvent]] = []
+    for path in directory.glob("*.json"):
         try:
-            event = parse_event(json.loads(path.read_text()))
+            pending.append((path, parse_event(json.loads(path.read_text()))))
         except (OSError, json.JSONDecodeError, SessionContextError):
             continue
+    for path, event in sorted(
+        pending, key=lambda item: (item[1].occurred_at, item[1].event_id, item[0].name)
+    ):
         existing = connection.execute(_SELECT_EVENT_CANONICAL_FIELDS, (event.event_id,)).fetchone()
         if existing is not None:
             if tuple(existing) == _canonical_event_fields(event):
@@ -233,6 +237,47 @@ def drain_inbox(connection: sqlite3.Connection, *, directory: Path) -> tuple[Der
                     event.project.kind,
                 ),
             )
+        elif event.event_type == "workspace_changed":
+            if open_row is None:
+                continue
+            connection.execute("SAVEPOINT workspace_changed_transition")
+            try:
+                connection.execute(
+                    _INSERT_EVENT,
+                    (
+                        event.event_id,
+                        event.producer,
+                        event.session_id,
+                        event.event_type,
+                        event.occurred_at.isoformat(),
+                        event.project.identity,
+                        event.project.display_name,
+                        event.project.root.as_posix(),
+                        event.project.kind,
+                    ),
+                )
+                connection.execute(
+                    _CLOSE_INTERVAL,
+                    (event.occurred_at.isoformat(), event.event_id, open_row[0]),
+                )
+                connection.execute(
+                    _INSERT_INTERVAL,
+                    (
+                        event.event_id,
+                        event.producer,
+                        event.session_id,
+                        event.occurred_at.isoformat(),
+                        event.project.identity,
+                        event.project.display_name,
+                        event.project.root.as_posix(),
+                        event.project.kind,
+                    ),
+                )
+            except sqlite3.Error:
+                connection.execute("ROLLBACK TO workspace_changed_transition")
+                connection.execute("RELEASE workspace_changed_transition")
+                continue
+            connection.execute("RELEASE workspace_changed_transition")
         else:
             if open_row is None:
                 continue
@@ -293,7 +338,7 @@ def correlated_project(
             "SELECT project_id, project_name, project_root, project_kind "
             "FROM session_context_intervals "
             "WHERE producer = ? AND session_id = ? AND started_at <= ? "
-            "AND (ended_at IS NULL OR ended_at >= ?)"
+            "AND (ended_at IS NULL OR ended_at > ?)"
         ),
         (producer, session_id, ended_at.isoformat(), started_at.isoformat()),
     ).fetchall()

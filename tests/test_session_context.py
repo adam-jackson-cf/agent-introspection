@@ -26,11 +26,12 @@ def _connection(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _event(root: Path, event_type: str, moment: datetime):
+def _event(root: Path, event_type: str, moment: datetime, *, event_id: str | None = None):
     project_id = hashlib.sha256(root.as_posix().encode()).hexdigest()
-    event_id = hashlib.sha256(
-        f"{event_type}:{moment.isoformat()}:{project_id}".encode()
-    ).hexdigest()
+    if event_id is None:
+        event_id = hashlib.sha256(
+            f"{event_type}:{moment.isoformat()}:{project_id}".encode()
+        ).hexdigest()
     return parse_event(
         {
             "event_id": event_id,
@@ -59,27 +60,79 @@ def test_context_parser_accepts_only_canonical_producers(tmp_path: Path, produce
     assert parse_event(payload).producer == producer
 
 
-def test_context_lifecycle_is_idempotent_immutable_and_correlates_exact_session(
+@pytest.mark.parametrize("event_type", ("session_start", "workspace_changed", "session_end"))
+def test_context_parser_accepts_exact_canonical_event_types(
+    tmp_path: Path, event_type: str
+) -> None:
+    assert (
+        parse_event(
+            event_payload(
+                _event(tmp_path / "project", event_type, datetime(2026, 1, 1, tzinfo=UTC))
+            )
+        ).event_type
+        == event_type
+    )
+
+
+def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projects(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "ledger.sqlite3"
-    root = tmp_path / "project"
-    root.mkdir()
+    first_root = tmp_path / "first-project"
+    second_root = tmp_path / "second-project"
+    first_root.mkdir()
+    second_root.mkdir()
     connection = _connection(database)
     try:
         start_at = datetime(2026, 1, 1, tzinfo=UTC)
-        start = _event(root, "session_start", start_at)
-        spool_event(start, directory=tmp_path / "inbox")
-        assert len(drain_inbox(connection, directory=tmp_path / "inbox")) == 1
-        assert drain_inbox(connection, directory=tmp_path / "inbox") == ()
-        project = correlated_project(
+        changed_at = start_at + timedelta(minutes=1)
+        start = _event(first_root, "session_start", start_at, event_id="f" * 64)
+        changed = _event(second_root, "workspace_changed", changed_at, event_id="0" * 64)
+        inbox = tmp_path / "inbox"
+        spool_event(start, directory=inbox)
+        spool_event(changed, directory=inbox)
+
+        accepted = drain_inbox(connection, directory=inbox)
+        assert [event.entity_id for event in accepted] == [start.event_id, changed.event_id]
+        assert len(accepted) == 2
+        assert drain_inbox(connection, directory=inbox) == ()
+        assert connection.execute(
+            """
+            SELECT event_id, started_at, ended_at, end_event_id, project_id
+            FROM session_context_intervals ORDER BY started_at
+            """
+        ).fetchall() == [
+            (
+                start.event_id,
+                start_at.isoformat(),
+                changed_at.isoformat(),
+                changed.event_id,
+                start.project.identity,
+            ),
+            (
+                changed.event_id,
+                changed_at.isoformat(),
+                None,
+                None,
+                changed.project.identity,
+            ),
+        ]
+        before = correlated_project(
             connection,
             producer="claude-code",
             session_id="session-1",
-            started_at=start_at,
-            ended_at=start_at + timedelta(seconds=1),
+            started_at=start_at + timedelta(seconds=1),
+            ended_at=changed_at - timedelta(seconds=1),
         )
-        assert project is not None and project.identity == start.project.identity
+        after = correlated_project(
+            connection,
+            producer="claude-code",
+            session_id="session-1",
+            started_at=changed_at,
+            ended_at=changed_at + timedelta(seconds=1),
+        )
+        assert before is not None and before.identity == start.project.identity
+        assert after is not None and after.identity == changed.project.identity
         assert (
             correlated_project(
                 connection,
@@ -92,6 +145,11 @@ def test_context_lifecycle_is_idempotent_immutable_and_correlates_exact_session(
         )
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("UPDATE session_context_events SET session_id = 'other'")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE session_context_intervals SET ended_at = ? WHERE event_id = ?",
+                (changed_at.isoformat(), start.event_id),
+            )
     finally:
         connection.close()
 
@@ -147,17 +205,41 @@ def test_reused_event_id_with_mismatched_canonical_record_remains_inbox_unresolv
 def test_malformed_and_conflicting_records_remain_unresolved(tmp_path: Path) -> None:
     database = tmp_path / "ledger.sqlite3"
     root = tmp_path / "project"
+    changed_root = tmp_path / "changed-project"
     root.mkdir()
+    changed_root.mkdir()
     connection = _connection(database)
     try:
         inbox = tmp_path / "inbox"
         start = _event(root, "session_start", datetime(2026, 1, 1, tzinfo=UTC))
+        missing_interval = _event(
+            changed_root,
+            "workspace_changed",
+            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+        )
+        spool_event(missing_interval, directory=inbox)
+        assert drain_inbox(connection, directory=inbox) == ()
+        assert (inbox / f"{missing_interval.event_id}.json").exists()
         spool_event(start, directory=inbox)
-        conflict = _event(root, "session_start", datetime(2026, 1, 1, 0, 1, tzinfo=UTC))
+        assert (
+            len(drain_inbox(connection, directory=inbox) + drain_inbox(connection, directory=inbox))
+            == 2
+        )
+
+        duplicate_path = inbox / f"{missing_interval.event_id}.json"
+        payload = event_payload(missing_interval)
+        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        assert drain_inbox(connection, directory=inbox) == ()
+        assert not duplicate_path.exists()
+        payload["session_id"] = "conflicting-session"
+        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        assert drain_inbox(connection, directory=inbox) == ()
+        assert duplicate_path.exists()
+        conflict = _event(root, "session_start", datetime(2026, 1, 1, 0, 2, tzinfo=UTC))
         spool_event(conflict, directory=inbox)
         (inbox / ("0" * 64 + ".json")).write_text("{}")
         drain_inbox(connection, directory=inbox)
-        assert connection.execute("SELECT COUNT(*) FROM session_context_events").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM session_context_events").fetchone()[0] == 2
         assert (inbox / ("0" * 64 + ".json")).exists()
     finally:
         connection.close()
@@ -173,5 +255,9 @@ def test_event_schema_rejects_missing_and_noncanonical_fields(tmp_path: Path) ->
         parse_event(payload)
     payload = event_payload(event)
     payload["event_id"] = hashlib.sha256(b"upper").hexdigest().upper()
+    with pytest.raises(SessionContextError):
+        parse_event(payload)
+    payload = event_payload(event)
+    payload["event_type"] = "workspace_change"
     with pytest.raises(SessionContextError):
         parse_event(payload)
