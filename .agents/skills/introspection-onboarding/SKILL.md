@@ -1,47 +1,44 @@
 ---
 name: "introspection-onboarding"
-description: "Onboard bounded Agent Introspection session-context capture from producer-owned artifacts."
+description: "Configure and validate bounded Agent Introspection project attribution; USE WHEN onboarding producers, mapping legacy telemetry, or verifying project attribution."
 ---
 
-# Workflow
+# Task
 
-### Step 1: Establish local telemetry health
+## Procedure
 
-**Purpose:** Prove the local SigNoz stack can receive and retain OTLP before configuring capture.
+- Select only the workflows required by the request; do not execute this index from top to bottom.
+- Load a linked workflow only when its stated operation applies.
+- Preserve explicit capability boundaries and leave unsupported attribution unresolved.
 
-**When:** Before first setup or any producer onboarding.
+## Workflow index
 
-**Actions:** Verify loopback-only UI and listener health, collector pipelines, synthetic trace/metric/log ingestion, and newly retained backend records. Stop at the first failed boundary without weakening security. Follow [stack bootstrap](references/stack-bootstrap-workflow.md).
+### Telemetry foundation
 
-### Step 2: Discover a native command-hook surface
+- [Stack bootstrap](references/stack-bootstrap-workflow.md): prove local SigNoz ingestion before producer onboarding or telemetry reimport.
+- [Canonical session-context contract](references/canonical-schema-workflow.md): resolve the authoritative event and project identity contract before creating or validating attribution.
 
-**Purpose:** Separate producers that can safely request bounded artifact backfill from scheduled capture.
+### Producer capture
 
-**When:** Before changing a producer configuration.
+- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle capabilities.
+- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks.
+- [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned hook runtime used by supported producers.
+- [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
 
-**Actions:** A hook may invoke only `agent-introspection session-context backfill` with no hook payload, prompt content, static project value, or telemetry CWD. The command reads only producer-owned session metadata and tool-target records under its configured roots and is idempotent. Configure a native local-command hook only when the installed producer configuration surface documents it; do not patch a binary or invent a setting. Follow [producer configuration](references/producer-implementation-workflow.md).
+### Historical attribution
 
-### Step 3: Configure the supported hook or retain scheduled capture
+- [Legacy project attribution](references/legacy-project-attribution-workflow.md): measure unmatched cohorts, resolve bounded authoritative evidence, reanalyse eligible history, and verify the active result.
 
-**Purpose:** Trigger bounded backfill after a safe lifecycle event when a documented local-command hook exists.
+### Verification and escalation
 
-**When:** After the producer capability boundary is recorded.
-
-**Actions:** Configure Claude Code `SessionStart` to invoke the backfill command. Configure Codex app-server only when its installed documented configuration surface, rather than an API request surface, binds a local command. Do not configure direct Codex CLI. Use an OMP extension lifecycle surface only when it natively and safely launches a local command without static project values; otherwise leave it to scheduled harvesting. Record every intentionally unsupported surface and its exact boundary.
-
-### Step 4: Validate configuration without triggering producers
-
-**Purpose:** Ensure changed configuration is syntactically valid while preserving lifecycle-only execution.
-
-**When:** After configuration authoring.
-
-**Actions:** Parse the producer configuration format without printing secrets. Do not run producers, hooks, backfill, scans, or telemetry queries while only authoring configuration. Scheduled harvesting remains the capture path for unsupported surfaces.
+- [End-to-end validation](references/end-to-end-validation-workflow.md): verify producer, ledger, source telemetry, and dashboard-facing identity correlation.
+- [Unresolved producer escalation](references/upstream-escalation-workflow.md): record missing native capabilities without adding inferred attribution.
 
 ## Output
 
-### Result Format
-
-- Enabled native producer hooks and their lifecycle events
-- Intentionally unsupported producer surfaces and exact boundaries
-- Configuration syntax-validation evidence
-- Scheduled-capture producers
+- Selected workflows and producer capability classifications
+- Baseline window, denominator, unmatched cohorts, and evidence provenance
+- Accepted and rejected attribution counts with rejection reasons
+- Reimport, generation, scan, scheduler, and end-to-end verification evidence
+- Before-and-after attribution percentages using the same denominator
+- Unsupported boundaries and unresolved risks

@@ -2,15 +2,13 @@
 
 ## Objective
 
-Record the missing native lifecycle capability without adding an inferred attribution path.
+Record the missing native lifecycle or attribution capability without adding an inferred attribution path.
 
-## Required actions
+## Guidance
 
-1. Identify whether authoritative session ID, absolute workspace, lifecycle event, or timestamp is unavailable.
-2. State that direct Codex CLI and OMP remain unresolved until their native lifecycle API provides both authoritative session ID and workspace.
-3. Specify the required normalized input contract for a future producer integration.
-4. Do not add static configuration, CWD, prompt, path, alias, process-state, or telemetry inference.
-
-## Done when
-
-- The unresolved boundary and missing producer capability are explicit.
+- Identify whether authoritative session ID, conversation key, absolute workspace, lifecycle timestamp, trace correlation, or bounded project evidence is unavailable.
+- State which producer remains unresolved and name the exact missing native surface.
+- Specify the required normalized input and correlation contract for a future producer integration.
+- Preserve unmatched telemetry as unresolved rather than assigning a static or inferred project.
+- Do not add static configuration, CWD, prompt, path, alias, process-state, generic hash, telemetry, or thread inference.
+- Complete this workflow when the unresolved boundary, affected producer, required upstream contract, and resulting coverage limit are explicit.
