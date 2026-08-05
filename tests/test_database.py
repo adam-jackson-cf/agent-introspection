@@ -39,6 +39,32 @@ def _scan(connection: sqlite3.Connection, scan_id: str = "scan-1") -> None:
     connection.commit()
 
 
+def _evidence(
+    connection: sqlite3.Connection,
+    observation_id: str,
+    *,
+    evidence_id: str = "evidence-1",
+    evidence_kind: str = "hydrated_log",
+    source_reference: str = "signoz-log:log-1",
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO evidence (
+            id, observation_id, evidence_kind, source_reference, redacted_content,
+            content_hash, correlation_status, created_at
+        ) VALUES (?, ?, ?, ?, NULL, ?, 'correlated', '2026-07-10T10:00:01+00:00')
+        """,
+        (
+            evidence_id,
+            observation_id,
+            evidence_kind,
+            source_reference,
+            "e" * 64,
+        ),
+    )
+    connection.commit()
+
+
 def _observation(
     observation_id: str,
     *,
@@ -67,10 +93,8 @@ def _observation(
             "attribution.method": "source",
             "correlation_id": "thread-1",
             "event_ids": ["event-1"],
-            "log_ids": ["log-1"],
             "producer": "codex-cli",
             "producer_surface": "cli",
-            "span_ids": ["span-1"],
         },
         created_at="2026-07-10T10:00:01+00:00",
     )
@@ -179,6 +203,14 @@ def test_observation_migration_creates_an_immutable_complete_manifest(tmp_path: 
         _scan(connection)
         observation = _observation("observation-1")
         persist_observations_and_watermark(connection, (observation,), _watermark(1_000))
+        _evidence(connection, observation.id)
+        _evidence(
+            connection,
+            observation.id,
+            evidence_id="evidence-2",
+            evidence_kind="source_reference",
+            source_reference="signoz-log:trace:0123456789abcdef0123456789abcdef",
+        )
 
         result = migrate_observations_to_canonical_activities(
             connection, migrated_at="2026-08-05T00:00:00+00:00"
@@ -198,7 +230,7 @@ def test_observation_migration_creates_an_immutable_complete_manifest(tmp_path: 
                 source_membership=CanonicalSourceMembership(
                     event_ids=("event-1",),
                     log_ids=("log-1",),
-                    span_ids=("span-1",),
+                    span_ids=("trace:0123456789abcdef0123456789abcdef",),
                 ),
                 operation_kind="shell",
                 target_kind="path",
@@ -208,6 +240,19 @@ def test_observation_migration_creates_an_immutable_complete_manifest(tmp_path: 
             ).id,
         )
         assert len(result.mapping_hash) == 64
+        expected_membership = CanonicalSourceMembership(
+            event_ids=("event-1",),
+            log_ids=("log-1",),
+            span_ids=("trace:0123456789abcdef0123456789abcdef",),
+        )
+        assert connection.execute(
+            """
+            SELECT id, source_membership_hash, source_membership_json
+            FROM canonical_activities
+            """
+        ).fetchall() == [
+            (result.activity_ids[0], expected_membership.hash, expected_membership.json)
+        ]
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM observation_activity_migration_manifest"
@@ -236,6 +281,8 @@ def test_observation_migration_rejects_ambiguous_activity_collisions(tmp_path: P
         first = _observation("observation-1")
         second = replace(first, id="observation-2")
         persist_observations_and_watermark(connection, (first, second), _watermark(1_000))
+        _evidence(connection, first.id, evidence_id="evidence-1")
+        _evidence(connection, second.id, evidence_id="evidence-2")
 
         with pytest.raises(DatabaseError, match="ambiguous canonical activity collisions"):
             migrate_observations_to_canonical_activities(
@@ -246,24 +293,58 @@ def test_observation_migration_rejects_ambiguous_activity_collisions(tmp_path: P
         connection.close()
 
 
-def test_observation_migration_rejects_missing_source_membership(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("event_ids", "evidence_kind", "source_reference", "error"),
+    (
+        (["event-1"], "unrecognized_kind", "signoz-log:log-1", "unrecognized evidence kind"),
+        (
+            ["event-1"],
+            "hydrated_log",
+            "other-log:log-1",
+            "unrecognized evidence source reference",
+        ),
+        (
+            ["event-1"],
+            "source_reference",
+            "other-log:log-1",
+            "unrecognized evidence source reference",
+        ),
+        ([""], "hydrated_log", "signoz-log:log-1", "invalid event_ids"),
+        (["event-1"], "hydrated_log", "signoz-log:", "invalid source identifier"),
+        (
+            ["event-1"],
+            "source_reference",
+            "signoz-log:trace:not-hex",
+            "invalid source identifier",
+        ),
+        ([], None, None, "no source membership"),
+    ),
+)
+def test_observation_migration_rejects_invalid_legacy_source_evidence(
+    tmp_path: Path,
+    event_ids: list[str],
+    evidence_kind: str | None,
+    source_reference: str | None,
+    error: str,
+) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
     try:
         _scan(connection)
+        base = _observation("observation-1")
         observation = replace(
-            _observation("observation-1"),
-            attributes={
-                "attribution.method": "source",
-                "correlation_id": "thread-1",
-                "event_ids": ["event-1"],
-                "log_ids": ["log-1"],
-                "producer": "codex-cli",
-                "producer_surface": "cli",
-            },
+            base,
+            attributes={**base.attributes, "event_ids": event_ids},
         )
         persist_observations_and_watermark(connection, (observation,), _watermark(1_000))
+        if evidence_kind is not None and source_reference is not None:
+            _evidence(
+                connection,
+                observation.id,
+                evidence_kind=evidence_kind,
+                source_reference=source_reference,
+            )
 
-        with pytest.raises(DatabaseError, match="invalid span_ids"):
+        with pytest.raises(DatabaseError, match=error):
             migrate_observations_to_canonical_activities(
                 connection, migrated_at="2026-08-05T00:00:00+00:00"
             )

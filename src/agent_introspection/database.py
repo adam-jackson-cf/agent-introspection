@@ -383,17 +383,53 @@ def _migration_ids(
     attributes: Mapping[str, object], name: str, observation_id: str
 ) -> tuple[str, ...]:
     value = attributes.get(name)
-    if (
-        not isinstance(value, list)
-        or not value
-        or any(not isinstance(item, str) or not item for item in value)
-    ):
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise DatabaseError(f"observation {observation_id!r} has invalid {name}")
     return tuple(value)
 
 
+def _migration_evidence_membership(
+    evidence_rows: Sequence[sqlite3.Row | tuple[object, ...]], observation_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    log_ids: list[str] = []
+    span_ids: list[str] = []
+    for evidence_kind, source_reference in evidence_rows:
+        if not isinstance(evidence_kind, str):
+            raise DatabaseError(f"observation {observation_id!r} has unrecognized evidence kind")
+        if not isinstance(source_reference, str):
+            raise DatabaseError(
+                f"observation {observation_id!r} has unrecognized evidence source reference"
+            )
+        if evidence_kind == "hydrated_log":
+            prefix = "signoz-log:"
+            if not source_reference.startswith(prefix):
+                raise DatabaseError(
+                    f"observation {observation_id!r} has unrecognized evidence source reference"
+                )
+            identifier = source_reference.removeprefix(prefix)
+            if not identifier:
+                raise DatabaseError(f"observation {observation_id!r} has invalid source identifier")
+            log_ids.append(identifier)
+            continue
+        if evidence_kind != "source_reference":
+            raise DatabaseError(f"observation {observation_id!r} has unrecognized evidence kind")
+        prefix = "signoz-log:trace:"
+        if not source_reference.startswith(prefix):
+            raise DatabaseError(
+                f"observation {observation_id!r} has unrecognized evidence source reference"
+            )
+        trace_id = source_reference.removeprefix(prefix)
+        if len(trace_id) != 32 or any(
+            character not in "0123456789abcdef" for character in trace_id
+        ):
+            raise DatabaseError(f"observation {observation_id!r} has invalid source identifier")
+        span_ids.append(f"trace:{trace_id}")
+    return tuple(log_ids), tuple(span_ids)
+
+
 def _observation_migration_activity(
     row: sqlite3.Row | tuple[object, ...],
+    evidence_rows: Sequence[sqlite3.Row | tuple[object, ...]],
 ) -> tuple[str, CanonicalActivity, CanonicalAttribution, str]:
     observation_id = str(row[0])
     try:
@@ -402,10 +438,14 @@ def _observation_migration_activity(
         raise DatabaseError(f"observation {observation_id!r} has invalid attributes_json") from exc
     if not isinstance(attributes, dict):
         raise DatabaseError(f"observation {observation_id!r} attributes must be an object")
+    log_ids, span_ids = _migration_evidence_membership(evidence_rows, observation_id)
+    event_ids = _migration_ids(attributes, "event_ids", observation_id)
+    if not (event_ids or log_ids or span_ids):
+        raise DatabaseError(f"observation {observation_id!r} has no source membership")
     membership = CanonicalSourceMembership(
-        event_ids=_migration_ids(attributes, "event_ids", observation_id),
-        log_ids=_migration_ids(attributes, "log_ids", observation_id),
-        span_ids=_migration_ids(attributes, "span_ids", observation_id),
+        event_ids=event_ids,
+        log_ids=log_ids,
+        span_ids=span_ids,
     )
     source_started_at_ns = _migration_int(row[8], "source_started_at_ns", observation_id)
     source_ended_at_ns = _migration_int(row[8], "source_ended_at_ns", observation_id)
@@ -478,7 +518,21 @@ def migrate_observations_to_canonical_activities(
     rows = connection.execute(
         f"SELECT {_OBSERVATION_COLUMNS} FROM observations ORDER BY id"
     ).fetchall()
-    candidates = tuple(_observation_migration_activity(row) for row in rows)
+    candidates = tuple(
+        _observation_migration_activity(
+            row,
+            connection.execute(
+                """
+                SELECT evidence_kind, source_reference
+                FROM evidence
+                WHERE observation_id = ?
+                ORDER BY id
+                """,
+                (str(row[0]),),
+            ).fetchall(),
+        )
+        for row in rows
+    )
     observation_ids = tuple(candidate[0] for candidate in candidates)
     activity_ids = tuple(candidate[1].id for candidate in candidates)
     if len(activity_ids) != len(set(activity_ids)):

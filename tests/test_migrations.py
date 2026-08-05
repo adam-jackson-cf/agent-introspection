@@ -36,6 +36,9 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         project_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(project_identities)")
         }
+        evidence_columns = {
+            str(row[1]): str(row[2]) for row in connection.execute("PRAGMA table_info(evidence)")
+        }
     finally:
         connection.close()
 
@@ -76,6 +79,16 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "canonical_rejections",
         "observation_activity_migration_manifest",
         "canonical_finding_membership",
+    }
+    assert evidence_columns == {
+        "id": "TEXT",
+        "observation_id": "TEXT",
+        "evidence_kind": "TEXT",
+        "source_reference": "TEXT",
+        "redacted_content": "TEXT",
+        "content_hash": "TEXT",
+        "correlation_status": "TEXT",
+        "created_at": "TEXT",
     }
     manifest_surface = {
         (entry.object_kind, entry.object_name) for entry in CANONICAL_CUTOVER_MANIFEST
