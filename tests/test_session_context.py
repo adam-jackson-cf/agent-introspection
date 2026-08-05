@@ -44,7 +44,7 @@ def _event(root: Path, event_type: str, moment: datetime, *, event_id: str | Non
                     "id": project_id,
                     "name": root.name,
                     "root": root.as_posix(),
-                    "kind": "non_git",
+                    "kind": "git",
                 }
             },
         }
@@ -154,7 +154,7 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
         connection.close()
 
 
-def test_reused_event_id_with_mismatched_canonical_record_remains_inbox_unresolved(
+def test_duplicate_conflicts_and_invalid_transitions_are_quarantined_with_rejections(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "ledger.sqlite3"
@@ -163,84 +163,91 @@ def test_reused_event_id_with_mismatched_canonical_record_remains_inbox_unresolv
     connection = _connection(database)
     try:
         inbox = tmp_path / "inbox"
-        event = _event(root, "session_start", datetime(2026, 1, 1, tzinfo=UTC))
-        spool_event(event, directory=inbox)
+        start = _event(root, "session_start", datetime(2026, 1, 1, tzinfo=UTC))
+        spool_event(start, directory=inbox)
         assert len(drain_inbox(connection, directory=inbox)) == 1
-        payload = event_payload(event)
-        duplicate_path = inbox / f"{event.event_id}.json"
-        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
-        assert drain_inbox(connection, directory=inbox) == ()
-        assert not duplicate_path.exists()
+
+        payload = event_payload(start)
         payload["session_id"] = "reused-id-different-session"
-        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
-        ledger_before = connection.execute(
-            """
-            SELECT producer, session_id, event_type, occurred_at, project_id,
-                   project_name, project_root, project_kind
-            FROM session_context_events WHERE event_id = ?
-            """,
-            (event.event_id,),
-        ).fetchone()
-        outbox_before = connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()
-
+        conflict_path = inbox / f"{start.event_id}.json"
+        conflict_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
         assert drain_inbox(connection, directory=inbox) == ()
+        assert not conflict_path.exists()
 
-        assert duplicate_path.exists()
-        assert (
-            connection.execute(
-                """
-            SELECT producer, session_id, event_type, occurred_at, project_id,
-                   project_name, project_root, project_kind
-            FROM session_context_events WHERE event_id = ?
-            """,
-                (event.event_id,),
-            ).fetchone()
-            == ledger_before
+        invalid = _event(
+            root,
+            "session_start",
+            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
-        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone() == outbox_before
+        spool_event(invalid, directory=inbox)
+        assert drain_inbox(connection, directory=inbox) == ()
+        assert not (inbox / f"{invalid.event_id}.json").exists()
+        assert sorted(path.suffix for path in (inbox / "quarantine").iterdir()) == [
+            ".json",
+            ".json",
+        ]
+        assert connection.execute(
+            "SELECT reason_code FROM canonical_rejections ORDER BY reason_code"
+        ).fetchall() == [("duplicate_conflict",), ("invalid_transition",)]
     finally:
         connection.close()
 
 
-def test_malformed_and_conflicting_records_remain_unresolved(tmp_path: Path) -> None:
+def test_ordered_replay_and_end_exclusive_correlation(tmp_path: Path) -> None:
     database = tmp_path / "ledger.sqlite3"
-    root = tmp_path / "project"
-    changed_root = tmp_path / "changed-project"
-    root.mkdir()
-    changed_root.mkdir()
+    first_root = tmp_path / "first-project"
+    second_root = tmp_path / "second-project"
+    first_root.mkdir()
+    second_root.mkdir()
     connection = _connection(database)
     try:
         inbox = tmp_path / "inbox"
-        start = _event(root, "session_start", datetime(2026, 1, 1, tzinfo=UTC))
-        missing_interval = _event(
-            changed_root,
-            "workspace_changed",
-            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
-        )
-        spool_event(missing_interval, directory=inbox)
-        assert drain_inbox(connection, directory=inbox) == ()
-        assert (inbox / f"{missing_interval.event_id}.json").exists()
+        start_at = datetime(2026, 1, 1, tzinfo=UTC)
+        changed_at = start_at + timedelta(minutes=1)
+        session_end = changed_at + timedelta(minutes=1)
+        start = _event(first_root, "session_start", start_at)
+        changed = _event(second_root, "workspace_changed", changed_at)
+        ended = _event(second_root, "session_end", session_end)
+        spool_event(ended, directory=inbox)
+        spool_event(changed, directory=inbox)
         spool_event(start, directory=inbox)
-        assert (
-            len(drain_inbox(connection, directory=inbox) + drain_inbox(connection, directory=inbox))
-            == 2
-        )
 
-        duplicate_path = inbox / f"{missing_interval.event_id}.json"
-        payload = event_payload(missing_interval)
-        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
-        assert drain_inbox(connection, directory=inbox) == ()
-        assert not duplicate_path.exists()
-        payload["session_id"] = "conflicting-session"
-        duplicate_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
-        assert drain_inbox(connection, directory=inbox) == ()
-        assert duplicate_path.exists()
-        conflict = _event(root, "session_start", datetime(2026, 1, 1, 0, 2, tzinfo=UTC))
-        spool_event(conflict, directory=inbox)
-        (inbox / ("0" * 64 + ".json")).write_text("{}")
-        drain_inbox(connection, directory=inbox)
-        assert connection.execute("SELECT COUNT(*) FROM session_context_events").fetchone()[0] == 2
-        assert (inbox / ("0" * 64 + ".json")).exists()
+        accepted = drain_inbox(connection, directory=inbox)
+        assert [event.entity_id for event in accepted] == [
+            start.event_id,
+            changed.event_id,
+            ended.event_id,
+        ]
+        assert (
+            correlated_project(
+                connection,
+                producer="claude-code",
+                session_id="session-1",
+                started_at=start_at,
+                ended_at=changed_at,
+            ).identity
+            == start.project.identity
+        )
+        assert (
+            correlated_project(
+                connection,
+                producer="claude-code",
+                session_id="session-1",
+                started_at=changed_at,
+                ended_at=session_end,
+            ).identity
+            == changed.project.identity
+        )
+        assert (
+            correlated_project(
+                connection,
+                producer="claude-code",
+                session_id="session-1",
+                started_at=session_end,
+                ended_at=session_end + timedelta(seconds=1),
+            )
+            is None
+        )
     finally:
         connection.close()
 
@@ -259,5 +266,9 @@ def test_event_schema_rejects_missing_and_noncanonical_fields(tmp_path: Path) ->
         parse_event(payload)
     payload = event_payload(event)
     payload["event_type"] = "workspace_change"
+    with pytest.raises(SessionContextError):
+        parse_event(payload)
+    payload = event_payload(event)
+    payload["agent"]["project"]["kind"] = "non_git"
     with pytest.raises(SessionContextError):
         parse_event(payload)
