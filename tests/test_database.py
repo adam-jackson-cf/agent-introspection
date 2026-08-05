@@ -94,7 +94,7 @@ def _observation(
             "correlation_id": "thread-1",
             "event_ids": ["event-1"],
             "producer": "codex-cli",
-            "producer_surface": "cli",
+            "producer_surface": "codex-cli",
         },
         created_at="2026-07-10T10:00:01+00:00",
     )
@@ -116,7 +116,7 @@ def _canonical_activity(
 ) -> CanonicalActivity:
     return CanonicalActivity(
         producer="codex-cli",
-        producer_surface="cli",
+        producer_surface="codex-cli",
         correlation_id="thread-1",
         source_started_at_ns=1_000,
         source_ended_at_ns=2_000,
@@ -131,6 +131,44 @@ def _canonical_activity(
         normalized_failure_class="exit_1",
         created_at="2026-08-05T00:00:00+00:00",
     )
+
+
+@pytest.mark.parametrize(
+    ("producer", "producer_surface", "valid"),
+    (
+        ("codex-cli", "codex-cli", True),
+        ("codex-app-server", "codex-app", True),
+        ("codex-app-server", "codex-app-server", True),
+        ("omp", "omp", True),
+        ("claude-code", "claude-code", True),
+        ("codex-cli", "cli", False),
+        ("cli", "cli", False),
+        ("codex-cli", "codex-app", False),
+        ("codex-app-server", "codex-cli", False),
+        ("omp", "claude-code", False),
+        ("claude-code", "omp", False),
+    ),
+)
+def test_canonical_activity_accepts_only_exact_producer_surface_pairs(
+    producer: str, producer_surface: str, valid: bool
+) -> None:
+    if valid:
+        activity = replace(
+            _canonical_activity(),
+            producer=producer,
+            producer_surface=producer_surface,
+        )
+        assert (activity.producer, activity.producer_surface) == (
+            producer,
+            producer_surface,
+        )
+    else:
+        with pytest.raises(ValueError, match="canonical activity fields are invalid"):
+            replace(
+                _canonical_activity(),
+                producer=producer,
+                producer_surface=producer_surface,
+            )
 
 
 def _unresolved_attribution(reason_code: str = "missing_workspace") -> CanonicalAttribution:
@@ -220,7 +258,7 @@ def test_observation_migration_creates_an_immutable_complete_manifest(tmp_path: 
         assert result.activity_ids == (
             CanonicalActivity(
                 producer="codex-cli",
-                producer_surface="cli",
+                producer_surface="codex-cli",
                 correlation_id="thread-1",
                 source_started_at_ns=1_000,
                 source_ended_at_ns=1_000,

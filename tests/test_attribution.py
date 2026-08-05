@@ -24,7 +24,7 @@ def _connection(path: Path) -> sqlite3.Connection:
 def _activity(moment: datetime, *, event_id: str = "event-1") -> CanonicalActivity:
     return CanonicalActivity(
         producer="claude-code",
-        producer_surface="claude-code-hooks",
+        producer_surface="claude-code",
         correlation_id="session-1",
         source_started_at_ns=int(moment.timestamp() * 1_000_000_000),
         source_ended_at_ns=int(moment.timestamp() * 1_000_000_000),

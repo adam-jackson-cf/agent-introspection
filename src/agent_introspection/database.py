@@ -16,6 +16,16 @@ from typing import Any
 from agent_introspection.identities import canonical_activity_id
 from agent_introspection.migrations import apply_migrations
 
+_CANONICAL_PRODUCER_SURFACE_PAIRS = frozenset(
+    {
+        ("codex-cli", "codex-cli"),
+        ("codex-app-server", "codex-app"),
+        ("codex-app-server", "codex-app-server"),
+        ("omp", "omp"),
+        ("claude-code", "claude-code"),
+    }
+)
+
 
 class DatabaseError(RuntimeError):
     """A database operation could not satisfy its safety contract."""
@@ -144,8 +154,7 @@ class CanonicalActivity:
 
     def __post_init__(self) -> None:
         if (
-            self.producer not in {"claude-code", "codex-cli", "codex-app-server", "omp"}
-            or not self.producer_surface
+            (self.producer, self.producer_surface) not in _CANONICAL_PRODUCER_SURFACE_PAIRS
             or not self.correlation_id
             or self.source_started_at_ns < 0
             or self.source_ended_at_ns < self.source_started_at_ns
