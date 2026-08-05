@@ -8,10 +8,11 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,7 @@ def _usage() -> int:
 def _reject_duplicate_authoritative_keys(
     pairs: list[tuple[str, Any]],
 ) -> dict[str, Any]:
-    authoritative_keys = {"type", "thread-id", "cwd", "timestamp"}
+    authoritative_keys = {"type", "thread-id", "thread.id", "thread_id", "cwd", "timestamp"}
     payload: dict[str, Any] = {}
     for key, value in pairs:
         if key in authoritative_keys:
@@ -43,9 +44,10 @@ def _reject_duplicate_authoritative_keys(
 
 def _timestamp(payload: dict[str, Any]) -> str:
     value = payload.get("timestamp")
-    if value is None:
-        return datetime.now(UTC).isoformat()
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        value,
+    ):
         raise HookInputError
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -65,6 +67,8 @@ def _envelope(argument: str) -> tuple[str, str, str]:
         raise HookInputError
     session_id = payload.get("thread-id")
     workspace = payload.get("cwd")
+    if "thread.id" in payload or "thread_id" in payload:
+        raise HookInputError
     if (
         not isinstance(session_id, str)
         or not session_id
@@ -73,9 +77,10 @@ def _envelope(argument: str) -> tuple[str, str, str]:
         or not isinstance(workspace, str)
         or not workspace
         or not os.path.isabs(workspace)
+        or not os.path.isdir(workspace)
     ):
         raise HookInputError
-    return session_id, os.path.realpath(workspace), _timestamp(payload)
+    return session_id, workspace, _timestamp(payload)
 
 
 def _state_path(directory: Path, session_id: str) -> Path:

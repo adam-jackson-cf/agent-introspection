@@ -41,8 +41,8 @@ def _load_schema() -> AgentProjectSchema:
     if not isinstance(states, list) or set(states) != {"absent", "complete", "invalid"}:
         raise ProjectSchemaError("metadata states must be absent, complete, and invalid")
     kind = attributes["kind"].get("enum")
-    if not isinstance(kind, list) or set(kind) != {"git", "non_git"}:
-        raise ProjectSchemaError("project kind must be git or non_git")
+    if not isinstance(kind, list) or set(kind) != {"git"}:
+        raise ProjectSchemaError("project kind must be git")
     dashboard = data.get("dashboard_attributes")
     if (
         not isinstance(dashboard, dict)

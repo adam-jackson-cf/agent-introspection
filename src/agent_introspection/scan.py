@@ -283,37 +283,21 @@ def _bounds(connection: sqlite3.Connection, end_ns: int) -> tuple[int, int, int,
 def _correlated_trace_project(
     connection: sqlite3.Connection, trace: TraceRow
 ) -> ProjectIdentity | None:
-    if (
-        trace.producer not in {"codex-cli", "codex-app-server", "omp", "claude-code"}
-        or trace.session_id is None
-        or trace.source_correlation_started_at is None
-        or trace.source_correlation_ended_at is None
-    ):
+    correlation = trace.correlation
+    if correlation is None:
         return None
     return correlated_project(
         connection,
-        producer=trace.producer,
-        session_id=trace.session_id,
-        started_at=trace.source_correlation_started_at,
-        ended_at=trace.source_correlation_ended_at,
+        producer=correlation.producer,
+        session_id=correlation.correlation_id,
+        started_at=correlation.source_event_timestamp,
+        ended_at=correlation.source_event_timestamp,
     )
 
 
-def _trace_indexes(
-    logs: list[LogRow], traces: list[TraceRow]
-) -> tuple[dict[str, TraceRow], dict[str, str]]:
-    by_trace = {trace.trace_id: trace for trace in traces}
-    candidates: dict[str, set[str]] = defaultdict(set)
-    for log in logs:
-        trace = by_trace.get(log.trace_id or "")
-        if log.conversation_id and trace is not None and trace.thread_id:
-            candidates[log.conversation_id].add(trace.thread_id)
-    conversation_map = {
-        conversation: next(iter(thread_ids))
-        for conversation, thread_ids in candidates.items()
-        if len(thread_ids) == 1
-    }
-    return by_trace, conversation_map
+def _trace_indexes(logs: list[LogRow], traces: list[TraceRow]) -> dict[str, TraceRow]:
+    del logs
+    return {trace.trace_id: trace for trace in traces}
 
 
 def _shortlisted_log_ids(logs: list[LogRow], by_trace: dict[str, TraceRow]) -> list[str]:
@@ -337,7 +321,11 @@ def _shortlisted_log_ids(logs: list[LogRow], by_trace: dict[str, TraceRow]) -> l
             task_hint = (
                 trace.thread_id
                 if trace is not None and trace.thread_id is not None
-                else log.conversation_id or log.trace_id or log.log_id
+                else (
+                    trace.correlation.correlation_id
+                    if trace is not None and trace.correlation is not None
+                    else log.trace_id or log.log_id
+                )
             )
             tool_groups[(task_hint, log.tool_name)].append(log.log_id)
     for identifiers in tool_groups.values():
@@ -374,7 +362,7 @@ class _ProjectEvidenceIndex:
         *,
         log_id: str | None,
         producer: str | None,
-        conversation_id: str | None,
+        correlation_id: str | None,
         occurred_at: datetime,
     ) -> Attribution:
         direct = self.direct.get(log_id or "")
@@ -384,9 +372,9 @@ class _ProjectEvidenceIndex:
                 "git_validated_tool_workspace",
                 direct,
             )
-        if producer is None or conversation_id is None:
+        if producer is None or correlation_id is None:
             return Attribution(None, "unresolved")
-        interval = self.intervals.get((producer, conversation_id))
+        interval = self.intervals.get((producer, correlation_id))
         if interval is None or occurred_at < interval.started_at or occurred_at > interval.ended_at:
             return Attribution(None, "unresolved")
         return Attribution(
@@ -429,18 +417,20 @@ def _event_attribution(
     trace: TraceRow | None,
     evidence: _ProjectEvidenceIndex,
     log_id: str | None,
-    producer: str | None,
-    conversation_id: str | None,
-    occurred_at: datetime,
 ) -> Attribution:
     direct = resolve_attribution(trace=trace)
     if direct.project is not None:
         return direct
+    correlation = trace.correlation if trace is not None else None
+    if correlation is None:
+        return Attribution(None, "unresolved")
+    if log_id is not None and log_id not in correlation.source_log_ids:
+        return Attribution(None, "unresolved")
     return evidence.attribution(
         log_id=log_id,
-        producer=producer,
-        conversation_id=conversation_id,
-        occurred_at=occurred_at,
+        producer=correlation.producer,
+        correlation_id=correlation.correlation_id,
+        occurred_at=correlation.source_event_timestamp,
     )
 
 
@@ -450,7 +440,7 @@ def _detector_events(
     hydration: list[HydrationRow],
     project_evidence: ProjectEvidence | None = None,
 ) -> tuple[list[DetectorEvent], dict[str, ProjectIdentity]]:
-    by_trace, conversation_map = _trace_indexes(logs, traces)
+    by_trace = _trace_indexes(logs, traces)
     hydration_by_id = {row.log_id: row for row in hydration}
     operations = _hydrated_operations(hydration)
     evidence = _index_project_evidence(project_evidence or ProjectEvidence((), ()))
@@ -470,17 +460,14 @@ def _detector_events(
         task = canonical_task(
             trace_id=log.trace_id or log.log_id,
             thread_id=trace.thread_id if trace else None,
-            conversation_id=log.conversation_id,
-            conversation_to_thread=conversation_map,
+            conversation_id=None,
+            conversation_to_thread={},
         )
         occurred_at = datetime.fromtimestamp(log.timestamp_ns / 1_000_000_000, tz=UTC)
         attribution = _event_attribution(
             trace=trace,
             evidence=evidence,
             log_id=log.log_id,
-            producer=log.producer,
-            conversation_id=log.conversation_id,
-            occurred_at=occurred_at,
         )
         project_id = attribution.project_id or f"unresolved:{task.canonical}"
         hydrated = hydration_by_id.get(log.log_id)
@@ -514,16 +501,13 @@ def _detector_events(
         task = canonical_task(
             trace_id=trace.trace_id,
             thread_id=trace.thread_id,
-            conversation_id=trace.conversation_id,
-            conversation_to_thread=conversation_map,
+            conversation_id=None,
+            conversation_to_thread={},
         )
         trace_attribution = _event_attribution(
             trace=trace,
             evidence=evidence,
             log_id=None,
-            producer=trace.producer,
-            conversation_id=trace.conversation_id,
-            occurred_at=trace.ended_at,
         )
         project_id = trace_attribution.project_id or f"unresolved:{task.canonical}"
         events.append(

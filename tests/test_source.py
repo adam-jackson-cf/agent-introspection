@@ -15,6 +15,7 @@ from agent_introspection.source import (
     parse_duration_ms,
     parse_log_row,
     parse_project_evidence_row,
+    parse_source_activity_correlation,
     parse_trace_row,
     query_selected_ids,
 )
@@ -37,39 +38,30 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
         assert f"attributes_string['{key}']" in TRACE_QUERY
     assert "attributes_string['cwd']" not in TRACE_QUERY
     assert "project_metadata_state" in TRACE_QUERY
-    assert (
-        "uniqExactIf(\n"
-        "        tuple(correlation_producer, correlation_session_id),\n"
-        "        has_correlation_session\n"
-        "      ) = 1" in TRACE_QUERY
-    )
-    assert "serviceName = 'codex_cli_rs', 'codex-cli'" in TRACE_QUERY
-    assert "serviceName = 'codex-app-server', 'codex-app-server'" in TRACE_QUERY
-    assert "serviceName = 'oh-my-pi', 'omp'" in TRACE_QUERY
-    assert "serviceName = 'claude-code', 'claude-code'" in TRACE_QUERY
-    assert "serviceName = 'oh-my-pi', attributes_string['sessionId']" in TRACE_QUERY
+    assert "attributes_string['thread.id']" in TRACE_QUERY
+    assert "attributes_string['thread_id']" in TRACE_QUERY
+    assert "attributes_string['gen_ai.conversation.id']" in TRACE_QUERY
     assert "attributes_string['session.id']" in TRACE_QUERY
-    assert "minIf(timestamp, has_correlation_session)" in TRACE_QUERY
-    assert "maxIf(timestamp, has_correlation_session)" in TRACE_QUERY
-    assert "source_correlation_started_at" in TRACE_QUERY
-    assert "source_correlation_ended_at" in TRACE_QUERY
+    assert "attributes_string['sessionId']" not in TRACE_QUERY
+    assert "native_correlation_id" in TRACE_QUERY
+    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 1" in TRACE_QUERY
+    assert "correlation_session_id" not in TRACE_QUERY
+    assert "AS correlation_id" in TRACE_QUERY
+    assert "AS producer_surface" in TRACE_QUERY
+    assert "AS source_event_timestamp" in TRACE_QUERY
+    assert "arraySort(groupUniqArray(spanID)) AS source_span_ids" in TRACE_QUERY
     assert "AS tool_workspace" in PROJECT_EVIDENCE_QUERY
     assert "isValidJSON(tool_payload)" in PROJECT_EVIDENCE_QUERY
     assert "SELECT\n    timestamp,\n    id,\n    trace_id" in PROJECT_EVIDENCE_QUERY
     assert "tool_payload" not in PROJECT_EVIDENCE_QUERY.split("FROM", 1)[0].split("SELECT", 1)[1]
 
 
-def test_trace_query_leaves_missing_mixed_and_duplicate_sessions_unresolved() -> None:
-    unique_session = (
-        "uniqExactIf(\n"
-        "        tuple(correlation_producer, correlation_session_id),\n"
-        "        has_correlation_session\n"
-        "      ) = 1"
-    )
-    assert TRACE_QUERY.count(unique_session) == 3
-    assert "correlation_session_id != '' AS has_correlation_session" in TRACE_QUERY
-    assert "NULL\n    ) AS session_id" in TRACE_QUERY
-    assert "uniqExactIf(correlation_producer, has_correlation_producer) = 1" in TRACE_QUERY
+def test_trace_query_rejects_missing_multiple_and_conflicting_native_correlations() -> None:
+    assert "arrayJoin(" in TRACE_QUERY
+    assert "[attributes_string['thread.id'], attributes_string['thread_id']]" in TRACE_QUERY
+    assert "native_correlation_id != '' AS has_native_correlation" in TRACE_QUERY
+    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 1" in TRACE_QUERY
+    assert "anyIf(native_correlation_id, has_native_correlation)" in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
@@ -168,25 +160,52 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
     assert parsed.ended_at.tzinfo is UTC
 
 
-def test_trace_parser_preserves_source_correlation_interval() -> None:
+def test_trace_parser_returns_canonical_source_activity_correlation() -> None:
     parsed = parse_trace_row(
         {
             "trace_id": "trace-1",
             "started_at": "2026-07-10 14:53:47.565735000",
             "ended_at": "2026-07-10 14:53:48.565735000",
-            "source_correlation_started_at": "2026-07-10 14:53:47.765735000",
-            "source_correlation_ended_at": "2026-07-10 14:53:48.365735000",
+            "producer": "omp",
+            "producer_surface": "omp",
+            "correlation_id": "conversation-1",
+            "source_event_timestamp": "2026-07-10 14:53:47.765735000",
+            "source_span_ids": ["span-1"],
             "total_tokens": "123",
             "tool_calls": "2",
             "project_metadata_state": "absent",
         }
     )
-    assert parsed.source_correlation_started_at == datetime(
+    assert parsed.correlation is not None
+    assert parsed.correlation.producer == "omp"
+    assert parsed.correlation.producer_surface == "omp"
+    assert parsed.correlation.correlation_id == "conversation-1"
+    assert parsed.correlation.source_event_timestamp == datetime(
         2026, 7, 10, 14, 53, 47, 765735, tzinfo=UTC
     )
-    assert parsed.source_correlation_ended_at == datetime(
-        2026, 7, 10, 14, 53, 48, 365735, tzinfo=UTC
-    )
+    assert parsed.correlation.source_span_ids == ("span-1",)
+
+
+@pytest.mark.parametrize(
+    "change, error",
+    [
+        ({"correlation_id": None}, "fields must be present together"),
+        ({"correlation_id": ["thread-a", "thread-b"]}, "optional text value"),
+        ({"producer_surface": "codex-app-server"}, "producer surface is invalid"),
+        ({"source_span_ids": ["span-2", "span-1"]}, "sorted unique"),
+    ],
+)
+def test_source_activity_correlation_fails_closed(change: dict[str, object], error: str) -> None:
+    data: dict[str, object] = {
+        "producer": "codex-cli",
+        "producer_surface": "codex-cli",
+        "correlation_id": "thread-1",
+        "source_event_timestamp": "2026-07-10 14:53:47.765735000",
+        "source_span_ids": ["span-1"],
+    }
+    data.update(change)
+    with pytest.raises(SourceError, match=error):
+        parse_source_activity_correlation(data)
 
 
 def test_trace_parser_requires_complete_normalized_agent_project_metadata() -> None:

@@ -122,13 +122,26 @@ WITH
       NULL
     ) AS correlation_producer,
     multiIf(
-      serviceName = 'oh-my-pi', attributes_string['sessionId'],
-      attributes_string['session.id']
-    ) AS correlation_session_id,
-    correlation_session_id != '' AS has_correlation_session,
+      serviceName = 'codex_cli_rs', 'codex-cli',
+      serviceName = 'codex-app-server', 'codex-app-server',
+      serviceName = 'oh-my-pi', 'omp',
+      serviceName = 'claude-code', 'claude-code',
+      NULL
+    ) AS correlation_producer_surface,
+    arrayJoin(
+      multiIf(
+        serviceName IN ('codex_cli_rs', 'codex-app-server'),
+        [attributes_string['thread.id'], attributes_string['thread_id']],
+        serviceName = 'oh-my-pi',
+        [attributes_string['gen_ai.conversation.id']],
+        [attributes_string['session.id']]
+      )
+    ) AS native_correlation_id,
+    native_correlation_id != '' AS has_native_correlation,
     correlation_producer IS NOT NULL AS has_correlation_producer
 SELECT
     trace_id,
+    arraySort(groupUniqArray(spanID)) AS source_span_ids,
     coalesce(
       nullIf(anyIf(attributes_string['turn.id'], attributes_string['turn.id'] != ''), ''),
       nullIf(anyIf(attributes_string['turn_id'], attributes_string['turn_id'] != ''), '')
@@ -147,15 +160,23 @@ SELECT
       NULL
     ) AS conversation_id,
     multiIf(
-      uniqExactIf(
-        tuple(correlation_producer, correlation_session_id),
-        has_correlation_session
-      ) = 1,
-      anyIf(correlation_session_id, has_correlation_session),
+      uniqExactIf(native_correlation_id, has_native_correlation) = 1
+        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      anyIf(native_correlation_id, has_native_correlation),
       NULL
-    ) AS session_id,
+    ) AS correlation_id,
     multiIf(
-      uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      uniqExactIf(
+        tuple(correlation_producer, correlation_producer_surface),
+        has_correlation_producer
+      ) = 1
+        AND uniqExactIf(native_correlation_id, has_native_correlation) = 1,
+      anyIf(correlation_producer_surface, has_correlation_producer),
+      NULL
+    ) AS producer_surface,
+    multiIf(
+      uniqExactIf(native_correlation_id, has_native_correlation) = 1
+        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
       anyIf(correlation_producer, has_correlation_producer),
       NULL
     ) AS producer,
@@ -186,21 +207,11 @@ SELECT
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
     multiIf(
-      uniqExactIf(
-        tuple(correlation_producer, correlation_session_id),
-        has_correlation_session
-      ) = 1,
-      minIf(timestamp, has_correlation_session),
+      uniqExactIf(native_correlation_id, has_native_correlation) = 1
+        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      minIf(timestamp, has_native_correlation),
       NULL
-    ) AS source_correlation_started_at,
-    multiIf(
-      uniqExactIf(
-        tuple(correlation_producer, correlation_session_id),
-        has_correlation_session
-      ) = 1,
-      maxIf(timestamp, has_correlation_session),
-      NULL
-    ) AS source_correlation_ended_at,
+    ) AS source_event_timestamp,
     sumIf(attributes_number['codex.usage.total_tokens'],
           mapContains(attributes_number, 'codex.usage.total_tokens')) AS total_tokens,
     countIf(attributes_string['tool_name'] != '') AS tool_calls
@@ -334,11 +345,20 @@ class TraceRow:
     ended_at: datetime
     total_tokens: int
     tool_calls: int
-    conversation_id: str | None = None
-    session_id: str | None = None
-    producer: str | None = None
-    source_correlation_started_at: datetime | None = None
-    source_correlation_ended_at: datetime | None = None
+    correlation: SourceActivityCorrelation | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceActivityCorrelation:
+    """Canonical native source correlation and allowlisted source provenance."""
+
+    producer: str
+    producer_surface: str
+    correlation_id: str
+    source_event_timestamp: datetime
+    source_event_ids: tuple[str, ...]
+    source_log_ids: tuple[str, ...]
+    source_span_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,10 +399,71 @@ def _optional_timestamp(value: object) -> datetime | None:
     try:
         timestamp = datetime.fromisoformat(str(value))
     except ValueError as exc:
-        raise SourceError("trace correlation timestamps must be ISO-8601 values") from exc
+        raise SourceError("source event timestamps must be ISO-8601 values") from exc
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp.astimezone(UTC)
+
+
+_PRODUCER_SURFACES: Mapping[str, str] = {
+    "codex-cli": "codex-cli",
+    "codex-app-server": "codex-app-server",
+    "omp": "omp",
+    "claude-code": "claude-code",
+}
+_PROVENANCE_FIELDS = ("source_event_ids", "source_log_ids", "source_span_ids")
+
+
+def _provenance_ids(data: Mapping[str, object], field: str) -> tuple[str, ...]:
+    value = data.get(field, ())
+    if not isinstance(value, (list, tuple)):
+        raise SourceError(f"{field} must be an array of non-empty strings")
+    identifiers = tuple(value)
+    if any(not isinstance(identifier, str) or not identifier for identifier in identifiers):
+        raise SourceError(f"{field} must be an array of non-empty strings")
+    if identifiers != tuple(sorted(set(identifiers))):
+        raise SourceError(f"{field} must contain sorted unique identifiers")
+    return identifiers
+
+
+def parse_source_activity_correlation(
+    data: Mapping[str, object],
+) -> SourceActivityCorrelation | None:
+    """Parse the sole canonical source-correlation representation."""
+
+    fields = ("producer", "producer_surface", "correlation_id", "source_event_timestamp")
+    present = tuple(data.get(field) is not None for field in fields)
+    if not any(present):
+        return None
+    if not all(present):
+        raise SourceError("source correlation fields must be present together")
+    producer = _optional_text(data.get("producer"))
+    producer_surface = _optional_text(data.get("producer_surface"))
+    correlation_id = _optional_text(data.get("correlation_id"))
+    source_event_timestamp = _optional_timestamp(data.get("source_event_timestamp"))
+    if producer is None:
+        raise SourceError("source correlation producer is invalid")
+    producer_surface_for_producer = _PRODUCER_SURFACES.get(producer)
+    if producer_surface_for_producer is None:
+        raise SourceError("source correlation producer is invalid")
+    if producer_surface != producer_surface_for_producer:
+        raise SourceError("source correlation producer surface is invalid")
+    if correlation_id is None:
+        raise SourceError("source correlation ID is required")
+    if source_event_timestamp is None:
+        raise SourceError("source event timestamp is required")
+    provenance = tuple(_provenance_ids(data, field) for field in _PROVENANCE_FIELDS)
+    if not any(provenance):
+        raise SourceError("source correlation requires allowlisted provenance identifiers")
+    return SourceActivityCorrelation(
+        producer=producer,
+        producer_surface=producer_surface,
+        correlation_id=correlation_id,
+        source_event_timestamp=source_event_timestamp,
+        source_event_ids=provenance[0],
+        source_log_ids=provenance[1],
+        source_span_ids=provenance[2],
+    )
 
 
 def _optional_int(value: object) -> int | None:
@@ -505,16 +586,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     ended = ended.astimezone(UTC)
     if ended < started:
         raise SourceError("trace timestamps must be ordered")
-    source_correlation_started_at = _optional_timestamp(data.get("source_correlation_started_at"))
-    source_correlation_ended_at = _optional_timestamp(data.get("source_correlation_ended_at"))
-    if (source_correlation_started_at is None) != (source_correlation_ended_at is None):
-        raise SourceError("trace correlation timestamps must be present together")
-    if (
-        source_correlation_started_at is not None
-        and source_correlation_ended_at is not None
-        and source_correlation_ended_at < source_correlation_started_at
-    ):
-        raise SourceError("trace correlation timestamps must be ordered")
+    correlation = parse_source_activity_correlation(data)
     total_tokens = _optional_int(data.get("total_tokens"))
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
@@ -548,11 +620,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         ended_at=ended,
         total_tokens=total_tokens,
         tool_calls=tool_calls,
-        conversation_id=_optional_text(data.get("conversation_id")),
-        session_id=_optional_text(data.get("session_id")),
-        producer=_optional_text(data.get("producer")),
-        source_correlation_started_at=source_correlation_started_at,
-        source_correlation_ended_at=source_correlation_ended_at,
+        correlation=correlation,
     )
 
 

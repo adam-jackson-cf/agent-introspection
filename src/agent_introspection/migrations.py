@@ -1277,6 +1277,216 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
             """,
         ),
     ),
+    Migration(
+        version=13,
+        name="add canonical activity ingestion ledger",
+        statements=(
+            """
+            CREATE TABLE canonical_activities (
+                id TEXT PRIMARY KEY,
+                producer TEXT NOT NULL CHECK (
+                    producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')
+                ),
+                producer_surface TEXT NOT NULL CHECK (length(producer_surface) > 0),
+                correlation_id TEXT NOT NULL CHECK (length(correlation_id) > 0),
+                source_started_at_ns INTEGER NOT NULL CHECK (source_started_at_ns >= 0),
+                source_ended_at_ns INTEGER NOT NULL CHECK (
+                    source_ended_at_ns >= source_started_at_ns
+                ),
+                detector_id TEXT NOT NULL CHECK (length(detector_id) > 0),
+                detector_version INTEGER NOT NULL CHECK (detector_version > 0),
+                normalization_version INTEGER NOT NULL CHECK (normalization_version > 0),
+                source_membership_hash TEXT NOT NULL CHECK (length(source_membership_hash) = 64),
+                source_membership_json TEXT NOT NULL CHECK (json_valid(source_membership_json)),
+                operation_kind TEXT NOT NULL CHECK (length(operation_kind) > 0),
+                target_kind TEXT NOT NULL CHECK (length(target_kind) > 0),
+                normalized_target TEXT NOT NULL,
+                normalized_failure_class TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (
+                    detector_id, detector_version, normalization_version, source_membership_hash
+                )
+            ) STRICT
+            """,
+            """
+            CREATE INDEX canonical_activities_source_membership_idx
+            ON canonical_activities(source_membership_hash, source_started_at_ns)
+            """,
+            """
+            CREATE INDEX canonical_activities_correlation_window_idx
+            ON canonical_activities(producer, correlation_id, source_started_at_ns)
+            """,
+            """
+            CREATE TABLE canonical_activity_versions (
+                activity_id TEXT NOT NULL REFERENCES canonical_activities(id),
+                version INTEGER NOT NULL CHECK (version > 0),
+                attribution_state TEXT NOT NULL CHECK (
+                    attribution_state IN ('resolved', 'unresolved')
+                ),
+                project_identity_id TEXT REFERENCES project_identities(id),
+                attribution_method TEXT NOT NULL CHECK (length(attribution_method) > 0),
+                attribution_evidence_id TEXT,
+                reason_code TEXT CHECK (
+                    reason_code IN (
+                        'missing_correlation_id', 'conflicting_correlation_id', 'missing_workspace',
+                        'invalid_workspace', 'non_git_workspace', 'git_resolution_failed',
+                        'invalid_timestamp', 'invalid_transition', 'duplicate_conflict',
+                        'out_of_order_event'
+                    )
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (activity_id, version),
+                CHECK (
+                    (attribution_state = 'resolved'
+                        AND project_identity_id IS NOT NULL
+                        AND reason_code IS NULL)
+                    OR
+                    (attribution_state = 'unresolved'
+                        AND project_identity_id IS NULL)
+                )
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE UNIQUE INDEX canonical_activity_versions_attribution_tuple_idx
+            ON canonical_activity_versions(
+                activity_id,
+                attribution_state,
+                ifnull(project_identity_id, ''),
+                attribution_method,
+                ifnull(attribution_evidence_id, ''),
+                ifnull(reason_code, '')
+            )
+            """,
+            """
+            CREATE INDEX canonical_activity_versions_latest_idx
+            ON canonical_activity_versions(activity_id, version DESC)
+            """,
+            """
+            CREATE TRIGGER canonical_activities_no_update
+            BEFORE UPDATE ON canonical_activities BEGIN
+                SELECT RAISE(ABORT, 'canonical activities are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_activities_no_delete
+            BEFORE DELETE ON canonical_activities BEGIN
+                SELECT RAISE(ABORT, 'canonical activities cannot be deleted');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_activity_versions_monotonic
+            BEFORE INSERT ON canonical_activity_versions
+            WHEN NEW.version != COALESCE(
+                (SELECT MAX(version) + 1 FROM canonical_activity_versions
+                 WHERE activity_id = NEW.activity_id),
+                1
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'canonical activity versions must be monotonic');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_activity_versions_no_update
+            BEFORE UPDATE ON canonical_activity_versions BEGIN
+                SELECT RAISE(ABORT, 'canonical activity versions are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_activity_versions_no_delete
+            BEFORE DELETE ON canonical_activity_versions BEGIN
+                SELECT RAISE(ABORT, 'canonical activity versions cannot be deleted');
+            END
+            """,
+            """
+            CREATE TABLE canonical_recomputation_schedule (
+                activity_id TEXT NOT NULL,
+                activity_version INTEGER NOT NULL,
+                aggregate_kind TEXT NOT NULL CHECK (aggregate_kind IN ('findings', 'trends')),
+                scheduled_at TEXT NOT NULL,
+                completed_at TEXT,
+                PRIMARY KEY (activity_id, activity_version, aggregate_kind),
+                FOREIGN KEY (activity_id, activity_version)
+                    REFERENCES canonical_activity_versions(activity_id, version),
+                CHECK (completed_at IS NULL OR completed_at >= scheduled_at)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE INDEX canonical_recomputation_pending_idx
+            ON canonical_recomputation_schedule(aggregate_kind, scheduled_at)
+            WHERE completed_at IS NULL
+            """,
+            """
+            CREATE TABLE canonical_activity_outbox_evidence (
+                activity_id TEXT NOT NULL,
+                activity_version INTEGER NOT NULL,
+                payload_schema_version INTEGER NOT NULL CHECK (payload_schema_version > 0),
+                event_name TEXT NOT NULL CHECK (length(event_name) > 0),
+                event_id TEXT NOT NULL UNIQUE REFERENCES otlp_outbox(event_id)
+                    CHECK (length(event_id) = 64),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    activity_id, activity_version, payload_schema_version, event_name
+                ),
+                FOREIGN KEY (activity_id, activity_version)
+                    REFERENCES canonical_activity_versions(activity_id, version)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE TRIGGER canonical_activity_outbox_evidence_no_update
+            BEFORE UPDATE ON canonical_activity_outbox_evidence BEGIN
+                SELECT RAISE(ABORT, 'canonical activity outbox evidence is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_activity_outbox_evidence_no_delete
+            BEFORE DELETE ON canonical_activity_outbox_evidence BEGIN
+                SELECT RAISE(ABORT, 'canonical activity outbox evidence cannot be deleted');
+            END
+            """,
+            """
+            CREATE TABLE canonical_rejections (
+                id TEXT PRIMARY KEY,
+                producer TEXT NOT NULL CHECK (
+                    producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')
+                ),
+                producer_surface TEXT NOT NULL CHECK (length(producer_surface) > 0),
+                correlation_id TEXT CHECK (
+                    correlation_id IS NULL OR length(correlation_id) > 0
+                ),
+                lifecycle_event TEXT NOT NULL CHECK (
+                    lifecycle_event IN ('session_start', 'workspace_changed', 'session_end')
+                ),
+                occurred_at TEXT NOT NULL,
+                reason_code TEXT NOT NULL CHECK (
+                    reason_code IN (
+                        'missing_correlation_id', 'conflicting_correlation_id', 'missing_workspace',
+                        'invalid_workspace', 'non_git_workspace', 'git_resolution_failed',
+                        'invalid_timestamp', 'invalid_transition', 'duplicate_conflict',
+                        'out_of_order_event'
+                    )
+                ),
+                source_adapter TEXT NOT NULL CHECK (length(source_adapter) > 0),
+                created_at TEXT NOT NULL,
+                UNIQUE (
+                    producer, producer_surface, correlation_id, lifecycle_event,
+                    occurred_at, reason_code, source_adapter
+                )
+            ) STRICT
+            """,
+            """
+            CREATE TRIGGER canonical_rejections_no_update
+            BEFORE UPDATE ON canonical_rejections BEGIN
+                SELECT RAISE(ABORT, 'canonical rejections are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_rejections_no_delete
+            BEFORE DELETE ON canonical_rejections BEGIN
+                SELECT RAISE(ABORT, 'canonical rejections cannot be deleted');
+            END
+            """,
+        ),
+    ),
 )
 
 

@@ -68,6 +68,11 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "session_context_events",
         "session_context_intervals",
         "project_evidence_intervals",
+        "canonical_activities",
+        "canonical_activity_versions",
+        "canonical_recomputation_schedule",
+        "canonical_activity_outbox_evidence",
+        "canonical_rejections",
     }
     assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
@@ -164,6 +169,202 @@ def test_duplicate_otlp_event_id_requires_the_identical_immutable_payload(
         connection.execute(statement, ('{"value":1}',))
         with pytest.raises(sqlite3.IntegrityError, match="conflicts"):
             connection.execute(statement, ('{"value":2}',))
+    finally:
+        connection.close()
+
+
+def test_canonical_activity_ledger_enforces_versions_recomputation_and_rejections(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    activity = (
+        "activity-1",
+        "omp",
+        "omp",
+        "session-1",
+        100,
+        200,
+        "detector",
+        1,
+        1,
+        "a" * 64,
+        '["event-1"]',
+        "tool",
+        "file",
+        "target",
+        "",
+        "2026-08-05T00:00:00+00:00",
+    )
+    try:
+        apply_migrations(connection, path)
+        canonical_columns = {
+            str(row[1]): str(row[2])
+            for row in connection.execute("PRAGMA table_info(canonical_activities)")
+        }
+        version_columns = {
+            str(row[1]): str(row[2])
+            for row in connection.execute("PRAGMA table_info(canonical_activity_versions)")
+        }
+        activity_indexes = {
+            str(row[1]) for row in connection.execute("PRAGMA index_list(canonical_activities)")
+        }
+        version_foreign_keys = {
+            (str(row[2]), str(row[3]), str(row[4]))
+            for row in connection.execute("PRAGMA foreign_key_list(canonical_activity_versions)")
+        }
+        indexes = {
+            str(row[1])
+            for row in connection.execute("PRAGMA index_list(canonical_activity_versions)")
+        }
+        connection.execute(
+            """
+            INSERT INTO canonical_activities (
+                id, producer, producer_surface, correlation_id, source_started_at_ns,
+                source_ended_at_ns, detector_id, detector_version, normalization_version,
+                source_membership_hash, source_membership_json, operation_kind, target_kind,
+                normalized_target, normalized_failure_class, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            activity,
+        )
+        connection.execute(
+            """
+            INSERT INTO canonical_activity_versions (
+                activity_id, version, attribution_state, project_identity_id,
+                attribution_method, attribution_evidence_id, reason_code, created_at
+            ) VALUES ('activity-1', 1, 'unresolved', NULL, 'source', NULL,
+                      'missing_workspace', '2026-08-05T00:00:00+00:00')
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="monotonic"):
+            connection.execute(
+                """
+                INSERT INTO canonical_activity_versions (
+                    activity_id, version, attribution_state, project_identity_id,
+                    attribution_method, attribution_evidence_id, reason_code, created_at
+                ) VALUES ('activity-1', 3, 'unresolved', NULL, 'source', NULL,
+                          'missing_workspace', '2026-08-05T00:00:00+00:00')
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO canonical_activity_versions (
+                    activity_id, version, attribution_state, project_identity_id,
+                    attribution_method, attribution_evidence_id, reason_code, created_at
+                ) VALUES ('activity-1', 2, 'resolved', NULL, 'source', NULL, NULL,
+                          '2026-08-05T00:00:00+00:00')
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO canonical_activities (
+                    id, producer, producer_surface, correlation_id, source_started_at_ns,
+                    source_ended_at_ns, detector_id, detector_version, normalization_version,
+                    source_membership_hash, source_membership_json, operation_kind, target_kind,
+                    normalized_target, normalized_failure_class, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("activity-2", *activity[1:]),
+            )
+        connection.execute(
+            """
+            INSERT INTO canonical_recomputation_schedule (
+                activity_id, activity_version, aggregate_kind, scheduled_at, completed_at
+            ) VALUES ('activity-1', 1, 'findings', '2026-08-05T00:00:00+00:00', NULL)
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO canonical_recomputation_schedule (
+                    activity_id, activity_version, aggregate_kind, scheduled_at, completed_at
+                ) VALUES ('activity-1', 2, 'findings', '2026-08-05T00:00:00+00:00', NULL)
+                """
+            )
+        connection.execute(
+            """
+            INSERT INTO canonical_rejections (
+                id, producer, producer_surface, correlation_id, lifecycle_event, occurred_at,
+                reason_code, source_adapter, created_at
+            ) VALUES (
+                'rejection-1', 'omp', 'omp', NULL, 'session_start', '2026-08-05T00:00:00+00:00',
+                'missing_correlation_id', 'omp-native', '2026-08-05T00:00:00+00:00'
+            )
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute("UPDATE canonical_rejections SET source_adapter = 'other'")
+        assert canonical_columns["source_membership_json"] == "TEXT"
+        assert version_columns["activity_id"] == "TEXT"
+        assert ("canonical_activities", "activity_id", "id") in version_foreign_keys
+        assert "canonical_activities_source_membership_idx" in activity_indexes
+        assert "canonical_activity_versions_latest_idx" in indexes
+        assert connection.execute(
+            "SELECT source_membership_json FROM canonical_activities WHERE id = 'activity-1'"
+        ).fetchone() == ('["event-1"]',)
+    finally:
+        connection.close()
+
+
+def test_canonical_activity_outbox_evidence_is_deterministic_and_rejections_are_bounded(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    try:
+        apply_migrations(connection, path)
+        rejection_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(canonical_rejections)")
+        }
+        evidence_indexes = {
+            str(row[1]): int(row[2])
+            for row in connection.execute("PRAGMA index_list(canonical_activity_outbox_evidence)")
+        }
+        event_id_unique = any(
+            unique
+            and {str(row[2]) for row in connection.execute(f"PRAGMA index_info({index_name})")}
+            == {"event_id"}
+            for index_name, unique in evidence_indexes.items()
+        )
+    finally:
+        connection.close()
+
+    assert rejection_columns == {
+        "id",
+        "producer",
+        "producer_surface",
+        "correlation_id",
+        "lifecycle_event",
+        "occurred_at",
+        "reason_code",
+        "source_adapter",
+        "created_at",
+    }
+    assert event_id_unique
+
+
+def test_canonical_migration_rehearsal_preserves_preexisting_rows(tmp_path: Path) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    try:
+        apply_migrations(connection, path, MIGRATIONS[:12])
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+            ) VALUES ('project-1', 'git', '/project', '/project/.git', '2026-08-05', 'project')
+            """
+        )
+        connection.commit()
+        applied = apply_migrations(connection, path)
+        assert [migration.version for migration in applied] == [13]
+        assert connection.execute(
+            "SELECT canonical_name FROM project_identities WHERE id = 'project-1'"
+        ).fetchone() == ("project",)
+        assert connection.execute("PRAGMA user_version").fetchone() == (13,)
     finally:
         connection.close()
 
@@ -288,7 +489,20 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        assert [migration.version for migration in applied] == [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+        ]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM trend_evaluations").fetchone()[0] == 1
@@ -362,7 +576,7 @@ def test_review_lifecycle_telemetry_removal_preserves_sessions_and_installs_guar
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8, 9, 10, 11, 12]
+        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         assert connection.execute(
             "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
         ).fetchall() == [

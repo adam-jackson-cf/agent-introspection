@@ -34,6 +34,7 @@ from agent_introspection.source import (
     HydrationRow,
     LogRow,
     ProjectEvidenceRow,
+    SourceActivityCorrelation,
     SourceError,
     TraceRow,
 )
@@ -256,8 +257,6 @@ def test_session_context_correlation_accepts_each_supported_producer(
 ) -> None:
     connection, _config = scan_environment
     now = datetime(2026, 7, 10, 12, tzinfo=UTC)
-    source_started_at = now + timedelta(seconds=5)
-    source_ended_at = now + timedelta(seconds=10)
     calls: list[dict[str, object]] = []
 
     def capture(_connection: Any, **kwargs: object) -> None:
@@ -267,6 +266,15 @@ def test_session_context_correlation_accepts_each_supported_producer(
     monkeypatch.setattr(scan, "correlated_project", capture)
     producers = ("codex-cli", "codex-app-server", "omp", "claude-code")
     for producer in producers:
+        correlation = SourceActivityCorrelation(
+            producer=producer,
+            producer_surface=producer,
+            correlation_id="session-1",
+            source_event_timestamp=now + timedelta(seconds=5),
+            source_event_ids=("event-1",),
+            source_log_ids=("log-1",),
+            source_span_ids=(),
+        )
         trace = TraceRow(
             trace_id=f"{producer}-session",
             turn_id=None,
@@ -279,24 +287,21 @@ def test_session_context_correlation_accepts_each_supported_producer(
             ended_at=now + timedelta(seconds=30),
             total_tokens=0,
             tool_calls=0,
-            producer=producer,
-            session_id="session-1",
-            source_correlation_started_at=source_started_at,
-            source_correlation_ended_at=source_ended_at,
+            correlation=correlation,
         )
         assert scan._correlated_trace_project(connection, trace) is None
     assert calls == [
         {
             "producer": producer,
             "session_id": "session-1",
-            "started_at": source_started_at,
-            "ended_at": source_ended_at,
+            "started_at": now + timedelta(seconds=5),
+            "ended_at": now + timedelta(seconds=5),
         }
         for producer in producers
     ]
 
 
-def test_session_context_correlation_rejects_missing_mixed_and_duplicate_sessions(
+def test_session_context_correlation_rejects_missing_correlation(
     scan_environment: tuple[Any, AppConfig], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection, _config = scan_environment
@@ -321,7 +326,6 @@ def test_session_context_correlation_rejects_missing_mixed_and_duplicate_session
             ended_at=now + timedelta(seconds=30),
             total_tokens=0,
             tool_calls=0,
-            producer="omp",
         ),
         TraceRow(
             trace_id="mixed-producer-sessions",
@@ -509,23 +513,48 @@ def test_detector_events_use_direct_and_closed_interval_workspace_evidence(
             ),
         ),
     )
+    row_times = (
+        ("before", first - timedelta(microseconds=1)),
+        ("first", first),
+        ("middle", first + timedelta(seconds=10)),
+        ("last", last),
+        ("after", last + timedelta(microseconds=1)),
+    )
     rows = [
         log_row(
             identifier,
             int(timestamp.timestamp() * 1_000_000_000),
-            conversation_id="conversation",
-            producer="codex-cli",
+            trace_id=f"trace-{identifier}",
         )
-        for identifier, timestamp in (
-            ("before", first - timedelta(microseconds=1)),
-            ("first", first),
-            ("middle", first + timedelta(seconds=10)),
-            ("last", last),
-            ("after", last + timedelta(microseconds=1)),
+        for identifier, timestamp in row_times
+    ]
+    traces = [
+        TraceRow(
+            trace_id=f"trace-{identifier}",
+            turn_id=None,
+            thread_id=None,
+            project_id=None,
+            project_name=None,
+            project_root=None,
+            project_kind=None,
+            started_at=timestamp,
+            ended_at=timestamp,
+            total_tokens=0,
+            tool_calls=0,
+            correlation=SourceActivityCorrelation(
+                producer="codex-cli",
+                producer_surface="codex-cli",
+                correlation_id="conversation",
+                source_event_timestamp=timestamp,
+                source_event_ids=(f"event-{identifier}",),
+                source_log_ids=(identifier,),
+                source_span_ids=(),
+            ),
         )
+        for identifier, timestamp in row_times
     ]
 
-    events, projects = _detector_events(rows, [], [], evidence)
+    events, projects = _detector_events(rows, traces, [], evidence)
     by_id = {event.event_id: event for event in events}
 
     assert by_id["before"].project_id.startswith("unresolved:")
@@ -578,20 +607,45 @@ def test_reanalysis_persists_idempotent_immutable_workspace_intervals(
             ),
         ),
     )
+    row_times = (
+        ("first", first),
+        ("middle", first + timedelta(seconds=10)),
+        ("last", last),
+    )
     source = FakeSource(
         logs=[
             log_row(
                 identifier,
                 int(timestamp.timestamp() * 1_000_000_000),
-                conversation_id="conversation",
-                producer="codex-app-server",
+                trace_id=f"trace-{identifier}",
             )
-            for identifier, timestamp in (
-                ("first", first),
-                ("middle", first + timedelta(seconds=10)),
-                ("last", last),
+            for identifier, timestamp in row_times
+        ],
+        traces=[
+            TraceRow(
+                trace_id=f"trace-{identifier}",
+                turn_id=None,
+                thread_id=None,
+                project_id=None,
+                project_name=None,
+                project_root=None,
+                project_kind=None,
+                started_at=timestamp,
+                ended_at=timestamp,
+                total_tokens=0,
+                tool_calls=0,
+                correlation=SourceActivityCorrelation(
+                    producer="codex-app-server",
+                    producer_surface="codex-app-server",
+                    correlation_id="conversation",
+                    source_event_timestamp=timestamp,
+                    source_event_ids=(f"event-{identifier}",),
+                    source_log_ids=(identifier,),
+                    source_span_ids=(),
+                ),
             )
-        ]
+            for identifier, timestamp in row_times
+        ],
     )
     monkeypatch.setattr(scan, "_build_project_evidence", lambda *_args, **_kwargs: evidence)
     fingerprint = approve(connection, source)

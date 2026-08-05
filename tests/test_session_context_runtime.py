@@ -36,10 +36,11 @@ def inbox(home: Path) -> Path:
     return home / ".local/share/agent-introspection/session-context-inbox"
 
 
+@pytest.mark.parametrize("producer", ["codex-cli", "codex-app-server"])
 @pytest.mark.parametrize("symlink_workspace", [False, True])
 @pytest.mark.parametrize("occurred_at", ["2026-08-03T12:34:56Z", "2026-08-03T12:34:56.123+05:30"])
 def test_runtime_writes_compact_canonical_json_for_valid_rfc3339_events(
-    tmp_path: Path, occurred_at: str, symlink_workspace: bool
+    tmp_path: Path, occurred_at: str, symlink_workspace: bool, producer: str
 ) -> None:
     workspace = make_repository(tmp_path)
     if symlink_workspace:
@@ -48,7 +49,7 @@ def test_runtime_writes_compact_canonical_json_for_valid_rfc3339_events(
         workspace = alias
     home = tmp_path / "home"
     completed = run_runtime(
-        home, "codex-cli", "session-123", "session_start", occurred_at, str(workspace)
+        home, producer, "session-123", "session_start", occurred_at, str(workspace)
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -59,11 +60,11 @@ def test_runtime_writes_compact_canonical_json_for_valid_rfc3339_events(
     root = str(workspace.resolve())
     expected_project_id = hashlib.sha256(f"git\0{root}".encode()).hexdigest()
     expected_event_id = hashlib.sha256(
-        f"codex-cli\0session-123\0session_start\0{occurred_at}\0{root}".encode()
+        f"{producer}\0session-123\0session_start\0{occurred_at}\0{root}".encode()
     ).hexdigest()
     assert record == {
         "event_id": expected_event_id,
-        "producer": "codex-cli",
+        "producer": producer,
         "session_id": "session-123",
         "event_type": "session_start",
         "occurred_at": occurred_at,

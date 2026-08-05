@@ -12,31 +12,63 @@ type LifecycleEvent = "session_start" | "session_end";
 type NativeLifecycleEvent = "session_start" | "session_shutdown";
 
 interface OmpExtensionContext {
-  cwd: string;
-  sessionManager: {
-    getSessionId(): string;
+  cwd: unknown;
+  sessionManager?: {
+    getSessionId?(): unknown;
   };
+}
+
+interface NativeEvent {
+  timestamp?: unknown;
 }
 
 interface OmpExtensionAPI {
   on(
     event: NativeLifecycleEvent,
-    handler: (event: unknown, context: OmpExtensionContext) => void,
+    handler: (event: NativeEvent, context: OmpExtensionContext) => void,
   ): void;
 }
 
 function requireValue(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`OMP ${name} is required`);
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error(`OMP ${name} is required and must not contain control characters`);
   }
 
   return value;
 }
 
-function emitLifecycleEvent(context: OmpExtensionContext, eventType: LifecycleEvent): void {
+function nativeTimestamp(event: NativeEvent): string {
+  if (event.timestamp === undefined) {
+    return new Date().toISOString();
+  }
+
+  const timestamp = requireValue(event.timestamp, "timestamp");
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      timestamp,
+    ) ||
+    Number.isNaN(Date.parse(timestamp))
+  ) {
+    throw new Error("OMP timestamp must be RFC 3339");
+  }
+  return timestamp;
+}
+
+function emitLifecycleEvent(
+  event: NativeEvent,
+  context: OmpExtensionContext,
+  eventType: LifecycleEvent,
+): void {
   const sessionId = requireValue(context?.sessionManager?.getSessionId?.(), "session id");
   const workspace = requireValue(context?.cwd, "workspace");
-  const occurredAt = new Date().toISOString();
+  if (!workspace.startsWith("/")) {
+    throw new Error("OMP workspace must be an absolute path");
+  }
+  const occurredAt = nativeTimestamp(event);
   const result = spawnSync(
     runtimePath,
     ["omp", sessionId, eventType, occurredAt, workspace],
@@ -52,10 +84,10 @@ function emitLifecycleEvent(context: OmpExtensionContext, eventType: LifecycleEv
 }
 
 export default function registerOmpLifecycleAdapter(api: OmpExtensionAPI): void {
-  api.on("session_start", (_event, context) => {
-    emitLifecycleEvent(context, "session_start");
+  api.on("session_start", (event, context) => {
+    emitLifecycleEvent(event, context, "session_start");
   });
-  api.on("session_shutdown", (_event, context) => {
-    emitLifecycleEvent(context, "session_end");
+  api.on("session_shutdown", (event, context) => {
+    emitLifecycleEvent(event, context, "session_end");
   });
 }

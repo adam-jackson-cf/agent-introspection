@@ -31,6 +31,7 @@ def _invoke_adapter(
     event: str,
     session_id: str,
     workspace: str,
+    native_event: dict[str, object],
 ) -> dict[str, str | None]:
     driver = tmp_path / "invoke.ts"
     driver.write_text(
@@ -42,7 +43,7 @@ const handlers = new Map();
 adapter.default({ on(event, handler) { handlers.set(event, handler); } });
 try {
   handlers.get(process.argv[3])(
-    { arbitrary: "payload is not forwarded" },
+    JSON.parse(process.argv[6]),
     {
       cwd: process.argv[5],
       sessionManager: { getSessionId() { return process.argv[4]; } },
@@ -58,7 +59,7 @@ try {
     bun = shutil.which("bun")
     assert bun is not None, "Bun is required to execute the OMP TypeScript extension adapter"
     completed = subprocess.run(
-        [bun, "run", driver, adapter, event, session_id, workspace],
+        [bun, "run", driver, adapter, event, session_id, workspace, json.dumps(native_event)],
         check=True,
         capture_output=True,
         text=True,
@@ -86,6 +87,7 @@ def test_omp_lifecycle_events_invoke_canonical_runtime(
         native_event,
         "omp-session-42",
         "/workspaces/authoritative",
+        {"timestamp": "2026-08-05T12:34:56.789Z"},
     )
 
     assert outcome == {"error": None}
@@ -96,7 +98,31 @@ def test_omp_lifecycle_events_invoke_canonical_runtime(
         expected_event,
         "/workspaces/authoritative",
     )
-    assert datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).tzinfo == UTC
+    assert occurred_at == "2026-08-05T12:34:56.789Z"
+
+
+def test_omp_uses_synchronous_time_when_native_timestamp_is_absent(
+    tmp_path: Path, omp_adapter_sandbox: tuple[Path, Path]
+) -> None:
+    adapter, runtime_log = omp_adapter_sandbox
+
+    outcome = _invoke_adapter(
+        tmp_path,
+        adapter,
+        runtime_log,
+        "session_start",
+        "omp-session-42",
+        "/workspaces/authoritative",
+        {},
+    )
+
+    assert outcome == {"error": None}
+    assert (
+        datetime.fromisoformat(
+            runtime_log.read_text().splitlines()[3].replace("Z", "+00:00")
+        ).tzinfo
+        == UTC
+    )
 
 
 @pytest.mark.parametrize(
@@ -119,7 +145,58 @@ def test_omp_adapter_rejects_missing_authoritative_values(
         "session_start",
         session_id,
         workspace,
+        {},
     )
 
-    assert outcome == {"error": f"OMP {required_value} is required"}
+    assert outcome == {
+        "error": f"OMP {required_value} is required and must not contain control characters"
+    }
+    assert not runtime_log.exists()
+
+
+@pytest.mark.parametrize(
+    ("session_id", "workspace", "native_event", "message"),
+    (
+        (
+            "id\nother",
+            "/workspaces/authoritative",
+            {},
+            "OMP session id is required and must not contain control characters",
+        ),
+        ("omp-session-42", "workspace", {}, "OMP workspace must be an absolute path"),
+        (
+            "omp-session-42",
+            "/workspaces/authoritative",
+            {"timestamp": "arbitrary"},
+            "OMP timestamp must be RFC 3339",
+        ),
+        (
+            "omp-session-42",
+            "/workspaces/authoritative",
+            {"timestamp": None},
+            "OMP timestamp is required and must not contain control characters",
+        ),
+    ),
+)
+def test_omp_adapter_rejects_malformed_native_values_without_runtime_invocation(
+    tmp_path: Path,
+    omp_adapter_sandbox: tuple[Path, Path],
+    session_id: str,
+    workspace: str,
+    native_event: dict[str, object],
+    message: str,
+) -> None:
+    adapter, runtime_log = omp_adapter_sandbox
+
+    outcome = _invoke_adapter(
+        tmp_path,
+        adapter,
+        runtime_log,
+        "session_start",
+        session_id,
+        workspace,
+        native_event,
+    )
+
+    assert outcome == {"error": message}
     assert not runtime_log.exists()

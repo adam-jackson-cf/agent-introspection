@@ -13,6 +13,10 @@ import pytest
 ADAPTER_SOURCE = (
     Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts/adapters/codex.py"
 )
+APP_SERVER_SOURCE = (
+    Path(__file__).parents[1]
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server.sh"
+)
 
 
 def _adapter(tmp_path: Path) -> tuple[Path, Path]:
@@ -21,6 +25,29 @@ def _adapter(tmp_path: Path) -> tuple[Path, Path]:
     adapters.mkdir(parents=True)
     adapter = adapters / "codex.py"
     shutil.copy2(ADAPTER_SOURCE, adapter)
+    log = tmp_path / "runtime-arguments.jsonl"
+    runtime = scripts / "session-context-runtime.sh"
+    runtime.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "with open(os.environ['FAKE_RUNTIME_LOG'], 'a', encoding='utf-8') as output:\n"
+        "    json.dump(sys.argv[1:], output)\n"
+        "    output.write('\\n')\n",
+        encoding="utf-8",
+    )
+    runtime.chmod(runtime.stat().st_mode | stat.S_IXUSR)
+    return adapter, log
+
+
+def _app_server_adapter(tmp_path: Path) -> tuple[Path, Path]:
+    scripts = tmp_path / "scripts"
+    adapters = scripts / "adapters"
+    adapters.mkdir(parents=True)
+    adapter = adapters / "codex-app-server.sh"
+    shutil.copy2(APP_SERVER_SOURCE, adapter)
+    adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "runtime-arguments.jsonl"
     runtime = scripts / "session-context-runtime.sh"
     runtime.write_text(
@@ -48,6 +75,18 @@ def _invoke_json(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(adapter), payload],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "HOME": str(home), "FAKE_RUNTIME_LOG": str(log)},
+        text=True,
+    )
+
+
+def _invoke_app_server(
+    adapter: Path, home: Path, log: Path, *arguments: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(adapter), *arguments],
         capture_output=True,
         check=False,
         env={**os.environ, "HOME": str(home), "FAKE_RUNTIME_LOG": str(log)},
@@ -110,6 +149,7 @@ def test_codex_notify_emits_start_once_and_workspace_transition(tmp_path: Path) 
     [
         {},
         {"type": "agent-turn-complete", "cwd": "/tmp"},
+        {"type": "agent-turn-complete", "thread-id": "thread", "cwd": "/tmp"},
         {"type": "agent-turn-complete", "thread-id": "thread", "cwd": "relative"},
         {
             "type": "agent-turn-complete",
@@ -124,6 +164,30 @@ def test_codex_notify_rejects_malformed_envelopes_without_runtime_invocation(
     tmp_path: Path, payload: object
 ) -> None:
     adapter, log = _adapter(tmp_path)
+
+    result = _invoke(adapter, tmp_path / "home", log, payload)
+
+    assert result.returncode == 64
+    assert _events(log) == []
+
+
+@pytest.mark.parametrize(
+    "additional_id",
+    [{"thread.id": "thread-42"}, {"thread_id": "other-thread"}],
+)
+def test_codex_notify_rejects_multiple_authoritative_thread_ids(
+    tmp_path: Path, additional_id: dict[str, str]
+) -> None:
+    adapter, log = _adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    payload = {
+        "type": "agent-turn-complete",
+        "thread-id": "thread-42",
+        "cwd": str(workspace),
+        "timestamp": "2026-08-03T12:00:00Z",
+        **additional_id,
+    }
 
     result = _invoke(adapter, tmp_path / "home", log, payload)
 
@@ -185,3 +249,53 @@ def test_codex_notify_rejects_duplicate_authoritative_fields_without_state_mutat
         "session_id": "thread-42",
         "workspace": str(original_workspace),
     }
+
+
+def test_codex_app_server_forwards_protocol_values_as_canonical_runtime_argv(
+    tmp_path: Path,
+) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    result = _invoke_app_server(
+        adapter,
+        tmp_path / "home",
+        log,
+        "thread-42",
+        str(workspace),
+        "workspace_changed",
+        "2026-08-03T12:01:00Z",
+    )
+
+    assert result.returncode == 0
+    assert _events(log) == [
+        [
+            "codex-app-server",
+            "thread-42",
+            "workspace_changed",
+            "2026-08-03T12:01:00Z",
+            str(workspace),
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (),
+        ("thread-42", "/tmp", "other", "2026-08-03T12:01:00Z"),
+        ("thread-42", "relative", "session_start", "2026-08-03T12:01:00Z"),
+        ("thread-42", "/tmp", "session_start", "2026-08-03T12:01:00"),
+        ("", "/tmp", "session_start", "2026-08-03T12:01:00Z"),
+    ],
+)
+def test_codex_app_server_rejects_malformed_protocol_without_runtime_invocation(
+    tmp_path: Path, arguments: tuple[str, ...]
+) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+
+    result = _invoke_app_server(adapter, tmp_path / "home", log, *arguments)
+
+    assert result.returncode == 64
+    assert _events(log) == []

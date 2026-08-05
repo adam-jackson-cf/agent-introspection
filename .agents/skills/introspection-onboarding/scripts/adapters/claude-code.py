@@ -6,12 +6,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 EVENT_TYPES = {
     "SessionStart": "session_start",
+    "CwdChanged": "workspace_changed",
     "SessionEnd": "session_end",
 }
 
@@ -29,8 +31,7 @@ def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     for key, value in pairs:
         if key in result:
             raise InvalidHook("duplicate JSON object key")
-        if key in {"hook_event_name", "session_id", "cwd"}:
-            result[key] = value
+        result[key] = value
     return result
 
 
@@ -56,6 +57,33 @@ def require_string(envelope: dict[str, Any], name: str) -> str:
     return value
 
 
+def require_native_timestamp(envelope: dict[str, Any]) -> str:
+    if "timestamp" not in envelope:
+        return hook_time()
+    timestamp = envelope["timestamp"]
+    if not isinstance(timestamp, str) or not timestamp:
+        raise InvalidHook("timestamp must be a non-empty string")
+    if any(ord(character) < 32 or ord(character) == 127 for character in timestamp):
+        raise InvalidHook("timestamp must not contain control characters")
+    if not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        timestamp,
+    ):
+        raise InvalidHook("timestamp must be RFC 3339")
+    try:
+        dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise InvalidHook("timestamp must be RFC 3339") from error
+    return timestamp
+
+
+def require_native_value(envelope: dict[str, Any], name: str) -> str:
+    value = require_string(envelope, name)
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise InvalidHook(f"{name} must not contain control characters")
+    return value
+
+
 def hook_time() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -67,15 +95,15 @@ def normalized_arguments() -> list[str]:
     if event_type is None:
         raise InvalidHook("hook_event_name is unsupported")
 
-    session_id = require_string(envelope, "session_id")
-    if "\n" in session_id or "\r" in session_id:
-        raise InvalidHook("session_id must be a single line")
+    session_id = require_native_value(envelope, "session_id")
 
-    workspace = require_string(envelope, "cwd")
+    workspace = require_native_value(envelope, "cwd")
     if not workspace.startswith("/"):
         raise InvalidHook("cwd must be an absolute path")
 
-    return ["claude-code", session_id, event_type, hook_time(), workspace]
+    occurred_at = require_native_timestamp(envelope)
+
+    return ["claude-code", session_id, event_type, occurred_at, workspace]
 
 
 def main() -> int:

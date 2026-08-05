@@ -24,7 +24,7 @@
       "key": "agent.project.kind",
       "type": "string",
       "required": true,
-      "enum": ["git", "non_git"]
+      "enum": ["git"]
     }
   },
   "metadata_states": ["absent", "complete", "invalid"],

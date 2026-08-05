@@ -44,7 +44,11 @@ def _run(adapter: Path, captured: Path, payload: str) -> subprocess.CompletedPro
 
 @pytest.mark.parametrize(
     ("hook_event_name", "event_type"),
-    (("SessionStart", "session_start"), ("SessionEnd", "session_end")),
+    (
+        ("SessionStart", "session_start"),
+        ("CwdChanged", "workspace_changed"),
+        ("SessionEnd", "session_end"),
+    ),
 )
 def test_claude_lifecycle_hooks_normalize_to_runtime_argv(
     tmp_path: Path, hook_event_name: str, event_type: str
@@ -56,6 +60,7 @@ def test_claude_lifecycle_hooks_normalize_to_runtime_argv(
             "hook_event_name": hook_event_name,
             "session_id": "claude-session",
             "cwd": workspace,
+            "timestamp": "2026-08-05T12:34:56.789Z",
             "transcript_path": "/private/transcript.jsonl",
             "source": "startup",
         }
@@ -66,8 +71,29 @@ def test_claude_lifecycle_hooks_normalize_to_runtime_argv(
     assert result.returncode == 0
     argv = captured.read_bytes().split(b"\0")[:-1]
     assert argv[:3] == [b"claude-code", b"claude-session", event_type.encode()]
-    assert RFC3339_UTC.fullmatch(argv[3])
+    assert argv[3] == b"2026-08-05T12:34:56.789Z"
     assert argv[4] == workspace.encode()
+
+
+def test_claude_uses_synchronous_time_when_native_timestamp_is_absent(
+    tmp_path: Path,
+) -> None:
+    adapter, captured = _adapter_with_fake_runtime(tmp_path)
+
+    result = _run(
+        adapter,
+        captured,
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "claude-session",
+                "cwd": (tmp_path / "workspace").as_posix(),
+            }
+        ),
+    )
+
+    assert result.returncode == 0
+    assert RFC3339_UTC.fullmatch(captured.read_bytes().split(b"\0")[3])
 
 
 @pytest.mark.parametrize(
@@ -77,6 +103,11 @@ def test_claude_lifecycle_hooks_normalize_to_runtime_argv(
         '{"hook_event_name":"Unknown","session_id":"id","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","session_id":"id","cwd":"workspace"}',
+        '{"hook_event_name":"CwdChanged","session_id":"id"}',
+        '{"hook_event_name":"SessionStart","session_id":"id\\u0000","cwd":"/workspace"}',
+        '{"hook_event_name":"SessionStart","session_id":"id","cwd":"/workspace","timestamp":"not-a-timestamp"}',
+        '{"hook_event_name":"SessionStart","session_id":"id","cwd":"/workspace","timestamp":null}',
+        '{"hook_event_name":"SessionStart","session_id":"id","cwd":"/workspace","timestamp":"2026-08-05T12:00:00Z","timestamp":"2026-08-05T12:01:00Z"}',
         '{"hook_event_name":"SessionEnd","session_id":"id\\nother","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","hook_event_name":"SessionEnd","session_id":"id","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","session_id":"id","cwd":"/workspace"} trailing',
