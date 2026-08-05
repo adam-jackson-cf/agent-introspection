@@ -453,6 +453,127 @@ _INITIAL_SCHEMA: Final[tuple[str, ...]] = (
     """,
 )
 
+
+@dataclass(frozen=True, slots=True)
+class MigrationManifestEntry:
+    """One executable disposition for an object affected by canonical cutover."""
+
+    object_kind: str
+    object_name: str
+    disposition: str
+    target: str
+
+
+CANONICAL_CUTOVER_MANIFEST: Final[tuple[MigrationManifestEntry, ...]] = (
+    MigrationManifestEntry("table", "observations", "migrate", "canonical_activities"),
+    MigrationManifestEntry(
+        "column", "observations.project_identity_id", "migrate", "canonical_activity_versions"
+    ),
+    MigrationManifestEntry(
+        "column", "observations.attributes_json", "migrate", "canonical_activities"
+    ),
+    MigrationManifestEntry("index", "observations_fingerprint_idx", "retain", "observations"),
+    MigrationManifestEntry("index", "observations_task_idx", "retain", "observations"),
+    MigrationManifestEntry("trigger", "observations_no_update", "retain", "observations"),
+    MigrationManifestEntry("trigger", "observations_no_delete", "retain", "observations"),
+    MigrationManifestEntry("foreign_key", "observations.scan_run_id", "retain", "scan_runs"),
+    MigrationManifestEntry(
+        "foreign_key", "observations.project_identity_id", "preserve", "project_identities"
+    ),
+    MigrationManifestEntry("column", "finding_membership.observation_id", "replace", "activity ID"),
+    MigrationManifestEntry(
+        "column", "findings.project_identity_id", "recompute", "latest activity"
+    ),
+    MigrationManifestEntry("column", "findings.trend_state", "recompute", "latest activity"),
+    MigrationManifestEntry("column", "trend_evaluations.finding_id", "rebuild", "latest activity"),
+    MigrationManifestEntry(
+        "column", "session_context_intervals.project_id", "preserve", "canonical project contract"
+    ),
+    MigrationManifestEntry(
+        "column", "session_context_intervals.session_id", "preserve", "canonical correlation"
+    ),
+    MigrationManifestEntry("index", "session_context_correlation_idx", "verify", "interval join"),
+    MigrationManifestEntry("trigger", "findings_no_delete", "rebuild", "findings"),
+    MigrationManifestEntry(
+        "trigger", "finding_membership_no_update", "retain", "legacy membership"
+    ),
+    MigrationManifestEntry(
+        "trigger", "finding_membership_no_delete", "retain", "legacy membership"
+    ),
+    MigrationManifestEntry(
+        "foreign_key", "finding_membership.observation_id", "replace", "canonical activity"
+    ),
+    MigrationManifestEntry("foreign_key", "finding_membership.finding_id", "preserve", "findings"),
+    MigrationManifestEntry(
+        "table", "findings", "rebuild", "canonical activity IDs/latest versions"
+    ),
+    MigrationManifestEntry("table", "finding_membership", "rebuild", "canonical activity IDs"),
+    MigrationManifestEntry("table", "trend_evaluations", "rebuild", "latest activity versions"),
+    MigrationManifestEntry(
+        "table", "session_context_events", "preserve", "canonical producer/project contract"
+    ),
+    MigrationManifestEntry(
+        "table", "session_context_intervals", "preserve", "canonical producer/project contract"
+    ),
+    MigrationManifestEntry("table", "canonical_rejections", "preserve", "quarantine records"),
+    MigrationManifestEntry("asset", "session-context-inbox", "migrate", "quarantine records"),
+    MigrationManifestEntry(
+        "table", "attribution_reanalysis_fact_sets", "preserve", "legacy migration input"
+    ),
+    MigrationManifestEntry(
+        "table", "attribution_reanalysis_facts", "preserve", "legacy migration input"
+    ),
+    MigrationManifestEntry("table", "analysis_generations", "retain", "pending later cutover"),
+    MigrationManifestEntry(
+        "table", "analysis_generation_event_links", "retain", "pending remote purge"
+    ),
+    MigrationManifestEntry(
+        "table", "analysis_generation_current", "retain", "pending remote purge"
+    ),
+    MigrationManifestEntry(
+        "table", "analysis_generation_activations", "retain", "pending remote purge"
+    ),
+    MigrationManifestEntry("table", "otlp_outbox", "preserve", "delivered canonical events"),
+    MigrationManifestEntry("row_set", "otlp_outbox.pending", "cancel", "before schema cutover"),
+    MigrationManifestEntry("row_set", "otlp_outbox.failed", "record", "before schema cutover"),
+    MigrationManifestEntry(
+        "row_set", "otlp_outbox.delivered", "preserve", "canonical delivery evidence"
+    ),
+    MigrationManifestEntry(
+        "foreign_key", "analysis_generation_event_links.event_id", "cancel pending", "otlp_outbox"
+    ),
+    MigrationManifestEntry(
+        "foreign_key", "canonical_finding_membership.activity_id", "add", "canonical_activities"
+    ),
+    MigrationManifestEntry(
+        "foreign_key", "canonical_finding_membership.finding_id", "add", "findings"
+    ),
+    MigrationManifestEntry(
+        "index", "canonical_finding_membership_activity_idx", "add", "canonical finding membership"
+    ),
+    MigrationManifestEntry(
+        "trigger", "canonical_finding_membership_no_update", "add", "canonical finding membership"
+    ),
+    MigrationManifestEntry(
+        "trigger", "canonical_finding_membership_no_delete", "add", "canonical finding membership"
+    ),
+    MigrationManifestEntry(
+        "command", "analysis-generation stage", "retain", "pending later cutover"
+    ),
+    MigrationManifestEntry(
+        "command", "analysis-generation activate", "retain", "pending later cutover"
+    ),
+    MigrationManifestEntry(
+        "command", "analysis-reanalyse-attribution", "remove", "canonical legacy writer"
+    ),
+    MigrationManifestEntry(
+        "asset", "generation telemetry events", "retain", "pending remote purge"
+    ),
+    MigrationManifestEntry("test", "tests/test_database.py", "expand", "migration rehearsal"),
+    MigrationManifestEntry("test", "tests/test_migrations.py", "expand", "migration rehearsal"),
+)
+
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="initial schema", statements=_INITIAL_SCHEMA),
     Migration(
@@ -1486,6 +1607,111 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
             END
             """,
         ),
+    ),
+    Migration(
+        version=14,
+        name="add canonical observation and finding migration ledger",
+        statements=(
+            """
+            CREATE TABLE observation_activity_migration_manifest (
+                observation_id TEXT PRIMARY KEY REFERENCES observations(id),
+                activity_id TEXT NOT NULL REFERENCES canonical_activities(id),
+                source_membership_hash TEXT NOT NULL CHECK (length(source_membership_hash) = 64),
+                mapping_hash TEXT NOT NULL CHECK (length(mapping_hash) = 64),
+                migrated_at TEXT NOT NULL,
+                UNIQUE (activity_id)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE INDEX observation_activity_migration_manifest_activity_idx
+            ON observation_activity_migration_manifest(activity_id)
+            """,
+            """
+            CREATE TRIGGER observation_activity_migration_manifest_no_update
+            BEFORE UPDATE ON observation_activity_migration_manifest BEGIN
+                SELECT RAISE(ABORT, 'observation activity migration manifest is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER observation_activity_migration_manifest_no_delete
+            BEFORE DELETE ON observation_activity_migration_manifest BEGIN
+                SELECT RAISE(ABORT, 'observation activity migration manifest cannot be deleted');
+            END
+            """,
+            """
+            CREATE TABLE new_findings (
+                id TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE CHECK (length(fingerprint) = 64),
+                category TEXT NOT NULL,
+                project_identity_id TEXT REFERENCES project_identities(id),
+                trend_state TEXT NOT NULL CHECK (
+                    trend_state IN ('isolated', 'emerging', 'actionable', 'dormant')
+                ),
+                detector_id TEXT NOT NULL CHECK (length(detector_id) > 0),
+                detector_version INTEGER NOT NULL CHECK (detector_version > 0),
+                first_seen_ns INTEGER NOT NULL CHECK (first_seen_ns >= 0),
+                last_seen_ns INTEGER NOT NULL CHECK (last_seen_ns >= first_seen_ns),
+                occurrence_count INTEGER NOT NULL CHECK (occurrence_count >= 0),
+                canonical_task_count INTEGER NOT NULL CHECK (canonical_task_count >= 0),
+                local_day_count INTEGER NOT NULL CHECK (local_day_count >= 0),
+                entity_version INTEGER NOT NULL CHECK (entity_version > 0),
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                replaced_by_finding_id TEXT REFERENCES findings(id),
+                updated_at TEXT NOT NULL,
+                CHECK (
+                    (is_active = 1 AND replaced_by_finding_id IS NULL)
+                    OR (is_active = 0 AND replaced_by_finding_id IS NOT NULL)
+                )
+            ) STRICT
+            """,
+            """
+            INSERT INTO new_findings (
+                id, fingerprint, category, project_identity_id, trend_state, detector_id,
+                detector_version, first_seen_ns, last_seen_ns, occurrence_count,
+                canonical_task_count, local_day_count, entity_version, is_active,
+                replaced_by_finding_id, updated_at
+            )
+            SELECT
+                id, fingerprint, category, project_identity_id, trend_state, detector_id,
+                detector_version, first_seen_ns, last_seen_ns, occurrence_count,
+                canonical_task_count, local_day_count, entity_version, 1, NULL, updated_at
+            FROM findings
+            """,
+            "DROP TABLE findings",
+            "ALTER TABLE new_findings RENAME TO findings",
+            """
+            CREATE TRIGGER findings_no_delete
+            BEFORE DELETE ON findings BEGIN
+                SELECT RAISE(ABORT, 'findings cannot be deleted');
+            END
+            """,
+            """
+            CREATE TABLE canonical_finding_membership (
+                finding_id TEXT NOT NULL REFERENCES findings(id),
+                activity_id TEXT NOT NULL REFERENCES canonical_activities(id),
+                rationale TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (finding_id, activity_id)
+            ) STRICT, WITHOUT ROWID
+            """,
+            """
+            CREATE INDEX canonical_finding_membership_activity_idx
+            ON canonical_finding_membership(activity_id, finding_id)
+            """,
+            """
+            CREATE TRIGGER canonical_finding_membership_no_update
+            BEFORE UPDATE ON canonical_finding_membership BEGIN
+                SELECT RAISE(ABORT, 'canonical finding membership is immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER canonical_finding_membership_no_delete
+            BEFORE DELETE ON canonical_finding_membership BEGIN
+                SELECT RAISE(ABORT, 'canonical finding membership cannot be deleted');
+            END
+            """,
+        ),
+        requires_foreign_keys_disabled=True,
     ),
 )
 

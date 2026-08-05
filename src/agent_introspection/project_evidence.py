@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import sqlite3
 import subprocess
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol
 
 from agent_introspection.identities import ProjectIdentity, canonical_git_project
+from agent_introspection.source import ProjectEvidenceRow
 
 _GIT_TIMEOUT_SECONDS = 2.0
 
@@ -265,4 +269,274 @@ def build_project_evidence(
                 key=lambda item: (item.producer, item.conversation_id, item.started_at),
             )
         ),
+    )
+
+
+MAX_LEGACY_PROJECT_ATTRIBUTION_RANGE = timedelta(days=31)
+_CODEX_PRODUCERS = frozenset({"codex-cli", "codex-app-server"})
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyProjectAttributionResult:
+    """Verified result of one bounded legacy project-attribution application."""
+
+    fact_set_id: str
+    accepted: int
+    rejected: int
+    unresolved: int
+    denominator: int
+    activity_ids: tuple[str, ...]
+    outbox_event_ids: tuple[str, ...]
+
+
+def _legacy_required_text(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value or value.strip() != value:
+        raise ProjectEvidenceError(f"{field} must be non-empty text")
+    return value
+
+
+def _legacy_timestamp_ns(value: object, *, start_ns: int, end_ns: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not start_ns < value <= end_ns:
+        raise ProjectEvidenceError("source timestamp is outside the requested range")
+    return value
+
+
+def _legacy_fact_set_id(
+    *,
+    start_ns: int,
+    end_ns: int,
+    approved_by: str,
+    accepted: tuple[DirectProjectEvidence, ...],
+) -> str:
+    payload = {
+        "approved_by": approved_by,
+        "accepted": [
+            {
+                "conversation_id": item.conversation_id,
+                "log_id": item.log_id,
+                "occurred_at_ns": int(item.occurred_at.timestamp() * 1_000_000_000),
+                "producer": item.producer,
+                "project_id": item.project.identity,
+                "workspace": item.workspace.as_posix(),
+            }
+            for item in accepted
+        ],
+        "end_ns": end_ns,
+        "start_ns": start_ns,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _persist_legacy_project(
+    connection: sqlite3.Connection, project: ProjectIdentity, *, created_at: str
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO project_identities (
+            id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+        ) VALUES (?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+        """,
+        (
+            project.identity,
+            project.kind,
+            project.root.as_posix(),
+            created_at,
+            project.display_name,
+        ),
+    )
+
+
+def apply_legacy_project_attribution(
+    connection: sqlite3.Connection,
+    *,
+    project_roots: Iterable[Path],
+    source_rows: Iterable[ProjectEvidenceRow],
+    start: datetime,
+    end: datetime,
+    approved_by: str,
+) -> LegacyProjectAttributionResult:
+    """Apply one bounded, allowlisted legacy project-attribution fact set exactly once."""
+
+    approved_by = _legacy_required_text(approved_by, field="approved_by")
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ProjectEvidenceError("legacy attribution bounds must be timezone-aware")
+    start = start.astimezone(UTC)
+    end = end.astimezone(UTC)
+    if start >= end or end - start > MAX_LEGACY_PROJECT_ATTRIBUTION_RANGE:
+        raise ProjectEvidenceError("legacy attribution range must be ordered and at most 31 days")
+    start_ns = int(start.timestamp() * 1_000_000_000)
+    end_ns = int(end.timestamp() * 1_000_000_000)
+    resolver = GitWorkspaceResolver(project_roots=project_roots)
+    accepted: list[DirectProjectEvidence] = []
+    rejected = 0
+    unresolved = 0
+    denominator = 0
+    source_log_ids: set[str] = set()
+    for row in source_rows:
+        denominator += 1
+        try:
+            producer = _legacy_required_text(row.producer, field="producer")
+            conversation_id = _legacy_required_text(row.conversation_id, field="conversation_id")
+            log_id = _legacy_required_text(row.log_id, field="log_id")
+            timestamp_ns = _legacy_timestamp_ns(row.timestamp_ns, start_ns=start_ns, end_ns=end_ns)
+            workspace = _legacy_required_text(row.tool_workspace, field="tool_workspace")
+        except (AttributeError, ProjectEvidenceError):
+            rejected += 1
+            continue
+        if producer not in _CODEX_PRODUCERS:
+            rejected += 1
+            continue
+        if log_id in source_log_ids:
+            rejected += 1
+            continue
+        source_log_ids.add(log_id)
+        resolution = resolver.resolve(workspace)
+        if resolution.status == "outside_collection":
+            rejected += 1
+            continue
+        if (
+            resolution.status != "project"
+            or resolution.workspace is None
+            or resolution.project is None
+        ):
+            unresolved += 1
+            continue
+        accepted.append(
+            DirectProjectEvidence(
+                log_id=log_id,
+                producer=producer,
+                conversation_id=conversation_id,
+                occurred_at=datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC),
+                workspace=resolution.workspace,
+                project=resolution.project,
+            )
+        )
+    facts = tuple(
+        sorted(
+            accepted,
+            key=lambda item: (
+                item.producer,
+                item.conversation_id,
+                item.occurred_at,
+                item.log_id,
+            ),
+        )
+    )
+    fact_set_id = _legacy_fact_set_id(
+        start_ns=start_ns,
+        end_ns=end_ns,
+        approved_by=approved_by,
+        accepted=facts,
+    )
+    created_at = end.isoformat()
+    if denominator != len(facts) + rejected + unresolved:
+        raise RuntimeError("legacy project-attribution denominator is not conserved")
+    from agent_introspection.database import (
+        CanonicalActivity,
+        CanonicalAttribution,
+        CanonicalSourceMembership,
+        persist_canonical_activity,
+    )
+    from agent_introspection.telemetry import (
+        CanonicalActivityVersionEvent,
+        enqueue_canonical_activity_version,
+    )
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if (
+            connection.execute(
+                "SELECT 1 FROM attribution_reanalysis_fact_sets WHERE id = ?", (fact_set_id,)
+            ).fetchone()
+            is not None
+        ):
+            raise RuntimeError("legacy project-attribution fact set was already applied")
+        semantic_hash = hashlib.sha256(fact_set_id.encode("ascii")).hexdigest()
+        connection.execute(
+            """
+            INSERT INTO attribution_reanalysis_fact_sets (
+                id, window_start_ns, window_end_ns, source_contract_fingerprint,
+                semantic_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (fact_set_id, start_ns, end_ns, semantic_hash, semantic_hash, created_at),
+        )
+        activity_ids: list[str] = []
+        outbox_event_ids: list[str] = []
+        for item in facts:
+            _persist_legacy_project(connection, item.project, created_at=created_at)
+            timestamp_ns = int(item.occurred_at.timestamp() * 1_000_000_000)
+            activity = CanonicalActivity(
+                producer=item.producer,
+                producer_surface=item.producer,
+                correlation_id=item.conversation_id,
+                source_started_at_ns=timestamp_ns,
+                source_ended_at_ns=timestamp_ns,
+                detector_id="project-attribution",
+                detector_version=1,
+                normalization_version=1,
+                source_membership=CanonicalSourceMembership(
+                    event_ids=(item.log_id,), log_ids=(item.log_id,), span_ids=()
+                ),
+                operation_kind="tool.workspace",
+                target_kind="git_workspace",
+                normalized_target=item.project.root.as_posix(),
+                normalized_failure_class="",
+                created_at=created_at,
+            )
+            attribution = CanonicalAttribution(
+                state="resolved",
+                project_identity_id=item.project.identity,
+                method="legacy_project_attribution",
+                evidence_id=item.log_id,
+                reason_code=None,
+                created_at=created_at,
+            )
+            write = persist_canonical_activity(connection, activity, attribution)
+            if not write.version_inserted:
+                raise RuntimeError("legacy project-attribution canonical activity already exists")
+            activity_ids.append(write.activity_id)
+            outbox_event_ids.append(
+                enqueue_canonical_activity_version(
+                    connection,
+                    CanonicalActivityVersionEvent(
+                        activity_id=write.activity_id,
+                        version=write.version,
+                        timestamp_ns=timestamp_ns,
+                        attributes={
+                            "activity.attribution.method": attribution.method,
+                            "activity.attribution.project_identity_id": item.project.identity,
+                            "activity.attribution.state": attribution.state,
+                        },
+                    ),
+                )
+            )
+        if len(set(activity_ids)) != len(activity_ids) or len(set(outbox_event_ids)) != len(
+            outbox_event_ids
+        ):
+            raise RuntimeError("legacy project-attribution source provenance is not unique")
+        if outbox_event_ids:
+            rows = connection.execute(
+                "SELECT event_id FROM otlp_outbox WHERE event_id IN ({})".format(
+                    ",".join("?" for _ in outbox_event_ids)
+                ),
+                tuple(outbox_event_ids),
+            ).fetchall()
+            if {str(row[0]) for row in rows} != set(outbox_event_ids):
+                raise RuntimeError("legacy project-attribution outbox verification failed")
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    return LegacyProjectAttributionResult(
+        fact_set_id=fact_set_id,
+        accepted=len(facts),
+        rejected=rejected,
+        unresolved=unresolved,
+        denominator=denominator,
+        activity_ids=tuple(sorted(activity_ids)),
+        outbox_event_ids=tuple(sorted(outbox_event_ids)),
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -37,7 +38,7 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
-from agent_introspection.generations import activate_generation, stage_generation
+from agent_introspection.project_evidence import apply_legacy_project_attribution
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -49,7 +50,7 @@ from agent_introspection.review import (
     import_model_output,
     validate_model_output,
 )
-from agent_introspection.scan import reanalyse_attribution, run_scan
+from agent_introspection.scan import run_scan
 from agent_introspection.scheduler import (
     completed_in_current_slot,
     install_schedule,
@@ -180,90 +181,53 @@ def _scan(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
 
 
-def _analysis_generation(args: argparse.Namespace) -> dict[str, Any]:
-    config, connection = _open(args)
-    try:
-        quick_check(connection)
-        verify_network_perimeter(docker_context=config.signoz.docker_context)
-        source = _client(config)
-        fingerprint = enforce_approved_schema(connection, discover_source_schema(source))
-        with scan_lease(
-            connection,
-            duration=timedelta(seconds=config.scheduler.lease_seconds),
-        ):
-            if args.analysis_generation_command == "stage":
-                staged = stage_generation(
-                    connection,
-                    source_contract_fingerprint=fingerprint,
-                )
-                return {
-                    "status": "staged",
-                    "generation_id": staged.generation_id,
-                    "ordinal": staged.ordinal,
-                    "window_start_ns": staged.window_start_ns,
-                    "window_end_ns": staged.window_end_ns,
-                    "semantic_hash": staged.semantic_hash,
-                    "projection_events": len(staged.projection_event_ids),
-                }
-            activated = activate_generation(
-                connection,
-                generation_id=args.generation_id,
-                client=source,
-                endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
-            )
-            return {
-                "status": "activated",
-                "generation_id": activated.generation_id,
-                "activation_event_id": activated.activation_event_id,
-                "projection_events": activated.projection_count,
-            }
-    finally:
-        connection.close()
+_RFC3339_UTC = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
-def _parse_utc_bound(value: str) -> datetime:
+def _parse_rfc3339_bound(value: str) -> datetime:
+    if not _RFC3339_UTC.fullmatch(value):
+        raise ValueError("legacy attribution bounds must be RFC3339 timestamps")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ValueError("reanalysis bounds must be ISO-8601 UTC timestamps") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-        raise ValueError("reanalysis bounds must use an explicit UTC offset")
+        raise ValueError("legacy attribution bounds must be RFC3339 timestamps") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("legacy attribution bounds must include an offset")
     return parsed.astimezone(UTC)
 
 
-def _analysis_reanalyse_attribution(args: argparse.Namespace) -> dict[str, Any]:
+def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
     config, connection = _open(args)
     try:
-        quick_check(connection)
-        verify_network_perimeter(docker_context=config.signoz.docker_context)
+        start = _parse_rfc3339_bound(args.start)
+        end = _parse_rfc3339_bound(args.end)
+        start_ns = int(start.timestamp() * 1_000_000_000)
+        end_ns = int(end.timestamp() * 1_000_000_000)
         source = _client(config)
-        fingerprint = enforce_approved_schema(connection, discover_source_schema(source))
-        start = _parse_utc_bound(args.start)
-        end = _parse_utc_bound(args.end)
-        with scan_lease(
+        result = apply_legacy_project_attribution(
             connection,
-            duration=timedelta(seconds=config.scheduler.lease_seconds),
-        ):
-            result = reanalyse_attribution(
-                connection,
-                config,
-                start_time=start,
-                end_time=end,
-                source_contract_fingerprint=fingerprint,
-                client=source,
-            )
-            staged = stage_generation(
-                connection,
-                source_contract_fingerprint=fingerprint,
-                fact_set_id=str(result["fact_set_id"]),
-                window_start_ns=int(result["window_start_ns"]),
-                window_end_ns=int(result["window_end_ns"]),
-            )
+            project_roots=config.attribution.project_roots,
+            source_rows=source.project_evidence(
+                start_ns=start_ns,
+                end_ns=end_ns,
+                start_bucket=max(0, start_ns // 1_000_000_000 - 1800),
+                end_bucket=end_ns // 1_000_000_000,
+            ),
+            start=start,
+            end=end,
+            approved_by=args.approved_by,
+        )
         return {
-            "status": "staged",
-            **result,
-            "generation_id": staged.generation_id,
-            "projection_events": len(staged.projection_event_ids),
+            "accepted": result.accepted,
+            "activity_ids": list(result.activity_ids),
+            "denominator": result.denominator,
+            "fact_set_id": result.fact_set_id,
+            "outbox_event_ids": list(result.outbox_event_ids),
+            "rejected": result.rejected,
+            "status": "applied",
+            "unresolved": result.unresolved,
         }
     finally:
         connection.close()
@@ -678,16 +642,13 @@ def _parser() -> argparse.ArgumentParser:
     hook.add_argument("--stdin", action="store_true")
     scan.add_argument("--scheduled", action="store_true")
 
-    generation = commands.add_parser("analysis-generation").add_subparsers(
-        dest="analysis_generation_command", required=True
+    legacy_project_attribution = commands.add_parser("legacy-project-attribution").add_subparsers(
+        dest="legacy_project_attribution_command", required=True
     )
-    generation.add_parser("stage")
-    activate = generation.add_parser("activate")
-    activate.add_argument("generation_id")
-
-    reanalyse = commands.add_parser("analysis-reanalyse-attribution")
-    reanalyse.add_argument("--start", required=True)
-    reanalyse.add_argument("--end", required=True)
+    legacy_run = legacy_project_attribution.add_parser("run")
+    legacy_run.add_argument("--start", required=True)
+    legacy_run.add_argument("--end", required=True)
+    legacy_run.add_argument("--approved-by", required=True)
 
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
@@ -761,10 +722,8 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _scan(args)
     if args.command == "session-context":
         return _session_context_hook(args)
-    if args.command == "analysis-generation":
-        return _analysis_generation(args)
-    if args.command == "analysis-reanalyse-attribution":
-        return _analysis_reanalyse_attribution(args)
+    if args.command == "legacy-project-attribution":
+        return _legacy_project_attribution(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":

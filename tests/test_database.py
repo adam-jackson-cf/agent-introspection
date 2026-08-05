@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from agent_introspection.database import (
     connect_database,
     integrity_check,
     manual_vacuum,
+    migrate_observations_to_canonical_activities,
     persist_canonical_activity,
     persist_observations_and_watermark,
     quick_check,
@@ -61,7 +63,15 @@ def _observation(
         normalized_failure_class="exit_1",
         normalization_version=1,
         membership_explanation="explicit failed tool result",
-        attributes={"event_ids": ["event-1"]},
+        attributes={
+            "attribution.method": "source",
+            "correlation_id": "thread-1",
+            "event_ids": ["event-1"],
+            "log_ids": ["log-1"],
+            "producer": "codex-cli",
+            "producer_surface": "cli",
+            "span_ids": ["span-1"],
+        },
         created_at="2026-07-10T10:00:01+00:00",
     )
 
@@ -159,6 +169,105 @@ def test_canonical_activity_writer_has_deterministic_membership_and_versions(
                 _canonical_activity(operation_kind="editor"),
                 _unresolved_attribution(),
             )
+    finally:
+        connection.close()
+
+
+def test_observation_migration_creates_an_immutable_complete_manifest(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    try:
+        _scan(connection)
+        observation = _observation("observation-1")
+        persist_observations_and_watermark(connection, (observation,), _watermark(1_000))
+
+        result = migrate_observations_to_canonical_activities(
+            connection, migrated_at="2026-08-05T00:00:00+00:00"
+        )
+
+        assert result.observation_ids == ("observation-1",)
+        assert result.activity_ids == (
+            CanonicalActivity(
+                producer="codex-cli",
+                producer_surface="cli",
+                correlation_id="thread-1",
+                source_started_at_ns=1_000,
+                source_ended_at_ns=1_000,
+                detector_id="tool_failure",
+                detector_version=1,
+                normalization_version=1,
+                source_membership=CanonicalSourceMembership(
+                    event_ids=("event-1",),
+                    log_ids=("log-1",),
+                    span_ids=("span-1",),
+                ),
+                operation_kind="shell",
+                target_kind="path",
+                normalized_target="src/app.py",
+                normalized_failure_class="exit_1",
+                created_at="2026-07-10T10:00:01+00:00",
+            ).id,
+        )
+        assert len(result.mapping_hash) == 64
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM observation_activity_migration_manifest"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            migrate_observations_to_canonical_activities(
+                connection, migrated_at="2026-08-05T00:00:00+00:00"
+            )
+            == result
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="manifest is immutable"):
+            connection.execute(
+                "UPDATE observation_activity_migration_manifest SET migrated_at = 'changed'"
+            )
+    finally:
+        connection.close()
+
+
+def test_observation_migration_rejects_ambiguous_activity_collisions(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    try:
+        _scan(connection)
+        first = _observation("observation-1")
+        second = replace(first, id="observation-2")
+        persist_observations_and_watermark(connection, (first, second), _watermark(1_000))
+
+        with pytest.raises(DatabaseError, match="ambiguous canonical activity collisions"):
+            migrate_observations_to_canonical_activities(
+                connection, migrated_at="2026-08-05T00:00:00+00:00"
+            )
+        assert connection.execute("SELECT COUNT(*) FROM canonical_activities").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_observation_migration_rejects_missing_source_membership(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    try:
+        _scan(connection)
+        observation = replace(
+            _observation("observation-1"),
+            attributes={
+                "attribution.method": "source",
+                "correlation_id": "thread-1",
+                "event_ids": ["event-1"],
+                "log_ids": ["log-1"],
+                "producer": "codex-cli",
+                "producer_surface": "cli",
+            },
+        )
+        persist_observations_and_watermark(connection, (observation,), _watermark(1_000))
+
+        with pytest.raises(DatabaseError, match="invalid span_ids"):
+            migrate_observations_to_canonical_activities(
+                connection, migrated_at="2026-08-05T00:00:00+00:00"
+            )
+        assert connection.execute("SELECT COUNT(*) FROM canonical_activities").fetchone()[0] == 0
     finally:
         connection.close()
 

@@ -1,47 +1,171 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from agent_introspection.attribution import (
-    Attribution,
-    direct_trace_attribution,
-    resolve_attribution,
-)
-from agent_introspection.source import TraceRow
+import pytest
+
+from agent_introspection.attribution import reconcile_activity, resolve_attribution
+from agent_introspection.database import CanonicalActivity, CanonicalSourceMembership
+from agent_introspection.migrations import apply_migrations
+from agent_introspection.session_context import drain_inbox, parse_event, spool_event
+
+_PROJECT_ID = "b" * 64
 
 
-def _trace(
-    *,
-    project_id: str | None = "project-1",
-    project_name: str | None = "Agent Introspection",
-    project_root: str | None = "/workspace/agent-introspection",
-    project_kind: str | None = "git",
-) -> TraceRow:
-    return TraceRow(
-        trace_id="trace-1",
-        turn_id=None,
-        thread_id="thread-1",
-        project_id=project_id,
-        project_name=project_name,
-        project_root=project_root,
-        project_kind=project_kind,
-        started_at=datetime(2026, 7, 20, tzinfo=UTC),
-        ended_at=datetime(2026, 7, 20, 1, tzinfo=UTC),
-        total_tokens=1,
-        tool_calls=0,
+def _connection(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    apply_migrations(connection, path)
+    return connection
+
+
+def _activity(moment: datetime, *, event_id: str = "event-1") -> CanonicalActivity:
+    return CanonicalActivity(
+        producer="claude-code",
+        producer_surface="claude-code-hooks",
+        correlation_id="session-1",
+        source_started_at_ns=int(moment.timestamp() * 1_000_000_000),
+        source_ended_at_ns=int(moment.timestamp() * 1_000_000_000),
+        detector_id="test-detector",
+        detector_version=1,
+        normalization_version=1,
+        source_membership=CanonicalSourceMembership(event_ids=(event_id,)),
+        operation_kind="tool",
+        target_kind="command",
+        normalized_target="pytest",
+        normalized_failure_class="failure",
+        created_at=moment.isoformat(),
     )
 
 
-def test_direct_trace_attribution_uses_complete_source_project_metadata() -> None:
-    attribution = direct_trace_attribution(_trace())
+def _context_event(root: Path, moment: datetime):
+    return parse_event(
+        {
+            "event_id": "a" * 64,
+            "producer": "claude-code",
+            "session_id": "session-1",
+            "event_type": "session_start",
+            "occurred_at": moment.isoformat(),
+            "agent": {
+                "project": {
+                    "id": _PROJECT_ID,
+                    "name": root.name,
+                    "root": root.as_posix(),
+                    "kind": "git",
+                }
+            },
+        }
+    )
 
-    assert attribution.method == "trace_project"
-    assert attribution.project_id == "project-1"
-    assert attribution.project is not None
-    assert attribution.project.display_name == "Agent Introspection"
-    assert attribution.project.root.as_posix() == "/workspace/agent-introspection"
+
+def test_resolution_uses_one_half_open_context_interval_or_fixed_reason(tmp_path: Path) -> None:
+    connection = _connection(tmp_path / "ledger.sqlite3")
+    try:
+        moment = datetime(2026, 7, 20, tzinfo=UTC)
+        assert (
+            resolve_attribution(
+                connection,
+                producer="claude-code",
+                correlation_id="session-1",
+                source_at=moment,
+            ).reason_code
+            == "missing_workspace"
+        )
+
+        root = tmp_path / "project"
+        root.mkdir()
+        inbox = tmp_path / "inbox"
+        spool_event(_context_event(root, moment), directory=inbox)
+        drain_inbox(connection, directory=inbox)
+
+        resolved = resolve_attribution(
+            connection,
+            producer="claude-code",
+            correlation_id="session-1",
+            source_at=moment,
+        )
+        assert resolved.state == "resolved"
+        assert resolved.project_id == _PROJECT_ID
+        assert (
+            resolve_attribution(
+                connection,
+                producer="claude-code",
+                correlation_id="session-1",
+                source_at=moment - timedelta(microseconds=1),
+            ).reason_code
+            == "missing_workspace"
+        )
+    finally:
+        connection.close()
 
 
-def test_missing_source_project_metadata_is_unresolved_without_cross_trace_inference() -> None:
-    assert direct_trace_attribution(_trace(project_name=None)) == Attribution(None, "unresolved")
-    assert resolve_attribution(trace=None) == Attribution(None, "unresolved")
+def test_late_context_reconciles_one_activity_once_and_rolls_back_all_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _connection(tmp_path / "ledger.sqlite3")
+    try:
+        moment = datetime(2026, 7, 20, tzinfo=UTC)
+        activity = _activity(moment)
+        first = reconcile_activity(connection, activity=activity, source_at=moment)
+        assert first.version == 1
+        assert first.version_inserted
+
+        root = tmp_path / "project"
+        root.mkdir()
+        connection.execute(
+            """
+            INSERT INTO project_identities(
+                id, identity_kind, canonical_path, git_common_dir, created_at
+            ) VALUES (?, 'git', ?, NULL, ?)
+            """,
+            (_PROJECT_ID, root.as_posix(), moment.isoformat()),
+        )
+        connection.commit()
+        inbox = tmp_path / "inbox"
+        spool_event(_context_event(root, moment), directory=inbox)
+        drain_inbox(connection, directory=inbox)
+
+        second = reconcile_activity(connection, activity=activity, source_at=moment)
+        assert (second.activity_id, second.version, second.version_inserted) == (
+            first.activity_id,
+            2,
+            True,
+        )
+        duplicate = reconcile_activity(connection, activity=activity, source_at=moment)
+        assert (duplicate.version, duplicate.version_inserted) == (2, False)
+        assert connection.execute(
+            "SELECT activity_version FROM canonical_recomputation_schedule "
+            "WHERE activity_id = ? ORDER BY aggregate_kind",
+            (activity.id,),
+        ).fetchall() == [(1,), (2,), (1,), (2,)]
+
+        outbox_count = connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()
+        import agent_introspection.attribution as attribution
+
+        monkeypatch.setattr(
+            attribution,
+            "_schedule_recomputation",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("schedule failed")),
+        )
+        changed = _activity(moment + timedelta(seconds=1), event_id="event-2")
+        with pytest.raises(RuntimeError, match="schedule failed"):
+            reconcile_activity(connection, activity=changed, source_at=moment)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM canonical_activities WHERE id = ?", (changed.id,)
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM canonical_activity_versions WHERE activity_id = ?", (changed.id,)
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM canonical_activity_outbox_evidence WHERE activity_id = ?",
+            (changed.id,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM canonical_recomputation_schedule WHERE activity_id = ?",
+            (changed.id,),
+        ).fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone() == outbox_count
+    finally:
+        connection.close()

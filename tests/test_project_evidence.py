@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 import agent_introspection.project_evidence as project_evidence
+from agent_introspection.database import connect_database
 from agent_introspection.project_evidence import (
     GitWorkspaceResolver,
     ToolWorkspaceInvocation,
+    apply_legacy_project_attribution,
     build_project_evidence,
 )
+from agent_introspection.source import ProjectEvidenceRow
 
 
 def _project(collection: Path, name: str) -> Path:
@@ -202,3 +205,130 @@ def test_git_command_failure_is_unresolved(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(project_evidence.subprocess, "run", failure)
 
     assert resolver.resolve(str(workspace)).status == "unresolved"
+
+
+def test_legacy_project_attribution_writes_one_canonical_fact_set_and_refuses_reapplication(
+    tmp_path: Path,
+) -> None:
+    collection = tmp_path / "Projects"
+    project = _project(collection, "project")
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    start = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    unresolved_workspace = collection / "unresolved"
+    unresolved_workspace.mkdir()
+    rows = (
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=1)).timestamp() * 1_000_000_000),
+            log_id="log-1",
+            trace_id="trace-1",
+            producer="codex-cli",
+            conversation_id="conversation-1",
+            tool_workspace=str(project),
+        ),
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=2)).timestamp() * 1_000_000_000),
+            log_id="log-2",
+            trace_id="trace-2",
+            producer="omp",
+            conversation_id="conversation-2",
+            tool_workspace=str(project),
+        ),
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=3)).timestamp() * 1_000_000_000),
+            log_id="log-3",
+            trace_id="trace-3",
+            producer="codex-cli",
+            conversation_id="conversation-3",
+            tool_workspace=str(unresolved_workspace),
+        ),
+    )
+    try:
+        result = apply_legacy_project_attribution(
+            connection,
+            project_roots=(collection,),
+            source_rows=rows,
+            start=start,
+            end=end,
+            approved_by="operator",
+        )
+        assert (result.accepted, result.rejected, result.unresolved, result.denominator) == (
+            1,
+            1,
+            1,
+            3,
+        )
+        assert result.denominator == result.accepted + result.rejected + result.unresolved
+        assert len(result.activity_ids) == len(result.outbox_event_ids) == 1
+        assert connection.execute("SELECT COUNT(*) FROM canonical_activities").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT event_id FROM otlp_outbox WHERE event_id = ?", (result.outbox_event_ids[0],)
+            ).fetchone()[0]
+            == result.outbox_event_ids[0]
+        )
+        with pytest.raises(RuntimeError, match="already applied"):
+            apply_legacy_project_attribution(
+                connection,
+                project_roots=(collection,),
+                source_rows=rows,
+                start=start,
+                end=end,
+                approved_by="operator",
+            )
+    finally:
+        connection.close()
+
+
+def test_legacy_project_attribution_rejects_invalid_and_outside_workspaces(
+    tmp_path: Path,
+) -> None:
+    collection = tmp_path / "Projects"
+    project = _project(collection, "project")
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    start = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    rows = (
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=1)).timestamp() * 1_000_000_000),
+            log_id="accepted",
+            trace_id="trace-accepted",
+            producer="codex-cli",
+            conversation_id="conversation-accepted",
+            tool_workspace=str(project),
+        ),
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=2)).timestamp() * 1_000_000_000),
+            log_id="invalid",
+            trace_id="trace-invalid",
+            producer="codex-cli",
+            conversation_id="conversation-invalid",
+            tool_workspace="",
+        ),
+        ProjectEvidenceRow(
+            timestamp_ns=int((start + timedelta(minutes=3)).timestamp() * 1_000_000_000),
+            log_id="outside",
+            trace_id="trace-outside",
+            producer="codex-cli",
+            conversation_id="conversation-outside",
+            tool_workspace=str(tmp_path / "outside"),
+        ),
+    )
+    try:
+        result = apply_legacy_project_attribution(
+            connection,
+            project_roots=(collection,),
+            source_rows=rows,
+            start=start,
+            end=end,
+            approved_by="operator",
+        )
+        assert (result.accepted, result.rejected, result.unresolved, result.denominator) == (
+            1,
+            2,
+            0,
+            3,
+        )
+        assert result.denominator == result.accepted + result.rejected + result.unresolved
+    finally:
+        connection.close()

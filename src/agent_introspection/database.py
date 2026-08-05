@@ -232,6 +232,15 @@ class CanonicalActivityWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationActivityMigrationResult:
+    """Verifiable evidence from one controlled observation migration."""
+
+    observation_ids: tuple[str, ...]
+    activity_ids: tuple[str, ...]
+    mapping_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class SourceWatermark:
     """The last source row durably included in an extraction transaction."""
 
@@ -355,6 +364,183 @@ def persist_canonical_activity(
         attribution.values(activity.id, version),
     )
     return CanonicalActivityWrite(activity.id, version, True)
+
+
+def _migration_text(attributes: Mapping[str, object], name: str, observation_id: str) -> str:
+    value = attributes.get(name)
+    if not isinstance(value, str) or not value:
+        raise DatabaseError(f"observation {observation_id!r} has no valid {name}")
+    return value
+
+
+def _migration_int(value: object, name: str, observation_id: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise DatabaseError(f"observation {observation_id!r} has invalid {name}")
+    return value
+
+
+def _migration_ids(
+    attributes: Mapping[str, object], name: str, observation_id: str
+) -> tuple[str, ...]:
+    value = attributes.get(name)
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
+    ):
+        raise DatabaseError(f"observation {observation_id!r} has invalid {name}")
+    return tuple(value)
+
+
+def _observation_migration_activity(
+    row: sqlite3.Row | tuple[object, ...],
+) -> tuple[str, CanonicalActivity, CanonicalAttribution, str]:
+    observation_id = str(row[0])
+    try:
+        attributes = json.loads(str(row[16]))
+    except json.JSONDecodeError as exc:
+        raise DatabaseError(f"observation {observation_id!r} has invalid attributes_json") from exc
+    if not isinstance(attributes, dict):
+        raise DatabaseError(f"observation {observation_id!r} attributes must be an object")
+    membership = CanonicalSourceMembership(
+        event_ids=_migration_ids(attributes, "event_ids", observation_id),
+        log_ids=_migration_ids(attributes, "log_ids", observation_id),
+        span_ids=_migration_ids(attributes, "span_ids", observation_id),
+    )
+    source_started_at_ns = _migration_int(row[8], "source_started_at_ns", observation_id)
+    source_ended_at_ns = _migration_int(row[8], "source_ended_at_ns", observation_id)
+    detector_version = _migration_int(row[3], "detector_version", observation_id)
+    normalization_version = _migration_int(row[14], "normalization_version", observation_id)
+    activity = CanonicalActivity(
+        producer=_migration_text(attributes, "producer", observation_id),
+        producer_surface=_migration_text(attributes, "producer_surface", observation_id),
+        correlation_id=_migration_text(attributes, "correlation_id", observation_id),
+        source_started_at_ns=source_started_at_ns,
+        source_ended_at_ns=source_ended_at_ns,
+        detector_id=str(row[2]),
+        detector_version=detector_version,
+        normalization_version=normalization_version,
+        source_membership=membership,
+        operation_kind=str(row[10]),
+        target_kind=str(row[11]),
+        normalized_target=str(row[12]),
+        normalized_failure_class=str(row[13]),
+        created_at=str(row[17]),
+    )
+    project_identity_id = row[5]
+    method = _migration_text(attributes, "attribution.method", observation_id)
+    if project_identity_id is None:
+        attribution = CanonicalAttribution(
+            state="unresolved",
+            project_identity_id=None,
+            method=method,
+            evidence_id=None,
+            reason_code=attributes.get("attribution.reason_code")
+            if isinstance(attributes.get("attribution.reason_code"), str)
+            else None,
+            created_at=str(row[17]),
+        )
+    else:
+        attribution = CanonicalAttribution(
+            state="resolved",
+            project_identity_id=str(project_identity_id),
+            method=method,
+            evidence_id=attributes.get("attribution.evidence_id")
+            if isinstance(attributes.get("attribution.evidence_id"), str)
+            else None,
+            reason_code=None,
+            created_at=str(row[17]),
+        )
+    mapping_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "activity_id": activity.id,
+                "observation_id": observation_id,
+                "source_membership_hash": membership.hash,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return observation_id, activity, attribution, mapping_hash
+
+
+def migrate_observations_to_canonical_activities(
+    connection: sqlite3.Connection,
+    *,
+    migrated_at: str,
+) -> ObservationActivityMigrationResult:
+    """Migrate the complete observation population or leave it untouched."""
+
+    _require_idle(connection, "observation activity migration")
+    if not migrated_at:
+        raise ValueError("migration timestamp is required")
+    rows = connection.execute(
+        f"SELECT {_OBSERVATION_COLUMNS} FROM observations ORDER BY id"
+    ).fetchall()
+    candidates = tuple(_observation_migration_activity(row) for row in rows)
+    observation_ids = tuple(candidate[0] for candidate in candidates)
+    activity_ids = tuple(candidate[1].id for candidate in candidates)
+    if len(activity_ids) != len(set(activity_ids)):
+        raise DatabaseError("observation migration has ambiguous canonical activity collisions")
+    mapping_hash = hashlib.sha256(
+        "\n".join(candidate[3] for candidate in candidates).encode("utf-8")
+    ).hexdigest()
+    existing = connection.execute(
+        """
+        SELECT observation_id, activity_id, source_membership_hash, mapping_hash
+        FROM observation_activity_migration_manifest
+        ORDER BY observation_id
+        """
+    ).fetchall()
+    expected = tuple(
+        (candidate[0], candidate[1].id, candidate[1].source_membership.hash, candidate[3])
+        for candidate in candidates
+    )
+    if existing:
+        if tuple(existing) != expected:
+            raise DatabaseError(
+                "observation migration manifest conflicts with the source population"
+            )
+        return ObservationActivityMigrationResult(observation_ids, activity_ids, mapping_hash)
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        for observation_id, activity, attribution, candidate_hash in candidates:
+            write = persist_canonical_activity(connection, activity, attribution)
+            if write.version != 1:
+                raise DatabaseError(
+                    f"observation {observation_id!r} does not preserve attribution as version one"
+                )
+            connection.execute(
+                """
+                INSERT INTO observation_activity_migration_manifest (
+                    observation_id, activity_id, source_membership_hash, mapping_hash, migrated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    activity.id,
+                    activity.source_membership.hash,
+                    candidate_hash,
+                    migrated_at,
+                ),
+            )
+        persisted = connection.execute(
+            """
+            SELECT observation_id, activity_id, source_membership_hash, mapping_hash
+            FROM observation_activity_migration_manifest
+            ORDER BY observation_id
+            """
+        ).fetchall()
+        if tuple(persisted) != expected:
+            raise DatabaseError("observation migration manifest verification failed")
+        connection.commit()
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    return ObservationActivityMigrationResult(observation_ids, activity_ids, mapping_hash)
 
 
 def _utc_stamp() -> str:

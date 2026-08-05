@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_introspection.migrations import (
+    CANONICAL_CUTOVER_MANIFEST,
     MIGRATIONS,
     Migration,
     MigrationError,
@@ -73,7 +74,24 @@ def test_initial_migration_creates_every_plan_table_and_verified_backup(
         "canonical_recomputation_schedule",
         "canonical_activity_outbox_evidence",
         "canonical_rejections",
+        "observation_activity_migration_manifest",
+        "canonical_finding_membership",
     }
+    manifest_surface = {
+        (entry.object_kind, entry.object_name) for entry in CANONICAL_CUTOVER_MANIFEST
+    }
+    assert {
+        "table",
+        "column",
+        "index",
+        "trigger",
+        "foreign_key",
+        "command",
+        "asset",
+        "test",
+    } <= {entry.object_kind for entry in CANONICAL_CUTOVER_MANIFEST}
+    assert ("table", "observations") in manifest_surface
+    assert ("table", "analysis_generations") in manifest_surface
     assert len(applied) == len(MIGRATIONS)
     assert applied[0].backup_path.is_file()
     assert "canonical_name" in project_columns
@@ -300,8 +318,28 @@ def test_canonical_activity_ledger_enforces_versions_recomputation_and_rejection
         assert canonical_columns["source_membership_json"] == "TEXT"
         assert version_columns["activity_id"] == "TEXT"
         assert ("canonical_activities", "activity_id", "id") in version_foreign_keys
+        manifest_columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(observation_activity_migration_manifest)"
+            )
+        }
+        finding_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(findings)")}
+        membership_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(canonical_finding_membership)")
+        }
         assert "canonical_activities_source_membership_idx" in activity_indexes
         assert "canonical_activity_versions_latest_idx" in indexes
+        assert manifest_columns == {
+            "observation_id",
+            "activity_id",
+            "source_membership_hash",
+            "mapping_hash",
+            "migrated_at",
+        }
+        assert {"is_active", "replaced_by_finding_id"} <= finding_columns
+        assert membership_columns == {"finding_id", "activity_id", "rationale", "created_at"}
         assert connection.execute(
             "SELECT source_membership_json FROM canonical_activities WHERE id = 'activity-1'"
         ).fetchone() == ('["event-1"]',)
@@ -360,11 +398,9 @@ def test_canonical_migration_rehearsal_preserves_preexisting_rows(tmp_path: Path
         )
         connection.commit()
         applied = apply_migrations(connection, path)
-        assert [migration.version for migration in applied] == [13]
-        assert connection.execute(
-            "SELECT canonical_name FROM project_identities WHERE id = 'project-1'"
-        ).fetchone() == ("project",)
-        assert connection.execute("PRAGMA user_version").fetchone() == (13,)
+        assert [migration.version for migration in applied] == [13, 14]
+        assert connection.execute("SELECT COUNT(*) FROM canonical_activities").fetchone() == (0,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (14,)
     finally:
         connection.close()
 
@@ -502,6 +538,7 @@ def test_findings_rebuild_preserves_dependents_and_permits_zero_window_counts(
             11,
             12,
             13,
+            14,
         ]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute("SELECT COUNT(*) FROM finding_membership").fetchone()[0] == 1
@@ -576,7 +613,19 @@ def test_review_lifecycle_telemetry_removal_preserves_sessions_and_installs_guar
 
         applied = apply_migrations(connection, path)
 
-        assert [migration.version for migration in applied] == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        assert [migration.version for migration in applied] == [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+        ]
         assert connection.execute(
             "SELECT id, purpose, status, entity_version FROM review_sessions ORDER BY id"
         ).fetchall() == [
