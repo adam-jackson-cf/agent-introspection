@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_introspection.identities import canonical_activity_id
 from agent_introspection.migrations import apply_migrations
 
 
@@ -75,6 +77,161 @@ class ObservationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalSourceMembership:
+    """Allowlisted, normalized immutable source identifiers for one activity."""
+
+    event_ids: tuple[str, ...] = ()
+    log_ids: tuple[str, ...] = ()
+    span_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("event_ids", "log_ids", "span_ids"):
+            values = getattr(self, field_name)
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError(f"{field_name} must contain only non-empty text identifiers")
+            object.__setattr__(self, field_name, tuple(sorted(set(values))))
+        if not self.source_ids:
+            raise ValueError("canonical source membership requires an allowlisted identifier")
+
+    @property
+    def source_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                (
+                    *(f"event:{value}" for value in self.event_ids),
+                    *(f"log:{value}" for value in self.log_ids),
+                    *(f"span:{value}" for value in self.span_ids),
+                )
+            )
+        )
+
+    @property
+    def json(self) -> str:
+        return json.dumps(
+            {
+                "event_ids": self.event_ids,
+                "log_ids": self.log_ids,
+                "span_ids": self.span_ids,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+
+    @property
+    def hash(self) -> str:
+        return hashlib.sha256(self.json.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalActivity:
+    """Immutable base activity data independent of attribution."""
+
+    producer: str
+    producer_surface: str
+    correlation_id: str
+    source_started_at_ns: int
+    source_ended_at_ns: int
+    detector_id: str
+    detector_version: int
+    normalization_version: int
+    source_membership: CanonicalSourceMembership
+    operation_kind: str
+    target_kind: str
+    normalized_target: str
+    normalized_failure_class: str
+    created_at: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.producer not in {"claude-code", "codex-cli", "codex-app-server", "omp"}
+            or not self.producer_surface
+            or not self.correlation_id
+            or self.source_started_at_ns < 0
+            or self.source_ended_at_ns < self.source_started_at_ns
+            or not self.target_kind
+            or not self.created_at
+        ):
+            raise ValueError("canonical activity fields are invalid")
+
+    @property
+    def id(self) -> str:
+        return canonical_activity_id(
+            detector_id=self.detector_id,
+            detector_version=self.detector_version,
+            normalization_version=self.normalization_version,
+            source_ids=self.source_membership.source_ids,
+            operation_kind=self.operation_kind,
+            normalized_target=self.normalized_target,
+            normalized_failure_class=self.normalized_failure_class,
+        )
+
+    def values(self) -> tuple[object, ...]:
+        return (
+            self.id,
+            self.producer,
+            self.producer_surface,
+            self.correlation_id,
+            self.source_started_at_ns,
+            self.source_ended_at_ns,
+            self.detector_id,
+            self.detector_version,
+            self.normalization_version,
+            self.source_membership.hash,
+            self.source_membership.json,
+            self.operation_kind,
+            self.target_kind,
+            self.normalized_target,
+            self.normalized_failure_class,
+            self.created_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalAttribution:
+    """Immutable activity attribution tuple for one canonical version."""
+
+    state: str
+    project_identity_id: str | None
+    method: str
+    evidence_id: str | None
+    reason_code: str | None
+    created_at: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.state not in {"resolved", "unresolved"}
+            or not self.method
+            or not self.created_at
+            or (self.state == "resolved" and self.project_identity_id is None)
+            or (self.state == "resolved" and self.reason_code is not None)
+            or (self.state == "unresolved" and self.project_identity_id is not None)
+        ):
+            raise ValueError("canonical attribution fields are invalid")
+
+    def values(self, activity_id: str, version: int) -> tuple[object, ...]:
+        return (
+            activity_id,
+            version,
+            self.state,
+            self.project_identity_id,
+            self.method,
+            self.evidence_id,
+            self.reason_code,
+            self.created_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalActivityWrite:
+    """The durable canonical activity identity and current attribution version."""
+
+    activity_id: str
+    version: int
+    version_inserted: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SourceWatermark:
     """The last source row durably included in an extraction transaction."""
 
@@ -115,6 +272,89 @@ _OBSERVATION_COLUMNS = (
     "target_kind, normalized_target, normalized_failure_class, normalization_version, "
     "membership_explanation, attributes_json, created_at"
 )
+
+_CANONICAL_ACTIVITY_COLUMNS = (
+    "id, producer, producer_surface, correlation_id, source_started_at_ns, source_ended_at_ns, "
+    "detector_id, detector_version, normalization_version, source_membership_hash, "
+    "source_membership_json, operation_kind, target_kind, normalized_target, "
+    "normalized_failure_class, created_at"
+)
+
+
+def persist_canonical_activity(
+    connection: sqlite3.Connection,
+    activity: CanonicalActivity,
+    attribution: CanonicalAttribution,
+) -> CanonicalActivityWrite:
+    """Persist one canonical activity and its changed attribution without committing."""
+
+    activity_values = activity.values()
+    membership = connection.execute(
+        """
+        SELECT id, source_membership_json
+        FROM canonical_activities
+        WHERE detector_id = ? AND detector_version = ? AND normalization_version = ?
+          AND source_membership_hash = ?
+        """,
+        (
+            activity.detector_id,
+            activity.detector_version,
+            activity.normalization_version,
+            activity.source_membership.hash,
+        ),
+    ).fetchone()
+    if membership is not None and (
+        str(membership[0]) != activity.id or str(membership[1]) != activity.source_membership.json
+    ):
+        raise DatabaseError("canonical source membership hash conflicts with persisted activity")
+
+    cursor = connection.execute(
+        f"INSERT INTO canonical_activities ({_CANONICAL_ACTIVITY_COLUMNS}) "
+        f"VALUES ({', '.join('?' for _ in activity_values)}) ON CONFLICT(id) DO NOTHING",
+        activity_values,
+    )
+    if cursor.rowcount == 0:
+        existing = connection.execute(
+            f"SELECT {_CANONICAL_ACTIVITY_COLUMNS} FROM canonical_activities WHERE id = ?",
+            (activity.id,),
+        ).fetchone()
+        if existing is None or tuple(existing) != activity_values:
+            raise DatabaseError(
+                f"canonical activity ID {activity.id!r} conflicts with persisted content"
+            )
+
+    latest = connection.execute(
+        """
+        SELECT version, attribution_state, project_identity_id, attribution_method,
+               attribution_evidence_id, reason_code
+        FROM canonical_activity_versions
+        WHERE activity_id = ?
+        ORDER BY version DESC
+        LIMIT 1
+        """,
+        (activity.id,),
+    ).fetchone()
+    attribution_tuple = (
+        attribution.state,
+        attribution.project_identity_id,
+        attribution.method,
+        attribution.evidence_id,
+        attribution.reason_code,
+    )
+    if latest is not None and tuple(latest[1:]) == attribution_tuple:
+        return CanonicalActivityWrite(activity.id, int(latest[0]), False)
+
+    version = 1 if latest is None else int(latest[0]) + 1
+    connection.execute(
+        """
+        INSERT INTO canonical_activity_versions (
+            activity_id, version, attribution_state, project_identity_id,
+            attribution_method, attribution_evidence_id, reason_code, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        attribution.values(activity.id, version),
+    )
+    return CanonicalActivityWrite(activity.id, version, True)
 
 
 def _utc_stamp() -> str:

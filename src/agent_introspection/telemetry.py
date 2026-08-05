@@ -29,6 +29,45 @@ OBSERVATION_EVENT_NAME = "introspection.observation.detected"
 OPERATIONAL_SCOPE = "operational"
 REVIEW_SCOPE = "review"
 
+CANONICAL_ACTIVITY_EVENT_NAME = "introspection.activity.version.recorded"
+CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class CanonicalActivityVersionEvent:
+    """Immutable OTLP representation of one canonical activity version."""
+
+    activity_id: str
+    version: int
+    timestamp_ns: int
+    attributes: Mapping[str, str | int | float | bool]
+    event_name: str = CANONICAL_ACTIVITY_EVENT_NAME
+    payload_schema_version: int = CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION
+
+    @property
+    def event_id(self) -> str:
+        material = "\x1f".join(
+            (
+                self.activity_id,
+                str(self.version),
+                str(self.payload_schema_version),
+                self.event_name,
+            )
+        )
+        return hashlib.sha256(material.encode()).hexdigest()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "event.id": self.event_id,
+            "event.scope": "canonical-activity",
+            "activity.id": self.activity_id,
+            "activity.version": self.version,
+            "activity.payload_schema_version": self.payload_schema_version,
+            "event.name": self.event_name,
+            "timestamp_ns": self.timestamp_ns,
+            **self.attributes,
+        }
+
 
 class EventQueryClient(Protocol):
     """The read-only query contract required for remote event verification."""
@@ -152,6 +191,82 @@ def enqueue_events(connection: sqlite3.Connection, events: list[DerivedEvent]) -
         with connection:
             write()
     return [event.event_id for event in events]
+
+
+def enqueue_canonical_activity_version(
+    connection: sqlite3.Connection, event: CanonicalActivityVersionEvent
+) -> str:
+    """Atomically retain one canonical activity-version outbox identity and evidence row."""
+    if not connection.in_transaction:
+        raise ValueError("canonical activity-version enqueue requires a caller-owned transaction")
+    if not event.activity_id:
+        raise ValueError("canonical activity ID is required")
+    if event.version <= 0:
+        raise ValueError("canonical activity version must be positive")
+    if event.payload_schema_version <= 0:
+        raise ValueError("canonical activity payload schema version must be positive")
+    if not event.event_name:
+        raise ValueError("canonical activity event name is required")
+
+    payload_json = json.dumps(event.payload(), sort_keys=True, separators=(",", ":"))
+    evidence_row = connection.execute(
+        """
+        SELECT event_id
+        FROM canonical_activity_outbox_evidence
+        WHERE activity_id = ? AND activity_version = ?
+          AND payload_schema_version = ? AND event_name = ?
+        """,
+        (event.activity_id, event.version, event.payload_schema_version, event.event_name),
+    ).fetchone()
+    if evidence_row is not None and str(evidence_row[0]) != event.event_id:
+        raise ValueError(
+            "immutable canonical activity outbox evidence conflict "
+            f"activity_id={event.activity_id} version={event.version} "
+            f"event_name={event.event_name}"
+        )
+
+    outbox_row = connection.execute(
+        "SELECT payload_json FROM otlp_outbox WHERE event_id = ?", (event.event_id,)
+    ).fetchone()
+    if outbox_row is not None and str(outbox_row[0]) != payload_json:
+        existing = json.loads(str(outbox_row[0]))
+        incoming = json.loads(payload_json)
+        differing = sorted(
+            key for key in set(existing) | set(incoming) if existing.get(key) != incoming.get(key)
+        )
+        raise ValueError(
+            "immutable OTLP event conflict "
+            f"event_id={event.event_id} event_name={event.event_name} "
+            f"entity_id={event.activity_id} differing_fields={','.join(differing)}"
+        )
+
+    now = datetime.now(UTC).isoformat()
+    connection.execute(
+        """
+        INSERT INTO otlp_outbox (
+            event_id, payload_json, status, attempt_count, next_attempt_at, created_at
+        ) VALUES (?, ?, 'pending', 0, ?, ?)
+        ON CONFLICT(event_id) DO NOTHING
+        """,
+        (event.event_id, payload_json, now, now),
+    )
+    connection.execute(
+        """
+        INSERT INTO canonical_activity_outbox_evidence (
+            activity_id, activity_version, payload_schema_version, event_name, event_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(activity_id, activity_version, payload_schema_version, event_name) DO NOTHING
+        """,
+        (
+            event.activity_id,
+            event.version,
+            event.payload_schema_version,
+            event.event_name,
+            event.event_id,
+            now,
+        ),
+    )
+    return event.event_id
 
 
 def _local_observation_event_ids(connection: sqlite3.Connection) -> set[str]:

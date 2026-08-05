@@ -1,0 +1,51 @@
+{
+  "observed_on": "2026-08-05",
+  "supported": [
+    {
+      "producer": "omp",
+      "version": "17.1.8",
+      "correlation_id": "019fd256-2b5b-7000-8243-256d0a07c777",
+      "equality_boundary": "local_session_context",
+      "otel_span_count": 2,
+      "unique_gen_ai_conversation_id_count": 1
+    },
+    {
+      "producer": "codex-app-server",
+      "version": "0.146.0",
+      "correlation_id": "019fd25b-c7e2-71d0-9aaf-652dbc1f366b",
+      "equality_boundary": "protocol_local_metadata",
+      "otel_span_count": 3,
+      "isolated_correlation_id": true
+    },
+    {
+      "producer": "codex-app-server",
+      "version": "0.146.0",
+      "correlation_id": "019fd25b-d86f-7710-b928-702237161395",
+      "equality_boundary": "protocol_local_metadata",
+      "otel_span_count": 3,
+      "isolated_correlation_id": true
+    },
+    {
+      "producer": "codex-app-server",
+      "version": "0.146.0",
+      "correlation_id": "019fd25a-4bea-7181-b8ca-e808d9f1d6e0",
+      "resume_preserved": true
+    }
+  ],
+  "unsupported": [
+    {
+      "producer": "claude-code",
+      "version": "2.1.199",
+      "missing_equality_boundary": "local_session_context"
+    },
+    {
+      "producer": "codex-cli",
+      "version": "0.146.0",
+      "missing_equality_boundary": "protocol_local_metadata"
+    },
+    {
+      "producer": "codex-app",
+      "missing_equality_boundary": "protocol_local_metadata"
+    }
+  ]
+}

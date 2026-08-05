@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -54,6 +56,63 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "isValidJSON(tool_payload)" in PROJECT_EVIDENCE_QUERY
     assert "SELECT\n    timestamp,\n    id,\n    trace_id" in PROJECT_EVIDENCE_QUERY
     assert "tool_payload" not in PROJECT_EVIDENCE_QUERY.split("FROM", 1)[0].split("SELECT", 1)[1]
+
+
+def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_surfaces() -> None:
+    fixture_path = Path(__file__).with_name("fixtures") / "producer_identity_proofs.json"
+    evidence = json.loads(fixture_path.read_text())
+
+    assert evidence == {
+        "observed_on": "2026-08-05",
+        "supported": [
+            {
+                "producer": "omp",
+                "version": "17.1.8",
+                "correlation_id": "019fd256-2b5b-7000-8243-256d0a07c777",
+                "equality_boundary": "local_session_context",
+                "otel_span_count": 2,
+                "unique_gen_ai_conversation_id_count": 1,
+            },
+            {
+                "producer": "codex-app-server",
+                "version": "0.146.0",
+                "correlation_id": "019fd25b-c7e2-71d0-9aaf-652dbc1f366b",
+                "equality_boundary": "protocol_local_metadata",
+                "otel_span_count": 3,
+                "isolated_correlation_id": True,
+            },
+            {
+                "producer": "codex-app-server",
+                "version": "0.146.0",
+                "correlation_id": "019fd25b-d86f-7710-b928-702237161395",
+                "equality_boundary": "protocol_local_metadata",
+                "otel_span_count": 3,
+                "isolated_correlation_id": True,
+            },
+            {
+                "producer": "codex-app-server",
+                "version": "0.146.0",
+                "correlation_id": "019fd25a-4bea-7181-b8ca-e808d9f1d6e0",
+                "resume_preserved": True,
+            },
+        ],
+        "unsupported": [
+            {
+                "producer": "claude-code",
+                "version": "2.1.199",
+                "missing_equality_boundary": "local_session_context",
+            },
+            {
+                "producer": "codex-cli",
+                "version": "0.146.0",
+                "missing_equality_boundary": "protocol_local_metadata",
+            },
+            {
+                "producer": "codex-app",
+                "missing_equality_boundary": "protocol_local_metadata",
+            },
+        ],
+    }
 
 
 def test_trace_query_rejects_missing_multiple_and_conflicting_native_correlations() -> None:

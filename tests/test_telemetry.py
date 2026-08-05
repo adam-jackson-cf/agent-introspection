@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -7,9 +8,13 @@ import pytest
 
 from agent_introspection.database import connect_database
 from agent_introspection.telemetry import (
+    CANONICAL_ACTIVITY_EVENT_NAME,
+    CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION,
     OPERATIONAL_SCOPE,
+    CanonicalActivityVersionEvent,
     DerivedEvent,
     drain_outbox,
+    enqueue_canonical_activity_version,
     enqueue_event,
     enqueue_events,
     enqueue_observation_reconciliation,
@@ -46,6 +51,128 @@ def event() -> DerivedEvent:
         attributes={"trend.state": "actionable", "occurrence.count": 3},
         timestamp_ns=1_700_000_000_000_000_000,
     )
+
+
+def canonical_activity_database(tmp_path: Path) -> sqlite3.Connection:
+    connection = connect_database(tmp_path / "canonical-activity.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO canonical_activities (
+            id, producer, producer_surface, correlation_id, source_started_at_ns,
+            source_ended_at_ns, detector_id, detector_version, normalization_version,
+            source_membership_hash, source_membership_json, operation_kind, target_kind,
+            normalized_target, normalized_failure_class, created_at
+        ) VALUES (
+            'activity-1', 'codex-cli', 'test', 'correlation-1', 10, 20, 'tool_failure',
+            1, 1, ?, '["source-1"]', 'run', 'command', 'test', 'failure', 'now'
+        )
+        """,
+        ("a" * 64,),
+    )
+    connection.execute(
+        """
+        INSERT INTO canonical_activity_versions (
+            activity_id, version, attribution_state, project_identity_id,
+            attribution_method, attribution_evidence_id, reason_code, created_at
+        ) VALUES ('activity-1', 1, 'unresolved', NULL, 'source', NULL, 'missing_workspace', 'now')
+        """
+    )
+    connection.commit()
+    return connection
+
+
+def canonical_activity_event(
+    *, attributes: dict[str, str | int] | None = None
+) -> CanonicalActivityVersionEvent:
+    return CanonicalActivityVersionEvent(
+        activity_id="activity-1",
+        version=1,
+        timestamp_ns=20,
+        attributes={"attribution.state": "unresolved"} if attributes is None else attributes,
+    )
+
+
+def test_canonical_activity_event_id_hashes_only_contract_fields() -> None:
+    event = canonical_activity_event()
+    expected = hashlib.sha256(
+        "\x1f".join(
+            (
+                "activity-1",
+                "1",
+                str(CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION),
+                CANONICAL_ACTIVITY_EVENT_NAME,
+            )
+        ).encode()
+    ).hexdigest()
+    assert event.event_id == expected
+    assert len(event.event_id) == 64
+    assert (
+        event.event_id
+        == canonical_activity_event(attributes={"attribution.state": "resolved"}).event_id
+    )
+
+
+def test_canonical_activity_enqueue_reuses_identical_identity_and_evidence(tmp_path: Path) -> None:
+    connection = canonical_activity_database(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="requires a caller-owned transaction"):
+            enqueue_canonical_activity_version(connection, canonical_activity_event())
+        assert not connection.in_transaction
+
+        connection.execute("BEGIN")
+        first = enqueue_canonical_activity_version(connection, canonical_activity_event())
+        connection.commit()
+
+        connection.execute("BEGIN")
+        second = enqueue_canonical_activity_version(connection, canonical_activity_event())
+        connection.commit()
+        assert first == second
+        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT event_id FROM canonical_activity_outbox_evidence"
+            ).fetchone()[0]
+            == first
+        )
+    finally:
+        connection.close()
+
+
+def test_canonical_activity_enqueue_rejects_conflicting_payload(tmp_path: Path) -> None:
+    connection = canonical_activity_database(tmp_path)
+    try:
+        connection.execute("BEGIN")
+        enqueue_canonical_activity_version(connection, canonical_activity_event())
+        connection.commit()
+
+        connection.execute("BEGIN")
+        with pytest.raises(ValueError, match=r"activity-1.*attribution.state"):
+            enqueue_canonical_activity_version(
+                connection,
+                canonical_activity_event(attributes={"attribution.state": "resolved"}),
+            )
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_canonical_activity_enqueue_rolls_back_outbox_and_evidence(tmp_path: Path) -> None:
+    connection = canonical_activity_database(tmp_path)
+    try:
+        connection.execute("BEGIN")
+        with pytest.raises(RuntimeError, match="rollback"):
+            enqueue_canonical_activity_version(connection, canonical_activity_event())
+            raise RuntimeError("rollback")
+        connection.rollback()
+        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canonical_activity_outbox_evidence"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        connection.close()
 
 
 def test_duplicate_enqueue_reuses_identical_event_id_and_payload() -> None:

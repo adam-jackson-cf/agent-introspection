@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from agent_introspection.database import (
+    CanonicalActivity,
+    CanonicalAttribution,
+    CanonicalSourceMembership,
     DatabaseError,
     ObservationRecord,
     SourceWatermark,
@@ -13,6 +16,7 @@ from agent_introspection.database import (
     connect_database,
     integrity_check,
     manual_vacuum,
+    persist_canonical_activity,
     persist_observations_and_watermark,
     quick_check,
     restore_database,
@@ -69,6 +73,94 @@ def _watermark(timestamp_ns: int, row_id: str = "row-1") -> SourceWatermark:
         row_id=row_id,
         updated_at="2026-07-10T10:00:02+00:00",
     )
+
+
+def _canonical_activity(
+    *,
+    membership: CanonicalSourceMembership | None = None,
+    operation_kind: str = "shell",
+) -> CanonicalActivity:
+    return CanonicalActivity(
+        producer="codex-cli",
+        producer_surface="cli",
+        correlation_id="thread-1",
+        source_started_at_ns=1_000,
+        source_ended_at_ns=2_000,
+        detector_id="tool_failure",
+        detector_version=1,
+        normalization_version=1,
+        source_membership=membership
+        or CanonicalSourceMembership(event_ids=("event-2", "event-1"), log_ids=("log-1",)),
+        operation_kind=operation_kind,
+        target_kind="path",
+        normalized_target="src/app.py",
+        normalized_failure_class="exit_1",
+        created_at="2026-08-05T00:00:00+00:00",
+    )
+
+
+def _unresolved_attribution(reason_code: str = "missing_workspace") -> CanonicalAttribution:
+    return CanonicalAttribution(
+        state="unresolved",
+        project_identity_id=None,
+        method="source",
+        evidence_id=None,
+        reason_code=reason_code,
+        created_at="2026-08-05T00:00:00+00:00",
+    )
+
+
+def test_canonical_activity_writer_has_deterministic_membership_and_versions(
+    tmp_path: Path,
+) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    try:
+        ordered = _canonical_activity(
+            membership=CanonicalSourceMembership(
+                event_ids=("event-1", "event-2"),
+                log_ids=("log-1",),
+            )
+        )
+        reordered = _canonical_activity(
+            membership=CanonicalSourceMembership(
+                event_ids=("event-2", "event-1"),
+                log_ids=("log-1",),
+            )
+        )
+        assert ordered.id == reordered.id
+        assert reordered.source_membership.event_ids == ("event-1", "event-2")
+
+        with connection:
+            first = persist_canonical_activity(connection, ordered, _unresolved_attribution())
+            replay = persist_canonical_activity(connection, reordered, _unresolved_attribution())
+        assert first.version == replay.version == 1
+        assert first.version_inserted
+        assert not replay.version_inserted
+
+        with connection:
+            changed = persist_canonical_activity(
+                connection,
+                ordered,
+                _unresolved_attribution("invalid_workspace"),
+            )
+        assert changed.version == 2
+        assert changed.version_inserted
+        assert connection.execute(
+            """
+            SELECT version FROM canonical_activity_versions
+            WHERE activity_id = ? ORDER BY version
+            """,
+            (ordered.id,),
+        ).fetchall() == [(1,), (2,)]
+
+        with pytest.raises(DatabaseError, match="membership hash conflicts"):
+            persist_canonical_activity(
+                connection,
+                _canonical_activity(operation_kind="editor"),
+                _unresolved_attribution(),
+            )
+    finally:
+        connection.close()
 
 
 def test_connection_enforces_wal_foreign_keys_timeout_and_schema(tmp_path: Path) -> None:
