@@ -15,7 +15,8 @@
     "safety_closure_commit": "c2c7065",
     "dashboard_diagnostics_commit": "46572ac",
     "legacy_remote_verification_commit": "bd3b54c",
-    "lifecycle_rejection_commit": "4528226"
+    "lifecycle_rejection_commit": "4528226",
+    "legacy_delivery_recovery_commit": "cc414e0"
   },
   "producer_identity_proofs": {
     "omp": {
@@ -87,29 +88,64 @@
       }
     },
     "codex_cli": {
-      "version": "0.146.1",
-      "command_argv_without_prompt": ["codex", "exec"],
+      "version": "0.146.0-alpha.9.2",
+      "command_argv_without_prompt": ["/Applications/ChatGPT.app/Contents/Resources/codex", "-c", "notify=[\"/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py\"]", "exec", "--sandbox", "read-only", "--json"],
       "native_field": "notify thread-id",
       "local_artifact_field": "session_meta.payload.id",
       "otel_service": "codex_exec",
       "otel_field": "thread.id or thread_id",
-      "fresh": {
-        "correlation_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
-        "local_artifact_event_id": "03d9e71a78c4a5266134ca59dc385e806adb15e471d8251221f0f409620cf59d",
-        "context_at": "2026-08-06T15:38:43.824830Z",
-        "otel_first_at": "2026-08-06T15:38:33.759611Z",
-        "otel_last_at": "2026-08-06T15:38:34.810971Z",
-        "otel_trace_count": 5,
-        "otel_span_count": 5,
+      "fresh_and_resume": {
+        "correlation_id": "019fd82f-7f9a-7f12-8f6b-9b4132720888",
+        "local_artifact_event_id": "0ec27fbeac0465f6ecef118966fa6538e4e1d2ac85fffd9e855a1573dde300e2",
+        "context_at": "2026-08-06T17:47:02.994569Z",
+        "otel_first_at": "2026-08-06T17:46:59.043866Z",
+        "otel_last_at_after_resume": "2026-08-06T17:47:42.963899Z",
+        "otel_trace_count_after_resume": 10,
+        "otel_span_count_after_resume": 11,
+        "resume_preserved_correlation_id": true,
+        "resume_preserved_open_interval": true,
         "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
         "project_name": "signoz-introspection",
         "result": "passed"
       },
-      "installed_binary_recheck": {
-        "result": "blocked",
-        "reason": "installed Homebrew binary did not complete version, help, or bounded read-only execution within 30-120 seconds while other user-owned Codex automation processes were active",
-        "processes_were_not_terminated": true,
-        "resume_and_concurrent_recheck": "not repeated"
+      "concurrent_projects": [
+        {
+          "correlation_id": "019fd830-abe3-70f2-87df-f42a15655c7a",
+          "local_artifact_event_id": "32e646efdf228f7ed4a31a0228d04f6268b75d3578854bfba1d560543d4d970e",
+          "context_at": "2026-08-06T17:48:19.640466Z",
+          "otel_first_at": "2026-08-06T17:48:16.176642Z",
+          "otel_last_at": "2026-08-06T17:48:16.756247Z",
+          "otel_trace_count": 5,
+          "otel_span_count": 5,
+          "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "project_name": "signoz-introspection"
+        },
+        {
+          "correlation_id": "019fd830-ad0b-7c41-98d0-340058ea477f",
+          "local_artifact_event_id": "66ddc1509fa2151a3cda2ae761bd1a69226f6313c5ea0a0d6f17756efe9f8cb3",
+          "context_at": "2026-08-06T17:48:20.149082Z",
+          "otel_first_at": "2026-08-06T17:48:16.508685Z",
+          "otel_last_at": "2026-08-06T17:48:17.117069Z",
+          "otel_trace_count": 5,
+          "otel_span_count": 5,
+          "project_id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+          "project_name": "fitness"
+        }
+      ],
+      "concurrent_otel_windows_overlap": true,
+      "concurrent_project_ids_are_distinct": true,
+      "non_git": {
+        "correlation_id": "019fd831-555f-7333-bc4c-72921d53b9d4",
+        "local_artifact_id": "d339f8fcf3e45b5d71e933791bfa534a3c53ec659d170cdcca2be988a23843c7",
+        "context_at": "2026-08-06T17:49:04.228957Z",
+        "otel_first_at": "2026-08-06T17:48:59.307990Z",
+        "otel_last_at": "2026-08-06T17:48:59.889407Z",
+        "otel_trace_count": 5,
+        "otel_span_count": 5,
+        "reason_code": "non_git_workspace",
+        "canonical_rejection_count": 1,
+        "accepted_interval_count": 0,
+        "result": "passed"
       }
     },
     "codex_app_server": {
@@ -184,6 +220,23 @@
       "checksum": "be8bb1b6b0b49bf469330160bea5284691146d9dd264b16620ab91ac31daccad",
       "denominator_conserved": true
     },
+    "legacy_delivery_recovery": {
+      "command": "agent-introspection legacy-project-attribution recover --fact-set-id <fact-set-id>",
+      "append_only_attempt_ledger": true,
+      "intended_event_id_set_count_and_hash_recorded": true,
+      "remote_event_id_set_count_and_hash_recorded": true,
+      "fixed_failure_reason_recorded": true,
+      "verification_time_recorded": true,
+      "reuses_immutable_event_ids": true,
+      "creates_new_fact_or_activity_version": false,
+      "focused_tests_passed": 27,
+      "smoke_fact_set_id": "472e521d73511d326cd412b94fe264482606b2f19e068afffa7a26f995d90572",
+      "smoke_intended_event_count": 0,
+      "smoke_remote_event_count": 0,
+      "smoke_intended_and_remote_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "smoke_verified": true,
+      "smoke_recovery_idempotent": true
+    },
     "remote_generation_inventory": {
       "captured_at": "2026-08-05T15:30:00Z",
       "row_count": 43806,
@@ -196,7 +249,8 @@
       "1 canonical schema",
       "2 temporal replay and canonical rejection identity",
       "3 legacy attribution fact ledger",
-      "4 canonical rejection reason vocabulary"
+      "4 canonical rejection reason vocabulary",
+      "5 legacy attribution delivery attempt ledger"
     ],
     "sqlite_integrity_check": "ok",
     "sqlite_foreign_key_violation_count": 0,
@@ -231,15 +285,16 @@
       }
     ],
     "rejection_counts": [
-      {"producer": "codex-app-server", "surface": "codex-app-server", "reason": "missing_correlation_id", "count": 13071},
-      {"producer": "codex-cli", "surface": "codex-cli", "reason": "missing_correlation_id", "count": 107764},
-      {"producer": "omp", "surface": "omp", "reason": "conflicting_correlation_id", "count": 3},
+      {"producer": "codex-app-server", "surface": "codex-app-server", "reason": "missing_correlation_id", "count": 14943},
+      {"producer": "codex-cli", "surface": "codex-cli", "reason": "missing_correlation_id", "count": 123350},
+      {"producer": "codex-cli", "surface": "session-context-inbox", "reason": "non_git_workspace", "count": 1},
+      {"producer": "omp", "surface": "omp", "reason": "conflicting_correlation_id", "count": 4},
       {"producer": "omp", "surface": "omp", "reason": "missing_correlation_id", "count": 1},
       {"producer": "omp", "surface": "session-context-inbox", "reason": "non_git_workspace", "count": 1}
     ],
     "context_counts": [
       {"producer": "claude-code", "sessions": 1, "events": 2},
-      {"producer": "codex-cli", "sessions": 3, "events": 3},
+      {"producer": "codex-cli", "sessions": 6, "events": 6},
       {"producer": "omp", "sessions": 7, "events": 16}
     ]
   },

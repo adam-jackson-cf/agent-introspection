@@ -44,32 +44,77 @@
     },
     {
       "producer": "codex-cli",
-      "version": "0.146.1",
-      "command_argv_without_prompt": ["codex", "exec"],
+      "version": "0.146.0-alpha.9.2",
+      "command_argv_without_prompt": ["/Applications/ChatGPT.app/Contents/Resources/codex", "-c", "notify=[\"/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py\"]", "exec", "--sandbox", "read-only", "--json"],
       "native_lifecycle_field": "notify thread-id",
       "local_artifact_field": "session_meta.payload.id",
       "otel_service": "codex_exec",
       "otel_field": "thread.id or thread_id",
-      "correlation_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
-      "local_artifact_ids": ["03d9e71a78c4a5266134ca59dc385e806adb15e471d8251221f0f409620cf59d"],
-      "first_context_at": "2026-08-06T15:38:43.824830Z",
-      "last_context_at": "2026-08-06T15:38:43.824830Z",
-      "first_otel_at": "2026-08-06T15:38:33.759611Z",
-      "last_otel_at": "2026-08-06T15:38:34.810971Z",
-      "otel_trace_count": 5,
-      "otel_span_count": 5,
+      "correlation_id": "019fd82f-7f9a-7f12-8f6b-9b4132720888",
+      "local_artifact_ids": [
+        "0ec27fbeac0465f6ecef118966fa6538e4e1d2ac85fffd9e855a1573dde300e2",
+        "32e646efdf228f7ed4a31a0228d04f6268b75d3578854bfba1d560543d4d970e",
+        "66ddc1509fa2151a3cda2ae761bd1a69226f6313c5ea0a0d6f17756efe9f8cb3",
+        "d339f8fcf3e45b5d71e933791bfa534a3c53ec659d170cdcca2be988a23843c7"
+      ],
+      "first_context_at": "2026-08-06T17:47:02.994569Z",
+      "last_context_at": "2026-08-06T17:49:04.228957Z",
+      "first_otel_at": "2026-08-06T17:46:59.043866Z",
+      "last_otel_at": "2026-08-06T17:48:59.889407Z",
+      "otel_trace_count": 25,
+      "otel_span_count": 26,
       "project": {
         "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
         "name": "signoz-introspection",
         "root": "/Users/adamjackson/Projects/inflight/signoz-introspection",
         "kind": "git"
       },
+      "resume_proof": {
+        "correlation_id": "019fd82f-7f9a-7f12-8f6b-9b4132720888",
+        "otel_trace_count_after_resume": 10,
+        "otel_span_count_after_resume": 11,
+        "otel_last_at": "2026-08-06T17:47:42.963899Z",
+        "new_context_event_count": 0,
+        "open_interval_preserved": true
+      },
+      "concurrent_proofs": [
+        {
+          "correlation_id": "019fd830-abe3-70f2-87df-f42a15655c7a",
+          "local_artifact_id": "32e646efdf228f7ed4a31a0228d04f6268b75d3578854bfba1d560543d4d970e",
+          "context_at": "2026-08-06T17:48:19.640466Z",
+          "otel_first_at": "2026-08-06T17:48:16.176642Z",
+          "otel_last_at": "2026-08-06T17:48:16.756247Z",
+          "otel_trace_count": 5,
+          "otel_span_count": 5,
+          "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "project_name": "signoz-introspection"
+        },
+        {
+          "correlation_id": "019fd830-ad0b-7c41-98d0-340058ea477f",
+          "local_artifact_id": "66ddc1509fa2151a3cda2ae761bd1a69226f6313c5ea0a0d6f17756efe9f8cb3",
+          "context_at": "2026-08-06T17:48:20.149082Z",
+          "otel_first_at": "2026-08-06T17:48:16.508685Z",
+          "otel_last_at": "2026-08-06T17:48:17.117069Z",
+          "otel_trace_count": 5,
+          "otel_span_count": 5,
+          "project_id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+          "project_name": "fitness"
+        }
+      ],
+      "non_git_proof": {
+        "correlation_id": "019fd831-555f-7333-bc4c-72921d53b9d4",
+        "local_artifact_id": "d339f8fcf3e45b5d71e933791bfa534a3c53ec659d170cdcca2be988a23843c7",
+        "reason_code": "non_git_workspace",
+        "accepted_interval_count": 0,
+        "otel_trace_count": 5,
+        "otel_span_count": 5
+      },
       "scenarios": {
         "fresh": "passed",
-        "resume": "recheck_blocked_by_active_user_owned_codex_processes",
+        "resume": "passed",
         "end": "not_exposed_by_installed_notify",
-        "concurrent_projects": "recheck_blocked_by_active_user_owned_codex_processes",
-        "non_git": "covered_by_shared_runtime",
+        "concurrent_projects": "passed",
+        "non_git": "passed",
         "workspace_change": "not_exposed_by_installed_notify"
       }
     },
