@@ -49,7 +49,7 @@ Managed configuration is producer-specific:
 | Producer | Managed native configuration | Native lifecycle mapping | Lifecycle limitation |
 |---|---|---|---|
 | Claude Code | Configure documented `SessionStart` and `SessionEnd` command hooks. | `SessionStart` → `session_start`; `SessionEnd` → `session_end`; use authoritative native session ID and absolute workspace. | No `workspace_changed` event. |
-| Codex | Configure the documented persistent `notify` hook. | `agent-turn-complete` with authoritative `thread-id` and absolute `cwd` → `session_start` on first observation; a changed normalized `cwd` → `workspace_changed`. | `session_end` is unsupported; a notification without the required values emits no event. |
+| Codex | Configure the documented persistent `notify` hook. | `agent-turn-complete` with authoritative `thread-id` and absolute `cwd` → `session_start`. | `workspace_changed` and `session_end` are unsupported; no lifecycle transition is inferred from changed `cwd`; a notification without the required values emits no event. |
 | OMP | Configure the native extension lifecycle callback. | Native `session_start` → `session_start`; native `session_shutdown` → `session_end`; use the extension session ID and absolute `cwd`. | No `workspace_changed` event. |
 
 The Codex adapter invokes the runtime as `codex-cli` only when its authoritative native `notify` envelope satisfies the adapter contract. The shared runtime recognizes all canonical producer values; a producer identity is never inferred from telemetry, process state, request content, or workspace.
@@ -59,7 +59,7 @@ The Codex adapter invokes the runtime as `codex-cli` only when its authoritative
 | Producer | Required authoritative native fields | Accepted event types | Unsupported boundary |
 |---|---|---|---|
 | Claude Code | `hook_event_name`, session ID, absolute `cwd`; native timestamp when supplied | `SessionStart` → `session_start`; `SessionEnd` → `session_end` | Missing or malformed values; workspace changes are not reported. |
-| Codex | `type=agent-turn-complete`, `thread-id`, absolute `cwd`; valid native timestamp when supplied | First observation → `session_start`; changed normalized `cwd` → `workspace_changed` | `session_end` is unsupported; missing, malformed, ambiguous, or non-lifecycle notification values emit no event. |
+| Codex | `type=agent-turn-complete`, `thread-id`, absolute `cwd`; valid native timestamp when supplied | `agent-turn-complete` → `session_start` | `workspace_changed` and `session_end` are unsupported; changed `cwd` does not infer a lifecycle transition; missing, malformed, ambiguous, or non-lifecycle notification values emit no event. |
 | OMP | extension session ID and absolute `cwd` | native `session_start` → `session_start`; native `session_shutdown` → `session_end` | Missing, malformed, or ambiguous values emit no event; workspace changes are not reported. |
 
 An unsupported producer event remains unresolved. Prompt hooks, text-only hooks, telemetry CWD, paths, aliases, shell commands, static values, request content, and thread inference are not authoritative inputs.

@@ -3,22 +3,17 @@
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
-import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 PRODUCER = "codex-cli"
 EVENT_TYPE = "agent-turn-complete"
-STATE_DIRECTORY = Path(".local/state/agent-introspection/codex-hook")
 
 
 class HookInputError(ValueError):
@@ -85,48 +80,6 @@ def _envelope(argument: str) -> tuple[str, str, str]:
     return session_id, workspace, _timestamp(payload)
 
 
-def _state_path(directory: Path, session_id: str) -> Path:
-    return directory / f"{hashlib.sha256(session_id.encode()).hexdigest()}.json"
-
-
-def _read_state(path: Path, session_id: str) -> str | None:
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    try:
-        state = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise HookInputError from error
-    if (
-        not isinstance(state, dict)
-        or set(state) != {"session_id", "workspace"}
-        or state.get("session_id") != session_id
-        or not isinstance(state.get("workspace"), str)
-    ):
-        raise HookInputError
-    return state["workspace"]
-
-
-def _write_state(directory: Path, path: Path, session_id: str, workspace: str) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(
-                {"session_id": session_id, "workspace": workspace},
-                stream,
-                separators=(",", ":"),
-            )
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temporary_name)
-        raise
-
-
 def _runtime() -> Path:
     return Path(__file__).resolve().parent.parent / "session-context-runtime.sh"
 
@@ -136,23 +89,11 @@ def main(argv: list[str]) -> int:
         return _usage()
     try:
         session_id, workspace, occurred_at = _envelope(argv[1])
-        state_directory = Path(os.environ["HOME"]) / STATE_DIRECTORY
-        state_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        lock_path = state_directory / ".lock"
-        with lock_path.open("a+", encoding="utf-8") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            state_path = _state_path(state_directory, session_id)
-            previous_workspace = _read_state(state_path, session_id)
-            if previous_workspace == workspace:
-                return 0
-            event_type = "session_start" if previous_workspace is None else "workspace_changed"
-            completed = subprocess.run(
-                [str(_runtime()), PRODUCER, session_id, event_type, occurred_at, workspace],
-                check=False,
-            )
-            if completed.returncode != 0:
-                return completed.returncode
-            _write_state(state_directory, state_path, session_id, workspace)
+        completed = subprocess.run(
+            [str(_runtime()), PRODUCER, session_id, "session_start", occurred_at, workspace],
+            check=False,
+        )
+        return completed.returncode
     except (HookInputError, KeyError, OSError):
         return _usage()
     return 0

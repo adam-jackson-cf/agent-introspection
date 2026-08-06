@@ -101,7 +101,9 @@ def _events(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
-def test_codex_notify_emits_start_once_and_workspace_transition(tmp_path: Path) -> None:
+def test_codex_notify_maps_each_native_notify_to_session_start_without_state(
+    tmp_path: Path,
+) -> None:
     adapter, log = _adapter(tmp_path)
     home = tmp_path / "home"
     first_workspace = tmp_path / "one"
@@ -123,23 +125,20 @@ def test_codex_notify_emits_start_once_and_workspace_transition(tmp_path: Path) 
     assert _invoke(adapter, home, log, changed).returncode == 0
 
     events = _events(log)
-    assert len(events) == 2
+    assert len(events) == 3
     assert events[0][:3] == ["codex-cli", "thread-42", "session_start"]
     assert started <= datetime.fromisoformat(events[0][3]) <= finished
     assert events[0][4] == str(first_workspace)
-    assert events[1] == [
+    assert events[1][:3] == ["codex-cli", "thread-42", "session_start"]
+    assert events[1][4] == str(first_workspace)
+    assert events[2] == [
         "codex-cli",
         "thread-42",
-        "workspace_changed",
+        "session_start",
         "2026-08-03T12:01:00+00:00",
         str(second_workspace),
     ]
-    state_files = list((home / ".local/state/agent-introspection/codex-hook").glob("*.json"))
-    assert len(state_files) == 1
-    assert json.loads(state_files[0].read_text(encoding="utf-8")) == {
-        "session_id": "thread-42",
-        "workspace": str(second_workspace),
-    }
+    assert not (home / ".local/state/agent-introspection/codex-hook").exists()
 
 
 @pytest.mark.parametrize(
@@ -196,7 +195,7 @@ def test_codex_notify_rejects_multiple_authoritative_thread_ids(
     "duplicate_field",
     ["type", "thread-id", "cwd", "timestamp"],
 )
-def test_codex_notify_rejects_duplicate_authoritative_fields_without_state_mutation(
+def test_codex_notify_rejects_duplicate_authoritative_fields_without_runtime_invocation(
     tmp_path: Path, duplicate_field: str
 ) -> None:
     adapter, log = _adapter(tmp_path)
@@ -240,12 +239,6 @@ def test_codex_notify_rejects_duplicate_authoritative_fields_without_state_mutat
             str(original_workspace),
         ]
     ]
-    state_files = list((home / ".local/state/agent-introspection/codex-hook").glob("*.json"))
-    assert len(state_files) == 1
-    assert json.loads(state_files[0].read_text(encoding="utf-8")) == {
-        "session_id": "thread-42",
-        "workspace": str(original_workspace),
-    }
 
 
 def test_codex_app_server_forwards_protocol_values_as_canonical_runtime_argv(
