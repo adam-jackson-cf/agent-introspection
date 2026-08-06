@@ -6,6 +6,7 @@ from agent_introspection.dashboard import (
     CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE,
     CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE,
     COMMON_FILTER,
+    CONTEXT_ACCEPTED_EVENT,
     DASHBOARD_UUID,
     HEALTH_DASHBOARD_UUID,
     INSIGHT_PANELS,
@@ -32,10 +33,15 @@ def test_insight_dashboard_has_stable_identity_and_only_agreed_panels() -> None:
     assert dashboard["title"] == "Agent Introspection"
 
     expected = {
-        "project-data-attribution": ("Project data attribution", "table", (0, 0, 12, 5)),
-        "actionable-trends": ("Actionable trends", "table", (0, 5, 12, 6)),
-        "observed-signals-by-detector": ("Observed signals by detector", "graph", (0, 11, 12, 6)),
-        "detector-signal-yield": ("Detector signal yield", "table", (0, 17, 12, 5)),
+        "activity-coverage": ("Activity coverage", "table", (0, 0, 12, 5)),
+        "attribution-diagnostics": ("Attribution diagnostics", "table", (0, 5, 12, 5)),
+        "session-context-coverage": ("Session context coverage", "table", (0, 10, 12, 6)),
+        "context-to-telemetry-delay": ("Context-to-telemetry delay", "graph", (0, 16, 12, 5)),
+        "late-context-reconciliations": (
+            "Late-context reconciliations",
+            "table",
+            (0, 21, 12, 5),
+        ),
     }
     assert len(dashboard["widgets"]) == len(INSIGHT_PANELS) == len(expected)
     layouts = {item["i"]: item for item in dashboard["layout"]}
@@ -44,7 +50,7 @@ def test_insight_dashboard_has_stable_identity_and_only_agreed_panels() -> None:
         assert widget["title"] == title
         assert widget["panelTypes"] == panel_type
         assert tuple(layouts[widget["id"]][key] for key in ("x", "y", "w", "h")) == layout
-        assert "selected display range" in widget["description"]
+        assert "selected source-event time range" in widget["description"]
 
 
 def test_health_dashboard_has_stable_identity_and_agreed_operational_panels() -> None:
@@ -88,19 +94,43 @@ def test_insight_queries_select_latest_canonical_activity_versions_in_source_tim
             assert " AS value" in query
 
 
-def test_attribution_diagnostics_require_complete_project_pair_and_report_outcomes() -> None:
-    attribution = _panels(build_dashboard())["project-data-attribution"]["query"]["clickhouse_sql"][
-        0
-    ]["query"]
+def test_attribution_diagnostics_cover_canonical_coverage_method_and_reason() -> None:
+    panels = _panels(build_dashboard())
+    coverage = panels["activity-coverage"]["query"]["clickhouse_sql"][0]["query"]
+    diagnostics = panels["attribution-diagnostics"]["query"]["clickhouse_sql"][0]["query"]
+
     for key in AGENT_PROJECT_SCHEMA.dashboard_attribute_keys.values():
-        assert f"attributes_string['{key}']" in attribution
-    assert "`Attribution state`" in attribution
-    assert "`Rejection reason`" in attribution
-    assert "`Producer surface`" in attribution
-    assert "`Resolved activities`" in attribution
-    assert "`Unresolved activities`" in attribution
-    assert "activity.attribution.reason_code" in attribution
-    assert "activity.producer_surface" in attribution
+        assert f"attributes_string['{key}']" in coverage
+    for metric in ("`Attributed`", "`Unresolved`", "`Eligible`"):
+        assert metric in coverage
+    assert coverage.count("countIf(") == 4
+    assert "activity.attribution.method" in diagnostics
+    assert "activity.attribution.reason_code" in diagnostics
+    assert "`Attribution method`" in diagnostics
+    assert "`Rejection reason`" in diagnostics
+
+
+def test_session_context_diagnostics_cover_all_cohorts_delay_and_reconciliations() -> None:
+    panels = _panels(build_dashboard())
+    coverage = panels["session-context-coverage"]["query"]["clickhouse_sql"][0]["query"]
+    delay = panels["context-to-telemetry-delay"]["query"]["clickhouse_sql"][0]["query"]
+    reconciliations = panels["late-context-reconciliations"]["query"]["clickhouse_sql"][0]["query"]
+
+    for cohort in (
+        "`Source sessions`",
+        "`Accepted context sessions`",
+        "`Matched sessions`",
+        "`Project-context records without telemetry`",
+        "`Telemetry without context`",
+    ):
+        assert cohort in coverage
+    assert CONTEXT_ACCEPTED_EVENT in coverage
+    assert "FULL OUTER JOIN" in coverage
+    assert "dateDiff(" in delay
+    assert " AS ts" in delay
+    assert " AS value" in delay
+    assert "attributes_number['activity.version'] > 1" in reconciliations
+    assert "session_context_interval" in reconciliations
 
 
 def test_health_queries_keep_operational_event_semantics() -> None:
@@ -137,20 +167,17 @@ def test_dashboard_verifiers_report_identity_presentation_layout_and_query_drift
 def test_dashboard_verifier_rejects_invalid_query_shapes_and_latest_version_selection() -> None:
     dashboard = build_dashboard()
     panels = _panels(dashboard)
-    panels["observed-signals-by-detector"]["query"]["clickhouse_sql"][0]["query"] = panels[
-        "observed-signals-by-detector"
+    panels["context-to-telemetry-delay"]["query"]["clickhouse_sql"][0]["query"] = panels[
+        "context-to-telemetry-delay"
     ]["query"]["clickhouse_sql"][0]["query"].replace(" AS value", " AS activities")
-    panels["project-data-attribution"]["query"]["clickhouse_sql"][0]["query"] = panels[
-        "project-data-attribution"
+    panels["activity-coverage"]["query"]["clickhouse_sql"][0]["query"] = panels[
+        "activity-coverage"
     ]["query"]["clickhouse_sql"][0]["query"].replace(
         CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE, "1 = 1"
     )
     issues = verify_dashboard(dashboard)
-    assert "visual panel observed-signals-by-detector lacks ts and value columns" in issues
-    assert (
-        "projection panel project-data-attribution does not select latest activity version"
-        in issues
-    )
+    assert "visual panel context-to-telemetry-delay lacks ts and value columns" in issues
+    assert "projection panel activity-coverage does not select latest activity version" in issues
 
 
 def test_dashboard_verifier_reports_a_malformed_query_definition_without_raising() -> None:

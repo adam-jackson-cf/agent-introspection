@@ -3,7 +3,7 @@
   "layout": [
     {
       "h": 5,
-      "i": "project-data-attribution",
+      "i": "activity-coverage",
       "moved": false,
       "static": false,
       "w": 12,
@@ -11,8 +11,8 @@
       "y": 0
     },
     {
-      "h": 6,
-      "i": "actionable-trends",
+      "h": 5,
+      "i": "attribution-diagnostics",
       "moved": false,
       "static": false,
       "w": 12,
@@ -21,21 +21,30 @@
     },
     {
       "h": 6,
-      "i": "observed-signals-by-detector",
+      "i": "session-context-coverage",
       "moved": false,
       "static": false,
       "w": 12,
       "x": 0,
-      "y": 11
+      "y": 10
     },
     {
       "h": 5,
-      "i": "detector-signal-yield",
+      "i": "context-to-telemetry-delay",
       "moved": false,
       "static": false,
       "w": 12,
       "x": 0,
-      "y": 17
+      "y": 16
+    },
+    {
+      "h": 5,
+      "i": "late-context-reconciliations",
+      "moved": false,
+      "static": false,
+      "w": 12,
+      "x": 0,
+      "y": 21
     }
   ],
   "locked": true,
@@ -52,8 +61,8 @@
   "version": "v5",
   "widgets": [
     {
-      "description": "Canonical activity attribution diagnostics in the selected display range.",
-      "id": "project-data-attribution",
+      "description": "Stable canonical activity coverage by producer and surface in the selected source-event time range.",
+      "id": "activity-coverage",
       "panelTypes": "table",
       "query": {
         "builder": {
@@ -63,19 +72,19 @@
         "clickhouse_sql": [
           {
             "disabled": false,
-            "legend": "Project data attribution",
+            "legend": "Activity coverage",
             "name": "A",
-            "query": "SELECT\n  attributes_string['activity.attribution.state'] AS `Attribution state`,\n  if(\n    attributes_string['activity.attribution.state'] = 'resolved',\n    'none',\n    if(\n      empty(attributes_string['activity.attribution.reason_code']),\n      'not recorded',\n      attributes_string['activity.attribution.reason_code']\n    )\n  ) AS `Rejection reason`,\n  attributes_string['activity.producer_surface'] AS `Producer surface`,\n  toFloat64(countIf(\n    attributes_string['activity.attribution.state'] = 'resolved'\n    AND notEmpty(attributes_string['agent.project.id'])\n    AND attributes_string['agent.project.id'] != 'unresolved'\n    AND notEmpty(attributes_string['agent.project.name'])\n    AND attributes_string['agent.project.name'] != 'unresolved'\n  )) AS `Resolved activities`,\n  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))\n    AS `Unresolved activities`,\n  toFloat64(count()) AS `All activities`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nGROUP BY `Attribution state`, `Rejection reason`, `Producer surface`\nORDER BY `All activities` DESC, `Attribution state`, `Rejection reason`, `Producer surface`"
+            "query": "SELECT\n  attributes_string['activity.producer'] AS `Producer`,\n  attributes_string['activity.producer_surface'] AS `Surface`,\n  toFloat64(countIf(\n    attributes_string['activity.attribution.state'] = 'resolved'\n    AND notEmpty(attributes_string['agent.project.id'])\n    AND attributes_string['agent.project.id'] != 'unresolved'\n    AND notEmpty(attributes_string['agent.project.name'])\n    AND attributes_string['agent.project.name'] != 'unresolved'\n  )) AS `Attributed`,\n  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))\n    AS `Unresolved`,\n  toFloat64(\n    countIf(\n      attributes_string['activity.attribution.state'] = 'resolved'\n      AND notEmpty(attributes_string['agent.project.id'])\n      AND attributes_string['agent.project.id'] != 'unresolved'\n      AND notEmpty(attributes_string['agent.project.name'])\n      AND attributes_string['agent.project.name'] != 'unresolved'\n    )\n    + countIf(attributes_string['activity.attribution.state'] = 'unresolved')\n  ) AS `Eligible`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nGROUP BY `Producer`, `Surface`\nORDER BY `Eligible` DESC, `Producer`, `Surface`"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Project data attribution"
+      "title": "Activity coverage"
     },
     {
-      "description": "Latest canonical activity versions in the selected display range.",
-      "id": "actionable-trends",
+      "description": "Stable canonical activity attribution method and rejection reason in the selected source-event time range.",
+      "id": "attribution-diagnostics",
       "panelTypes": "table",
       "query": {
         "builder": {
@@ -85,19 +94,41 @@
         "clickhouse_sql": [
           {
             "disabled": false,
-            "legend": "Actionable trends",
+            "legend": "Attribution diagnostics",
             "name": "A",
-            "query": "SELECT\n  left(attributes_string['activity.id'], 8) AS `Activity`,\n  attributes_string['activity.attribution.state'] AS `Attribution state`,\n  if(\n    attributes_string['activity.attribution.state'] = 'resolved'\n    AND notEmpty(attributes_string['agent.project.id'])\n    AND attributes_string['agent.project.id'] != 'unresolved'\n    AND notEmpty(attributes_string['agent.project.name'])\n    AND attributes_string['agent.project.name'] != 'unresolved',\n    attributes_string['agent.project.name'],\n    'Unresolved'\n  ) AS `Project`,\n  attributes_string['activity.producer_surface'] AS `Producer surface`,\n  attributes_number['activity.version'] AS `Version`,\n  formatDateTime(fromUnixTimestamp64Nano(timestamp), '%d %b %H:%i') AS `Source time`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nORDER BY timestamp DESC, `Activity`\nLIMIT 100"
+            "query": "SELECT\n  attributes_string['activity.attribution.method'] AS `Attribution method`,\n  if(\n    attributes_string['activity.attribution.state'] = 'resolved',\n    'none',\n    attributes_string['activity.attribution.reason_code']\n  ) AS `Rejection reason`,\n  toFloat64(count()) AS `Eligible`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nGROUP BY `Attribution method`, `Rejection reason`\nORDER BY `Eligible` DESC, `Attribution method`, `Rejection reason`"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Actionable trends"
+      "title": "Attribution diagnostics"
     },
     {
-      "description": "Daily latest canonical activity versions by producer surface in the selected display range.",
-      "id": "observed-signals-by-detector",
+      "description": "Source sessions and accepted context coverage in the selected source-event time range.",
+      "id": "session-context-coverage",
+      "panelTypes": "table",
+      "query": {
+        "builder": {
+          "queryData": [],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "Session context coverage",
+            "name": "A",
+            "query": "WITH latest_activities AS (\n  SELECT *\n  FROM signoz_logs.distributed_logs_v2\n  WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\n), accepted_context AS (\n  SELECT *\n  FROM signoz_logs.distributed_logs_v2\n  WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.session_context.accepted'\n)\nSELECT\n  coalesce(\n    activity.attributes_string['activity.producer'],\n    context.attributes_string['producer']\n  ) AS `Producer`,\n  coalesce(activity.attributes_string['activity.producer_surface'], 'context') AS `Surface`,\n  toFloat64(uniqExact(activity.attributes_string['activity.correlation_id'])) AS `Source sessions`,\n  toFloat64(uniqExact(context.attributes_string['session.id'])) AS `Accepted context sessions`,\n  toFloat64(uniqExactIf(\n    activity.attributes_string['activity.correlation_id'],\n    notEmpty(context.attributes_string['session.id'])\n  )) AS `Matched sessions`,\n  toFloat64(uniqExactIf(\n    context.attributes_string['session.id'],\n    empty(activity.attributes_string['activity.correlation_id'])\n  )) AS `Project-context records without telemetry`,\n  toFloat64(uniqExactIf(\n    activity.attributes_string['activity.correlation_id'],\n    empty(context.attributes_string['session.id'])\n  )) AS `Telemetry without context`\nFROM latest_activities AS activity\nFULL OUTER JOIN accepted_context AS context\n  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']\n  AND activity.attributes_string['activity.correlation_id']\n    = context.attributes_string['session.id']\nGROUP BY `Producer`, `Surface`\nORDER BY `Producer`, `Surface`"
+          }
+        ],
+        "queryType": "clickhouse_sql"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Session context coverage"
+    },
+    {
+      "description": "Context-to-telemetry delay for matched sessions in the selected source-event time range.",
+      "id": "context-to-telemetry-delay",
       "panelTypes": "graph",
       "query": {
         "builder": {
@@ -109,17 +140,17 @@
             "disabled": false,
             "legend": "",
             "name": "A",
-            "query": "SELECT\n  toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,\n  attributes_string['activity.producer_surface'] AS producer_surface,\n  toFloat64(count()) AS value\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nGROUP BY ts, producer_surface\nORDER BY ts, producer_surface"
+            "query": "WITH latest_activities AS (\n  SELECT *\n  FROM signoz_logs.distributed_logs_v2\n  WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\n), accepted_context AS (\n  SELECT *\n  FROM signoz_logs.distributed_logs_v2\n  WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n    AND attributes_string['event.name'] = 'introspection.session_context.accepted'\n)\nSELECT\n  toStartOfDay(fromUnixTimestamp64Nano(activity.timestamp)) AS ts,\n  toFloat64(avg(\n    dateDiff(\n      'millisecond',\n      fromUnixTimestamp64Nano(context.timestamp),\n      fromUnixTimestamp64Nano(activity.timestamp)\n    )\n  )) AS value\nFROM latest_activities AS activity\nINNER JOIN accepted_context AS context\n  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']\n  AND activity.attributes_string['activity.correlation_id']\n    = context.attributes_string['session.id']\nGROUP BY ts\nORDER BY ts"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Observed signals by detector"
+      "title": "Context-to-telemetry delay"
     },
     {
-      "description": "Canonical activity attribution outcomes by producer surface in the selected display range.",
-      "id": "detector-signal-yield",
+      "description": "Canonical higher activity versions resolved from late context in the selected source-event time range.",
+      "id": "late-context-reconciliations",
       "panelTypes": "table",
       "query": {
         "builder": {
@@ -129,15 +160,15 @@
         "clickhouse_sql": [
           {
             "disabled": false,
-            "legend": "Detector signal yield",
+            "legend": "Late-context reconciliations",
             "name": "A",
-            "query": "SELECT\n  attributes_string['activity.producer_surface'] AS `Producer surface`,\n  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))\n    AS `Resolved activities`,\n  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))\n    AS `Unresolved activities`,\n  toFloat64(count()) AS `All activities`,\n  round(\n    100 * toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))\n    / greatest(toFloat64(count()), 1),\n    2\n  ) AS `Resolved coverage`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND notEmpty(attributes_string['activity.id'])\n  AND (\n    attributes_string['activity.id'],\n    attributes_number['activity.version']\n  ) IN (\n    SELECT\n      attributes_string['activity.id'],\n      max(attributes_number['activity.version'])\n    FROM signoz_logs.distributed_logs_v2\n    WHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n      AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n      AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n      AND notEmpty(attributes_string['activity.id'])\n    GROUP BY attributes_string['activity.id']\n  )\nGROUP BY `Producer surface`\nORDER BY `Resolved coverage` DESC, `Producer surface`"
+            "query": "SELECT\n  attributes_string['activity.producer'] AS `Producer`,\n  attributes_string['activity.producer_surface'] AS `Surface`,\n  toFloat64(count()) AS `Late-context reconciliations`\nFROM signoz_logs.distributed_logs_v2\nWHERE timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano\nAND resource.`service.name`::String = 'agent-introspection'\n  AND attributes_string['event.name'] = 'introspection.activity.version.recorded'\n  AND toUInt64OrZero(toString(attributes_number['activity.payload_schema_version'])) = 2\n  AND attributes_number['activity.version'] > 1\n  AND attributes_string['activity.attribution.state'] = 'resolved'\n  AND attributes_string['activity.attribution.method'] = 'session_context_interval'\nGROUP BY `Producer`, `Surface`\nORDER BY `Late-context reconciliations` DESC, `Producer`, `Surface`"
           }
         ],
         "queryType": "clickhouse_sql"
       },
       "timePreferance": "GLOBAL_TIME",
-      "title": "Detector signal yield"
+      "title": "Late-context reconciliations"
     }
   ]
 }

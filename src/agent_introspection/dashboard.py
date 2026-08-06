@@ -53,6 +53,7 @@ CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE = f"""{CANONICAL_ACTIVITY_EVENT_PRED
       AND notEmpty(attributes_string['activity.id'])
     GROUP BY attributes_string['activity.id']
   )"""
+CONTEXT_ACCEPTED_EVENT = "introspection.session_context.accepted"
 PIPELINE_SNAPSHOT_EVENT = "introspection.pipeline.snapshot"
 
 DETECTOR_LABELS = {
@@ -96,109 +97,164 @@ def _projection_query(select: str, query_tail: str = "") -> str:
 
 Panel = tuple[str, str, str, str, str, tuple[int, int, int, int]]
 
+
+def _context_coverage_query(select: str, query_tail: str = "") -> str:
+    """Query canonical source activities and accepted context in one source-time range."""
+
+    return f"""WITH latest_activities AS (
+  SELECT *
+  FROM signoz_logs.distributed_logs_v2
+  WHERE {COMMON_FILTER}
+    AND {CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE}
+), accepted_context AS (
+  SELECT *
+  FROM signoz_logs.distributed_logs_v2
+  WHERE {COMMON_FILTER}
+    AND attributes_string['event.name'] = '{CONTEXT_ACCEPTED_EVENT}'
+)
+{select}{query_tail}"""
+
+
 INSIGHT_PANELS: tuple[Panel, ...] = (
     (
-        "project-data-attribution",
-        "Project data attribution",
+        "activity-coverage",
+        "Activity coverage",
         "table",
-        "Canonical activity attribution diagnostics in the selected display range.",
+        "Stable canonical activity coverage by producer and surface in the selected "
+        "source-event time range.",
         _projection_query(
-            f"""SELECT
-  attributes_string['activity.attribution.state'] AS `Attribution state`,
-  if(
-    attributes_string['activity.attribution.state'] = 'resolved',
-    'none',
-    if(
-      empty(attributes_string['activity.attribution.reason_code']),
-      'not recorded',
-      attributes_string['activity.attribution.reason_code']
-    )
-  ) AS `Rejection reason`,
-  attributes_string['activity.producer_surface'] AS `Producer surface`,
+            """SELECT
+  attributes_string['activity.producer'] AS `Producer`,
+  attributes_string['activity.producer_surface'] AS `Surface`,
   toFloat64(countIf(
     attributes_string['activity.attribution.state'] = 'resolved'
-    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
-    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
-    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
-    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
-  )) AS `Resolved activities`,
+    AND notEmpty(attributes_string['agent.project.id'])
+    AND attributes_string['agent.project.id'] != 'unresolved'
+    AND notEmpty(attributes_string['agent.project.name'])
+    AND attributes_string['agent.project.name'] != 'unresolved'
+  )) AS `Attributed`,
   toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))
-    AS `Unresolved activities`,
-  toFloat64(count()) AS `All activities`""",
+    AS `Unresolved`,
+  toFloat64(
+    countIf(
+      attributes_string['activity.attribution.state'] = 'resolved'
+      AND notEmpty(attributes_string['agent.project.id'])
+      AND attributes_string['agent.project.id'] != 'unresolved'
+      AND notEmpty(attributes_string['agent.project.name'])
+      AND attributes_string['agent.project.name'] != 'unresolved'
+    )
+    + countIf(attributes_string['activity.attribution.state'] = 'unresolved')
+  ) AS `Eligible`""",
             """
-GROUP BY `Attribution state`, `Rejection reason`, `Producer surface`
-ORDER BY `All activities` DESC, `Attribution state`, `Rejection reason`, `Producer surface`""",
+GROUP BY `Producer`, `Surface`
+ORDER BY `Eligible` DESC, `Producer`, `Surface`""",
         ),
         (0, 0, 12, 5),
     ),
     (
-        "actionable-trends",
-        "Actionable trends",
+        "attribution-diagnostics",
+        "Attribution diagnostics",
         "table",
-        "Latest canonical activity versions in the selected display range.",
+        "Stable canonical activity attribution method and rejection reason in the selected "
+        "source-event time range.",
         _projection_query(
-            f"""SELECT
-  left(attributes_string['activity.id'], 8) AS `Activity`,
-  attributes_string['activity.attribution.state'] AS `Attribution state`,
+            """SELECT
+  attributes_string['activity.attribution.method'] AS `Attribution method`,
   if(
-    attributes_string['activity.attribution.state'] = 'resolved'
-    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
-    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
-    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
-    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved',
-    attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'],
-    'Unresolved'
-  ) AS `Project`,
-  attributes_string['activity.producer_surface'] AS `Producer surface`,
-  attributes_number['activity.version'] AS `Version`,
-  formatDateTime(fromUnixTimestamp64Nano(timestamp), '%d %b %H:%i') AS `Source time`""",
+    attributes_string['activity.attribution.state'] = 'resolved',
+    'none',
+    attributes_string['activity.attribution.reason_code']
+  ) AS `Rejection reason`,
+  toFloat64(count()) AS `Eligible`""",
             """
-ORDER BY timestamp DESC, `Activity`
-LIMIT 100""",
+GROUP BY `Attribution method`, `Rejection reason`
+ORDER BY `Eligible` DESC, `Attribution method`, `Rejection reason`""",
         ),
-        (0, 5, 12, 6),
+        (0, 5, 12, 5),
     ),
     (
-        "observed-signals-by-detector",
-        "Observed signals by detector",
-        "graph",
-        "Daily latest canonical activity versions by producer surface in the selected"
-        " display range.",
-        _projection_query(
-            """SELECT
-  toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,
-  attributes_string['activity.producer_surface'] AS producer_surface,
-  toFloat64(count()) AS value""",
-            """
-GROUP BY ts, producer_surface
-ORDER BY ts, producer_surface""",
-        ),
-        (0, 11, 12, 6),
-    ),
-    (
-        "detector-signal-yield",
-        "Detector signal yield",
+        "session-context-coverage",
+        "Session context coverage",
         "table",
-        "Canonical activity attribution outcomes by producer surface in the selected"
-        " display range.",
-        _projection_query(
+        "Source sessions and accepted context coverage in the selected source-event time range.",
+        _context_coverage_query(
             """SELECT
-  attributes_string['activity.producer_surface'] AS `Producer surface`,
-  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))
-    AS `Resolved activities`,
-  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))
-    AS `Unresolved activities`,
-  toFloat64(count()) AS `All activities`,
-  round(
-    100 * toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))
-    / greatest(toFloat64(count()), 1),
-    2
-  ) AS `Resolved coverage`""",
+  coalesce(
+    activity.attributes_string['activity.producer'],
+    context.attributes_string['producer']
+  ) AS `Producer`,
+  coalesce(activity.attributes_string['activity.producer_surface'], 'context') AS `Surface`,
+  toFloat64(uniqExact(activity.attributes_string['activity.correlation_id'])) AS `Source sessions`,
+  toFloat64(uniqExact(context.attributes_string['session.id'])) AS `Accepted context sessions`,
+  toFloat64(uniqExactIf(
+    activity.attributes_string['activity.correlation_id'],
+    notEmpty(context.attributes_string['session.id'])
+  )) AS `Matched sessions`,
+  toFloat64(uniqExactIf(
+    context.attributes_string['session.id'],
+    empty(activity.attributes_string['activity.correlation_id'])
+  )) AS `Project-context records without telemetry`,
+  toFloat64(uniqExactIf(
+    activity.attributes_string['activity.correlation_id'],
+    empty(context.attributes_string['session.id'])
+  )) AS `Telemetry without context`
+FROM latest_activities AS activity
+FULL OUTER JOIN accepted_context AS context
+  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']
+  AND activity.attributes_string['activity.correlation_id']
+    = context.attributes_string['session.id']""",
             """
-GROUP BY `Producer surface`
-ORDER BY `Resolved coverage` DESC, `Producer surface`""",
+GROUP BY `Producer`, `Surface`
+ORDER BY `Producer`, `Surface`""",
         ),
-        (0, 17, 12, 5),
+        (0, 10, 12, 6),
+    ),
+    (
+        "context-to-telemetry-delay",
+        "Context-to-telemetry delay",
+        "graph",
+        "Context-to-telemetry delay for matched sessions in the selected source-event time range.",
+        _context_coverage_query(
+            """SELECT
+  toStartOfDay(fromUnixTimestamp64Nano(activity.timestamp)) AS ts,
+  toFloat64(avg(
+    dateDiff(
+      'millisecond',
+      fromUnixTimestamp64Nano(context.timestamp),
+      fromUnixTimestamp64Nano(activity.timestamp)
+    )
+  )) AS value
+FROM latest_activities AS activity
+INNER JOIN accepted_context AS context
+  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']
+  AND activity.attributes_string['activity.correlation_id']
+    = context.attributes_string['session.id']""",
+            """
+GROUP BY ts
+ORDER BY ts""",
+        ),
+        (0, 16, 12, 5),
+    ),
+    (
+        "late-context-reconciliations",
+        "Late-context reconciliations",
+        "table",
+        "Canonical higher activity versions resolved from late context in the selected "
+        "source-event time range.",
+        _query(
+            """SELECT
+  attributes_string['activity.producer'] AS `Producer`,
+  attributes_string['activity.producer_surface'] AS `Surface`,
+  toFloat64(count()) AS `Late-context reconciliations`""",
+            f"""{CANONICAL_ACTIVITY_EVENT_PREDICATE}
+  AND {CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE}
+  AND attributes_number['activity.version'] > 1
+  AND attributes_string['activity.attribution.state'] = 'resolved'
+  AND attributes_string['activity.attribution.method'] = 'session_context_interval'
+GROUP BY `Producer`, `Surface`
+ORDER BY `Late-context reconciliations` DESC, `Producer`, `Surface`""",
+        ),
+        (0, 21, 12, 5),
     ),
 )
 
@@ -251,9 +307,10 @@ HEALTH_PANELS: tuple[Panel, ...] = (
         (0, 4, 12, 6),
     ),
 )
-
+PROJECTION_PANEL_IDS = frozenset(
+    panel[0] for panel in INSIGHT_PANELS if panel[0] != "late-context-reconciliations"
+)
 PANELS = INSIGHT_PANELS
-PROJECTION_PANEL_IDS = frozenset(panel[0] for panel in INSIGHT_PANELS)
 
 
 def _widget(
