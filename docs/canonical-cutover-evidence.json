@@ -16,7 +16,9 @@
     "dashboard_diagnostics_commit": "46572ac",
     "legacy_remote_verification_commit": "bd3b54c",
     "lifecycle_rejection_commit": "4528226",
-    "legacy_delivery_recovery_commit": "cc414e0"
+    "legacy_delivery_recovery_commit": "cc414e0",
+    "legacy_http_recovery_test_commit": "421af1d",
+    "codex_native_lifecycle_commit": "3e230ae"
   },
   "producer_identity_proofs": {
     "omp": {
@@ -230,6 +232,7 @@
       "reuses_immutable_event_ids": true,
       "creates_new_fact_or_activity_version": false,
       "focused_tests_passed": 27,
+      "http_transport_failure_recovery_covered": true,
       "smoke_fact_set_id": "472e521d73511d326cd412b94fe264482606b2f19e068afffa7a26f995d90572",
       "smoke_intended_event_count": 0,
       "smoke_remote_event_count": 0,
@@ -335,6 +338,9 @@
     },
     "installed_references": {
       "codex_notify": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py",
+      "codex_native_lifecycle_events": ["session_start"],
+      "codex_workspace_change_inference_enabled": false,
+      "codex_session_end_inference_enabled": false,
       "claude_hooks": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/claude-code.py",
       "omp_extension": "/Users/adamjackson/.omp/agent/extensions/agent-introspection.ts",
       "scheduler_executable": "/Users/adamjackson/Projects/inflight/signoz-introspection/.venv/bin/agent-introspection",
@@ -346,7 +352,7 @@
     "ruff": "passed",
     "format": "passed",
     "mypy": "passed",
-    "pytest_passed": 402,
+    "pytest_passed": 403,
     "pytest_failed": 0
   }
 }
