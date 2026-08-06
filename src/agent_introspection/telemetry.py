@@ -519,6 +519,91 @@ def _encode_otlp(payloads: list[dict[str, Any]]) -> bytes:
     return bytes(request.SerializeToString())
 
 
+def drain_outbox_event_ids(
+    connection: sqlite3.Connection,
+    event_ids: Sequence[str],
+    *,
+    endpoint: str = "http://localhost:4318/v1/logs",
+    timeout_seconds: float = 10,
+) -> dict[str, int]:
+    """Deliver only an explicit immutable event set, in bounded requests."""
+    requested = tuple(event_ids)
+    if not requested or len(set(requested)) != len(requested):
+        raise ValueError("outbox delivery requires a non-empty unique event ID set")
+    placeholders = ", ".join("?" for _ in requested)
+    existing = {
+        str(row[0])
+        for row in connection.execute(
+            f"SELECT event_id FROM otlp_outbox WHERE event_id IN ({placeholders})", requested
+        )
+    }
+    if existing != set(requested):
+        raise ValueError("outbox delivery event IDs are not an exact local set")
+
+    selected = 0
+    delivered_count = 0
+    for offset in range(0, len(requested), 250):
+        batch_ids = requested[offset : offset + 250]
+        batch_placeholders = ", ".join("?" for _ in batch_ids)
+        now = datetime.now(UTC).isoformat()
+        rows = connection.execute(
+            f"""
+            SELECT event_id, payload_json, attempt_count
+            FROM otlp_outbox
+            WHERE status = 'pending' AND next_attempt_at <= ?
+              AND event_id IN ({batch_placeholders})
+            ORDER BY created_at, event_id
+            """,
+            (now, *batch_ids),
+        ).fetchall()
+        selected += len(rows)
+        if not rows:
+            continue
+        request = urllib.request.Request(
+            endpoint,
+            data=_encode_otlp([json.loads(row[1]) for row in rows]),
+            headers={"Content-Type": "application/x-protobuf"},
+            method="POST",
+        )
+        delivered = False
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                delivered = 200 <= response.status < 300
+        except (urllib.error.URLError, TimeoutError):
+            delivered = False
+        with connection:
+            if delivered:
+                connection.executemany(
+                    (
+                        "UPDATE otlp_outbox SET status = 'delivered', "
+                        "delivered_at = ? WHERE event_id = ?"
+                    ),
+                    [(now, row[0]) for row in rows],
+                )
+                delivered_count += len(rows)
+            else:
+                for event_id, _payload, attempt_count in rows:
+                    delay = min(3600, 2 ** min(int(attempt_count), 11))
+                    next_attempt = datetime.fromtimestamp(time.time() + delay, tz=UTC).isoformat()
+                    connection.execute(
+                        """
+                        UPDATE otlp_outbox
+                        SET attempt_count = attempt_count + 1, next_attempt_at = ?
+                        WHERE event_id = ?
+                        """,
+                        (next_attempt, event_id),
+                    )
+                break
+    pending = connection.execute(
+        (
+            "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending' "
+            f"AND event_id IN ({placeholders})"
+        ),
+        requested,
+    ).fetchone()[0]
+    return {"selected": selected, "delivered": delivered_count, "pending": int(pending)}
+
+
 def drain_outbox(
     connection: sqlite3.Connection,
     *,

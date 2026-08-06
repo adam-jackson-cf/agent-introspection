@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -120,7 +121,9 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
     )
 
     class Client:
-        def query(self, _sql: str, _parameters: dict[str, int]):
+        def query(self, sql: str, parameters: dict[str, int | str]):
+            if "attributes_string['event.id']" in sql:
+                return iter([{"event_id": parameters["event_0"]}])
             return iter(
                 [
                     {
@@ -144,9 +147,12 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
     connection = connect_database(config.database.path)
     start = datetime(2023, 11, 14, tzinfo=UTC)
     end = start + timedelta(minutes=1)
-    result = run_legacy_project_attribution(
-        connection, config, client=Client(), start=start, end=end, approved_by="operator"
-    )
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    with patch("urllib.request.urlopen", return_value=response):
+        result = run_legacy_project_attribution(
+            connection, config, client=Client(), start=start, end=end, approved_by="operator"
+        )
     assert result["accepted"] == 1
     assert result["rejected"] == result["unresolved"] == 0
     assert (
@@ -171,3 +177,60 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
             connection, config, client=Client(), start=start, end=end, approved_by="operator"
         )
     connection.close()
+
+
+def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "tracked.py").write_text("pass\n", encoding="utf-8")
+    subprocess.run(("git", "init", str(workspace)), check=True, capture_output=True, text=True)
+    config = parse_config(
+        {
+            "database": {"path": str(tmp_path / "state.sqlite3")},
+            "legacy_project_attribution": {"project_roots": [str(tmp_path)]},
+        }
+    )
+
+    class Client:
+        def query(self, sql: str, _parameters: dict[str, int | str]):
+            if "attributes_string['event.id']" in sql:
+                return iter(())
+            return iter(
+                [
+                    {
+                        "timestamp": 1_700_000_000_000_000_000,
+                        "log_id": "safe-log",
+                        "correlation_id": "thread",
+                        "call_id": "call",
+                        "tool_name": "exec",
+                        "arguments": json.dumps(
+                            {"cmd": "python tracked.py", "workdir": str(workspace)}
+                        ),
+                    }
+                ]
+            )
+
+    connection = connect_database(config.database.path)
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    start = datetime(2023, 11, 14, tzinfo=UTC)
+    try:
+        with (
+            patch("urllib.request.urlopen", return_value=response),
+            pytest.raises(RuntimeError, match="remote event IDs did not exactly match"),
+        ):
+            run_legacy_project_attribution(
+                connection,
+                config,
+                client=Client(),
+                start=start,
+                end=start + timedelta(minutes=1),
+                approved_by="operator",
+            )
+        fact_count = connection.execute(
+            "SELECT count(*) FROM legacy_attribution_fact_sets"
+        ).fetchone()
+        assert fact_count == (1,)
+        assert connection.execute("SELECT status FROM otlp_outbox").fetchone() == ("delivered",)
+    finally:
+        connection.close()

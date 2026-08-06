@@ -580,6 +580,7 @@ def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
             start=parse_rfc3339(args.start),
             end=parse_rfc3339(args.end),
             approved_by=args.approved_by,
+            delivery_endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
         )
     finally:
         connection.close()

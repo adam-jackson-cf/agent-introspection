@@ -24,8 +24,12 @@ from agent_introspection.identities import IdentityError, canonical_git_project,
 from agent_introspection.normalization import NormalizationError, parse_tool_arguments
 from agent_introspection.source import ClickHouseClient
 from agent_introspection.telemetry import (
+    CANONICAL_ACTIVITY_EVENT_NAME,
     CanonicalActivityVersionEvent,
+    RemoteEventReference,
+    drain_outbox_event_ids,
     enqueue_canonical_activity_version,
+    remote_event_ids,
 )
 
 MAXIMUM_RANGE_HELP = (
@@ -199,6 +203,7 @@ def run_legacy_project_attribution(
     start: datetime,
     end: datetime,
     approved_by: str,
+    delivery_endpoint: str = "http://localhost:4318/v1/logs",
 ) -> dict[str, Any]:
     """Apply one explicit bounded legacy fact set, refusing repeat application."""
     if start.tzinfo is None or end.tzinfo is None or start >= end:
@@ -259,6 +264,7 @@ def run_legacy_project_attribution(
 
     accepted_ids: list[str] = []
     outbox_ids: list[str] = []
+    remote_references: list[RemoteEventReference] = []
     with connection:
         connection.execute(
             """
@@ -326,6 +332,24 @@ def run_legacy_project_attribution(
             )
             accepted_ids.append(write.activity_id)
             outbox_ids.append(event_id)
+            remote_references.append(
+                RemoteEventReference(
+                    event_id=event_id,
+                    event_name=CANONICAL_ACTIVITY_EVENT_NAME,
+                    timestamp_ns=candidate.timestamp_ns,
+                )
+            )
+    if outbox_ids:
+        delivery = drain_outbox_event_ids(connection, outbox_ids, endpoint=delivery_endpoint)
+        if delivery["delivered"] != len(outbox_ids) or delivery["pending"] != 0:
+            raise RuntimeError(
+                f"legacy fact set {fact_set_id} delivery did not complete for its exact event IDs"
+            )
+        remote_ids = remote_event_ids(client, remote_references)
+        if remote_ids != set(outbox_ids):
+            raise RuntimeError(
+                f"legacy fact set {fact_set_id} remote event IDs did not exactly match delivery"
+            )
     return {
         "status": "applied",
         "approved_by": approved_by,

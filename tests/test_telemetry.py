@@ -2,7 +2,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from agent_introspection.telemetry import (
     CanonicalActivityVersionEvent,
     DerivedEvent,
     drain_outbox,
+    drain_outbox_event_ids,
     enqueue_canonical_activity_version,
     enqueue_event,
     enqueue_events,
@@ -221,6 +222,29 @@ def test_failed_delivery_retains_identical_payload_for_retry() -> None:
 
 def test_empty_outbox_drain_is_a_valid_noop() -> None:
     assert drain_outbox(outbox_database()) == {"selected": 0, "delivered": 0, "pending": 0}
+
+
+def test_exact_outbox_delivery_does_not_select_unrelated_pending_events() -> None:
+    connection = outbox_database()
+    selected_id = enqueue_event(connection, event())
+    unrelated = DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id="finding-2",
+        entity_version=1,
+        event_sequence=1,
+        event_name="introspection.observation.detected",
+        attributes={"detector.id": "tool_failure"},
+        timestamp_ns=1_700_000_000_000_000_001,
+    )
+    unrelated_id = enqueue_event(connection, unrelated)
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    with patch("urllib.request.urlopen", return_value=response):
+        result = drain_outbox_event_ids(connection, [selected_id])
+    assert result == {"selected": 1, "delivered": 1, "pending": 0}
+    assert connection.execute(
+        "SELECT status FROM otlp_outbox WHERE event_id = ?", (unrelated_id,)
+    ).fetchone() == ("pending",)
 
 
 def test_event_batches_commit_all_deterministic_payloads() -> None:
