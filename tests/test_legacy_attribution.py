@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -182,6 +183,122 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
             connection, config, client=Client(), start=start, end=end, approved_by="operator"
         )
     connection.close()
+
+
+def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "tracked.py").write_text("pass\n", encoding="utf-8")
+    subprocess.run(("git", "init", str(workspace)), check=True, capture_output=True, text=True)
+    config = parse_config(
+        {
+            "database": {"path": str(tmp_path / "state.sqlite3")},
+            "legacy_project_attribution": {"project_roots": [str(tmp_path)]},
+        }
+    )
+    remote_ready = False
+
+    class Client:
+        def query(self, sql: str, parameters: dict[str, int | str]):
+            if "attributes_string['event.id']" in sql:
+                if remote_ready:
+                    return iter([{"event_id": parameters["event_0"]}])
+                return iter(())
+            return iter(
+                [
+                    {
+                        "timestamp": 1_700_000_000_000_000_000,
+                        "log_id": "safe-log",
+                        "correlation_id": "thread",
+                        "call_id": "call",
+                        "tool_name": "exec",
+                        "arguments": json.dumps(
+                            {"cmd": "python tracked.py", "workdir": str(workspace)}
+                        ),
+                    }
+                ]
+            )
+
+    connection = connect_database(config.database.path)
+    start = datetime(2023, 11, 14, tzinfo=UTC)
+    try:
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=urllib.error.URLError("injected transport failure"),
+            ),
+            pytest.raises(RuntimeError, match="local_delivery_incomplete"),
+        ):
+            run_legacy_project_attribution(
+                connection,
+                config,
+                client=Client(),
+                start=start,
+                end=start + timedelta(minutes=1),
+                approved_by="operator",
+            )
+
+        fact_set_id = connection.execute("SELECT id FROM legacy_attribution_fact_sets").fetchone()[
+            0
+        ]
+        event_id = connection.execute("SELECT event_id FROM otlp_outbox").fetchone()[0]
+        attempt = connection.execute(
+            """
+            SELECT intended_event_ids_json, intended_event_count, local_delivery_result_json,
+                   remote_event_ids_json, failure_reason, verified_at
+            FROM legacy_attribution_delivery_attempts
+            """
+        ).fetchone()
+        assert attempt == (
+            json.dumps([event_id], separators=(",", ":")),
+            1,
+            '{"delivered":0,"pending":1,"selected":1}',
+            "[]",
+            "local_delivery_incomplete",
+            None,
+        )
+        assert connection.execute("SELECT count(*) FROM canonical_activities").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT count(*) FROM canonical_activity_versions"
+        ).fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM otlp_outbox").fetchone() == (1,)
+
+        remote_ready = True
+        response = MagicMock(status=200)
+        response.__enter__.return_value = response
+        with patch("urllib.request.urlopen", return_value=response):
+            recovered = recover_legacy_project_attribution(
+                connection, client=Client(), fact_set_id=fact_set_id
+            )
+        assert recovered["status"] == "verified"
+        assert recovered["idempotent"] is False
+        assert recovered["intended_event_count"] == recovered["remote_event_count"] == 1
+        attempts = connection.execute(
+            """
+            SELECT intended_event_ids_json, remote_event_ids_json, failure_reason, verified_at
+            FROM legacy_attribution_delivery_attempts
+            ORDER BY id
+            """
+        ).fetchall()
+        assert attempts[1][0] == attempts[1][1] == json.dumps([event_id], separators=(",", ":"))
+        assert attempts[1][2] is None
+        assert attempts[1][3] is not None
+        assert connection.execute("SELECT event_id, status FROM otlp_outbox").fetchone() == (
+            event_id,
+            "delivered",
+        )
+        assert connection.execute("SELECT count(*) FROM canonical_activities").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT count(*) FROM canonical_activity_versions"
+        ).fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM otlp_outbox").fetchone() == (1,)
+        assert recover_legacy_project_attribution(
+            connection, client=Client(), fact_set_id=fact_set_id
+        ) == {"status": "verified", "fact_set_id": fact_set_id, "idempotent": True}
+    finally:
+        connection.close()
 
 
 def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path: Path) -> None:
