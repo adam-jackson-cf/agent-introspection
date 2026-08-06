@@ -52,6 +52,13 @@ class SchedulerConfig:
     lease_seconds: int = 3_600
 
 
+
+@dataclass(frozen=True, slots=True)
+class LifecycleConfig:
+    """Lifecycle replay ordering policy."""
+
+    clock_skew_seconds: int = 300
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     """Complete application configuration."""
@@ -59,9 +66,10 @@ class AppConfig:
     database: DatabaseConfig = DatabaseConfig()
     signoz: SigNozConfig = SigNozConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
+    lifecycle: LifecycleConfig = LifecycleConfig()
 
 
-_ROOT_KEYS = frozenset({"database", "signoz", "scheduler"})
+_ROOT_KEYS = frozenset({"database", "signoz", "scheduler", "lifecycle"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _SIGNOZ_KEYS = frozenset(
     {
@@ -75,6 +83,7 @@ _SIGNOZ_KEYS = frozenset(
     }
 )
 _SCHEDULER_KEYS = frozenset({"timezone", "interval_seconds", "lease_seconds"})
+_LIFECYCLE_KEYS = frozenset({"clock_skew_seconds"})
 
 
 def _expand_path(value: object, *, field: str) -> Path:
@@ -132,9 +141,11 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     database = _table(data, "database")
     signoz = _table(data, "signoz")
     scheduler = _table(data, "scheduler")
+    lifecycle = _table(data, "lifecycle")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(scheduler), _SCHEDULER_KEYS, location="scheduler")
+    _reject_unknown(set(lifecycle), _LIFECYCLE_KEYS, location="lifecycle")
 
     defaults = AppConfig()
     database_config = DatabaseConfig(
@@ -203,10 +214,18 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.scheduler.lease_seconds
         ),
     )
+    lifecycle_config = LifecycleConfig(
+        clock_skew_seconds=(
+            _positive_int(lifecycle["clock_skew_seconds"], field="lifecycle.clock_skew_seconds")
+            if "clock_skew_seconds" in lifecycle
+            else defaults.lifecycle.clock_skew_seconds
+        )
+    )
     return AppConfig(
         database=database_config,
         signoz=signoz_config,
         scheduler=scheduler_config,
+        lifecycle=lifecycle_config,
     )
 
 

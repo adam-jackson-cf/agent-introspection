@@ -2,66 +2,32 @@
 
 ## Operating purpose
 
-The dashboard guides a local operator through three questions:
+The dashboard presents the current canonical session-context, activity-version,
+outbox, and source-time system for local operators.
 
-1. Can the pipeline be trusted now?
-2. Which observed agent behaviours require attention?
-3. Which actionable patterns are ready for investigation?
+## Canonical runtime
 
-The canonical repository is this project. Deterministic analysis uses a seven-day
-window and scheduled scans run hourly in UTC slots. The LaunchAgent runs on each
-calendar-hour boundary, coalesces missed boundaries after wake, and runs at
-user-session load so restart recovery resumes from persisted watermarks. Bounded
-source work produces a terminal failure before it can block a later hourly slot.
-
-## Pipeline contract
-
-Each terminal scan emits one `introspection.pipeline.snapshot` with a separate
-terminal status and freshness state. A healthy state requires a fresh succeeded
-or no-data scan with available logs and traces. Late scans are degraded; failed,
-stale, clock-skewed, missing, or unavailable source state is unhealthy.
-
-Logs, traces, hydration, source-contract validation, and detector persistence
-are fail-closed. Any failure rolls back observations, evidence, memberships,
-findings, trends, watermarks, and projection events. The terminal snapshot and
-scan status are then persisted atomically with safe fixed-category fields only.
-
-Per-stream lag is calculated from the scan finish time and each stream's newest
-source timestamp. A no-data stream is not applicable; a future source timestamp
-is clock skew and is never clamped.
-
-## Analysis generations
-
-Projection telemetry is scoped by an immutable analysis generation. A generation
-contains the seven-day window, approved source-contract fingerprint, detector and
-normalisation contract hashes, semantic hash, and linked immutable outbox events.
-
-`analysis-generation stage` rebroadcasts only validated SQLite observations and
-current trend facts in the bounded window. It does not re-read raw source data or
-run detectors. `analysis-generation activate GENERATION_ID` promotes a staged
-generation only after all linked projections and its activation marker are both
-locally delivered and remotely verified.
-
-The dashboard obtains the active generation from the unfiltered activation
-marker. Projection panels use that one generation; operational panels do not.
-No active generation produces a safe `generation_unavailable` pipeline result
-and no projection telemetry.
-
-## Historical convergence
-
-Existing observations, evidence, memberships, findings, and outbox records are
-preserved. Their membership and outbox state have already been reconciled, so a
-raw historical reanalysis is not required for this rollout.
-
-After migration, create and activate one generation from the validated local
-seven-day facts. This supplies canonical dashboard projections while preserving
-the original observation and trend timestamps. The immutable semantic hash
-contains the source contract, source-query/extraction code, and the detector,
-normalisation, trend-rule, identity, and outcome-model contracts. Stage a new
-generation only after a material source-query/extraction, source-contract,
-detector, normalisation, trend-rule, identity, or outcome-model change. Normal
-projection scans require the active generation to match both current contracts
-before extraction. Validate the bounded result before promotion.
+- The shared runtime resolves one Git project per producer and stores an
+  immutable project-context interval.
+- Lifecycle records carry the canonical session-context contract:
+  `producer`, `producer.surface`, `correlation.id`, `lifecycle.event`,
+  `occurred_at`, `agent.project.id`, `agent.project.name`,
+  `agent.project.root`, and `agent.project.kind = git`.
+- A source activity is attributed only when it falls inside exactly one
+  half-open interval for the same producer and correlation ID.
+- Conflicting, missing, malformed, inaccessible, ambiguous, and out-of-order
+  lifecycle records are rejected durably with bounded rejection records.
+- Rejected records contain no prompts, responses, tool payloads, environment
+  values, or arbitrary producer content.
+- Canonical activity records are stored as immutable activities with
+  monotonic activity versions.
+- Every attribution change creates one higher activity version only when the
+  canonical attribution tuple changes.
+- Findings and trends are recomputed from the latest activity version after
+  reconciliation.
+- OTLP delivery uses the outbox in the same transaction as the activity
+  version update.
+- The dashboard uses source-event time for range selection and interpretation.
 
 ## Canonical dashboards
 
@@ -69,45 +35,29 @@ before extraction. Validate the bounded result before promotion.
 | --- | --- | --- | --- |
 | Agent Introspection Health | Pipeline health | Latest terminal pipeline snapshot | Trust, repair, or wait for the pipeline |
 | Agent Introspection Health | Recent scan runs | Terminal pipeline snapshots in the selected range | Detect scan cost, failures, or performance drift |
-| Agent Introspection | Project data attribution | Active-generation observations | Decide whether project comparison is trustworthy |
-| Agent Introspection | Actionable trends | Active-generation current findings | Select a concrete behaviour for review |
-| Agent Introspection | Observed signals by detector | Active-generation observations | See which detector families dominate |
-| Agent Introspection | Detector signal yield | Active-generation actionable versus all findings | Assess detector usefulness |
+| Agent Introspection | Project data attribution | Latest activity versions in the selected source-event time range | Decide whether project comparison is trustworthy |
+| Agent Introspection | Actionable trends | Latest activity versions in the selected source-event time range | Select a concrete behaviour for review |
+| Agent Introspection | Observed signals by detector | Latest activity versions grouped by detector | See which detector families dominate |
+| Agent Introspection | Detector signal yield | Latest activity versions and findings in the selected source-event time range | Assess detector usefulness |
 
-Project concentration is withheld until the current active generation has at
-least 80% resolved identity coverage, 100 resolved observations, and three
-distinct projects. Identity resolution uses only allowlisted explicit source
-fields; unresolved observations remain unresolved.
-
-## Lifecycle roadmap
-
-The lifecycle view can return only after this gate is met:
-
-| Future panel | Data and purpose | Reintroduction gate |
-| --- | --- | --- |
-| Post-application observation change | Application generation plus exact seven-day baseline and follow-up observation windows | Five closed evaluable applications; aggregate view at ten |
-
-An application stores its immutable application generation. Its baseline is the
-preceding seven calendar days and its follow-up is the next seven. Both windows
-need at least 152 of 168 successful or no-data source slots, proven fourteen-day
-source retention, persisted window bounds, and an unchanged active generation.
-Otherwise the result is not evaluable.
+Project concentration is withheld until the current canonical attribution set
+has enough resolved identity coverage, resolved observations, and distinct
+projects to support a trustworthy comparison.
 
 ## Rollout sequence
 
 1. Run migrations and verify SQLite integrity.
-2. Stage and remotely activate the initial analysis generation.
-3. Update both canonical dashboard entities from their generated assets.
-4. Run a normal scan and confirm the terminal pipeline snapshot.
-5. Validate all six panels in the in-app browser over the seven-day range.
-6. Record any material contract change, stage its replacement generation, and
-   promote it only after delivery and remote-verification evidence.
+2. Update both canonical dashboard entities from their generated assets.
+3. Run a normal scan and confirm the terminal pipeline snapshot.
+4. Validate all six panels in the in-app browser over the selected source-event
+   time range.
+5. Record any material contract change, update the dashboard assets, and
+   verify the resulting browser state.
 
 ## Required evidence
 
 - passing format, lint, type, and test suites;
 - migration backup and SQLite foreign-key checks;
-- stage and activation identifiers plus remote event verification;
 - a succeeded or no-data normal scan and terminal snapshot;
 - an hourly schedule status with the configured interval;
 - dashboard update proof for both routes and browser confirmation for all six
