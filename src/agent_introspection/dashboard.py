@@ -104,7 +104,7 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
       empty(attributes_string['activity.attribution.reason_code']),
       'not recorded',
       attributes_string['activity.attribution.reason_code']
-    ),
+    )
   ) AS `Rejection reason`,
   attributes_string['activity.producer_surface'] AS `Producer surface`,
   toFloat64(countIf(
@@ -139,7 +139,7 @@ ORDER BY `All activities` DESC, `Attribution state`, `Rejection reason`, `Produc
     AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
     AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved',
     attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'],
-    'Unresolved',
+    'Unresolved'
   ) AS `Project`,
   attributes_string['activity.producer_surface'] AS `Producer surface`,
   attributes_number['activity.version'] AS `Version`,
@@ -184,7 +184,7 @@ ORDER BY ts, producer_surface""",
   round(
     100 * toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))
     / greatest(toFloat64(count()), 1),
-    2,
+    2
   ) AS `Resolved coverage`""",
             """
 GROUP BY `Producer surface`

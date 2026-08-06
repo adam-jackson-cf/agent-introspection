@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,8 @@ def _reject_duplicate_authoritative_keys(
 
 
 def _timestamp(payload: dict[str, Any]) -> str:
+    if "timestamp" not in payload:
+        return datetime.now(UTC).isoformat()
     value = payload.get("timestamp")
     if not isinstance(value, str) or not re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",

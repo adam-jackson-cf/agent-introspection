@@ -317,6 +317,8 @@ def _detector_events(
     mutation_tools = {"apply_patch", "write_file", "edit_file", "create_file"}
     for log in logs:
         trace = by_trace.get(log.trace_id or "")
+        if trace is None or trace.correlation is None:
+            continue
         task = canonical_task(
             trace_id=log.trace_id or log.log_id,
             thread_id=trace.thread_id if trace else None,
@@ -348,7 +350,7 @@ def _detector_events(
             )
         )
     for trace in traces:
-        if trace.total_tokens <= 0:
+        if trace.correlation is None or trace.total_tokens <= 0:
             continue
         task = canonical_task(
             trace_id=trace.trace_id,

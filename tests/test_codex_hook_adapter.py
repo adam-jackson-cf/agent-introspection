@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -111,30 +112,27 @@ def test_codex_notify_emits_start_once_and_workspace_transition(tmp_path: Path) 
         "type": "agent-turn-complete",
         "thread-id": "thread-42",
         "cwd": str(first_workspace),
-        "timestamp": "2026-08-03T12:00:00Z",
         "last-assistant-message": "must not be retained",
     }
 
+    started = datetime.now(UTC)
     assert _invoke(adapter, home, log, first).returncode == 0
+    finished = datetime.now(UTC)
     assert _invoke(adapter, home, log, first).returncode == 0
     changed = {**first, "cwd": str(second_workspace), "timestamp": "2026-08-03T12:01:00+00:00"}
     assert _invoke(adapter, home, log, changed).returncode == 0
 
-    assert _events(log) == [
-        [
-            "codex-cli",
-            "thread-42",
-            "session_start",
-            "2026-08-03T12:00:00+00:00",
-            str(first_workspace),
-        ],
-        [
-            "codex-cli",
-            "thread-42",
-            "workspace_changed",
-            "2026-08-03T12:01:00+00:00",
-            str(second_workspace),
-        ],
+    events = _events(log)
+    assert len(events) == 2
+    assert events[0][:3] == ["codex-cli", "thread-42", "session_start"]
+    assert started <= datetime.fromisoformat(events[0][3]) <= finished
+    assert events[0][4] == str(first_workspace)
+    assert events[1] == [
+        "codex-cli",
+        "thread-42",
+        "workspace_changed",
+        "2026-08-03T12:01:00+00:00",
+        str(second_workspace),
     ]
     state_files = list((home / ".local/state/agent-introspection/codex-hook").glob("*.json"))
     assert len(state_files) == 1
@@ -149,7 +147,6 @@ def test_codex_notify_emits_start_once_and_workspace_transition(tmp_path: Path) 
     [
         {},
         {"type": "agent-turn-complete", "cwd": "/tmp"},
-        {"type": "agent-turn-complete", "thread-id": "thread", "cwd": "/tmp"},
         {"type": "agent-turn-complete", "thread-id": "thread", "cwd": "relative"},
         {
             "type": "agent-turn-complete",

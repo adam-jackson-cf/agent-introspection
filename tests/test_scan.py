@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -260,9 +261,18 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
                 int(occurred_at.timestamp() * 1_000_000_000),
                 trace_id="trace-1",
                 producer="codex-cli",
-            )
+            ),
+            log_row(
+                "uncorrelated-log",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                trace_id="uncorrelated-trace",
+                producer="codex-cli",
+            ),
         ],
-        traces=[_trace("trace-1", occurred_at)],
+        traces=[
+            _trace("trace-1", occurred_at),
+            replace(_trace("uncorrelated-trace", occurred_at), correlation=None),
+        ],
     )
     approve(connection, source)
 
