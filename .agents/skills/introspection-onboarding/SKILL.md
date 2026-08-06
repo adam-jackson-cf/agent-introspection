@@ -1,6 +1,6 @@
 ---
 name: "introspection-onboarding"
-description: "Configure and validate bounded Agent Introspection project attribution; USE WHEN onboarding producers, mapping legacy telemetry, or verifying project attribution."
+description: "Configure and validate canonical Agent Introspection project attribution; USE WHEN onboarding producers, validating managed lifecycle capture, or verifying project attribution."
 ---
 
 # Task
@@ -15,7 +15,7 @@ description: "Configure and validate bounded Agent Introspection project attribu
 
 ### Telemetry foundation
 
-- [Stack bootstrap](references/stack-bootstrap-workflow.md): prove local SigNoz ingestion before producer onboarding or telemetry reimport.
+- [Stack bootstrap](references/stack-bootstrap-workflow.md): prove local SigNoz ingestion before producer onboarding.
 - [Canonical session-context contract](references/canonical-schema-workflow.md): resolve the authoritative event and project identity contract before creating or validating attribution.
 
 ### Producer capture
@@ -25,9 +25,9 @@ description: "Configure and validate bounded Agent Introspection project attribu
 - [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned hook runtime used by supported producers.
 - [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
 
-### Historical attribution
+### Fresh-start cutover
 
-- [Legacy project attribution](references/legacy-project-attribution-workflow.md): measure unmatched cohorts, resolve bounded authoritative evidence, reanalyse eligible history, and verify the active result.
+- [Fresh-start cutover](references/fresh-start-cutover-workflow.md): retire approved historical telemetry only after every retained producer passes canonical end-to-end verification.
 
 ### Verification and escalation
 
@@ -39,6 +39,6 @@ description: "Configure and validate bounded Agent Introspection project attribu
 - Selected workflows and producer capability classifications
 - Baseline window, denominator, unmatched cohorts, and evidence provenance
 - Accepted and rejected attribution counts with rejection reasons
-- Reimport, generation, scan, scheduler, and end-to-end verification evidence
+- Managed runtime, canonical scan, activity-version outbox, scheduler, and dashboard verification evidence
 - Before-and-after attribution percentages using the same denominator
 - Unsupported boundaries and unresolved risks

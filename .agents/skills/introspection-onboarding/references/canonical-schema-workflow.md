@@ -7,7 +7,7 @@ Create deterministic session-context records from normalized native lifecycle va
 ## Guidance
 
 - Accept only producer, session ID, event type, RFC 3339 occurred-at timestamp, and absolute workspace inputs.
-- Resolve the repository-owned canonical schema before deriving, emitting, reimporting, or validating project attribution.
+- Resolve the repository-owned canonical schema before deriving, emitting, or validating project attribution.
 - Require the complete canonical event and agent-project tuple; reject absent, partial, conflicting, or invalid values.
 - Resolve the normalized Git root from the explicit absolute workspace and reject non-Git, missing, ambiguous, or escaping roots.
 - Derive stable event and project identifiers from the canonical inputs exactly as the repository implementation specifies.

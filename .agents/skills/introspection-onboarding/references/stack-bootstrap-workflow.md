@@ -2,7 +2,7 @@
 
 ## Objective
 
-Prove the local SigNoz stack can receive and retain OTLP before configuring session-context producers or reimporting telemetry.
+Prove the local SigNoz stack can receive and retain OTLP before configuring session-context producers.
 
 ## Guidance
 

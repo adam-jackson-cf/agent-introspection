@@ -17,11 +17,11 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 
 ### Step 2: Run deterministic scans
 
-- **Purpose**: Mine source telemetry and persist deterministic observations and trend evidence.
+- **Purpose**: Convert bounded source telemetry and accepted lifecycle context into deterministic canonical activities, activity versions, findings, and trends.
 - Run the health workflow before scanning.
-- Use scheduler leases, source watermarks, bounded ClickHouse reads, and idempotent persistence.
-- Respect the seven-day actionable trend window and one successful or no-data scheduled run per UTC interval slot.
-- Drain duplicate-tolerant derived telemetry and report scan, observation, trend, and delivery evidence.
+- Use scheduler leases, source watermarks, bounded ClickHouse reads, ordered context replay, and idempotent canonical persistence.
+- Resolve each source activity through exactly one accepted producer/correlation/project interval or retain an explicit unresolved attribution.
+- Drain deterministic canonical activity-version events and report scan, activity, version, finding, trend, and delivery evidence.
 - Workflow: [Scan workflow](references/scan-workflow.md)
 
 ### Step 3: Persist and inspect proposals
