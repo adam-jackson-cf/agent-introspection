@@ -154,7 +154,7 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
         connection.close()
 
 
-def test_reused_event_id_conflict_remains_unresolved_without_mutating_ledger_or_outbox(
+def test_reused_event_id_conflict_is_quarantined_without_mutating_ledger_or_outbox(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "ledger.sqlite3"
@@ -187,7 +187,7 @@ def test_reused_event_id_conflict_remains_unresolved_without_mutating_ledger_or_
 
         assert drain_inbox(connection, directory=inbox) == ()
 
-        assert conflict_path.exists()
+        assert not conflict_path.exists()
         assert (
             connection.execute(
                 """
@@ -200,7 +200,9 @@ def test_reused_event_id_conflict_remains_unresolved_without_mutating_ledger_or_
             == ledger_before
         )
         assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone() == outbox_before
-        assert connection.execute("SELECT COUNT(*) FROM canonical_rejections").fetchone() == (0,)
+        assert connection.execute("SELECT reason_code FROM canonical_rejections").fetchone() == (
+            "duplicate_conflict",
+        )
     finally:
         connection.close()
 
@@ -217,6 +219,7 @@ def test_ordered_replay_and_end_exclusive_correlation(tmp_path: Path) -> None:
         start_at = datetime(2026, 1, 1, tzinfo=UTC)
         changed_at = start_at + timedelta(minutes=1)
         session_end = changed_at + timedelta(minutes=1)
+
         start = _event(first_root, "session_start", start_at)
         changed = _event(second_root, "workspace_changed", changed_at)
         ended = _event(second_root, "session_end", session_end)
@@ -343,7 +346,7 @@ def test_late_lifecycle_event_beyond_clock_skew_is_quarantined(tmp_path: Path) -
         spool_event(late, directory=inbox)
         assert drain_inbox(connection, directory=inbox, clock_skew_seconds=299) == ()
         assert connection.execute("SELECT reason_code FROM canonical_rejections").fetchall() == [
-            ("clock_skew_exceeded",)
+            ("out_of_order_event",)
         ]
     finally:
         connection.close()

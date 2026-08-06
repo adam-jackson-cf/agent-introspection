@@ -8,6 +8,16 @@ contains_ascii_control() {
     *) return 1 ;;
   esac
 }
+publish_rejection() {
+  local reason_code=$1 rejection_id inbox tmp
+  rejection_id=$(printf '%s\0%s\0%s\0%s\0%s' "$producer" "$session_id" "$event_type" "$occurred_at" "$reason_code" | shasum -a 256)
+  rejection_id=${rejection_id%% *}
+  inbox=${HOME:?HOME must be set}/.local/share/agent-introspection/session-context-inbox
+  mkdir -p "$inbox"
+  tmp=$(mktemp "$inbox/.${rejection_id}.XXXXXX")
+  printf '{"rejection_id":"%s","producer":"%s","producer_surface":"session-context-inbox","correlation_id":"%s","lifecycle_event":"%s","occurred_at":"%s","reason_code":"%s","source_adapter":"session-context"}\n' "$rejection_id" "$(json_escape "$producer")" "$(json_escape "$session_id")" "$(json_escape "$event_type")" "$(json_escape "$occurred_at")" "$reason_code" >"$tmp"
+  mv -f "$tmp" "$inbox/$rejection_id.json"
+}
 resolve_git_common_dir() {
   python3 - "$1" <<'PY'
 import subprocess
@@ -93,27 +103,25 @@ if contains_ascii_control "$occurred_at" || ! validate_occurred_at "$occurred_at
   printf '%s\n' 'occurred-at must be an RFC 3339 timestamp with an offset and no ASCII control characters' >&2
   exit 64
 fi
-if contains_ascii_control "$workspace"; then
-  printf '%s\n' 'workspace must not contain ASCII control characters' >&2
-  exit 64
-fi
+if [ -z "$workspace" ]; then publish_rejection missing_workspace; exit 64; fi
+if contains_ascii_control "$workspace"; then publish_rejection invalid_workspace; exit 64; fi
 case $workspace in
   /*) ;;
-  *) printf '%s\n' 'workspace must be an absolute path' >&2; exit 64 ;;
+  *) publish_rejection invalid_workspace; exit 64 ;;
 esac
-[ -d "$workspace" ] || { printf '%s\n' 'workspace must name an existing directory' >&2; exit 64; }
-
-common_dir=$(resolve_git_common_dir "$workspace") || exit 65
-[ -d "$common_dir" ] || { printf '%s\n' 'Git common directory does not exist' >&2; exit 65; }
-case ${common_dir##*/} in
-  .git) ;;
-  *) printf '%s\n' 'Git common directory must be named .git' >&2; exit 65 ;;
-esac
-root=$(cd "$common_dir/.." && pwd -P)
-if contains_ascii_control "$root"; then
-  printf '%s\n' 'Git root must not contain ASCII control characters' >&2
+if [ ! -d "$workspace" ]; then publish_rejection invalid_workspace; exit 64; fi
+if ! git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  publish_rejection non_git_workspace
   exit 65
 fi
+common_dir=$(resolve_git_common_dir "$workspace") || { publish_rejection git_resolution_failed; exit 65; }
+if [ ! -d "$common_dir" ]; then publish_rejection git_resolution_failed; exit 65; fi
+case ${common_dir##*/} in
+  .git) ;;
+  *) publish_rejection git_resolution_failed; exit 65 ;;
+esac
+root=$(cd "$common_dir/.." && pwd -P) || { publish_rejection git_resolution_failed; exit 65; }
+if contains_ascii_control "$root"; then publish_rejection git_resolution_failed; exit 65; fi
 project_name=${root##*/}
 project_id=$(printf 'git\0%s' "$root" | shasum -a 256)
 project_id=${project_id%% *}

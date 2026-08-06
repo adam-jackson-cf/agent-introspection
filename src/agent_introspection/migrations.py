@@ -670,6 +670,28 @@ _TEMPORAL_AND_REJECTION_SCHEMA: Final[tuple[str, ...]] = (
     "CREATE TRIGGER canonical_rejections_no_delete BEFORE DELETE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections cannot be deleted'); END",
 )
 
+_REJECTION_REASON_CHECK_SCHEMA: Final[tuple[str, ...]] = (
+    "DROP TRIGGER canonical_rejections_no_update",
+    "DROP TRIGGER canonical_rejections_no_delete",
+    "ALTER TABLE canonical_rejections RENAME TO canonical_rejections_legacy",
+    """
+    CREATE TABLE canonical_rejections (
+        id TEXT PRIMARY KEY, producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        producer_surface TEXT NOT NULL CHECK (length(producer_surface) > 0), correlation_id TEXT,
+        lifecycle_event TEXT NOT NULL CHECK (lifecycle_event IN ('session_start', 'workspace_changed', 'session_end', 'source_activity')),
+        occurred_at TEXT NOT NULL,
+        reason_code TEXT NOT NULL CHECK (reason_code IN ('missing_correlation_id', 'conflicting_correlation_id', 'missing_workspace', 'invalid_workspace', 'non_git_workspace', 'git_resolution_failed', 'invalid_timestamp', 'invalid_transition', 'duplicate_conflict', 'out_of_order_event')),
+        source_adapter TEXT NOT NULL CHECK (length(source_adapter) > 0),
+        source_provenance TEXT CHECK (source_provenance IS NULL OR json_valid(source_provenance)), created_at TEXT NOT NULL
+    ) STRICT
+    """,
+    "INSERT INTO canonical_rejections SELECT * FROM canonical_rejections_legacy WHERE reason_code IN ('missing_correlation_id', 'conflicting_correlation_id', 'missing_workspace', 'invalid_workspace', 'non_git_workspace', 'git_resolution_failed', 'invalid_timestamp', 'invalid_transition', 'duplicate_conflict', 'out_of_order_event')",
+    "DROP TABLE canonical_rejections_legacy",
+    "CREATE UNIQUE INDEX canonical_rejections_identity_idx ON canonical_rejections(producer, producer_surface, COALESCE(correlation_id, ''), lifecycle_event, occurred_at, reason_code, source_adapter, COALESCE(source_provenance, ''))",
+    "CREATE TRIGGER canonical_rejections_no_update BEFORE UPDATE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections are immutable'); END",
+    "CREATE TRIGGER canonical_rejections_no_delete BEFORE DELETE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections cannot be deleted'); END",
+)
+
 _LEGACY_ATTRIBUTION_FACT_SCHEMA: Final[tuple[str, ...]] = (
     """
     CREATE TABLE legacy_attribution_fact_sets (
@@ -701,6 +723,11 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         version=3,
         name="legacy attribution fact ledger",
         statements=_LEGACY_ATTRIBUTION_FACT_SCHEMA,
+    ),
+    Migration(
+        version=4,
+        name="canonical rejection reason vocabulary",
+        statements=_REJECTION_REASON_CHECK_SCHEMA,
     ),
 )
 

@@ -33,7 +33,7 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
     finally:
         connection.close()
 
-    assert len(MIGRATIONS) == len(applied) == 3
+    assert len(MIGRATIONS) == len(applied) == 4
     assert all(migration.backup_path.is_file() for migration in applied)
     assert tables == {
         "canonical_activities",

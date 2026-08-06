@@ -137,4 +137,88 @@ def test_runtime_rejects_every_representable_ascii_control_before_inbox_commit(
     )
 
     assert completed.returncode != 0
-    assert not inbox(home).exists()
+    if field in {"workspace", "project_root"}:
+        assert len(list(inbox(home).glob("*.json"))) == 1
+    else:
+        assert not inbox(home).exists()
+
+
+@pytest.mark.parametrize(
+    ("workspace_factory", "reason_code"),
+    [
+        (lambda path: path / "missing", "invalid_workspace"),
+        (lambda path: path / "plain", "non_git_workspace"),
+    ],
+)
+def test_runtime_spools_bounded_workspace_rejections(
+    tmp_path: Path, workspace_factory, reason_code: str
+) -> None:
+    workspace = workspace_factory(tmp_path)
+    if reason_code == "non_git_workspace":
+        workspace.mkdir()
+    home = tmp_path / "home"
+
+    completed = run_runtime(
+        home,
+        "omp",
+        "session-123",
+        "session_start",
+        "2026-08-03T12:34:56Z",
+        str(workspace),
+    )
+
+    assert completed.returncode != 0
+    records = list(inbox(home).glob("*.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text())
+    assert set(record) == {
+        "rejection_id",
+        "producer",
+        "producer_surface",
+        "correlation_id",
+        "lifecycle_event",
+        "occurred_at",
+        "reason_code",
+        "source_adapter",
+    }
+    assert record["reason_code"] == reason_code
+    assert str(workspace) not in records[0].read_text()
+
+
+def test_runtime_spools_git_resolution_failure(tmp_path: Path) -> None:
+    workspace = make_repository(tmp_path)
+    home = tmp_path / "home"
+    shim_directory = tmp_path / "bin"
+    shim_directory.mkdir()
+    shim = shim_directory / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$4" = "--is-inside-work-tree" ]; then printf "true\\n"; exit 0; fi\n'
+        "exit 1\n"
+    )
+    shim.chmod(0o755)
+    environment = os.environ | {
+        "HOME": str(home),
+        "PATH": f"{shim_directory}{os.pathsep}{os.environ['PATH']}",
+    }
+
+    completed = subprocess.run(
+        [
+            str(RUNTIME),
+            "omp",
+            "session-123",
+            "session_start",
+            "2026-08-03T12:34:56Z",
+            str(workspace),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert (
+        json.loads(next(inbox(home).glob("*.json")).read_text())["reason_code"]
+        == "git_resolution_failed"
+    )

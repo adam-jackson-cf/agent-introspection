@@ -56,6 +56,21 @@ _INSERT_REJECTION_WITHOUT_CORRELATION = (
     ") VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)"
 )
 
+_REJECTION_REASONS = frozenset(
+    {
+        "missing_correlation_id",
+        "conflicting_correlation_id",
+        "missing_workspace",
+        "invalid_workspace",
+        "non_git_workspace",
+        "git_resolution_failed",
+        "invalid_timestamp",
+        "invalid_transition",
+        "duplicate_conflict",
+        "out_of_order_event",
+    }
+)
+
 
 def _canonical_event_fields(event: SessionContextEvent) -> tuple[str, ...]:
     project_name = event.project.display_name
@@ -225,6 +240,46 @@ def _rejection_details(value: object, reason_code: str) -> tuple[str, str, str |
     return producer, "session-context-inbox", correlation_id, lifecycle_event, occurred_at
 
 
+def _rejection_envelope_details(
+    value: object,
+) -> tuple[str, str, str, str, str, str, str, str] | None:
+    if not isinstance(value, dict) or set(value) != {
+        "rejection_id",
+        "producer",
+        "producer_surface",
+        "correlation_id",
+        "lifecycle_event",
+        "occurred_at",
+        "reason_code",
+        "source_adapter",
+    }:
+        return None
+    rejection_id = _text(value["rejection_id"], "rejection_id")
+    producer = _text(value["producer"], "producer")
+    surface = _text(value["producer_surface"], "producer_surface")
+    correlation_id = _text(value["correlation_id"], "correlation_id")
+    lifecycle_event = _text(value["lifecycle_event"], "lifecycle_event")
+    reason_code = _text(value["reason_code"], "reason_code")
+    source_adapter = _text(value["source_adapter"], "source_adapter")
+    if (
+        _EVENT_ID.fullmatch(rejection_id) is None
+        or producer not in ("claude-code", "codex-cli", "codex-app-server", "omp")
+        or lifecycle_event not in ("session_start", "workspace_changed", "session_end")
+        or reason_code not in _REJECTION_REASONS
+    ):
+        raise SessionContextError("rejection envelope is not canonical")
+    return (
+        rejection_id,
+        producer,
+        surface,
+        correlation_id,
+        lifecycle_event,
+        _timestamp(value["occurred_at"]).isoformat(),
+        reason_code,
+        source_adapter,
+    )
+
+
 def _quarantine_path(directory: Path, content: bytes) -> Path:
     quarantine = directory / "quarantine"
     quarantine.mkdir(parents=True, exist_ok=True)
@@ -327,7 +382,7 @@ def _replay_intervals(
     if latest is not None:
         latest_at = datetime.fromisoformat(str(latest[0])).astimezone(UTC)
         if (latest_at - event.occurred_at).total_seconds() > clock_skew_seconds:
-            return "clock_skew_exceeded"
+            return "out_of_order_event"
     rows = connection.execute(
         "SELECT event_id, producer, session_id, event_type, occurred_at, project_id, "
         "project_name, project_root, project_kind FROM session_context_events "
@@ -429,6 +484,16 @@ def drain_inbox(
             _quarantine(path, content)
             continue
         try:
+            rejection = _rejection_envelope_details(value)
+        except SessionContextError:
+            _quarantine(path, content)
+            continue
+        if rejection is not None:
+            with connection:
+                os.replace(path, _quarantine_path(path.parent, content))
+                connection.execute(_INSERT_REJECTION, (*rejection, datetime.now(UTC).isoformat()))
+            continue
+        try:
             event = parse_event(value)
         except SessionContextError as error:
             _reject(
@@ -451,13 +516,9 @@ def drain_inbox(
                 )
                 if reason_code in (None, "idempotent"):
                     path.unlink()
-                elif reason_code != "duplicate_conflict":
+                else:
                     _reject(
-                        connection,
-                        path=path,
-                        content=content,
-                        value=value,
-                        reason_code=reason_code,
+                        connection, path=path, content=content, value=value, reason_code=reason_code
                     )
         except sqlite3.Error:
             _reject(
