@@ -617,8 +617,66 @@ _CANONICAL_SCHEMA: Final[tuple[str, ...]] = (
     "CREATE TRIGGER canonical_activity_versions_monotonic BEFORE INSERT ON canonical_activity_versions WHEN NEW.version != COALESCE((SELECT MAX(version) + 1 FROM canonical_activity_versions WHERE activity_id = NEW.activity_id), 1) BEGIN SELECT RAISE(ABORT, 'canonical activity versions must be monotonic'); END",
 )
 
+_TEMPORAL_AND_REJECTION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE session_context_replay_state (
+        producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        session_id TEXT NOT NULL,
+        latest_occurred_at TEXT NOT NULL,
+        PRIMARY KEY (producer, session_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE UNIQUE INDEX canonical_activity_versions_attribution_unique_idx ON canonical_activity_versions(activity_id, attribution_state, COALESCE(project_identity_id, ''), attribution_method, COALESCE(attribution_evidence_id, ''), COALESCE(reason_code, ''))",
+    "DROP TRIGGER session_context_intervals_guard_update",
+    "DROP TRIGGER session_context_intervals_no_delete",
+    """
+    CREATE TABLE session_context_replay_mutations (
+        producer TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        PRIMARY KEY (producer, session_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE TRIGGER session_context_intervals_guard_update BEFORE UPDATE ON session_context_intervals WHEN NOT EXISTS (SELECT 1 FROM session_context_replay_mutations WHERE producer = OLD.producer AND session_id = OLD.session_id) BEGIN SELECT RAISE(ABORT, 'session context interval history is immutable'); END",
+    "CREATE TRIGGER session_context_intervals_no_delete BEFORE DELETE ON session_context_intervals WHEN NOT EXISTS (SELECT 1 FROM session_context_replay_mutations WHERE producer = OLD.producer AND session_id = OLD.session_id) BEGIN SELECT RAISE(ABORT, 'session context intervals cannot be deleted'); END",
+    "DROP TRIGGER canonical_rejections_no_update",
+    "DROP TRIGGER canonical_rejections_no_delete",
+    "ALTER TABLE canonical_rejections RENAME TO canonical_rejections_legacy",
+    """
+    CREATE TABLE canonical_rejections (
+        id TEXT PRIMARY KEY,
+        producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        producer_surface TEXT NOT NULL CHECK (length(producer_surface) > 0),
+        correlation_id TEXT,
+        lifecycle_event TEXT NOT NULL CHECK (lifecycle_event IN ('session_start', 'workspace_changed', 'session_end', 'source_activity')),
+        occurred_at TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        source_adapter TEXT NOT NULL CHECK (length(source_adapter) > 0),
+        source_provenance TEXT CHECK (source_provenance IS NULL OR json_valid(source_provenance)),
+        created_at TEXT NOT NULL
+    ) STRICT
+    """,
+    """
+    INSERT INTO canonical_rejections(
+        id, producer, producer_surface, correlation_id, lifecycle_event, occurred_at,
+        reason_code, source_adapter, source_provenance, created_at
+    )
+    SELECT id, producer, producer_surface, correlation_id, lifecycle_event, occurred_at,
+           reason_code, source_adapter, NULL, created_at
+    FROM canonical_rejections_legacy
+    """,
+    "DROP TABLE canonical_rejections_legacy",
+    "CREATE UNIQUE INDEX canonical_rejections_identity_idx ON canonical_rejections(producer, producer_surface, COALESCE(correlation_id, ''), lifecycle_event, occurred_at, reason_code, source_adapter, COALESCE(source_provenance, ''))",
+    "CREATE TRIGGER canonical_rejections_no_update BEFORE UPDATE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections are immutable'); END",
+    "CREATE TRIGGER canonical_rejections_no_delete BEFORE DELETE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections cannot be deleted'); END",
+)
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
+    Migration(
+        version=2,
+        name="temporal replay and canonical rejection identity",
+        statements=_TEMPORAL_AND_REJECTION_SCHEMA,
+    ),
 )
 
 

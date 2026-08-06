@@ -52,12 +52,12 @@ class SchedulerConfig:
     lease_seconds: int = 3_600
 
 
-
 @dataclass(frozen=True, slots=True)
 class LifecycleConfig:
     """Lifecycle replay ordering policy."""
 
     clock_skew_seconds: int = 300
+
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:

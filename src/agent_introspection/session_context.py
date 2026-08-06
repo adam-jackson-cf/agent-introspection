@@ -307,8 +307,11 @@ def _parse_rejection_reason(error: SessionContextError) -> str:
     return "invalid_workspace"
 
 
-def _persist_event(connection: sqlite3.Connection, event: SessionContextEvent) -> str | None:
-    """Persist one ordered lifecycle event, returning its rejection code when invalid."""
+def _replay_intervals(
+    connection: sqlite3.Connection, event: SessionContextEvent, *, clock_skew_seconds: int
+) -> str | None:
+    """Insert one event and rebuild its ordered half-open interval projection."""
+
     existing = connection.execute(_SELECT_EVENT_CANONICAL_FIELDS, (event.event_id,)).fetchone()
     if existing is not None:
         return (
@@ -316,63 +319,101 @@ def _persist_event(connection: sqlite3.Connection, event: SessionContextEvent) -
             if tuple(existing) == _canonical_event_fields(event)
             else "duplicate_conflict"
         )
-    open_row = connection.execute(
-        "SELECT event_id, started_at FROM session_context_intervals "
-        "WHERE producer = ? AND session_id = ? AND ended_at IS NULL",
+    latest = connection.execute(
+        "SELECT latest_occurred_at FROM session_context_replay_state "
+        "WHERE producer = ? AND session_id = ?",
         (event.producer, event.session_id),
     ).fetchone()
-    if event.event_type == "session_start":
-        if open_row is not None:
+    if latest is not None:
+        latest_at = datetime.fromisoformat(str(latest[0])).astimezone(UTC)
+        if (latest_at - event.occurred_at).total_seconds() > clock_skew_seconds:
+            return "clock_skew_exceeded"
+    rows = connection.execute(
+        "SELECT event_id, producer, session_id, event_type, occurred_at, project_id, "
+        "project_name, project_root, project_kind FROM session_context_events "
+        "WHERE producer = ? AND session_id = ? ORDER BY occurred_at, event_id",
+        (event.producer, event.session_id),
+    ).fetchall()
+    ordered = [
+        SessionContextEvent(
+            event_id=event.event_id,
+            producer=event.producer,
+            session_id=event.session_id,
+            event_type=event.event_type,
+            occurred_at=event.occurred_at,
+            project=event.project,
+        )
+    ]
+    for row in rows:
+        ordered.append(
+            SessionContextEvent(
+                event_id=str(row[0]),
+                producer=cast(Producer, row[1]),
+                session_id=str(row[2]),
+                event_type=cast(EventType, row[3]),
+                occurred_at=datetime.fromisoformat(str(row[4])).astimezone(UTC),
+                project=ProjectIdentity(str(row[8]), Path(str(row[7])), str(row[5]), str(row[6])),
+            )
+        )
+    ordered.sort(key=lambda item: (item.occurred_at, item.event_id))
+    open_event: SessionContextEvent | None = None
+    intervals: list[tuple[SessionContextEvent, SessionContextEvent | None]] = []
+    for item in ordered:
+        if item.event_type == "session_start":
+            if open_event is not None:
+                return "invalid_transition"
+            open_event = item
+            continue
+        if open_event is None:
             return "invalid_transition"
-        connection.execute(_INSERT_EVENT, _event_parameters(event))
-        connection.execute(
-            _INSERT_INTERVAL,
-            (
-                event.event_id,
-                event.producer,
-                event.session_id,
-                event.occurred_at.isoformat(),
-                event.project.identity,
-                event.project.display_name,
-                event.project.root.as_posix(),
-                event.project.kind,
-            ),
-        )
-        return None
-    if open_row is None:
-        return "invalid_transition"
-    if event.occurred_at.isoformat() < str(open_row[1]):
-        return "out_of_order_event"
+        intervals.append((open_event, item))
+        open_event = item if item.event_type == "workspace_changed" else None
+    if open_event is not None:
+        intervals.append((open_event, None))
     connection.execute(_INSERT_EVENT, _event_parameters(event))
-    updated = connection.execute(
-        _CLOSE_INTERVAL + " AND ended_at IS NULL AND started_at <= ?",
-        (
-            event.occurred_at.isoformat(),
-            event.event_id,
-            open_row[0],
-            event.occurred_at.isoformat(),
-        ),
+    connection.execute(
+        "INSERT INTO session_context_replay_state(producer, session_id, latest_occurred_at) "
+        "VALUES (?, ?, ?) ON CONFLICT(producer, session_id) DO UPDATE SET "
+        "latest_occurred_at = MAX(latest_occurred_at, excluded.latest_occurred_at)",
+        (event.producer, event.session_id, event.occurred_at.isoformat()),
     )
-    if updated.rowcount != 1:
-        raise sqlite3.IntegrityError("open interval ownership changed")
-    if event.event_type == "workspace_changed":
+    connection.execute(
+        "INSERT INTO session_context_replay_mutations(producer, session_id) VALUES (?, ?)",
+        (event.producer, event.session_id),
+    )
+    connection.execute(
+        "DELETE FROM session_context_intervals WHERE producer = ? AND session_id = ?",
+        (event.producer, event.session_id),
+    )
+    for start, end in intervals:
         connection.execute(
             _INSERT_INTERVAL,
             (
-                event.event_id,
-                event.producer,
-                event.session_id,
-                event.occurred_at.isoformat(),
-                event.project.identity,
-                event.project.display_name,
-                event.project.root.as_posix(),
-                event.project.kind,
+                start.event_id,
+                start.producer,
+                start.session_id,
+                start.occurred_at.isoformat(),
+                start.project.identity,
+                start.project.display_name,
+                start.project.root.as_posix(),
+                start.project.kind,
             ),
         )
+        if end is not None:
+            connection.execute(
+                _CLOSE_INTERVAL,
+                (end.occurred_at.isoformat(), end.event_id, start.event_id),
+            )
+    connection.execute(
+        "DELETE FROM session_context_replay_mutations WHERE producer = ? AND session_id = ?",
+        (event.producer, event.session_id),
+    )
     return None
 
 
-def drain_inbox(connection: sqlite3.Connection, *, directory: Path) -> tuple[DerivedEvent, ...]:
+def drain_inbox(
+    connection: sqlite3.Connection, *, directory: Path, clock_skew_seconds: int = 300
+) -> tuple[DerivedEvent, ...]:
     """Transactionally replay ordered lifecycle records and quarantine every rejection."""
     if not directory.exists():
         return ()
@@ -405,10 +446,12 @@ def drain_inbox(connection: sqlite3.Connection, *, directory: Path) -> tuple[Der
     ):
         try:
             with connection:
-                reason_code = _persist_event(connection, event)
+                reason_code = _replay_intervals(
+                    connection, event, clock_skew_seconds=clock_skew_seconds
+                )
                 if reason_code in (None, "idempotent"):
                     path.unlink()
-                else:
+                elif reason_code != "duplicate_conflict":
                     _reject(
                         connection,
                         path=path,

@@ -59,8 +59,9 @@ def _canonical_schema_identity() -> tuple[tuple[str, str, str], ...]:
     connection = sqlite3.connect(":memory:")
     try:
         connection.execute("PRAGMA foreign_keys = ON")
-        for statement in MIGRATIONS[0].statements:
-            connection.execute(statement)
+        for migration in MIGRATIONS:
+            for statement in migration.statements:
+                connection.execute(statement)
         return _schema_identity(connection)
     finally:
         connection.close()

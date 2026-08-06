@@ -22,6 +22,7 @@ def test_documented_defaults_are_canonical() -> None:
     assert config.signoz.docker_context == "orbstack"
     assert config.signoz.docker_host == "unix:///Users/adamjackson/.orbstack/run/docker.sock"
     assert config.scheduler.interval_seconds == 3_600
+    assert config.lifecycle.clock_skew_seconds == 300
 
 
 def test_parse_config_expands_paths_and_preserves_explicit_values(
@@ -41,6 +42,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
                 "interval_seconds": 3_600,
                 "lease_seconds": 900,
             },
+            "lifecycle": {"clock_skew_seconds": 120},
         }
     )
 
@@ -49,6 +51,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
     assert config.signoz.compose_directory == tmp_path / "signoz"
     assert config.scheduler.interval_seconds == 3_600
     assert config.scheduler.lease_seconds == 900
+    assert config.lifecycle.clock_skew_seconds == 120
 
 
 @pytest.mark.parametrize(
@@ -66,6 +69,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
         ({"scheduler": {"interval_seconds": 1_800}}, "must be exactly 3600 seconds"),
         ({"scheduler": {"timezone": "Mars/Olympus"}}, "must name an installed timezone"),
         ({"attribution": {}}, "unsupported keys in root"),
+        ({"lifecycle": {"clock_skew_seconds": 0}}, "must be a positive integer"),
     ],
 )
 def test_invalid_configuration_fails_closed(document: dict[str, object], message: str) -> None:

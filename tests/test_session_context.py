@@ -154,7 +154,7 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
         connection.close()
 
 
-def test_duplicate_conflicts_and_invalid_transitions_are_quarantined_with_rejections(
+def test_reused_event_id_conflict_remains_unresolved_without_mutating_ledger_or_outbox(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "ledger.sqlite3"
@@ -168,27 +168,39 @@ def test_duplicate_conflicts_and_invalid_transitions_are_quarantined_with_reject
         assert len(drain_inbox(connection, directory=inbox)) == 1
 
         payload = event_payload(start)
-        payload["session_id"] = "reused-id-different-session"
         conflict_path = inbox / f"{start.event_id}.json"
         conflict_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
         assert drain_inbox(connection, directory=inbox) == ()
         assert not conflict_path.exists()
 
-        invalid = _event(
-            root,
-            "session_start",
-            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
-        )
-        spool_event(invalid, directory=inbox)
+        payload["session_id"] = "reused-id-different-session"
+        conflict_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        ledger_before = connection.execute(
+            """
+            SELECT producer, session_id, event_type, occurred_at, project_id,
+                   project_name, project_root, project_kind
+            FROM session_context_events WHERE event_id = ?
+            """,
+            (start.event_id,),
+        ).fetchone()
+        outbox_before = connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()
+
         assert drain_inbox(connection, directory=inbox) == ()
-        assert not (inbox / f"{invalid.event_id}.json").exists()
-        assert sorted(path.suffix for path in (inbox / "quarantine").iterdir()) == [
-            ".json",
-            ".json",
-        ]
-        assert connection.execute(
-            "SELECT reason_code FROM canonical_rejections ORDER BY reason_code"
-        ).fetchall() == [("duplicate_conflict",), ("invalid_transition",)]
+
+        assert conflict_path.exists()
+        assert (
+            connection.execute(
+                """
+            SELECT producer, session_id, event_type, occurred_at, project_id,
+                   project_name, project_root, project_kind
+            FROM session_context_events WHERE event_id = ?
+            """,
+                (start.event_id,),
+            ).fetchone()
+            == ledger_before
+        )
+        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone() == outbox_before
+        assert connection.execute("SELECT COUNT(*) FROM canonical_rejections").fetchone() == (0,)
     finally:
         connection.close()
 
@@ -272,3 +284,66 @@ def test_event_schema_rejects_missing_and_noncanonical_fields(tmp_path: Path) ->
     payload["agent"]["project"]["kind"] = "non_git"
     with pytest.raises(SessionContextError):
         parse_event(payload)
+
+
+def test_late_lifecycle_event_replays_within_configured_clock_skew(tmp_path: Path) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    first_root = tmp_path / "first-project"
+    second_root = tmp_path / "second-project"
+    first_root.mkdir()
+    second_root.mkdir()
+    connection = _connection(database)
+    try:
+        inbox = tmp_path / "inbox"
+        started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        changed_at = started_at + timedelta(minutes=5)
+        ended_at = started_at + timedelta(minutes=10)
+        start = _event(first_root, "session_start", started_at)
+        ended = _event(first_root, "session_end", ended_at)
+        changed = _event(second_root, "workspace_changed", changed_at)
+        spool_event(start, directory=inbox)
+        assert [item.entity_id for item in drain_inbox(connection, directory=inbox)] == [
+            start.event_id
+        ]
+        spool_event(ended, directory=inbox)
+        assert [item.entity_id for item in drain_inbox(connection, directory=inbox)] == [
+            ended.event_id
+        ]
+        spool_event(changed, directory=inbox)
+        assert [
+            item.entity_id
+            for item in drain_inbox(connection, directory=inbox, clock_skew_seconds=600)
+        ] == [changed.event_id]
+        assert connection.execute(
+            "SELECT project_id, started_at, ended_at FROM session_context_intervals "
+            "ORDER BY started_at"
+        ).fetchall() == [
+            (start.project.identity, started_at.isoformat(), changed_at.isoformat()),
+            (changed.project.identity, changed_at.isoformat(), ended_at.isoformat()),
+        ]
+    finally:
+        connection.close()
+
+
+def test_late_lifecycle_event_beyond_clock_skew_is_quarantined(tmp_path: Path) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    root = tmp_path / "project"
+    root.mkdir()
+    connection = _connection(database)
+    try:
+        inbox = tmp_path / "inbox"
+        started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        start = _event(root, "session_start", started_at)
+        ended = _event(root, "session_end", started_at + timedelta(minutes=10))
+        late = _event(root, "workspace_changed", started_at + timedelta(minutes=5))
+        spool_event(start, directory=inbox)
+        drain_inbox(connection, directory=inbox)
+        spool_event(ended, directory=inbox)
+        drain_inbox(connection, directory=inbox)
+        spool_event(late, directory=inbox)
+        assert drain_inbox(connection, directory=inbox, clock_skew_seconds=299) == ()
+        assert connection.execute("SELECT reason_code FROM canonical_rejections").fetchall() == [
+            ("clock_skew_exceeded",)
+        ]
+    finally:
+        connection.close()

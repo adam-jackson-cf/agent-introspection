@@ -352,7 +352,17 @@ def persist_canonical_activity(
     )
     if latest is not None and tuple(latest[1:]) == attribution_tuple:
         return CanonicalActivityWrite(activity.id, int(latest[0]), False)
-
+    existing_version = connection.execute(
+        """
+        SELECT version FROM canonical_activity_versions
+        WHERE activity_id = ? AND attribution_state = ?
+          AND project_identity_id IS ? AND attribution_method = ?
+          AND attribution_evidence_id IS ? AND reason_code IS ?
+        """,
+        (activity.id, *attribution_tuple),
+    ).fetchone()
+    if existing_version is not None:
+        return CanonicalActivityWrite(activity.id, int(existing_version[0]), False)
     version = 1 if latest is None else int(latest[0]) + 1
     connection.execute(
         """

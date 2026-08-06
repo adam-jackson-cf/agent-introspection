@@ -33,8 +33,8 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
     finally:
         connection.close()
 
-    assert len(MIGRATIONS) == len(applied) == 1
-    assert applied[0].backup_path.is_file()
+    assert len(MIGRATIONS) == len(applied) == 2
+    assert all(migration.backup_path.is_file() for migration in applied)
     assert tables == {
         "canonical_activities",
         "canonical_activity_outbox_evidence",
@@ -61,6 +61,8 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
         "semantic_classifications",
         "session_context_events",
         "session_context_intervals",
+        "session_context_replay_mutations",
+        "session_context_replay_state",
         "source_schema_snapshots",
         "source_watermarks",
         "trend_evaluations",

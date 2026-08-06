@@ -198,6 +198,14 @@ def test_canonical_activity_writer_has_deterministic_membership_and_versions(
             """,
             (ordered.id,),
         ).fetchall() == [(1,), (2,)]
+        with connection:
+            non_consecutive_replay = persist_canonical_activity(
+                connection, ordered, _unresolved_attribution()
+            )
+        assert (non_consecutive_replay.version, non_consecutive_replay.version_inserted) == (
+            1,
+            False,
+        )
 
         with pytest.raises(DatabaseError, match="membership hash conflicts"):
             persist_canonical_activity(
