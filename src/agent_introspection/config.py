@@ -17,11 +17,6 @@ DEFAULT_COMPOSE_DIRECTORY: Final[Path] = Path(
     "~/.local/share/codex-observability/signoz/deploy/docker"
 ).expanduser()
 
-DEFAULT_PROJECT_ROOTS: Final[tuple[Path, ...]] = (
-    Path("~/Projects").expanduser(),
-    Path("~/orca/workspaces").expanduser(),
-)
-
 
 class ConfigurationError(ValueError):
     """Raised when configuration is malformed or contains unsupported keys."""
@@ -58,23 +53,15 @@ class SchedulerConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class AttributionConfig:
-    """Project-root collection policy for Git evidence."""
-
-    project_roots: tuple[Path, ...] = DEFAULT_PROJECT_ROOTS
-
-
-@dataclass(frozen=True, slots=True)
 class AppConfig:
     """Complete application configuration."""
 
     database: DatabaseConfig = DatabaseConfig()
     signoz: SigNozConfig = SigNozConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
-    attribution: AttributionConfig = AttributionConfig()
 
 
-_ROOT_KEYS = frozenset({"database", "signoz", "scheduler", "attribution"})
+_ROOT_KEYS = frozenset({"database", "signoz", "scheduler"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _SIGNOZ_KEYS = frozenset(
     {
@@ -88,7 +75,6 @@ _SIGNOZ_KEYS = frozenset(
     }
 )
 _SCHEDULER_KEYS = frozenset({"timezone", "interval_seconds", "lease_seconds"})
-_ATTRIBUTION_KEYS = frozenset({"project_roots"})
 
 
 def _expand_path(value: object, *, field: str) -> Path:
@@ -96,24 +82,6 @@ def _expand_path(value: object, *, field: str) -> Path:
         raise ConfigurationError(f"{field} must be a non-empty string")
     expanded = os.path.expandvars(os.path.expanduser(value))
     return Path(expanded).resolve(strict=False)
-
-
-def _path_list(value: object, *, field: str) -> tuple[Path, ...]:
-    if not isinstance(value, list) or not value:
-        raise ConfigurationError(f"{field} must be a non-empty TOML list")
-    roots: list[Path] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str) or not item.strip():
-            raise ConfigurationError(f"{field}[{index}] must be a non-empty path string")
-        expanded = os.path.expandvars(os.path.expanduser(item))
-        path = Path(expanded)
-        if not path.is_absolute():
-            raise ConfigurationError(f"{field}[{index}] must be an absolute path")
-        root = path.resolve(strict=False)
-        if root in roots:
-            raise ConfigurationError(f"{field} must not contain duplicate paths")
-        roots.append(root)
-    return tuple(roots)
 
 
 def _positive_int(value: object, *, field: str) -> int:
@@ -164,11 +132,9 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     database = _table(data, "database")
     signoz = _table(data, "signoz")
     scheduler = _table(data, "scheduler")
-    attribution = _table(data, "attribution")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(scheduler), _SCHEDULER_KEYS, location="scheduler")
-    _reject_unknown(set(attribution), _ATTRIBUTION_KEYS, location="attribution")
 
     defaults = AppConfig()
     database_config = DatabaseConfig(
@@ -237,18 +203,10 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.scheduler.lease_seconds
         ),
     )
-    attribution_config = AttributionConfig(
-        project_roots=(
-            _path_list(attribution["project_roots"], field="attribution.project_roots")
-            if "project_roots" in attribution
-            else defaults.attribution.project_roots
-        )
-    )
     return AppConfig(
         database=database_config,
         signoz=signoz_config,
         scheduler=scheduler_config,
-        attribution=attribution_config,
     )
 
 

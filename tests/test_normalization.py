@@ -61,6 +61,14 @@ def test_shell_accepts_structured_argv_forms() -> None:
     assert direct.membership_key == wrapped.membership_key
 
 
+def test_shell_accepts_installed_codex_exec_wrapper() -> None:
+    wrapped = normalize_shell_operation(
+        'const r = await tools.exec_command({"cmd":"pwd","workdir":"/repo"}); text(r.output);\n'
+    )
+    direct = normalize_shell_operation({"cmd": "pwd", "workdir": "/repo"})
+    assert wrapped.membership_key == direct.membership_key
+
+
 def test_shell_target_extraction_ignores_option_values_and_preserves_metadata() -> None:
     operation = normalize_shell_operation(
         {"cmd": ["git", "-C", "/tmp/generated", "status"]},

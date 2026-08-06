@@ -302,6 +302,14 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
     assert [(event["activity.id"], event["activity.version"]) for event in outbox] == [
         (activity_id, 1)
     ]
+    activity_event = outbox[0]
+    assert activity_event["activity.producer"] == "codex-cli"
+    assert activity_event["activity.producer_surface"] == "codex-cli"
+    assert activity_event["activity.correlation_id"] == "session-1"
+    assert activity_event["activity.detector.id"] == "tool_failure"
+    assert activity_event["activity.payload_schema_version"] == 2
+    assert activity_event["agent.project.id"] == "1" * 64
+    assert activity_event["agent.project.name"] == root.name
 
 
 def test_late_context_bumps_one_canonical_activity_once(

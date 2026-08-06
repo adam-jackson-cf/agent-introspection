@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
+from agent_introspection.telemetry import CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION
 
 _PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.dashboard_attribute_keys
 
@@ -30,7 +31,13 @@ CANONICAL_ACTIVITY_EVENT = "introspection.activity.version.recorded"
 CANONICAL_ACTIVITY_EVENT_PREDICATE = (
     f"attributes_string['event.name'] = '{CANONICAL_ACTIVITY_EVENT}'"
 )
+CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE = (
+    "toUInt64OrZero(toString("
+    "attributes_number['activity.payload_schema_version'])) = "
+    f"{CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION}"
+)
 CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE = f"""{CANONICAL_ACTIVITY_EVENT_PREDICATE}
+  AND {CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE}
   AND notEmpty(attributes_string['activity.id'])
   AND (
     attributes_string['activity.id'],
@@ -42,6 +49,7 @@ CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE = f"""{CANONICAL_ACTIVITY_EVENT_PRED
     FROM signoz_logs.distributed_logs_v2
     WHERE {COMMON_FILTER}
       AND {CANONICAL_ACTIVITY_EVENT_PREDICATE}
+      AND {CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE}
       AND notEmpty(attributes_string['activity.id'])
     GROUP BY attributes_string['activity.id']
   )"""

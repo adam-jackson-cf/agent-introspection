@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from agent_introspection import scheduler
-from agent_introspection.attribution import reconcile_activity, resolve_attribution
+from agent_introspection.attribution import (
+    canonical_activity_event_attributes,
+    reconcile_activity,
+    resolve_attribution,
+)
 from agent_introspection.capabilities import (
     CapabilityError,
     discover_source_schema,
@@ -33,7 +37,6 @@ from agent_introspection.detectors import DetectorEngine, DetectorEvent, Observa
 from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
-from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.scheduler import recover_interrupted_scan_runs
 from agent_introspection.session_context import drain_inbox, inbox_path
 from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
@@ -49,8 +52,6 @@ from agent_introspection.trends import (
     TrendEvaluation,
     recompute_canonical_findings,
 )
-
-_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
 
 
 class ScanError(RuntimeError):
@@ -501,18 +502,7 @@ def _persist_canonical_activities(
         ).canonical(created_at=_iso_now())
         _persist_attribution_project(connection, attribution)
         write = persist_canonical_activity(connection, activity, attribution)
-        if not write.version_inserted:
-            continue
-        attributes: dict[str, str] = {
-            "activity.attribution.state": attribution.state,
-            "activity.attribution.method": attribution.method,
-        }
-        if attribution.project_identity_id is not None:
-            attributes["activity.attribution.project_identity_id"] = attribution.project_identity_id
-        if attribution.evidence_id is not None:
-            attributes["activity.attribution.evidence_id"] = attribution.evidence_id
-        if attribution.reason_code is not None:
-            attributes["activity.attribution.reason_code"] = attribution.reason_code
+        attributes = canonical_activity_event_attributes(connection, activity, attribution)
         enqueue_canonical_activity_version(
             connection,
             CanonicalActivityVersionEvent(
@@ -522,6 +512,8 @@ def _persist_canonical_activities(
                 attributes=attributes,
             ),
         )
+        if not write.version_inserted:
+            continue
         connection.executemany(
             """
             INSERT INTO canonical_recomputation_schedule (
@@ -546,6 +538,70 @@ def _persist_canonical_activities(
             (_iso_now(), *changed_ids),
         )
     return changed_ids, evaluations
+
+
+def _canonical_activity_from_storage(row: tuple[Any, ...]) -> CanonicalActivity:
+    membership = json.loads(str(row[8]))
+    return CanonicalActivity(
+        producer=str(row[0]),
+        producer_surface=str(row[1]),
+        correlation_id=str(row[2]),
+        source_started_at_ns=int(row[3]),
+        source_ended_at_ns=int(row[4]),
+        detector_id=str(row[5]),
+        detector_version=int(row[6]),
+        normalization_version=int(row[7]),
+        source_membership=CanonicalSourceMembership(
+            event_ids=tuple(membership["event_ids"]),
+            log_ids=tuple(membership["log_ids"]),
+            span_ids=tuple(membership["span_ids"]),
+        ),
+        operation_kind=str(row[9]),
+        target_kind=str(row[10]),
+        normalized_target=str(row[11]),
+        normalized_failure_class=str(row[12]),
+        created_at=str(row[13]),
+    )
+
+
+def _ensure_current_activity_outbox(connection: sqlite3.Connection) -> None:
+    """Ensure every latest canonical activity version has the current OTLP projection."""
+    rows = connection.execute(
+        """
+        SELECT a.producer, a.producer_surface, a.correlation_id, a.source_started_at_ns,
+               a.source_ended_at_ns, a.detector_id, a.detector_version,
+               a.normalization_version, a.source_membership_json, a.operation_kind,
+               a.target_kind, a.normalized_target, a.normalized_failure_class, a.created_at,
+               av.version, av.attribution_state, av.project_identity_id,
+               av.attribution_method, av.attribution_evidence_id, av.reason_code, av.created_at
+        FROM canonical_activities AS a
+        JOIN canonical_activity_versions AS av ON av.activity_id = a.id
+        WHERE av.version = (
+          SELECT MAX(latest.version)
+          FROM canonical_activity_versions AS latest
+          WHERE latest.activity_id = a.id
+        )
+        """
+    ).fetchall()
+    for row in rows:
+        activity = _canonical_activity_from_storage(row)
+        attribution = CanonicalAttribution(
+            state=str(row[15]),
+            project_identity_id=str(row[16]) if row[16] is not None else None,
+            method=str(row[17]),
+            evidence_id=str(row[18]) if row[18] is not None else None,
+            reason_code=str(row[19]) if row[19] is not None else None,
+            created_at=str(row[20]),
+        )
+        enqueue_canonical_activity_version(
+            connection,
+            CanonicalActivityVersionEvent(
+                activity_id=activity.id,
+                version=int(row[14]),
+                timestamp_ns=activity.source_ended_at_ns,
+                attributes=canonical_activity_event_attributes(connection, activity, attribution),
+            ),
+        )
 
 
 def _reconcile_late_context(
@@ -573,27 +629,7 @@ def _reconcile_late_context(
             (producer, correlation_id),
         ).fetchall()
         for row in rows:
-            membership = json.loads(str(row[8]))
-            activity = CanonicalActivity(
-                producer=str(row[0]),
-                producer_surface=str(row[1]),
-                correlation_id=str(row[2]),
-                source_started_at_ns=int(row[3]),
-                source_ended_at_ns=int(row[4]),
-                detector_id=str(row[5]),
-                detector_version=int(row[6]),
-                normalization_version=int(row[7]),
-                source_membership=CanonicalSourceMembership(
-                    event_ids=tuple(membership["event_ids"]),
-                    log_ids=tuple(membership["log_ids"]),
-                    span_ids=tuple(membership["span_ids"]),
-                ),
-                operation_kind=str(row[9]),
-                target_kind=str(row[10]),
-                normalized_target=str(row[11]),
-                normalized_failure_class=str(row[12]),
-                created_at=str(row[13]),
-            )
+            activity = _canonical_activity_from_storage(row)
             source_at = datetime.fromtimestamp(activity.source_ended_at_ns / 1_000_000_000, tz=UTC)
             write = reconcile_activity(connection, activity=activity, source_at=source_at)
             if write.version_inserted:
@@ -621,21 +657,6 @@ def _persist_projects(connection: sqlite3.Connection, projects: dict[str, Projec
                 now,
             ),
         )
-
-
-def _dashboard_project_attributes(
-    project_id: str | None, project_names: dict[str, str]
-) -> dict[str, str]:
-    project_name = project_names.get(project_id or "")
-    if project_id is None or project_name is None:
-        return {
-            _PROJECT_ATTRIBUTE_KEYS["id"]: "unresolved",
-            _PROJECT_ATTRIBUTE_KEYS["name"]: "unresolved",
-        }
-    return {
-        _PROJECT_ATTRIBUTE_KEYS["id"]: project_id,
-        _PROJECT_ATTRIBUTE_KEYS["name"]: project_name,
-    }
 
 
 def run_scan(
@@ -778,6 +799,7 @@ def run_scan(
             connection.execute("BEGIN IMMEDIATE")
             _, current_evaluations = _persist_canonical_activities(connection, activities, now=now)
             trend_evaluations.extend(current_evaluations)
+            _ensure_current_activity_outbox(connection)
             terminal_status = "no_data" if not logs and not traces else "succeeded"
             connection.commit()
         except BaseException as exc:

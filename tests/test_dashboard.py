@@ -4,6 +4,7 @@ from typing import Any
 from agent_introspection.dashboard import (
     CANONICAL_ACTIVITY_EVENT,
     CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE,
+    CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE,
     COMMON_FILTER,
     DASHBOARD_UUID,
     HEALTH_DASHBOARD_UUID,
@@ -65,6 +66,9 @@ def test_insight_queries_select_latest_canonical_activity_versions_in_source_tim
     insight = _panels(build_dashboard())
     assert "ts_bucket_start" not in COMMON_FILTER
     assert CANONICAL_ACTIVITY_EVENT in CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
+    assert CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_PREDICATE in (
+        CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
+    )
     assert (
         "max(attributes_number['activity.version'])" in CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
     )

@@ -30,7 +30,7 @@ OPERATIONAL_SCOPE = "operational"
 REVIEW_SCOPE = "review"
 
 CANONICAL_ACTIVITY_EVENT_NAME = "introspection.activity.version.recorded"
-CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION = 1
+CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)

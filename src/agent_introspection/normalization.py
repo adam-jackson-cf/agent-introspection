@@ -27,6 +27,10 @@ _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
 _LINE_POSITION = re.compile(r"^(?P<path>.+?):\d+(?::\d+)?$")
+_CODEX_EXEC_WRAPPER = re.compile(
+    r"\Aconst r = await tools\.exec_command\((\{.*\})\); text\(r\.output\);\s*\Z",
+    re.DOTALL,
+)
 
 _KNOWN_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "cargo": frozenset({"build", "check", "clippy", "fmt", "run", "test"}),
@@ -185,7 +189,13 @@ def parse_tool_arguments(arguments: str | Mapping[str, object] | Sequence[object
     try:
         decoded = json.loads(arguments, parse_constant=_reject_json_constant)
     except ValueError as exc:
-        raise NormalizationError("tool arguments must be structured JSON") from exc
+        wrapper = _CODEX_EXEC_WRAPPER.fullmatch(arguments)
+        if wrapper is None:
+            raise NormalizationError("tool arguments must be structured JSON") from exc
+        try:
+            decoded = json.loads(wrapper.group(1), parse_constant=_reject_json_constant)
+        except ValueError as wrapper_exc:
+            raise NormalizationError("tool arguments must be structured JSON") from wrapper_exc
     if not isinstance(decoded, (dict, list)):
         raise NormalizationError("tool arguments must decode to an object or array")
     return decoded

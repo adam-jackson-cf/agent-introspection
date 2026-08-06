@@ -12,6 +12,7 @@ from agent_introspection.database import (
     CanonicalAttribution,
     persist_canonical_activity,
 )
+from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.telemetry import (
     CanonicalActivityVersionEvent,
     enqueue_canonical_activity_version,
@@ -80,6 +81,43 @@ def resolve_attribution(
     return Attribution("resolved", str(project_id), "session_context_interval", str(event_id), None)
 
 
+def canonical_activity_event_attributes(
+    connection: sqlite3.Connection,
+    activity: CanonicalActivity,
+    attribution: CanonicalAttribution,
+) -> dict[str, str | int]:
+    """Build the complete identity and attribution projection for canonical OTLP."""
+    attributes: dict[str, str | int] = {
+        "activity.producer": activity.producer,
+        "activity.producer_surface": activity.producer_surface,
+        "activity.correlation_id": activity.correlation_id,
+        "activity.detector.id": activity.detector_id,
+        "activity.detector.version": activity.detector_version,
+        "activity.normalization.version": activity.normalization_version,
+        "activity.attribution.state": attribution.state,
+        "activity.attribution.method": attribution.method,
+    }
+    project_keys = AGENT_PROJECT_SCHEMA.attribute_keys
+    if attribution.project_identity_id is None:
+        attributes[project_keys["id"]] = "unresolved"
+        attributes[project_keys["name"]] = "unresolved"
+    else:
+        row = connection.execute(
+            "SELECT canonical_name FROM project_identities WHERE id = ?",
+            (attribution.project_identity_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("resolved canonical attribution lacks a project identity")
+        attributes[project_keys["id"]] = attribution.project_identity_id
+        attributes[project_keys["name"]] = str(row[0])
+        attributes["activity.attribution.project_identity_id"] = attribution.project_identity_id
+    if attribution.evidence_id is not None:
+        attributes["activity.attribution.evidence_id"] = attribution.evidence_id
+    if attribution.reason_code is not None:
+        attributes["activity.attribution.reason_code"] = attribution.reason_code
+    return attributes
+
+
 def _timestamp_ns(value: datetime) -> int:
     value_utc = value.astimezone(UTC)
     return (
@@ -130,16 +168,7 @@ def reconcile_activity(
         write = persist_canonical_activity(connection, activity, attribution)
         if not write.version_inserted:
             return write
-        attributes: dict[str, str] = {
-            "activity.attribution.state": attribution.state,
-            "activity.attribution.method": attribution.method,
-        }
-        if attribution.project_identity_id is not None:
-            attributes["activity.attribution.project_identity_id"] = attribution.project_identity_id
-        if attribution.evidence_id is not None:
-            attributes["activity.attribution.evidence_id"] = attribution.evidence_id
-        if attribution.reason_code is not None:
-            attributes["activity.attribution.reason_code"] = attribution.reason_code
+        attributes = canonical_activity_event_attributes(connection, activity, attribution)
         event = CanonicalActivityVersionEvent(
             activity_id=write.activity_id,
             version=write.version,

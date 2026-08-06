@@ -1,13 +1,21 @@
 {
-  "observed_on": "2026-08-05",
+  "observed_on": "2026-08-06",
   "supported": [
     {
       "producer": "omp",
       "version": "17.1.8",
-      "correlation_id": "019fd256-2b5b-7000-8243-256d0a07c777",
+      "correlation_id": "019fd7ba-3cda-7000-a9dd-5ded507bc421",
       "equality_boundary": "local_session_context",
       "otel_span_count": 2,
       "unique_gen_ai_conversation_id_count": 1
+    },
+    {
+      "producer": "codex-cli",
+      "version": "0.146.1",
+      "correlation_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
+      "equality_boundary": "local_session_context",
+      "otel_span_count": 5,
+      "unique_thread_id_count": 1
     },
     {
       "producer": "codex-app-server",
@@ -37,11 +45,6 @@
       "producer": "claude-code",
       "version": "2.1.199",
       "missing_equality_boundary": "local_session_context"
-    },
-    {
-      "producer": "codex-cli",
-      "version": "0.146.0",
-      "missing_equality_boundary": "protocol_local_metadata"
     },
     {
       "producer": "codex-app",

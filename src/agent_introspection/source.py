@@ -25,7 +25,7 @@ SELECT
     attributes_string['event.name'] AS event_name,
     attributes_string['conversation.id'] AS conversation_id,
     multiIf(
-      resource.`service.name`::String = 'codex_cli_rs', 'codex-cli',
+      resource.`service.name`::String IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
       resource.`service.name`::String = 'codex-app-server', 'codex-app-server',
       NULL
     ) AS producer,
@@ -50,7 +50,7 @@ FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
+  AND resource.`service.name`::String IN ('codex_exec', 'codex_cli_rs', 'codex-app-server')
 ORDER BY timestamp, id
 """.strip()
 
@@ -58,14 +58,14 @@ ORDER BY timestamp, id
 TRACE_QUERY = r"""
 WITH
     multiIf(
-      serviceName = 'codex_cli_rs', 'codex-cli',
+      serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
       serviceName = 'codex-app-server', 'codex-app-server',
       serviceName = 'oh-my-pi', 'omp',
       serviceName = 'claude-code', 'claude-code',
       NULL
     ) AS correlation_producer,
     multiIf(
-      serviceName = 'codex_cli_rs', 'codex-cli',
+      serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
       serviceName = 'codex-app-server', 'codex-app-server',
       serviceName = 'oh-my-pi', 'omp',
       serviceName = 'claude-code', 'claude-code',
@@ -73,7 +73,7 @@ WITH
     ) AS correlation_producer_surface,
     arrayJoin(
       multiIf(
-        serviceName IN ('codex_cli_rs', 'codex-app-server'),
+        serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
         [attributes_string['thread.id'], attributes_string['thread_id']],
         serviceName = 'oh-my-pi',
         [attributes_string['gen_ai.conversation.id']],
@@ -89,8 +89,10 @@ SELECT
       nullIf(anyIf(attributes_string['turn.id'], attributes_string['turn.id'] != ''), ''),
       nullIf(anyIf(attributes_string['turn_id'], attributes_string['turn_id'] != ''), '')
     ) AS turn_id,
-    nullIf(anyIf(attributes_string['thread.id'], attributes_string['thread.id'] != ''), '')
-      AS thread_id,
+    coalesce(
+      nullIf(anyIf(attributes_string['thread.id'], attributes_string['thread.id'] != ''), ''),
+      nullIf(anyIf(attributes_string['thread_id'], attributes_string['thread_id'] != ''), '')
+    ) AS thread_id,
     multiIf(
       uniqExactIf(
         attributes_string['conversation.id'],
@@ -131,18 +133,27 @@ SELECT
       minIf(timestamp, has_native_correlation),
       NULL
     ) AS source_event_timestamp,
-    sumIf(attributes_number['codex.usage.total_tokens'],
-          mapContains(attributes_number, 'codex.usage.total_tokens')) AS total_tokens,
-    countIf(attributes_string['tool_name'] != '') AS tool_calls
+    sumIf(
+      attributes_number['codex.turn.token_usage.total_tokens'],
+      mapContains(attributes_number, 'codex.turn.token_usage.total_tokens')
+    ) + sumIf(
+      attributes_number['pi.gen_ai.usage.total_tokens'],
+      mapContains(attributes_number, 'pi.gen_ai.usage.total_tokens')
+    ) AS total_tokens,
+    countIf(
+      notEmpty(attributes_string['tool_name'])
+      OR notEmpty(attributes_string['gen_ai.tool.name'])
+    ) AS tool_calls
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code')
   AND (
-    name IN ('run_sampling_request', 'session_task.turn', 'turn/start', 'turn/steer',
-             'turn/interrupt', 'handle_responses')
-    OR mapContains(attributes_number, 'codex.usage.total_tokens')
-    OR mapContains(attributes_string, 'tool_name')
+    (serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server')
+      AND (notEmpty(attributes_string['thread.id'])
+        OR notEmpty(attributes_string['thread_id'])))
+    OR (serviceName = 'oh-my-pi'
+      AND notEmpty(attributes_string['gen_ai.conversation.id']))
+    OR (serviceName = 'claude-code' AND notEmpty(attributes_string['session.id']))
   )
 GROUP BY trace_id
 ORDER BY started_at, trace_id
@@ -155,13 +166,15 @@ SELECT
    WHERE timestamp <= {start_ns:UInt64}
      AND ts_bucket_start <= {start_bucket:UInt64}
      AND resource.`service.name`::String IN (
-         'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
      ))
   AND
   (SELECT count() > 0 FROM signoz_traces.distributed_signoz_index_v3
    WHERE timestamp <= {start:DateTime64(9)}
      AND ts_bucket_start <= {start_bucket:UInt64}
-     AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code')) AS retained
+     AND serviceName IN (
+         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+     )) AS retained
 """.strip()
 
 
@@ -193,7 +206,7 @@ WHERE {predicate}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
   AND resource.`service.name`::String IN (
-      'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+      'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
   )
 ORDER BY timestamp, id
 """.strip()
