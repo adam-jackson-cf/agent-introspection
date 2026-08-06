@@ -16,6 +16,7 @@ from agent_introspection.source import (
     HydrationRow,
     LogRow,
     SourceActivityCorrelation,
+    SourceCorrelationStatus,
     TraceRow,
 )
 
@@ -263,15 +264,42 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
                 producer="codex-cli",
             ),
             log_row(
-                "uncorrelated-log",
+                "missing-correlation-log",
                 int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="uncorrelated-trace",
+                trace_id="missing-correlation-trace",
+                producer="codex-cli",
+            ),
+            log_row(
+                "conflicting-correlation-log",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                trace_id="conflicting-correlation-trace",
                 producer="codex-cli",
             ),
         ],
         traces=[
             _trace("trace-1", occurred_at),
-            replace(_trace("uncorrelated-trace", occurred_at), correlation=None),
+            replace(
+                _trace("missing-correlation-trace", occurred_at),
+                correlation=None,
+                correlation_status=SourceCorrelationStatus(
+                    state="missing",
+                    producer="codex-cli",
+                    producer_surface="codex-cli",
+                    source_event_timestamp=occurred_at,
+                    source_span_ids=("missing-span",),
+                ),
+            ),
+            replace(
+                _trace("conflicting-correlation-trace", occurred_at),
+                correlation=None,
+                correlation_status=SourceCorrelationStatus(
+                    state="conflicting",
+                    producer="codex-cli",
+                    producer_surface="codex-cli",
+                    source_event_timestamp=occurred_at,
+                    source_span_ids=("conflicting-span",),
+                ),
+            ),
         ],
     )
     approve(connection, source)
@@ -294,6 +322,34 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
     assert connection.execute(
         "SELECT COUNT(*) FROM canonical_activity_versions WHERE activity_id = ?", (activity_id,)
     ).fetchone() == (1,)
+    rejection_rows = connection.execute(
+        """
+        SELECT reason_code, producer, producer_surface, correlation_id, occurred_at,
+               source_adapter, source_provenance
+        FROM canonical_rejections
+        ORDER BY reason_code
+        """
+    ).fetchall()
+    assert rejection_rows == [
+        (
+            "conflicting_correlation_id",
+            "codex-cli",
+            "codex-cli",
+            None,
+            occurred_at.isoformat(),
+            "signoz",
+            '{"source_event_ids":[],"source_log_ids":[],"source_span_ids":["conflicting-span"]}',
+        ),
+        (
+            "missing_correlation_id",
+            "codex-cli",
+            "codex-cli",
+            None,
+            occurred_at.isoformat(),
+            "signoz",
+            '{"source_event_ids":[],"source_log_ids":[],"source_span_ids":["missing-span"]}',
+        ),
+    ]
     outbox = [
         json.loads(row[0])
         for row in connection.execute("SELECT payload_json FROM otlp_outbox")
@@ -415,19 +471,31 @@ def test_workspace_transition_splits_canonical_activities(
     source = FakeSource(
         logs=[
             log_row("log-1", int(before.timestamp() * 1_000_000_000), trace_id="trace-1"),
-            log_row("log-2", int(after.timestamp() * 1_000_000_000), trace_id="trace-2"),
+            log_row("log-2", int(after.timestamp() * 1_000_000_000), trace_id="trace-1"),
         ],
-        traces=[_trace("trace-1", before), _trace("trace-2", after)],
+        traces=[_trace("trace-1", after)],
     )
     approve(connection, source)
 
     result = run_scan(connection, config, client=source, end_time=after)
 
-    assert result["observations"] == 3
+    assert result["observations"] == 4
     rows = _activity_rows(connection)
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert {row[1:3] for row in rows} == {("resolved", 1)}
     assert {row[3] for row in rows} == {"3" * 64, "4" * 64}
+    transition_ns = int((after - timedelta(seconds=1)).timestamp() * 1_000_000_000)
+    memberships = connection.execute(
+        """
+        SELECT source_started_at_ns, source_ended_at_ns, source_membership_json
+        FROM canonical_activities
+        """
+    ).fetchall()
+    assert all(
+        ended_at_ns < transition_ns or started_at_ns >= transition_ns
+        for started_at_ns, ended_at_ns, _ in memberships
+    )
+    assert all(len(json.loads(membership)["log_ids"]) == 1 for _, _, membership in memberships)
     projects = connection.execute(
         """
         SELECT id, canonical_path, canonical_name

@@ -38,7 +38,7 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "attributes_string['thread.id']" in TRACE_QUERY
     assert "attributes_string['thread_id']" in TRACE_QUERY
     assert "attributes_string['gen_ai.conversation.id']" in TRACE_QUERY
-    assert "attributes_string['session.id']" in TRACE_QUERY
+    assert "attributes_string['session.id']" not in TRACE_QUERY
     assert "attributes_string['sessionId']" not in TRACE_QUERY
     assert "native_correlation_id" in TRACE_QUERY
     assert "uniqExactIf(native_correlation_id, has_native_correlation) = 1" in TRACE_QUERY
@@ -109,11 +109,15 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
     }
 
 
-def test_trace_query_rejects_missing_multiple_and_conflicting_native_correlations() -> None:
+def test_trace_query_reports_bounded_native_correlation_status() -> None:
     assert "arrayJoin(" in TRACE_QUERY
     assert "[attributes_string['thread.id'], attributes_string['thread_id']]" in TRACE_QUERY
     assert "native_correlation_id != '' AS has_native_correlation" in TRACE_QUERY
-    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 1" in TRACE_QUERY
+    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 0" in TRACE_QUERY
+    assert "'missing'" in TRACE_QUERY
+    assert "'conflicting'" in TRACE_QUERY
+    assert "'valid'" in TRACE_QUERY
+    assert "AS correlation_status" in TRACE_QUERY
     assert "anyIf(native_correlation_id, has_native_correlation)" in TRACE_QUERY
 
 
@@ -193,7 +197,6 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
         ("codex-cli", "codex-cli"),
         ("codex-app-server", "codex-app-server"),
         ("omp", "omp"),
-        ("claude-code", "claude-code"),
     ],
 )
 def test_trace_parser_returns_canonical_source_activity_correlation(
@@ -221,6 +224,33 @@ def test_trace_parser_returns_canonical_source_activity_correlation(
         2026, 7, 10, 14, 53, 47, 765735, tzinfo=UTC
     )
     assert parsed.correlation.source_span_ids == ("span-1",)
+
+
+@pytest.mark.parametrize(
+    ("state", "correlation_id"),
+    [("missing", None), ("conflicting", None)],
+)
+def test_trace_parser_exposes_rejected_correlation_status(state: str, correlation_id: None) -> None:
+    parsed = parse_trace_row(
+        {
+            "trace_id": "trace-1",
+            "started_at": "2026-07-10 14:53:47.565735000",
+            "ended_at": "2026-07-10 14:53:48.565735000",
+            "correlation_status": state,
+            "producer": "codex-cli",
+            "producer_surface": "codex-cli",
+            "correlation_id": correlation_id,
+            "source_event_timestamp": "2026-07-10 14:53:47.765735000",
+            "source_span_ids": ["span-1"],
+            "total_tokens": "123",
+            "tool_calls": "2",
+        }
+    )
+    assert parsed.correlation is None
+    assert parsed.correlation_status is not None
+    assert parsed.correlation_status.state == state
+    assert parsed.correlation_status.producer == "codex-cli"
+    assert parsed.correlation_status.source_span_ids == ("span-1",)
 
 
 @pytest.mark.parametrize(

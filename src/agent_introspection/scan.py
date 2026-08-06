@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import signal
 import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -372,6 +373,94 @@ def _detector_events(
             )
         )
     return events
+
+
+def _partition_observations_by_context(
+    connection: sqlite3.Connection,
+    observations: tuple[Observation, ...],
+    event_index: dict[str, DetectorEvent],
+    traces_by_id: dict[str, TraceRow],
+    logs_by_id: dict[str, LogRow],
+) -> tuple[Observation, ...]:
+    partitioned: list[Observation] = []
+    for observation in observations:
+        groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for event_id in observation.event_ids:
+            trace_id = (
+                event_id.removeprefix("trace:")
+                if event_id.startswith("trace:")
+                else (logs_by_id[event_id].trace_id or "")
+            )
+            trace = traces_by_id.get(trace_id)
+            if trace is None or trace.correlation is None:
+                groups[(f"unresolved:{event_id}", "unresolved")].append(event_id)
+                continue
+            attribution = resolve_attribution(
+                connection,
+                producer=trace.correlation.producer,
+                correlation_id=trace.correlation.correlation_id,
+                source_at=event_index[event_id].timestamp,
+            )
+            partition_key = attribution.evidence_id or f"unresolved:{event_id}"
+            project_id = attribution.project_id or "unresolved"
+            groups[(partition_key, project_id)].append(event_id)
+        for (_, project_id), event_ids in groups.items():
+            components = replace(observation.fingerprint_components, project_identity=project_id)
+            partitioned.append(
+                replace(
+                    observation,
+                    project_id=project_id,
+                    task_ids=tuple(
+                        sorted({event_index[event_id].task_id for event_id in event_ids})
+                    ),
+                    event_ids=tuple(event_ids),
+                    fingerprint=components.digest(),
+                    fingerprint_components=components,
+                )
+            )
+    return tuple(partitioned)
+
+
+def _persist_source_rejections(connection: sqlite3.Connection, traces: list[TraceRow]) -> None:
+    for trace in traces:
+        status = trace.correlation_status
+        if status is None:
+            continue
+        reason_code = (
+            "missing_correlation_id" if status.state == "missing" else "conflicting_correlation_id"
+        )
+        provenance = json.dumps(
+            {
+                "source_event_ids": [],
+                "source_log_ids": [],
+                "source_span_ids": list(status.source_span_ids),
+            },
+            separators=(",", ":"),
+        )
+        occurred_at = status.source_event_timestamp.isoformat()
+        identity = (
+            status.producer,
+            status.producer_surface,
+            None,
+            "source_activity",
+            occurred_at,
+            reason_code,
+            "signoz",
+            provenance,
+        )
+        rejection_id = hashlib.sha256(
+            json.dumps(identity, separators=(",", ":")).encode()
+        ).hexdigest()
+        connection.execute(
+            """
+            INSERT INTO canonical_rejections (
+                id, producer, producer_surface, correlation_id, lifecycle_event, occurred_at,
+                reason_code, source_adapter, source_provenance, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            """,
+            (rejection_id, *identity, _iso_now()),
+        )
 
 
 def _canonical_activity(
@@ -792,11 +881,15 @@ def run_scan(
             event_index = {event.event_id: event for event in events}
             logs_by_id = {log.log_id: log for log in logs}
             traces_by_id = {trace.trace_id: trace for trace in traces}
+            observations = _partition_observations_by_context(
+                connection, observations, event_index, traces_by_id, logs_by_id
+            )
             activities = [
                 _canonical_activity(observation, event_index, logs_by_id, traces_by_id)
                 for observation in observations
             ]
             connection.execute("BEGIN IMMEDIATE")
+            _persist_source_rejections(connection, traces)
             _, current_evaluations = _persist_canonical_activities(connection, activities, now=now)
             trend_evaluations.extend(current_evaluations)
             _ensure_current_activity_outbox(connection)

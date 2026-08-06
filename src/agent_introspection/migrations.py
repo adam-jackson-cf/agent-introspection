@@ -670,12 +670,37 @@ _TEMPORAL_AND_REJECTION_SCHEMA: Final[tuple[str, ...]] = (
     "CREATE TRIGGER canonical_rejections_no_delete BEFORE DELETE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections cannot be deleted'); END",
 )
 
+_LEGACY_ATTRIBUTION_FACT_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE legacy_attribution_fact_sets (
+        id TEXT PRIMARY KEY,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        approved_by TEXT NOT NULL CHECK (length(approved_by) > 0),
+        denominator INTEGER NOT NULL CHECK (denominator >= 0),
+        accepted INTEGER NOT NULL CHECK (accepted >= 0),
+        rejected INTEGER NOT NULL CHECK (rejected >= 0),
+        unresolved INTEGER NOT NULL CHECK (unresolved >= 0),
+        source_ids_json TEXT NOT NULL CHECK (json_valid(source_ids_json)),
+        created_at TEXT NOT NULL,
+        CHECK (denominator = accepted + rejected + unresolved)
+    ) STRICT
+    """,
+    "CREATE TRIGGER legacy_attribution_fact_sets_no_update BEFORE UPDATE ON legacy_attribution_fact_sets BEGIN SELECT RAISE(ABORT, 'legacy attribution fact sets are immutable'); END",
+    "CREATE TRIGGER legacy_attribution_fact_sets_no_delete BEFORE DELETE ON legacy_attribution_fact_sets BEGIN SELECT RAISE(ABORT, 'legacy attribution fact sets cannot be deleted'); END",
+)
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
     Migration(
         version=2,
         name="temporal replay and canonical rejection identity",
         statements=_TEMPORAL_AND_REJECTION_SCHEMA,
+    ),
+    Migration(
+        version=3,
+        name="legacy attribution fact ledger",
+        statements=_LEGACY_ATTRIBUTION_FACT_SCHEMA,
     ),
 )
 

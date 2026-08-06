@@ -61,23 +61,41 @@ WITH
       serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
       serviceName = 'codex-app-server', 'codex-app-server',
       serviceName = 'oh-my-pi', 'omp',
-      serviceName = 'claude-code', 'claude-code',
       NULL
     ) AS correlation_producer,
     multiIf(
       serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
       serviceName = 'codex-app-server', 'codex-app-server',
       serviceName = 'oh-my-pi', 'omp',
-      serviceName = 'claude-code', 'claude-code',
       NULL
     ) AS correlation_producer_surface,
     arrayJoin(
-      multiIf(
-        serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
-        [attributes_string['thread.id'], attributes_string['thread_id']],
-        serviceName = 'oh-my-pi',
-        [attributes_string['gen_ai.conversation.id']],
-        [attributes_string['session.id']]
+      if(
+        empty(
+          arrayFilter(
+            value -> value != '',
+            multiIf(
+              serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
+              [attributes_string['thread.id'], attributes_string['thread_id']],
+              serviceName = 'oh-my-pi',
+              [attributes_string['gen_ai.conversation.id']],
+              []
+            )
+          )
+        ),
+        [''],
+        arrayDistinct(
+          arrayFilter(
+            value -> value != '',
+            multiIf(
+              serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
+              [attributes_string['thread.id'], attributes_string['thread_id']],
+              serviceName = 'oh-my-pi',
+              [attributes_string['gen_ai.conversation.id']],
+              []
+            )
+          )
+        )
       )
     ) AS native_correlation_id,
     native_correlation_id != '' AS has_native_correlation,
@@ -105,8 +123,15 @@ SELECT
       NULL
     ) AS conversation_id,
     multiIf(
+      uniqExactIf(native_correlation_id, has_native_correlation) = 0,
+      'missing',
       uniqExactIf(native_correlation_id, has_native_correlation) = 1
         AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      'valid',
+      'conflicting'
+    ) AS correlation_status,
+    multiIf(
+      correlation_status = 'valid',
       anyIf(native_correlation_id, has_native_correlation),
       NULL
     ) AS correlation_id,
@@ -114,25 +139,18 @@ SELECT
       uniqExactIf(
         tuple(correlation_producer, correlation_producer_surface),
         has_correlation_producer
-      ) = 1
-        AND uniqExactIf(native_correlation_id, has_native_correlation) = 1,
+      ) = 1,
       anyIf(correlation_producer_surface, has_correlation_producer),
       NULL
     ) AS producer_surface,
     multiIf(
-      uniqExactIf(native_correlation_id, has_native_correlation) = 1
-        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
+      uniqExactIf(correlation_producer, has_correlation_producer) = 1,
       anyIf(correlation_producer, has_correlation_producer),
       NULL
     ) AS producer,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
-    multiIf(
-      uniqExactIf(native_correlation_id, has_native_correlation) = 1
-        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
-      minIf(timestamp, has_native_correlation),
-      NULL
-    ) AS source_event_timestamp,
+    min(timestamp) AS source_event_timestamp,
     sumIf(
       attributes_number['codex.turn.token_usage.total_tokens'],
       mapContains(attributes_number, 'codex.turn.token_usage.total_tokens')
@@ -147,14 +165,7 @@ SELECT
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND (
-    (serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server')
-      AND (notEmpty(attributes_string['thread.id'])
-        OR notEmpty(attributes_string['thread_id'])))
-    OR (serviceName = 'oh-my-pi'
-      AND notEmpty(attributes_string['gen_ai.conversation.id']))
-    OR (serviceName = 'claude-code' AND notEmpty(attributes_string['session.id']))
-  )
+  AND serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi')
 GROUP BY trace_id
 ORDER BY started_at, trace_id
 """.strip()
@@ -166,14 +177,14 @@ SELECT
    WHERE timestamp <= {start_ns:UInt64}
      AND ts_bucket_start <= {start_bucket:UInt64}
      AND resource.`service.name`::String IN (
-         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi'
      ))
   AND
   (SELECT count() > 0 FROM signoz_traces.distributed_signoz_index_v3
    WHERE timestamp <= {start:DateTime64(9)}
      AND ts_bucket_start <= {start_bucket:UInt64}
      AND serviceName IN (
-         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+         'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi'
      )) AS retained
 """.strip()
 
@@ -206,7 +217,7 @@ WHERE {predicate}
   AND timestamp <= {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
   AND resource.`service.name`::String IN (
-      'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code'
+      'codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi'
   )
 ORDER BY timestamp, id
 """.strip()
@@ -262,6 +273,7 @@ class TraceRow:
     total_tokens: int
     tool_calls: int
     correlation: SourceActivityCorrelation | None = None
+    correlation_status: SourceCorrelationStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +286,17 @@ class SourceActivityCorrelation:
     source_event_timestamp: datetime
     source_event_ids: tuple[str, ...]
     source_log_ids: tuple[str, ...]
+    source_span_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCorrelationStatus:
+    """Bounded source-correlation state and provenance for a trace."""
+
+    state: Literal["missing", "conflicting"]
+    producer: str
+    producer_surface: str
+    source_event_timestamp: datetime
     source_span_ids: tuple[str, ...]
 
 
@@ -325,7 +348,6 @@ _PRODUCER_SURFACES: Mapping[str, str] = {
     "codex-cli": "codex-cli",
     "codex-app-server": "codex-app-server",
     "omp": "omp",
-    "claude-code": "claude-code",
 }
 _PROVENANCE_FIELDS = ("source_event_ids", "source_log_ids", "source_span_ids")
 
@@ -379,6 +401,46 @@ def parse_source_activity_correlation(
         source_event_ids=provenance[0],
         source_log_ids=provenance[1],
         source_span_ids=provenance[2],
+    )
+
+
+def _parse_source_correlation_status(
+    data: Mapping[str, object], correlation: SourceActivityCorrelation | None
+) -> SourceCorrelationStatus | None:
+    value = data.get("correlation_status")
+    if value is None:
+        return None
+    if value == "valid":
+        if correlation is None:
+            raise SourceError("valid source correlation status requires a correlation")
+        return None
+    if value not in {"missing", "conflicting"}:
+        raise SourceError("source correlation status is invalid")
+    if correlation is not None or data.get("correlation_id") is not None:
+        raise SourceError("rejected source correlation must not include a correlation ID")
+    producer = _optional_text(data.get("producer"))
+    producer_surface = _optional_text(data.get("producer_surface"))
+    source_event_timestamp = _optional_timestamp(data.get("source_event_timestamp"))
+    if (
+        producer is None
+        or producer_surface is None
+        or _PRODUCER_SURFACES.get(producer) != producer_surface
+    ):
+        raise SourceError("rejected source correlation producer surface is invalid")
+    if source_event_timestamp is None:
+        raise SourceError("rejected source correlation timestamp is required")
+    source_span_ids = _provenance_ids(data, "source_span_ids")
+    if not source_span_ids:
+        raise SourceError("rejected source correlation requires source span IDs")
+    for field in ("source_event_ids", "source_log_ids"):
+        if _provenance_ids(data, field):
+            raise SourceError("rejected source correlation must only contain source span IDs")
+    return SourceCorrelationStatus(
+        state=value,
+        producer=producer,
+        producer_surface=producer_surface,
+        source_event_timestamp=source_event_timestamp,
+        source_span_ids=source_span_ids,
     )
 
 
@@ -473,7 +535,11 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     ended = ended.astimezone(UTC)
     if ended < started:
         raise SourceError("trace timestamps must be ordered")
-    correlation = parse_source_activity_correlation(data)
+    correlation = (
+        parse_source_activity_correlation(data)
+        if data.get("correlation_status") not in {"missing", "conflicting"}
+        else None
+    )
     total_tokens = _optional_int(data.get("total_tokens"))
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
@@ -487,6 +553,7 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         total_tokens=total_tokens,
         tool_calls=tool_calls,
         correlation=correlation,
+        correlation_status=_parse_source_correlation_status(data, correlation),
     )
 
 

@@ -60,6 +60,14 @@ class LifecycleConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyProjectAttributionConfig:
+    """Explicit roots and maximum manual attribution range in hours."""
+
+    project_roots: tuple[Path, ...] = ()
+    maximum_range_hours: int = 24
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     """Complete application configuration."""
 
@@ -67,9 +75,12 @@ class AppConfig:
     signoz: SigNozConfig = SigNozConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     lifecycle: LifecycleConfig = LifecycleConfig()
+    legacy_project_attribution: LegacyProjectAttributionConfig = LegacyProjectAttributionConfig()
 
 
-_ROOT_KEYS = frozenset({"database", "signoz", "scheduler", "lifecycle"})
+_ROOT_KEYS = frozenset(
+    {"database", "signoz", "scheduler", "lifecycle", "legacy_project_attribution"}
+)
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _SIGNOZ_KEYS = frozenset(
     {
@@ -84,6 +95,7 @@ _SIGNOZ_KEYS = frozenset(
 )
 _SCHEDULER_KEYS = frozenset({"timezone", "interval_seconds", "lease_seconds"})
 _LIFECYCLE_KEYS = frozenset({"clock_skew_seconds"})
+_LEGACY_PROJECT_ATTRIBUTION_KEYS = frozenset({"project_roots", "maximum_range_hours"})
 
 
 def _expand_path(value: object, *, field: str) -> Path:
@@ -146,6 +158,12 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(scheduler), _SCHEDULER_KEYS, location="scheduler")
     _reject_unknown(set(lifecycle), _LIFECYCLE_KEYS, location="lifecycle")
+    legacy_project_attribution = _table(data, "legacy_project_attribution")
+    _reject_unknown(
+        set(legacy_project_attribution),
+        _LEGACY_PROJECT_ATTRIBUTION_KEYS,
+        location="legacy_project_attribution",
+    )
 
     defaults = AppConfig()
     database_config = DatabaseConfig(
@@ -221,11 +239,38 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.lifecycle.clock_skew_seconds
         )
     )
+    roots_value = legacy_project_attribution.get("project_roots", ())
+    if not isinstance(roots_value, (list, tuple)) or any(
+        not isinstance(root, str) or not root.strip() for root in roots_value
+    ):
+        raise ConfigurationError(
+            "legacy_project_attribution.project_roots must be an array of non-empty paths"
+        )
+    legacy_project_attribution_config = LegacyProjectAttributionConfig(
+        project_roots=tuple(
+            sorted(
+                {
+                    _expand_path(root, field="legacy_project_attribution.project_roots")
+                    for root in roots_value
+                },
+                key=lambda root: root.as_posix(),
+            )
+        ),
+        maximum_range_hours=(
+            _positive_int(
+                legacy_project_attribution["maximum_range_hours"],
+                field="legacy_project_attribution.maximum_range_hours",
+            )
+            if "maximum_range_hours" in legacy_project_attribution
+            else defaults.legacy_project_attribution.maximum_range_hours
+        ),
+    )
     return AppConfig(
         database=database_config,
         signoz=signoz_config,
         scheduler=scheduler_config,
         lifecycle=lifecycle_config,
+        legacy_project_attribution=legacy_project_attribution_config,
     )
 
 

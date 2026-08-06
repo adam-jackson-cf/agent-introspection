@@ -37,6 +37,7 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
+from agent_introspection.legacy_attribution import parse_rfc3339, run_legacy_project_attribution
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -569,6 +570,21 @@ def _session_context_hook(args: argparse.Namespace) -> dict[str, Any]:
     return {"event_id": event.event_id, "spooled": str(path)}
 
 
+def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
+    config, connection = _open(args)
+    try:
+        return run_legacy_project_attribution(
+            connection,
+            config,
+            client=_client(config),
+            start=parse_rfc3339(args.start),
+            end=parse_rfc3339(args.end),
+            approved_by=args.approved_by,
+        )
+    finally:
+        connection.close()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
@@ -588,6 +604,18 @@ def _parser() -> argparse.ArgumentParser:
     hook.add_argument("--stdin", action="store_true")
     scan.add_argument("--scheduled", action="store_true")
 
+    legacy_project_attribution = commands.add_parser(
+        "legacy-project-attribution",
+        help="Run explicit bounded legacy Codex project attribution.",
+    ).add_subparsers(dest="legacy_project_attribution_command", required=True)
+    legacy_run = legacy_project_attribution.add_parser("run")
+    legacy_run.add_argument(
+        "--start",
+        required=True,
+        help="RFC3339 start; range maximum is legacy_project_attribution.maximum_range_hours.",
+    )
+    legacy_run.add_argument("--end", required=True)
+    legacy_run.add_argument("--approved-by", required=True)
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -660,6 +688,8 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _scan(args)
     if args.command == "session-context":
         return _session_context_hook(args)
+    if args.command == "legacy-project-attribution":
+        return _legacy_project_attribution(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":
