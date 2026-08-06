@@ -1,5 +1,4 @@
 import json
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,7 +7,6 @@ import pytest
 from agent_introspection import cli
 from agent_introspection.cli import EXIT_CAPABILITY, EXIT_CONFIG, main
 from agent_introspection.database import connect_database
-from agent_introspection.source import ProjectEvidenceRow
 
 
 def config_file(tmp_path: Path) -> Path:
@@ -135,102 +133,22 @@ def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
     assert calls == ["run", "run", "run"]
 
 
-def test_legacy_project_attribution_exposes_only_the_final_command(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    config = config_file(tmp_path)
-    collection = tmp_path / "Projects"
-    project = collection / "project"
-    project.mkdir(parents=True)
-    subprocess.run(["git", "init", "--quiet", project], check=True)
-    unresolved_workspace = collection / "unresolved"
-    unresolved_workspace.mkdir()
-    outside_workspace = tmp_path / "outside"
-    config.write_text(config.read_text() + f'\n[attribution]\nproject_roots = ["{collection}"]\n')
-    start = datetime(2026, 7, 10, 12, tzinfo=UTC)
-    rows = (
-        ProjectEvidenceRow(
-            timestamp_ns=int((start.timestamp() + 60) * 1_000_000_000),
-            log_id="accepted",
-            trace_id="trace-accepted",
-            producer="codex-cli",
-            conversation_id="conversation-accepted",
-            tool_workspace=str(project),
-        ),
-        ProjectEvidenceRow(
-            timestamp_ns=int((start.timestamp() + 120) * 1_000_000_000),
-            log_id="unsupported",
-            trace_id="trace-unsupported",
-            producer="omp",
-            conversation_id="conversation-unsupported",
-            tool_workspace=str(project),
-        ),
-        ProjectEvidenceRow(
-            timestamp_ns=int((start.timestamp() + 180) * 1_000_000_000),
-            log_id="invalid",
-            trace_id="trace-invalid",
-            producer="codex-cli",
-            conversation_id="conversation-invalid",
-            tool_workspace="",
-        ),
-        ProjectEvidenceRow(
-            timestamp_ns=int((start.timestamp() + 240) * 1_000_000_000),
-            log_id="outside",
-            trace_id="trace-outside",
-            producer="codex-cli",
-            conversation_id="conversation-outside",
-            tool_workspace=str(outside_workspace),
-        ),
-        ProjectEvidenceRow(
-            timestamp_ns=int((start.timestamp() + 300) * 1_000_000_000),
-            log_id="unresolved",
-            trace_id="trace-unresolved",
-            producer="codex-cli",
-            conversation_id="conversation-unresolved",
-            tool_workspace=str(unresolved_workspace),
-        ),
-    )
-    received: dict[str, object] = {}
+def test_cli_help_exposes_only_canonical_commands() -> None:
+    help_text = cli._parser().format_help()
 
-    class Source:
-        def project_evidence(self, **kwargs: object) -> list[object]:
-            received.update(kwargs)
-            return list(rows)
-
-    monkeypatch.setattr(cli, "_client", lambda _config: Source())
-    assert (
-        main(
-            [
-                "--config",
-                str(config),
-                "legacy-project-attribution",
-                "run",
-                "--start",
-                "2026-07-10T12:00:00Z",
-                "--end",
-                "2026-07-10T13:00:00Z",
-                "--approved-by",
-                "operator",
-            ]
-        )
-        == 0
-    )
-    emitted = json.loads(capsys.readouterr().out)
-    assert emitted["status"] == "applied"
-    assert (
-        emitted["accepted"],
-        emitted["rejected"],
-        emitted["unresolved"],
-        emitted["denominator"],
-    ) == (
-        1,
-        3,
-        1,
-        5,
-    )
-    assert (
-        emitted["denominator"] == emitted["accepted"] + emitted["rejected"] + emitted["unresolved"]
-    )
-    assert received["start_ns"] < received["end_ns"]
+    assert "generation" not in help_text
+    assert "legacy-project-attribution" not in help_text
+    for command in (
+        "doctor",
+        "health",
+        "scan",
+        "session-context",
+        "candidates",
+        "classification",
+        "proposal",
+        "telemetry",
+        "dashboard",
+        "db",
+        "schedule",
+    ):
+        assert command in help_text

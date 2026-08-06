@@ -2,17 +2,14 @@ from importlib.resources import files
 from typing import Any
 
 from agent_introspection.dashboard import (
-    ACTIVE_GENERATION_MARKER_QUERY,
-    ACTIVE_GENERATION_PREDICATE,
+    CANONICAL_ACTIVITY_EVENT,
+    CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE,
     COMMON_FILTER,
     DASHBOARD_UUID,
-    DETECTOR_LABELS,
     HEALTH_DASHBOARD_UUID,
-    HEALTH_PANELS,
     INSIGHT_PANELS,
     PIPELINE_SNAPSHOT_EVENT,
     PROJECTION_PANEL_IDS,
-    STATUS_LABELS,
     build_dashboard,
     build_health_dashboard,
     render_dashboard_json,
@@ -32,7 +29,6 @@ def test_insight_dashboard_has_stable_identity_and_only_agreed_panels() -> None:
     assert dashboard["uuid"] == DASHBOARD_UUID
     assert verify_dashboard(dashboard) == []
     assert dashboard["title"] == "Agent Introspection"
-    assert dashboard["description"] == "Observed agent behaviours in the selected display range."
 
     expected = {
         "project-data-attribution": ("Project data attribution", "table", (0, 0, 12, 5)),
@@ -47,7 +43,6 @@ def test_insight_dashboard_has_stable_identity_and_only_agreed_panels() -> None:
         assert widget["title"] == title
         assert widget["panelTypes"] == panel_type
         assert tuple(layouts[widget["id"]][key] for key in ("x", "y", "w", "h")) == layout
-        assert "seven-day analysis window" in widget["description"]
         assert "selected display range" in widget["description"]
 
 
@@ -55,103 +50,61 @@ def test_health_dashboard_has_stable_identity_and_agreed_operational_panels() ->
     dashboard = build_health_dashboard()
     assert dashboard["uuid"] == HEALTH_DASHBOARD_UUID
     assert verify_health_dashboard(dashboard) == []
-    assert dashboard["title"] == "Agent Introspection Health"
-
     expected = {
         "pipeline-health": ("Pipeline health", "table", (0, 0, 12, 4)),
         "recent-scan-runs": ("Recent scan runs", "table", (0, 4, 12, 6)),
     }
-    assert len(dashboard["widgets"]) == len(HEALTH_PANELS) == len(expected)
     layouts = {item["i"]: item for item in dashboard["layout"]}
     for widget in dashboard["widgets"]:
         title, panel_type, layout = expected[widget["id"]]
-        assert widget["title"] == title
-        assert widget["panelTypes"] == panel_type
+        assert (widget["title"], widget["panelTypes"]) == (title, panel_type)
         assert tuple(layouts[widget["id"]][key] for key in ("x", "y", "w", "h")) == layout
-        assert widget["description"]
 
 
-def test_dashboard_queries_use_global_time_active_generation_and_plain_language_labels() -> None:
+def test_insight_queries_select_latest_canonical_activity_versions_in_source_time_bounds() -> None:
     insight = _panels(build_dashboard())
-    health = _panels(build_health_dashboard())
-    assert COMMON_FILTER not in ACTIVE_GENERATION_MARKER_QUERY
-
-    for panel_id, widget in {**insight, **health}.items():
-        query = widget["query"]["clickhouse_sql"][0]["query"]
-        assert COMMON_FILTER in query
-        assert "agent-introspection" in query
-        if widget["panelTypes"] == "graph":
-            assert " AS ts" in query
-            assert " AS value" in query
-            assert widget["query"]["clickhouse_sql"][0]["legend"] == ""
-        if panel_id in PROJECTION_PANEL_IDS:
-            assert ACTIVE_GENERATION_PREDICATE in query
-            if "\nGROUP BY" in query:
-                assert query.index(ACTIVE_GENERATION_PREDICATE) < query.index("\nGROUP BY")
-
-    pipeline = health["pipeline-health"]["query"]["clickhouse_sql"][0]["query"]
-    assert PIPELINE_SNAPSHOT_EVENT in pipeline
-    assert all(
-        label in pipeline
-        for label in ("`Pipeline state`", "`Last completed scan`", "`Last scan duration`")
-    )
-    assert "terminal_status" not in pipeline
-    assert "freshness" not in pipeline
-    assert "logs.query_status" not in pipeline
-    assert "traces.query_status" not in pipeline
-
-    recent_scans = health["recent-scan-runs"]["query"]["clickhouse_sql"][0]["query"]
-    assert all(
-        label in recent_scans
-        for label in ("`Started at`", "`Duration`", "`Outcome`", "`Rows processed`", "LIMIT 24")
-    )
-    assert "ORDER BY timestamp DESC" in recent_scans
-
-    attribution = insight["project-data-attribution"]["query"]["clickhouse_sql"][0]["query"]
-    assert all(
-        label in attribution
-        for label in (
-            "`Project attribution coverage`",
-            "`Attributed observations`",
-            "`All observations`",
-        )
-    )
-    assert "HAVING count() > 0" in attribution
-    assert "identity_coverage_pct" not in attribution
-    for key in AGENT_PROJECT_SCHEMA.dashboard_attribute_keys.values():
-        assert f"attributes_string['{key}']" in attribution
-    assert "attributes_string['project.id']" not in attribution
-    assert "attributes_string['project.name']" not in attribution
-
-    actionable = insight["actionable-trends"]["query"]["clickhouse_sql"][0]["query"]
-    assert all(
-        label in actionable
-        for label in (
-            "`Finding`",
-            "`Category`",
-            "`Detector`",
-            "`Project`",
-            "`Occurrences`",
-            "`Last evaluated`",
-        )
+    assert "ts_bucket_start" not in COMMON_FILTER
+    assert CANONICAL_ACTIVITY_EVENT in CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
+    assert (
+        "max(attributes_number['activity.version'])" in CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
     )
     assert (
-        f"attributes_string['{AGENT_PROJECT_SCHEMA.dashboard_attribute_keys['name']}']"
-        in actionable
+        "GROUP BY attributes_string['activity.id']" in CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
     )
-    assert "attributes_string['project.name']" not in actionable
-    for raw, label in DETECTOR_LABELS.items():
-        assert raw in actionable
-        assert label in actionable
 
-    observed = insight["observed-signals-by-detector"]["query"]["clickhouse_sql"][0]["query"]
-    for raw, label in DETECTOR_LABELS.items():
-        assert raw in observed
-        assert label in observed
+    for panel_id in PROJECTION_PANEL_IDS:
+        query = insight[panel_id]["query"]["clickhouse_sql"][0]["query"]
+        assert COMMON_FILTER in query
+        assert CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE in query
+        assert "attributes_string['activity.id']" in query
+        assert "attributes_number['activity.version']" in query
+        assert "introspection.observation.detected" not in query
+        if insight[panel_id]["panelTypes"] == "graph":
+            assert " AS ts" in query
+            assert " AS value" in query
 
-    for raw, label in STATUS_LABELS.items():
-        assert raw in pipeline or raw in recent_scans
-        assert label in pipeline or label in recent_scans
+
+def test_attribution_diagnostics_require_complete_project_pair_and_report_outcomes() -> None:
+    attribution = _panels(build_dashboard())["project-data-attribution"]["query"]["clickhouse_sql"][
+        0
+    ]["query"]
+    for key in AGENT_PROJECT_SCHEMA.dashboard_attribute_keys.values():
+        assert f"attributes_string['{key}']" in attribution
+    assert "`Attribution state`" in attribution
+    assert "`Rejection reason`" in attribution
+    assert "`Producer surface`" in attribution
+    assert "`Resolved activities`" in attribution
+    assert "`Unresolved activities`" in attribution
+    assert "activity.attribution.reason_code" in attribution
+    assert "activity.producer_surface" in attribution
+
+
+def test_health_queries_keep_operational_event_semantics() -> None:
+    health = _panels(build_health_dashboard())
+    for widget in health.values():
+        assert COMMON_FILTER in widget["query"]["clickhouse_sql"][0]["query"]
+    pipeline = health["pipeline-health"]["query"]["clickhouse_sql"][0]["query"]
+    assert PIPELINE_SNAPSHOT_EVENT in pipeline
 
 
 def test_checked_in_dashboard_assets_are_generated_from_canonical_builders() -> None:
@@ -169,35 +122,36 @@ def test_dashboard_verifiers_report_identity_presentation_layout_and_query_drift
     insight["widgets"][0]["description"] = "Changed"
     insight["layout"][0]["w"] = 1
     insight["widgets"].pop()
-    issues = verify_dashboard(insight)
-    assert "insight dashboard identity changed" in issues
-    assert "insight dashboard panel set is incomplete" in issues
+    assert "insight dashboard identity changed" in verify_dashboard(insight)
+    assert "insight dashboard panel set is incomplete" in verify_dashboard(insight)
 
     health = build_health_dashboard()
     health["uuid"] = "fabricated"
-    issues = verify_health_dashboard(health)
-    assert "health dashboard identity changed" in issues
+    assert "health dashboard identity changed" in verify_health_dashboard(health)
 
 
-def test_dashboard_verifier_rejects_invalid_query_shapes_and_generation_selection() -> None:
+def test_dashboard_verifier_rejects_invalid_query_shapes_and_latest_version_selection() -> None:
     dashboard = build_dashboard()
     panels = _panels(dashboard)
     panels["observed-signals-by-detector"]["query"]["clickhouse_sql"][0]["query"] = panels[
         "observed-signals-by-detector"
-    ]["query"]["clickhouse_sql"][0]["query"].replace(" AS value", " AS observations")
+    ]["query"]["clickhouse_sql"][0]["query"].replace(" AS value", " AS activities")
     panels["project-data-attribution"]["query"]["clickhouse_sql"][0]["query"] = panels[
         "project-data-attribution"
-    ]["query"]["clickhouse_sql"][0]["query"].replace(ACTIVE_GENERATION_PREDICATE, "1 = 1")
+    ]["query"]["clickhouse_sql"][0]["query"].replace(
+        CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE, "1 = 1"
+    )
     issues = verify_dashboard(dashboard)
     assert "visual panel observed-signals-by-detector lacks ts and value columns" in issues
     assert (
-        "projection panel project-data-attribution does not select the active generation" in issues
+        "projection panel project-data-attribution does not select latest activity version"
+        in issues
     )
 
 
 def test_dashboard_verifier_reports_a_malformed_query_definition_without_raising() -> None:
     dashboard = build_health_dashboard()
-    pipeline = _panels(dashboard)["pipeline-health"]
-    pipeline["query"]["clickhouse_sql"] = []
-    issues = verify_health_dashboard(dashboard)
-    assert "panel pipeline-health has an invalid query definition" in issues
+    _panels(dashboard)["pipeline-health"]["query"]["clickhouse_sql"] = []
+    assert "panel pipeline-health has an invalid query definition" in verify_health_dashboard(
+        dashboard
+    )

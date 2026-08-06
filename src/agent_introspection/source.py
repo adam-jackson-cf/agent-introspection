@@ -9,19 +9,7 @@ import subprocess
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
-
-from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
-
-_PROJECT_ATTRIBUTE_KEYS = AGENT_PROJECT_SCHEMA.attribute_keys
-_PROJECT_METADATA_STATES = AGENT_PROJECT_SCHEMA.metadata_states
-_PROJECT_KIND_VALUES = AGENT_PROJECT_SCHEMA.kind_values
-_PROJECT_ID = _PROJECT_ATTRIBUTE_KEYS["id"]
-_PROJECT_NAME = _PROJECT_ATTRIBUTE_KEYS["name"]
-_PROJECT_ROOT = _PROJECT_ATTRIBUTE_KEYS["root"]
-_PROJECT_KIND = _PROJECT_ATTRIBUTE_KEYS["kind"]
-
 
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
 _DURATION_MS = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
@@ -67,53 +55,8 @@ ORDER BY timestamp, id
 """.strip()
 
 
-PROJECT_EVIDENCE_QUERY = r"""
+TRACE_QUERY = r"""
 WITH
-    coalesce(
-      nullIf(attributes_string['arguments'], ''),
-      nullIf(attributes_string['args'], ''),
-      attributes_string['argv']
-    ) AS tool_payload,
-    coalesce(
-      nullIf(JSONExtractString(tool_payload, 'cwd'), ''),
-      nullIf(JSONExtractString(tool_payload, 'workdir'), '')
-    ) AS tool_workspace
-SELECT
-    timestamp,
-    id,
-    trace_id,
-    multiIf(
-      resource.`service.name`::String = 'codex_cli_rs', 'codex-cli',
-      resource.`service.name`::String = 'codex-app-server', 'codex-app-server',
-      NULL
-    ) AS producer,
-    attributes_string['conversation.id'] AS conversation_id,
-    tool_workspace
-FROM signoz_logs.distributed_logs_v2
-WHERE timestamp > {start_ns:UInt64}
-  AND timestamp <= {end_ns:UInt64}
-  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_cli_rs', 'codex-app-server')
-  AND attributes_string['tool_name'] != ''
-  AND attributes_string['conversation.id'] != ''
-  AND isValidJSON(tool_payload)
-  AND tool_workspace != ''
-ORDER BY timestamp, id
-""".strip()
-
-
-TRACE_QUERY = f"""
-WITH
-    attributes_string['{_PROJECT_ID}'] != '' AS project_id_present,
-    attributes_string['{_PROJECT_NAME}'] != '' AS project_name_present,
-    attributes_string['{_PROJECT_ROOT}'] != '' AS project_root_present,
-    attributes_string['{_PROJECT_KIND}'] != '' AS project_kind_present,
-    (
-      project_id_present OR project_name_present OR project_root_present OR project_kind_present
-    ) AS project_metadata_present,
-    (
-      project_id_present AND project_name_present AND project_root_present AND project_kind_present
-    ) AS complete_project_metadata,
     multiIf(
       serviceName = 'codex_cli_rs', 'codex-cli',
       serviceName = 'codex-app-server', 'codex-app-server',
@@ -180,30 +123,6 @@ SELECT
       anyIf(correlation_producer, has_correlation_producer),
       NULL
     ) AS producer,
-    nullIf(anyIf(attributes_string['{_PROJECT_ID}'], complete_project_metadata), '')
-      AS project_id,
-    nullIf(anyIf(attributes_string['{_PROJECT_NAME}'], complete_project_metadata), '')
-      AS project_name,
-    nullIf(anyIf(attributes_string['{_PROJECT_ROOT}'], complete_project_metadata), '')
-      AS project_root,
-    nullIf(anyIf(attributes_string['{_PROJECT_KIND}'], complete_project_metadata), '')
-      AS project_kind,
-    multiIf(
-      countIf(project_metadata_present) = 0,
-      'absent',
-      countIf(complete_project_metadata) = countIf(project_metadata_present)
-        AND uniqExactIf(
-          tuple(
-            attributes_string['{_PROJECT_ID}'],
-            attributes_string['{_PROJECT_NAME}'],
-            attributes_string['{_PROJECT_ROOT}'],
-            attributes_string['{_PROJECT_KIND}']
-          ),
-          complete_project_metadata
-        ) = 1,
-      'complete',
-      'invalid'
-    ) AS project_metadata_state,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
     multiIf(
@@ -216,8 +135,8 @@ SELECT
           mapContains(attributes_number, 'codex.usage.total_tokens')) AS total_tokens,
     countIf(attributes_string['tool_name'] != '') AS tool_calls
 FROM signoz_traces.distributed_signoz_index_v3
-WHERE timestamp BETWEEN {{start:DateTime64(9)}} AND {{end:DateTime64(9)}}
-  AND ts_bucket_start BETWEEN {{start_bucket:UInt64}} AND {{end_bucket:UInt64}}
+WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
   AND serviceName IN ('codex_cli_rs', 'codex-app-server', 'oh-my-pi', 'claude-code')
   AND (
     name IN ('run_sampling_request', 'session_task.turn', 'turn/start', 'turn/steer',
@@ -321,26 +240,10 @@ class LogRow:
 
 
 @dataclass(frozen=True, slots=True)
-class ProjectEvidenceRow:
-    """Allowlisted producer workspace evidence without raw tool content."""
-
-    timestamp_ns: int
-    log_id: str
-    trace_id: str | None
-    producer: str
-    conversation_id: str
-    tool_workspace: str
-
-
-@dataclass(frozen=True, slots=True)
 class TraceRow:
     trace_id: str
     turn_id: str | None
     thread_id: str | None
-    project_id: str | None
-    project_name: str | None
-    project_root: str | None
-    project_kind: str | None
     started_at: datetime
     ended_at: datetime
     total_tokens: int
@@ -540,39 +443,10 @@ def parse_log_row(data: Mapping[str, object]) -> LogRow:
     )
 
 
-def parse_project_evidence_row(data: Mapping[str, object]) -> ProjectEvidenceRow:
-    timestamp = _optional_int(data.get("timestamp"))
-    if timestamp is None or timestamp < 0:
-        raise SourceError("timestamp must be an unsigned integer")
-    log_id = _optional_text(data.get("id"))
-    producer = _optional_text(data.get("producer"))
-    conversation_id = _optional_text(data.get("conversation_id"))
-    tool_workspace = _optional_text(data.get("tool_workspace"))
-    if log_id is None:
-        raise SourceError("id is required")
-    if producer not in {"codex-cli", "codex-app-server"}:
-        raise SourceError("project evidence producer is invalid")
-    if conversation_id is None or tool_workspace is None:
-        raise SourceError("project evidence requires conversation and workspace")
-    return ProjectEvidenceRow(
-        timestamp_ns=timestamp,
-        log_id=log_id,
-        trace_id=_optional_text(data.get("trace_id")),
-        producer=producer,
-        conversation_id=conversation_id,
-        tool_workspace=tool_workspace,
-    )
-
-
 def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     trace_id = _optional_text(data.get("trace_id"))
     if trace_id is None:
         raise SourceError("trace_id is required")
-    project_metadata_state = _optional_text(data.get("project_metadata_state"))
-    if project_metadata_state not in _PROJECT_METADATA_STATES:
-        raise SourceError("project metadata state is required")
-    if project_metadata_state == "invalid":
-        raise SourceError("agent project metadata is invalid")
     try:
         started = datetime.fromisoformat(str(data["started_at"]))
         ended = datetime.fromisoformat(str(data["ended_at"]))
@@ -591,31 +465,10 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
         raise SourceError("trace counters must be non-negative integers")
-    project_id = _optional_text(data.get("project_id"))
-    project_name = _optional_text(data.get("project_name"))
-    project_root = _optional_text(data.get("project_root"))
-    project_kind = _optional_text(data.get("project_kind"))
-    project_attributes = (project_id, project_name, project_root, project_kind)
-    if project_metadata_state == "absent" and any(project_attributes):
-        raise SourceError("absent project metadata cannot contain project attributes")
-    if project_metadata_state == "complete" and not all(project_attributes):
-        raise SourceError("complete project metadata must include every project attribute")
-    if any(project_attributes) and not all(project_attributes):
-        raise SourceError("agent project attributes must be present together")
-    if project_kind is not None and project_kind not in _PROJECT_KIND_VALUES:
-        raise SourceError("agent.project.kind must be git or non_git")
-    if project_root is not None:
-        project_path = Path(project_root)
-        if not project_path.is_absolute() or project_path.as_posix() != project_root:
-            raise SourceError("agent.project.root must be a normalized absolute path")
     return TraceRow(
         trace_id=trace_id,
-        turn_id=_optional_text(data.get("turn_id")),
         thread_id=_optional_text(data.get("thread_id")),
-        project_id=project_id,
-        project_name=project_name,
-        project_root=project_root,
-        project_kind=project_kind,
+        turn_id=_optional_text(data.get("turn_id")),
         started_at=started,
         ended_at=ended,
         total_tokens=total_tokens,
@@ -723,24 +576,6 @@ class ClickHouseClient:
             },
         ):
             yield parse_log_row(row)
-
-    def project_evidence(
-        self, *, start_ns: int, end_ns: int, start_bucket: int, end_bucket: int
-    ) -> Iterator[ProjectEvidenceRow]:
-        """Extract only explicit producer workspace fields needed for attribution."""
-
-        if not (0 <= start_ns < end_ns and 0 <= start_bucket <= end_bucket):
-            raise ValueError("invalid project evidence bounds")
-        for row in self.query(
-            PROJECT_EVIDENCE_QUERY,
-            {
-                "start_ns": start_ns,
-                "end_ns": end_ns,
-                "start_bucket": start_bucket,
-                "end_bucket": end_bucket,
-            },
-        ):
-            yield parse_project_evidence_row(row)
 
     def traces(
         self, *, start: datetime, end: datetime, start_bucket: int, end_bucket: int

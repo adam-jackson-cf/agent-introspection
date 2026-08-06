@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import sqlite3
 import sys
@@ -38,7 +37,6 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
-from agent_introspection.project_evidence import apply_legacy_project_attribution
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -177,58 +175,6 @@ def _scan(args: argparse.Namespace) -> dict[str, Any]:
                     "qualifying_run_started_at": completed.started_at,
                 }
         return run_scan(connection, config)
-    finally:
-        connection.close()
-
-
-_RFC3339_UTC = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
-)
-
-
-def _parse_rfc3339_bound(value: str) -> datetime:
-    if not _RFC3339_UTC.fullmatch(value):
-        raise ValueError("legacy attribution bounds must be RFC3339 timestamps")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("legacy attribution bounds must be RFC3339 timestamps") from exc
-    if parsed.tzinfo is None:
-        raise ValueError("legacy attribution bounds must include an offset")
-    return parsed.astimezone(UTC)
-
-
-def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
-    config, connection = _open(args)
-    try:
-        start = _parse_rfc3339_bound(args.start)
-        end = _parse_rfc3339_bound(args.end)
-        start_ns = int(start.timestamp() * 1_000_000_000)
-        end_ns = int(end.timestamp() * 1_000_000_000)
-        source = _client(config)
-        result = apply_legacy_project_attribution(
-            connection,
-            project_roots=config.attribution.project_roots,
-            source_rows=source.project_evidence(
-                start_ns=start_ns,
-                end_ns=end_ns,
-                start_bucket=max(0, start_ns // 1_000_000_000 - 1800),
-                end_bucket=end_ns // 1_000_000_000,
-            ),
-            start=start,
-            end=end,
-            approved_by=args.approved_by,
-        )
-        return {
-            "accepted": result.accepted,
-            "activity_ids": list(result.activity_ids),
-            "denominator": result.denominator,
-            "fact_set_id": result.fact_set_id,
-            "outbox_event_ids": list(result.outbox_event_ids),
-            "rejected": result.rejected,
-            "status": "applied",
-            "unresolved": result.unresolved,
-        }
     finally:
         connection.close()
 
@@ -642,14 +588,6 @@ def _parser() -> argparse.ArgumentParser:
     hook.add_argument("--stdin", action="store_true")
     scan.add_argument("--scheduled", action="store_true")
 
-    legacy_project_attribution = commands.add_parser("legacy-project-attribution").add_subparsers(
-        dest="legacy_project_attribution_command", required=True
-    )
-    legacy_run = legacy_project_attribution.add_parser("run")
-    legacy_run.add_argument("--start", required=True)
-    legacy_run.add_argument("--end", required=True)
-    legacy_run.add_argument("--approved-by", required=True)
-
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -722,8 +660,6 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return _scan(args)
     if args.command == "session-context":
         return _session_context_hook(args)
-    if args.command == "legacy-project-attribution":
-        return _legacy_project_attribution(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":

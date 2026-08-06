@@ -7,16 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.source import (
     LOG_QUERY,
-    PROJECT_EVIDENCE_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
     SourceError,
     parse_duration_ms,
     parse_log_row,
-    parse_project_evidence_row,
     parse_source_activity_correlation,
     parse_trace_row,
     query_selected_ids,
@@ -36,10 +33,8 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
         assert f"['{raw_key}']" not in LOG_QUERY
     assert "{start:DateTime64(9)}" in TRACE_QUERY
     assert "{end:DateTime64(9)}" in TRACE_QUERY
-    for key in AGENT_PROJECT_SCHEMA.attribute_keys.values():
-        assert f"attributes_string['{key}']" in TRACE_QUERY
-    assert "attributes_string['cwd']" not in TRACE_QUERY
-    assert "project_metadata_state" in TRACE_QUERY
+    assert "{{start:DateTime64(9)}}" not in TRACE_QUERY
+    assert "{{end:DateTime64(9)}}" not in TRACE_QUERY
     assert "attributes_string['thread.id']" in TRACE_QUERY
     assert "attributes_string['thread_id']" in TRACE_QUERY
     assert "attributes_string['gen_ai.conversation.id']" in TRACE_QUERY
@@ -52,10 +47,6 @@ def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
     assert "AS producer_surface" in TRACE_QUERY
     assert "AS source_event_timestamp" in TRACE_QUERY
     assert "arraySort(groupUniqArray(spanID)) AS source_span_ids" in TRACE_QUERY
-    assert "AS tool_workspace" in PROJECT_EVIDENCE_QUERY
-    assert "isValidJSON(tool_payload)" in PROJECT_EVIDENCE_QUERY
-    assert "SELECT\n    timestamp,\n    id,\n    trace_id" in PROJECT_EVIDENCE_QUERY
-    assert "tool_payload" not in PROJECT_EVIDENCE_QUERY.split("FROM", 1)[0].split("SELECT", 1)[1]
 
 
 def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_surfaces() -> None:
@@ -179,31 +170,6 @@ def test_log_parser_retains_tool_rows_without_event_name() -> None:
     assert parsed.tool_name == "exec_command"
 
 
-def test_project_evidence_parser_requires_complete_allowlisted_metadata() -> None:
-    parsed = parse_project_evidence_row(
-        {
-            "timestamp": "1783695231067293000",
-            "id": "log-1",
-            "trace_id": "trace-1",
-            "producer": "codex-app-server",
-            "conversation_id": "conversation-1",
-            "tool_workspace": "/project",
-        }
-    )
-    assert parsed.producer == "codex-app-server"
-    assert parsed.tool_workspace == "/project"
-    with pytest.raises(SourceError, match="producer is invalid"):
-        parse_project_evidence_row(
-            {
-                "timestamp": "1",
-                "id": "log-1",
-                "producer": "unknown",
-                "conversation_id": "conversation-1",
-                "tool_workspace": "/project",
-            }
-        )
-
-
 def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() -> None:
     parsed = parse_trace_row(
         {
@@ -212,32 +178,41 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
             "ended_at": "2026-07-10 14:53:48.565735000",
             "total_tokens": "123",
             "tool_calls": "2",
-            "project_metadata_state": "absent",
         }
     )
     assert parsed.started_at.tzinfo is UTC
     assert parsed.ended_at.tzinfo is UTC
 
 
-def test_trace_parser_returns_canonical_source_activity_correlation() -> None:
+@pytest.mark.parametrize(
+    ("producer", "producer_surface"),
+    [
+        ("codex-cli", "codex-cli"),
+        ("codex-app-server", "codex-app-server"),
+        ("omp", "omp"),
+        ("claude-code", "claude-code"),
+    ],
+)
+def test_trace_parser_returns_canonical_source_activity_correlation(
+    producer: str, producer_surface: str
+) -> None:
     parsed = parse_trace_row(
         {
             "trace_id": "trace-1",
             "started_at": "2026-07-10 14:53:47.565735000",
             "ended_at": "2026-07-10 14:53:48.565735000",
-            "producer": "omp",
-            "producer_surface": "omp",
+            "producer": producer,
+            "producer_surface": producer_surface,
             "correlation_id": "conversation-1",
             "source_event_timestamp": "2026-07-10 14:53:47.765735000",
             "source_span_ids": ["span-1"],
             "total_tokens": "123",
             "tool_calls": "2",
-            "project_metadata_state": "absent",
         }
     )
     assert parsed.correlation is not None
-    assert parsed.correlation.producer == "omp"
-    assert parsed.correlation.producer_surface == "omp"
+    assert parsed.correlation.producer == producer
+    assert parsed.correlation.producer_surface == producer_surface
     assert parsed.correlation.correlation_id == "conversation-1"
     assert parsed.correlation.source_event_timestamp == datetime(
         2026, 7, 10, 14, 53, 47, 765735, tzinfo=UTC
@@ -265,38 +240,6 @@ def test_source_activity_correlation_fails_closed(change: dict[str, object], err
     data.update(change)
     with pytest.raises(SourceError, match=error):
         parse_source_activity_correlation(data)
-
-
-def test_trace_parser_requires_complete_normalized_agent_project_metadata() -> None:
-    base: dict[str, object] = {
-        "trace_id": "trace-1",
-        "started_at": "2026-07-10 14:53:47.565735000",
-        "ended_at": "2026-07-10 14:53:48.565735000",
-        "total_tokens": "123",
-        "tool_calls": "2",
-        "project_id": "project-1",
-        "project_name": "Agent Introspection",
-        "project_root": "/workspace/agent-introspection",
-        "project_kind": "git",
-        "project_metadata_state": "complete",
-    }
-    parsed = parse_trace_row(base)
-    assert parsed.project_id == "project-1"
-    assert parsed.project_name == "Agent Introspection"
-    base["project_root"] = "workspace/agent-introspection"
-    with pytest.raises(SourceError, match="normalized absolute path"):
-        parse_trace_row(base)
-    base["project_root"] = "/workspace/agent-introspection"
-    base["project_kind"] = "unknown"
-    with pytest.raises(SourceError, match="git or non_git"):
-        parse_trace_row(base)
-    base["project_kind"] = ""
-    with pytest.raises(SourceError, match="must include every project attribute"):
-        parse_trace_row(base)
-    base["project_kind"] = "git"
-    base["project_metadata_state"] = "invalid"
-    with pytest.raises(SourceError, match="metadata is invalid"):
-        parse_trace_row(base)
 
 
 def test_client_requires_exact_parameter_set_and_uses_clickhouse_parameters(

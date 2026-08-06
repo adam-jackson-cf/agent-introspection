@@ -25,22 +25,26 @@ HEALTH_DASHBOARD_ROUTE_ID = "019f7fb0-6f30-77e0-ad12-6d2e44964a7d"
 
 DASHBOARD_SCHEMA_VERSION = 1
 COMMON_FILTER = """timestamp BETWEEN $start_timestamp_nano AND $end_timestamp_nano
-AND ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
 AND resource.`service.name`::String = 'agent-introspection'"""
-ACTIVE_GENERATION_MARKER_QUERY = """(
-  SELECT argMax(
-    attributes_string['analysis.generation'],
-    tuple(attributes_number['entity.version'], timestamp)
-  )
-  FROM signoz_logs.distributed_logs_v2
-  WHERE resource.`service.name`::String = 'agent-introspection'
-    AND attributes_string['event.name'] = 'introspection.analysis_generation.activated'
-)"""
-ACTIVE_GENERATION_PREDICATE = (
-    """notEmpty(attributes_string['analysis.generation'])
-  AND attributes_string['analysis.generation'] = """
-    + ACTIVE_GENERATION_MARKER_QUERY
+CANONICAL_ACTIVITY_EVENT = "introspection.activity.version.recorded"
+CANONICAL_ACTIVITY_EVENT_PREDICATE = (
+    f"attributes_string['event.name'] = '{CANONICAL_ACTIVITY_EVENT}'"
 )
+CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE = f"""{CANONICAL_ACTIVITY_EVENT_PREDICATE}
+  AND notEmpty(attributes_string['activity.id'])
+  AND (
+    attributes_string['activity.id'],
+    attributes_number['activity.version']
+  ) IN (
+    SELECT
+      attributes_string['activity.id'],
+      max(attributes_number['activity.version'])
+    FROM signoz_logs.distributed_logs_v2
+    WHERE {COMMON_FILTER}
+      AND {CANONICAL_ACTIVITY_EVENT_PREDICATE}
+      AND notEmpty(attributes_string['activity.id'])
+    GROUP BY attributes_string['activity.id']
+  )"""
 PIPELINE_SNAPSHOT_EVENT = "introspection.pipeline.snapshot"
 
 DETECTOR_LABELS = {
@@ -78,8 +82,8 @@ def _query(select: str, event_filter: str = "") -> str:
     return f"{select}\nFROM signoz_logs.distributed_logs_v2\nWHERE {COMMON_FILTER}{suffix}"
 
 
-def _projection_query(select: str, where_filter: str, query_tail: str = "") -> str:
-    return _query(select, f"{where_filter}\n  AND {ACTIVE_GENERATION_PREDICATE}{query_tail}")
+def _projection_query(select: str, query_tail: str = "") -> str:
+    return _query(select, f"{CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE}{query_tail}")
 
 
 Panel = tuple[str, str, str, str, str, tuple[int, int, int, int]]
@@ -89,32 +93,33 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
         "project-data-attribution",
         "Project data attribution",
         "table",
-        (
-            "How much of the active seven-day analysis window is linked to a project, "
-            "filtered by the selected display range."
-        ),
+        "Canonical activity attribution diagnostics in the selected display range.",
         _projection_query(
             f"""SELECT
-  round(
-    100 * toFloat64(uniqExactIf(
-      attributes_string['entity.id'],
-      notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
-        AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
-        AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
-        AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
-    )) / greatest(toFloat64(uniqExact(attributes_string['entity.id'])), 1),
-    2
-  ) AS `Project attribution coverage`,
-  toFloat64(uniqExactIf(
-    attributes_string['entity.id'],
-    notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
-      AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
-      AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
-      AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
-  )) AS `Attributed observations`,
-  toFloat64(uniqExact(attributes_string['entity.id'])) AS `All observations`""",
-            "attributes_string['event.name'] = 'introspection.observation.detected'",
-            "\nHAVING count() > 0",
+  attributes_string['activity.attribution.state'] AS `Attribution state`,
+  if(
+    attributes_string['activity.attribution.state'] = 'resolved',
+    'none',
+    if(
+      empty(attributes_string['activity.attribution.reason_code']),
+      'not recorded',
+      attributes_string['activity.attribution.reason_code']
+    ),
+  ) AS `Rejection reason`,
+  attributes_string['activity.producer_surface'] AS `Producer surface`,
+  toFloat64(countIf(
+    attributes_string['activity.attribution.state'] = 'resolved'
+    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
+    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
+    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
+    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved'
+  )) AS `Resolved activities`,
+  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))
+    AS `Unresolved activities`,
+  toFloat64(count()) AS `All activities`""",
+            """
+GROUP BY `Attribution state`, `Rejection reason`, `Producer surface`
+ORDER BY `All activities` DESC, `Attribution state`, `Rejection reason`, `Producer surface`""",
         ),
         (0, 0, 12, 5),
     ),
@@ -122,47 +127,26 @@ INSIGHT_PANELS: tuple[Panel, ...] = (
         "actionable-trends",
         "Actionable trends",
         "table",
-        (
-            "Actionable patterns in the active seven-day analysis window, filtered by the "
-            "selected display range."
-        ),
+        "Latest canonical activity versions in the selected display range.",
         _projection_query(
             f"""SELECT
-  left(attributes_string['entity.id'], 8) AS `Finding`,
-  argMax(
-    {_label_sql("attributes_string['finding.category']", DETECTOR_LABELS)},
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS `Category`,
-  argMax(
-    {_label_sql("attributes_string['detector.id']", DETECTOR_LABELS)},
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS `Detector`,
-  argMax(
-    if(
-      empty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}']),
-      'Unresolved',
-      attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}']
-    ),
-    tuple(attributes_number['entity.version'], timestamp)
+  left(attributes_string['activity.id'], 8) AS `Activity`,
+  attributes_string['activity.attribution.state'] AS `Attribution state`,
+  if(
+    attributes_string['activity.attribution.state'] = 'resolved'
+    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'])
+    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["id"]}'] != 'unresolved'
+    AND notEmpty(attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'])
+    AND attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'] != 'unresolved',
+    attributes_string['{_PROJECT_ATTRIBUTE_KEYS["name"]}'],
+    'Unresolved',
   ) AS `Project`,
-  argMax(
-    attributes_number['occurrence.count'],
-    tuple(attributes_number['entity.version'], timestamp)
-  ) AS `Occurrences`,
-  formatDateTime(
-    max(fromUnixTimestamp64Nano(timestamp)),
-    '%d %b %H:%i'
-  ) AS `Last evaluated`""",
-            """attributes_string['event.name'] IN (
-  'introspection.trend.evaluated', 'introspection.trend.promoted'
-)""",
+  attributes_string['activity.producer_surface'] AS `Producer surface`,
+  attributes_number['activity.version'] AS `Version`,
+  formatDateTime(fromUnixTimestamp64Nano(timestamp), '%d %b %H:%i') AS `Source time`""",
             """
-GROUP BY attributes_string['entity.id']
-HAVING argMax(
-  attributes_string['trend.state'],
-  tuple(attributes_number['entity.version'], timestamp)
-) = 'actionable'
-ORDER BY `Occurrences` DESC, `Last evaluated` DESC""",
+ORDER BY timestamp DESC, `Activity`
+LIMIT 100""",
         ),
         (0, 5, 12, 6),
     ),
@@ -170,19 +154,16 @@ ORDER BY `Occurrences` DESC, `Last evaluated` DESC""",
         "observed-signals-by-detector",
         "Observed signals by detector",
         "graph",
-        (
-            "Daily observations by detector in the active seven-day analysis window, filtered "
-            "by the selected display range."
-        ),
+        "Daily latest canonical activity versions by producer surface in the selected"
+        " display range.",
         _projection_query(
-            f"""SELECT
+            """SELECT
   toStartOfDay(fromUnixTimestamp64Nano(timestamp)) AS ts,
-  {_label_sql("attributes_string['detector.id']", DETECTOR_LABELS)} AS detector,
-  toFloat64(uniqExact(attributes_string['entity.id'])) AS value""",
-            "attributes_string['event.name'] = 'introspection.observation.detected'",
+  attributes_string['activity.producer_surface'] AS producer_surface,
+  toFloat64(count()) AS value""",
             """
-GROUP BY ts, detector
-ORDER BY ts, detector""",
+GROUP BY ts, producer_surface
+ORDER BY ts, producer_surface""",
         ),
         (0, 11, 12, 6),
     ),
@@ -190,39 +171,24 @@ ORDER BY ts, detector""",
         "detector-signal-yield",
         "Detector signal yield",
         "table",
-        (
-            "Of distinct findings in the active seven-day analysis window, the share that "
-            "becomes actionable, filtered by the selected display range."
-        ),
+        "Canonical activity attribution outcomes by producer surface in the selected"
+        " display range.",
         _projection_query(
-            f"""SELECT
-  {_label_sql("detector", DETECTOR_LABELS)} AS `Detector`,
-  toFloat64(uniqExactIf(finding_id, trend_state = 'actionable')) AS `Actionable findings`,
-  toFloat64(uniqExact(finding_id)) AS `All findings`,
+            """SELECT
+  attributes_string['activity.producer_surface'] AS `Producer surface`,
+  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))
+    AS `Resolved activities`,
+  toFloat64(countIf(attributes_string['activity.attribution.state'] = 'unresolved'))
+    AS `Unresolved activities`,
+  toFloat64(count()) AS `All activities`,
   round(
-    100 * toFloat64(uniqExactIf(finding_id, trend_state = 'actionable'))
-      / greatest(toFloat64(uniqExact(finding_id)), 1),
-    2
-  ) AS `Actionable yield`
-FROM (
-  SELECT
-    attributes_string['entity.id'] AS finding_id,
-    argMax(
-      attributes_string['detector.id'],
-      tuple(attributes_number['entity.version'], timestamp)
-    ) AS detector,
-    argMax(
-      attributes_string['trend.state'],
-      tuple(attributes_number['entity.version'], timestamp)
-    ) AS trend_state""",
-            """attributes_string['event.name'] IN (
-    'introspection.trend.evaluated', 'introspection.trend.promoted'
-  )""",
+    100 * toFloat64(countIf(attributes_string['activity.attribution.state'] = 'resolved'))
+    / greatest(toFloat64(count()), 1),
+    2,
+  ) AS `Resolved coverage`""",
             """
-  GROUP BY finding_id
-)
-GROUP BY detector
-ORDER BY `Actionable yield` DESC, `Detector`""",
+GROUP BY `Producer surface`
+ORDER BY `Resolved coverage` DESC, `Producer surface`""",
         ),
         (0, 17, 12, 5),
     ),
@@ -430,14 +396,16 @@ def _verify_dashboard(
         if panel_type == "graph" and (" AS ts" not in query or " AS value" not in query):
             issues.append(f"visual panel {panel_id} lacks ts and value columns")
         if panel_id in PROJECTION_PANEL_IDS:
-            if ACTIVE_GENERATION_PREDICATE not in query:
-                issues.append(f"projection panel {panel_id} does not select the active generation")
-            elif "\nGROUP BY" in query and query.index(ACTIVE_GENERATION_PREDICATE) > query.index(
-                "\nGROUP BY"
-            ):
-                issues.append(f"projection panel {panel_id} filters generation after aggregation")
-            if COMMON_FILTER in ACTIVE_GENERATION_MARKER_QUERY:
-                issues.append("active generation marker is time filtered")
+            if CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE not in query:
+                issues.append(
+                    f"projection panel {panel_id} does not select latest activity version"
+                )
+            elif "\nGROUP BY" in query and query.index(
+                CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
+            ) > query.index("\nGROUP BY"):
+                issues.append(
+                    f"projection panel {panel_id} filters activity version after aggregation"
+                )
     return issues
 
 

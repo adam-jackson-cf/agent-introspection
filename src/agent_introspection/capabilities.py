@@ -17,7 +17,6 @@ from typing import Any
 from agent_introspection.source import (
     HYDRATION_QUERIES,
     LOG_QUERY,
-    PROJECT_EVIDENCE_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
 )
@@ -244,7 +243,6 @@ def discover_source_schema(client: ClickHouseClient) -> dict[str, Any]:
     query_hashes = {
         "log": hashlib.sha256(LOG_QUERY.encode()).hexdigest(),
         "trace": hashlib.sha256(TRACE_QUERY.encode()).hexdigest(),
-        "project_evidence": hashlib.sha256(PROJECT_EVIDENCE_QUERY.encode()).hexdigest(),
         "hydration": {
             identity: hashlib.sha256(query.encode()).hexdigest()
             for identity, query in sorted(HYDRATION_QUERIES.items())

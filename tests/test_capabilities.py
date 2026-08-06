@@ -18,7 +18,6 @@ from agent_introspection.database import connect_database
 from agent_introspection.source import (
     HYDRATION_QUERIES,
     LOG_QUERY,
-    PROJECT_EVIDENCE_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
 )
@@ -169,7 +168,6 @@ def test_missing_required_column_fails_discovery() -> None:
     [
         "log",
         "trace",
-        "project_evidence",
         "hydration.log_id",
         "hydration.trace_id",
         "hydration.call_id",
@@ -184,12 +182,6 @@ def test_each_extraction_query_class_participates_in_contract(
         monkeypatch.setattr(capabilities, "LOG_QUERY", LOG_QUERY + "\n-- contract mutation")
     elif query_class == "trace":
         monkeypatch.setattr(capabilities, "TRACE_QUERY", TRACE_QUERY + "\n-- contract mutation")
-    elif query_class == "project_evidence":
-        monkeypatch.setattr(
-            capabilities,
-            "PROJECT_EVIDENCE_QUERY",
-            PROJECT_EVIDENCE_QUERY + "\n-- contract mutation",
-        )
     else:
         identity = query_class.removeprefix("hydration.")
         queries: dict[str, str] = dict(HYDRATION_QUERIES)
