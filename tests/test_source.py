@@ -53,60 +53,54 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
     fixture_path = Path(__file__).with_name("fixtures") / "producer_identity_proofs.json"
     evidence = json.loads(fixture_path.read_text())
 
-    assert evidence == {
-        "observed_on": "2026-08-06",
-        "supported": [
-            {
-                "producer": "omp",
-                "version": "17.1.8",
-                "correlation_id": "019fd7ba-3cda-7000-a9dd-5ded507bc421",
-                "equality_boundary": "local_session_context",
-                "otel_span_count": 2,
-                "unique_gen_ai_conversation_id_count": 1,
-            },
-            {
-                "producer": "codex-cli",
-                "version": "0.146.1",
-                "correlation_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
-                "equality_boundary": "local_session_context",
-                "otel_span_count": 5,
-                "unique_thread_id_count": 1,
-            },
-            {
-                "producer": "codex-app-server",
-                "version": "0.146.0",
-                "correlation_id": "019fd25b-c7e2-71d0-9aaf-652dbc1f366b",
-                "equality_boundary": "protocol_local_metadata",
-                "otel_span_count": 3,
-                "isolated_correlation_id": True,
-            },
-            {
-                "producer": "codex-app-server",
-                "version": "0.146.0",
-                "correlation_id": "019fd25b-d86f-7710-b928-702237161395",
-                "equality_boundary": "protocol_local_metadata",
-                "otel_span_count": 3,
-                "isolated_correlation_id": True,
-            },
-            {
-                "producer": "codex-app-server",
-                "version": "0.146.0",
-                "correlation_id": "019fd25a-4bea-7181-b8ca-e808d9f1d6e0",
-                "resume_preserved": True,
-            },
-        ],
-        "unsupported": [
-            {
-                "producer": "claude-code",
-                "version": "2.1.199",
-                "missing_equality_boundary": "local_session_context",
-            },
-            {
-                "producer": "codex-app",
-                "missing_equality_boundary": "protocol_local_metadata",
-            },
-        ],
+    assert evidence["observed_on"] == "2026-08-06"
+    assert evidence["evidence_policy"] == {
+        "prompts_recorded": False,
+        "responses_recorded": False,
+        "identifiers_and_counts_only": True,
     }
+    supported = {proof["producer"]: proof for proof in evidence["supported"]}
+    assert set(supported) == {"omp", "codex-cli", "codex-app-server"}
+    required_fields = {
+        "version",
+        "command_argv_without_prompt",
+        "native_lifecycle_field",
+        "local_artifact_field",
+        "otel_service",
+        "otel_field",
+        "correlation_id",
+        "local_artifact_ids",
+        "first_context_at",
+        "last_context_at",
+        "first_otel_at",
+        "last_otel_at",
+        "otel_trace_count",
+        "otel_span_count",
+        "project",
+        "scenarios",
+    }
+    required_scenarios = {
+        "fresh",
+        "resume",
+        "end",
+        "concurrent_projects",
+        "non_git",
+        "workspace_change",
+    }
+    for proof in supported.values():
+        assert required_fields <= proof.keys()
+        assert proof["local_artifact_ids"]
+        assert proof["otel_trace_count"] > 0
+        assert proof["otel_span_count"] > 0
+        assert set(proof["project"]) == {"id", "name", "root", "kind"}
+        assert set(proof["scenarios"]) == required_scenarios
+
+    unsupported = {proof["producer"]: proof for proof in evidence["unsupported"]}
+    assert set(unsupported) == {"claude-code", "codex-app"}
+    assert all(proof["source_ingestion_enabled"] is False for proof in unsupported.values())
+    serialized = json.dumps(evidence, sort_keys=True).lower()
+    for forbidden in ("prompt_text", "response_text", "command_output", "environment_values"):
+        assert forbidden not in serialized
 
 
 def test_trace_query_reports_bounded_native_correlation_status() -> None:

@@ -1,54 +1,124 @@
 {
   "observed_on": "2026-08-06",
+  "evidence_policy": {
+    "prompts_recorded": false,
+    "responses_recorded": false,
+    "identifiers_and_counts_only": true
+  },
   "supported": [
     {
       "producer": "omp",
       "version": "17.1.8",
-      "correlation_id": "019fd7ba-3cda-7000-a9dd-5ded507bc421",
-      "equality_boundary": "local_session_context",
-      "otel_span_count": 2,
-      "unique_gen_ai_conversation_id_count": 1
+      "command_argv_without_prompt": ["omp", "-p", "--no-tools", "--max-time=2m"],
+      "native_lifecycle_field": "getSessionId()",
+      "local_artifact_field": "session record id",
+      "otel_service": "oh-my-pi",
+      "otel_field": "gen_ai.conversation.id",
+      "correlation_id": "019fd80e-2eec-7000-b3c3-a6aefb21cb31",
+      "local_artifact_ids": [
+        "40bc33d0393e898bdf98aebe6fcdcc6065a305fbb87c8b6a3bf1897676088cd8",
+        "078caa8e348c39a679bdc2614e3557b1d2234e9ff89d271f438f98b1a896102b",
+        "b0b065343d29a8ed3ab4ffbe20fd83bd7a9fd510c53578d28777fc18dd83e159",
+        "fa156bea80001465e42e042e4cbcdaf39a0f429a9b0b3fb36a98c202be17e744"
+      ],
+      "first_context_at": "2026-08-06T17:10:36.335Z",
+      "last_context_at": "2026-08-06T17:11:19.117Z",
+      "first_otel_at": "2026-08-06T17:10:37.404Z",
+      "last_otel_at": "2026-08-06T17:11:17.206Z",
+      "otel_trace_count": 2,
+      "otel_span_count": 4,
+      "project": {
+        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "name": "signoz-introspection",
+        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection",
+        "kind": "git"
+      },
+      "scenarios": {
+        "fresh": "passed",
+        "resume": "passed",
+        "end": "passed",
+        "concurrent_projects": "passed",
+        "non_git": "passed",
+        "workspace_change": "not_exposed_by_installed_extension"
+      }
     },
     {
       "producer": "codex-cli",
       "version": "0.146.1",
+      "command_argv_without_prompt": ["codex", "exec"],
+      "native_lifecycle_field": "notify thread-id",
+      "local_artifact_field": "session_meta.payload.id",
+      "otel_service": "codex_exec",
+      "otel_field": "thread.id or thread_id",
       "correlation_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
-      "equality_boundary": "local_session_context",
+      "local_artifact_ids": ["03d9e71a78c4a5266134ca59dc385e806adb15e471d8251221f0f409620cf59d"],
+      "first_context_at": "2026-08-06T15:38:43.824830Z",
+      "last_context_at": "2026-08-06T15:38:43.824830Z",
+      "first_otel_at": "2026-08-06T15:38:33.759611Z",
+      "last_otel_at": "2026-08-06T15:38:34.810971Z",
+      "otel_trace_count": 5,
       "otel_span_count": 5,
-      "unique_thread_id_count": 1
+      "project": {
+        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "name": "signoz-introspection",
+        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection",
+        "kind": "git"
+      },
+      "scenarios": {
+        "fresh": "passed",
+        "resume": "recheck_blocked_by_active_user_owned_codex_processes",
+        "end": "not_exposed_by_installed_notify",
+        "concurrent_projects": "recheck_blocked_by_active_user_owned_codex_processes",
+        "non_git": "covered_by_shared_runtime",
+        "workspace_change": "not_exposed_by_installed_notify"
+      }
     },
     {
       "producer": "codex-app-server",
       "version": "0.146.0",
+      "command_argv_without_prompt": ["codex", "app-server"],
+      "native_lifecycle_field": "thread/start response thread ID",
+      "local_artifact_field": "protocol thread metadata ID",
+      "otel_service": "codex-app-server",
+      "otel_field": "thread.id or thread_id",
       "correlation_id": "019fd25b-c7e2-71d0-9aaf-652dbc1f366b",
-      "equality_boundary": "protocol_local_metadata",
+      "local_artifact_ids": ["019fd25b-c7e2-71d0-9aaf-652dbc1f366b"],
+      "first_context_at": "2026-08-05T14:37:38.256868Z",
+      "last_context_at": "2026-08-05T14:37:38.414027Z",
+      "first_otel_at": "2026-08-05T14:37:38.256868Z",
+      "last_otel_at": "2026-08-05T14:37:38.414027Z",
+      "otel_trace_count": 3,
       "otel_span_count": 3,
-      "isolated_correlation_id": true
-    },
-    {
-      "producer": "codex-app-server",
-      "version": "0.146.0",
-      "correlation_id": "019fd25b-d86f-7710-b928-702237161395",
-      "equality_boundary": "protocol_local_metadata",
-      "otel_span_count": 3,
-      "isolated_correlation_id": true
-    },
-    {
-      "producer": "codex-app-server",
-      "version": "0.146.0",
-      "correlation_id": "019fd25a-4bea-7181-b8ca-e808d9f1d6e0",
-      "resume_preserved": true
+      "project": {
+        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "name": "signoz-introspection",
+        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection",
+        "kind": "git"
+      },
+      "scenarios": {
+        "fresh": "passed",
+        "resume": "passed",
+        "end": "not_exposed_by_protocol_fixture",
+        "concurrent_projects": "passed_with_isolated_thread_ids",
+        "non_git": "covered_by_shared_runtime",
+        "workspace_change": "not_exposed_by_protocol_fixture"
+      }
     }
   ],
   "unsupported": [
     {
       "producer": "claude-code",
       "version": "2.1.199",
-      "missing_equality_boundary": "local_session_context"
+      "command_argv_without_prompt": ["claude", "-p", "--session-id", "11d82e11-6688-4ea2-8d7c-5130814b0fb1", "--output-format", "stream-json", "--include-hook-events", "--tools", ""],
+      "explicit_session_id": "11d82e11-6688-4ea2-8d7c-5130814b0fb1",
+      "observed_hook_session_id": "988ea35f-3a09-4919-a33c-d733f327cba4",
+      "missing_equality_boundary": "hook session_id = local artifact session ID = OTEL session.id",
+      "source_ingestion_enabled": false
     },
     {
       "producer": "codex-app",
-      "missing_equality_boundary": "protocol_local_metadata"
+      "missing_equality_boundary": "app workspace lifecycle ID = protocol local metadata ID",
+      "source_ingestion_enabled": false
     }
   ]
 }
