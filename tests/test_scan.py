@@ -9,7 +9,7 @@ from agent_introspection.capabilities import approve_schema, discover_source_sch
 from agent_introspection.config import AppConfig, DatabaseConfig
 from agent_introspection.database import connect_database
 from agent_introspection.scan import run_scan
-from agent_introspection.session_context import inbox_path, parse_event, spool_event
+from agent_introspection.session_context import parse_event, spool_event
 from agent_introspection.source import (
     ClickHouseClient,
     HydrationRow,
@@ -120,6 +120,8 @@ class FakeSource(ClickHouseClient):
 def scan_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, AppConfig]:
     config = AppConfig(database=DatabaseConfig(path=tmp_path / "introspection.sqlite3"))
     connection = connect_database(config.database.path)
+    context_inbox = config.database.path.parent / "session-context-inbox"
+    monkeypatch.setattr("agent_introspection.scan.inbox_path", lambda _path: context_inbox)
     monkeypatch.setattr("agent_introspection.scan.verify_network_perimeter", lambda **_kwargs: {})
     monkeypatch.setattr(
         "agent_introspection.scan.drain_outbox",
@@ -253,7 +255,7 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
             project_id="1" * 64,
             occurred_at=occurred_at - timedelta(minutes=1),
         ),
-        directory=inbox_path(config.database.path),
+        directory=config.database.path.parent / "session-context-inbox",
     )
     source = FakeSource(
         logs=[
@@ -328,9 +330,15 @@ def test_late_context_bumps_one_canonical_activity_once(
         project_id="2" * 64,
         occurred_at=occurred_at - timedelta(minutes=1),
     )
-    spool_event(context, directory=inbox_path(config.database.path))
+    spool_event(
+        context,
+        directory=config.database.path.parent / "session-context-inbox",
+    )
     run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=1))
-    spool_event(context, directory=inbox_path(config.database.path))
+    spool_event(
+        context,
+        directory=config.database.path.parent / "session-context-inbox",
+    )
     run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=2))
 
     assert _activity_rows(connection) == [(activity_id, "resolved", 2, "2" * 64)]
@@ -370,7 +378,7 @@ def test_workspace_transition_splits_canonical_activities(
     second_root = tmp_path / "two"
     first_root.mkdir()
     second_root.mkdir()
-    inbox = inbox_path(config.database.path)
+    inbox = config.database.path.parent / "session-context-inbox"
     spool_event(
         _context_event(
             event_id="c" * 64,

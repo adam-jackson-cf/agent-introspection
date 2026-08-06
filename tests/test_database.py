@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -11,6 +14,7 @@ from agent_introspection.database import (
     CanonicalAttribution,
     CanonicalSourceMembership,
     DatabaseError,
+    LegacyMappingRehearsalResult,
     ObservationRecord,
     SourceWatermark,
     backup_database,
@@ -21,10 +25,12 @@ from agent_introspection.database import (
     persist_canonical_activity,
     persist_observations_and_watermark,
     quick_check,
+    rehearse_legacy_mapping_copy,
     restore_database,
     verify_database_file,
     weekly_maintenance,
 )
+from agent_introspection.legacy_mapping import LegacyMappingManifest, LegacyMappingRecord
 from agent_introspection.migrations import MIGRATIONS
 
 
@@ -71,6 +77,7 @@ def _observation(
     scan_id: str = "scan-1",
     category: str = "tool_failure",
     fingerprint: str = "a" * 64,
+    event_ids: tuple[str, ...] = ("event-1",),
 ) -> ObservationRecord:
     return ObservationRecord(
         id=observation_id,
@@ -92,7 +99,7 @@ def _observation(
         attributes={
             "attribution.method": "source",
             "correlation_id": "thread-1",
-            "event_ids": ["event-1"],
+            "event_ids": list(event_ids),
             "producer": "codex-cli",
             "producer_surface": "codex-cli",
         },
@@ -131,6 +138,407 @@ def _canonical_activity(
         normalized_failure_class="exit_1",
         created_at="2026-08-05T00:00:00+00:00",
     )
+
+
+def _legacy_mapping_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    ).hexdigest()
+
+
+def _legacy_manifest(*rows: LegacyMappingRecord) -> LegacyMappingManifest:
+    population = [asdict(row) for row in rows]
+    population_hash = _legacy_mapping_digest(population)
+    body = {
+        "schema_version": 1,
+        "created_at": "2026-08-06T00:00:00+00:00",
+        "population_hash": population_hash,
+        "rows": population,
+        "accepted": sum(row.status == "accepted" for row in rows),
+        "rejected": sum(row.status == "rejected" for row in rows),
+        "unresolved": sum(row.status == "unresolved" for row in rows),
+        "denominator": len(rows),
+    }
+    return LegacyMappingManifest(
+        **body,
+        checksum=_legacy_mapping_digest(body),
+    )
+
+
+def _legacy_record(
+    observation_id: str,
+    *,
+    status: Literal["accepted", "rejected", "unresolved"] = "accepted",
+    source_ids: tuple[str, ...] | None = None,
+    evidence_ids: tuple[str, ...] | None = None,
+) -> LegacyMappingRecord:
+    source_ids = ("event-1",) if source_ids is None else source_ids
+    evidence_ids = (f"evidence:{observation_id}",) if evidence_ids is None else evidence_ids
+    evidence_hash = _legacy_mapping_digest({"source_ids": source_ids, "evidence_ids": evidence_ids})
+    return LegacyMappingRecord(
+        observation_id=observation_id,
+        producer="codex-cli" if status == "accepted" else None,
+        producer_surface="codex-cli" if status == "accepted" else None,
+        correlation_id="session-1" if status == "accepted" else None,
+        source_at_ns=1_000,
+        source_ids=source_ids,
+        project=("project-1", "project", "/project", "git") if status == "accepted" else None,
+        status=status,
+        reason_code=None if status == "accepted" else "missing_workspace",
+        evidence_ids=evidence_ids,
+        evidence_hash=evidence_hash,
+    )
+
+
+@pytest.mark.parametrize("serialized_rows", (False, True))
+def test_legacy_mapping_rehearsal_uses_only_copy_and_keeps_noncanonical_rows_visible(
+    tmp_path: Path,
+    serialized_rows: bool,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    try:
+        _scan(connection)
+        persist_observations_and_watermark(
+            connection,
+            [_observation("observation-1"), _observation("observation-2")],
+            _watermark(1_000),
+        )
+        _evidence(connection, "observation-1", evidence_id="evidence:observation-1")
+        _evidence(connection, "observation-2", evidence_id="evidence:observation-2")
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+            ) VALUES ('project-1', 'git', '/project', '/project/.git', '2026-08-06', 'project')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    manifest = _legacy_manifest(
+        _legacy_record("observation-1"),
+        _legacy_record("observation-2", status="unresolved"),
+    )
+    if serialized_rows:
+        manifest = replace(manifest, rows=tuple(json.loads(json.dumps(manifest.rows))))
+    result = rehearse_legacy_mapping_copy(
+        source,
+        tmp_path / "source.rehearsal-copy.sqlite3",
+        manifest,
+        rehearsal_copy_marker="rehearsal-copy",
+    )
+    assert isinstance(result, LegacyMappingRehearsalResult)
+    assert result.activity_ids and result.outbox_event_ids
+    assert (
+        result.observation_ids_before
+        == result.observation_ids_after
+        == (
+            "observation-1",
+            "observation-2",
+        )
+    )
+    assert result.rejected == 0 and result.unresolved == 1 and not result.purge_ready
+    assert result.noncanonical_rows == (_legacy_record("observation-2", status="unresolved"),)
+    rehearsal_copy = connect_database(tmp_path / "source.rehearsal-copy.sqlite3")
+    try:
+        canonical_count = rehearsal_copy.execute(
+            "SELECT COUNT(*) FROM canonical_activities"
+        ).fetchone()[0]
+        assert canonical_count == 1
+    finally:
+        rehearsal_copy.close()
+    assert result.integrity_result == ("ok",) and not result.foreign_key_result
+    original = connect_database(source)
+    try:
+        assert original.execute("SELECT COUNT(*) FROM canonical_activities").fetchone()[0] == 0
+    finally:
+        original.close()
+
+
+@pytest.mark.parametrize(
+    ("second_status", "accepted_count", "rejected_count", "unresolved_count"),
+    (
+        ("accepted", 2, 0, 0),
+        ("rejected", 1, 1, 0),
+        ("unresolved", 1, 0, 1),
+    ),
+)
+def test_legacy_mapping_rehearsal_preserves_shared_source_membership(
+    tmp_path: Path,
+    second_status: Literal["accepted", "rejected", "unresolved"],
+    accepted_count: int,
+    rejected_count: int,
+    unresolved_count: int,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    first_source_ids = ("event:first", "event:shared")
+    second_source_ids = ("event:second", "event:shared")
+    try:
+        _scan(connection)
+        persist_observations_and_watermark(
+            connection,
+            [
+                _observation("observation-1", event_ids=first_source_ids),
+                _observation("observation-2", event_ids=second_source_ids),
+            ],
+            _watermark(1_000),
+        )
+        _evidence(connection, "observation-1", evidence_id="evidence:observation-1")
+        _evidence(connection, "observation-2", evidence_id="evidence:observation-2")
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+            ) VALUES ('project-1', 'git', '/project', '/project/.git', '2026-08-06', 'project')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    first = _legacy_record("observation-1", source_ids=first_source_ids)
+    second = replace(
+        _legacy_record(
+            "observation-2",
+            status=second_status,
+            source_ids=second_source_ids,
+        ),
+        source_at_ns=2_000,
+    )
+    result = rehearse_legacy_mapping_copy(
+        source,
+        tmp_path / "source.rehearsal-copy.sqlite3",
+        _legacy_manifest(first, second),
+        rehearsal_copy_marker="rehearsal-copy",
+    )
+    assert result.source_ids == (
+        "event:first",
+        "event:second",
+        "event:shared",
+        "event:shared",
+    )
+    assert result.accepted == accepted_count
+    assert result.rejected == rejected_count
+    assert result.unresolved == unresolved_count
+    assert result.noncanonical_rows == (() if second_status == "accepted" else (second,))
+    rehearsal_copy = connect_database(tmp_path / "source.rehearsal-copy.sqlite3")
+    try:
+        assert (
+            rehearsal_copy.execute("SELECT COUNT(*) FROM canonical_activities").fetchone()[0]
+            == accepted_count
+        )
+    finally:
+        rehearsal_copy.close()
+
+
+def test_legacy_mapping_rehearsal_preserves_observation_fields_and_reuses_activity(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    try:
+        _scan(connection)
+        observations = [
+            replace(
+                _observation(observation_id),
+                detector_id="preserved-detector",
+                detector_version=7,
+                occurred_at_ns=4_321,
+                operation_kind="preserved.operation",
+                target_kind="preserved-target",
+                normalized_target="/preserved",
+                normalized_failure_class="preserved_failure",
+                normalization_version=3,
+                created_at="2026-08-01T01:02:03+00:00",
+            )
+            for observation_id in ("observation-1", "observation-2")
+        ]
+        persist_observations_and_watermark(connection, observations, _watermark(4_321))
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+            ) VALUES ('project-1', 'git', '/project', '/project/.git', '2026-08-06', 'project')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    manifest = _legacy_manifest(
+        _legacy_record("observation-1", evidence_ids=()),
+        _legacy_record("observation-2", evidence_ids=()),
+    )
+    result = rehearse_legacy_mapping_copy(
+        source,
+        tmp_path / "source.rehearsal-copy.sqlite3",
+        manifest,
+        rehearsal_copy_marker="rehearsal-copy",
+    )
+    assert len(set(result.activity_ids)) == 1
+    assert len(result.outbox_event_ids) == 1
+    rehearsal_copy = connect_database(tmp_path / "source.rehearsal-copy.sqlite3")
+    try:
+        activity = rehearsal_copy.execute(
+            """
+            SELECT producer, producer_surface, correlation_id, source_started_at_ns,
+                   source_ended_at_ns, detector_id, detector_version, normalization_version,
+                   operation_kind, target_kind, normalized_target, normalized_failure_class,
+                   created_at
+            FROM canonical_activities
+            """
+        ).fetchone()
+        assert tuple(activity) == (
+            "codex-cli",
+            "codex-cli",
+            "session-1",
+            4_321,
+            4_321,
+            "preserved-detector",
+            7,
+            3,
+            "preserved.operation",
+            "preserved-target",
+            "/preserved",
+            "preserved_failure",
+            "2026-08-01T01:02:03+00:00",
+        )
+        manifests = tuple(
+            rehearsal_copy.execute(
+                """
+                SELECT observation_id, activity_id, source_membership_hash, mapping_hash
+                FROM observation_activity_migration_manifest
+                ORDER BY observation_id
+                """
+            ).fetchall()
+        )
+        assert tuple(row[0] for row in manifests) == ("observation-1", "observation-2")
+        assert len({row[1] for row in manifests}) == 1
+        assert all(len(str(row[2])) == len(str(row[3])) == 64 for row in manifests)
+        assert rehearsal_copy.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 1
+    finally:
+        rehearsal_copy.close()
+
+
+def test_legacy_mapping_rehearsal_rejects_membership_mismatch_before_writes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    try:
+        _scan(connection)
+        persist_observations_and_watermark(
+            connection,
+            [_observation("observation-1")],
+            _watermark(1),
+        )
+        connection.execute(
+            """
+            INSERT INTO project_identities (
+                id, identity_kind, canonical_path, git_common_dir, created_at, canonical_name
+            ) VALUES ('project-1', 'git', '/project', '/project/.git', '2026-08-06', 'project')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    target = tmp_path / "source.rehearsal-copy.sqlite3"
+    with pytest.raises(DatabaseError, match="source IDs do not exactly match"):
+        rehearse_legacy_mapping_copy(
+            source,
+            target,
+            _legacy_manifest(_legacy_record("observation-1", source_ids=("event-other",))),
+            rehearsal_copy_marker="rehearsal-copy",
+        )
+    rehearsal_copy = connect_database(target)
+    try:
+        canonical_count = rehearsal_copy.execute(
+            "SELECT COUNT(*) FROM canonical_activities"
+        ).fetchone()[0]
+        assert canonical_count == 0
+        assert (
+            rehearsal_copy.execute(
+                "SELECT COUNT(*) FROM observation_activity_migration_manifest"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        rehearsal_copy.close()
+
+
+def test_legacy_mapping_rehearsal_rejects_duplicate_row_source_ids_before_copy(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    connection.close()
+    row = _legacy_record(
+        "missing-observation",
+        source_ids=("source:duplicate", "source:duplicate"),
+    )
+    target = tmp_path / "source.rehearsal-copy.sqlite3"
+    with pytest.raises(DatabaseError, match="observation or source IDs are not exact"):
+        rehearse_legacy_mapping_copy(
+            source,
+            target,
+            _legacy_manifest(row),
+            rehearsal_copy_marker="rehearsal-copy",
+        )
+    assert not target.exists()
+
+
+def test_legacy_mapping_rehearsal_rejects_bad_manifest_before_copy(tmp_path: Path) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    connection.close()
+    manifest = _legacy_manifest(_legacy_record("missing-observation"))
+    bad_manifest = replace(manifest, checksum="0" * 64)
+    target = tmp_path / "source.rehearsal-copy.sqlite3"
+    with pytest.raises(DatabaseError, match="checksum"):
+        rehearse_legacy_mapping_copy(
+            source, target, bad_manifest, rehearsal_copy_marker="rehearsal-copy"
+        )
+    assert not target.exists()
+
+
+def test_legacy_mapping_rehearsal_rejects_malformed_row_before_copy(tmp_path: Path) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    connection.close()
+    manifest = _legacy_manifest(_legacy_record("missing-observation"))
+    malformed_manifest = replace(manifest, rows=({"observation_id": "missing-observation"},))
+    target = tmp_path / "source.rehearsal-copy.sqlite3"
+    with pytest.raises(DatabaseError, match="row 0 has an invalid shape"):
+        rehearse_legacy_mapping_copy(
+            source, target, malformed_manifest, rehearsal_copy_marker="rehearsal-copy"
+        )
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    ("correlation_id", "error"),
+    (
+        (None, "accepted legacy mapping row is incomplete"),
+        (" session-1", "invalid field types"),
+    ),
+)
+def test_legacy_mapping_rehearsal_rejects_invalid_accepted_correlation_before_copy(
+    tmp_path: Path,
+    correlation_id: str | None,
+    error: str,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    connection = connect_database(source)
+    connection.close()
+    manifest = _legacy_manifest(
+        replace(_legacy_record("missing-observation"), correlation_id=correlation_id)
+    )
+    target = tmp_path / "source.rehearsal-copy.sqlite3"
+    with pytest.raises(DatabaseError, match=error):
+        rehearse_legacy_mapping_copy(
+            source, target, manifest, rehearsal_copy_marker="rehearsal-copy"
+        )
+    assert not target.exists()
 
 
 @pytest.mark.parametrize(

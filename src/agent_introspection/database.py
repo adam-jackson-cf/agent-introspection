@@ -8,13 +8,19 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeGuard
 
+from agent_introspection.config import DEFAULT_DATABASE_PATH
 from agent_introspection.identities import canonical_activity_id
+from agent_introspection.legacy_mapping import LegacyMappingManifest, LegacyMappingRecord
 from agent_introspection.migrations import apply_migrations
+from agent_introspection.telemetry import (
+    CanonicalActivityVersionEvent,
+    enqueue_canonical_activity_version,
+)
 
 _CANONICAL_PRODUCER_SURFACE_PAIRS = frozenset(
     {
@@ -247,6 +253,30 @@ class ObservationActivityMigrationResult:
     observation_ids: tuple[str, ...]
     activity_ids: tuple[str, ...]
     mapping_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyMappingRehearsalResult:
+    """Immutable proof from an isolated legacy-mapping database rehearsal."""
+
+    observation_ids_before: tuple[str, ...]
+    observation_ids_after: tuple[str, ...]
+    source_ids: tuple[str, ...]
+    project_tuples: tuple[tuple[str, str, str, str], ...]
+    activity_ids_before: tuple[str, ...]
+    activity_ids_after: tuple[str, ...]
+    activity_ids: tuple[str, ...]
+    outbox_event_ids: tuple[str, ...]
+    accepted: int
+    rejected: int
+    unresolved: int
+    denominator: int
+    population_hash: str
+    checksum: str
+    integrity_result: tuple[str, ...]
+    foreign_key_result: tuple[tuple[object, ...], ...]
+    purge_ready: bool
+    noncanonical_rows: tuple[LegacyMappingRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,7 +633,498 @@ def migrate_observations_to_canonical_activities(
         if connection.in_transaction:
             connection.rollback()
         raise
+
     return ObservationActivityMigrationResult(observation_ids, activity_ids, mapping_hash)
+
+
+def _legacy_mapping_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    ).hexdigest()
+
+
+def _validate_legacy_mapping_manifest(
+    manifest: LegacyMappingManifest,
+) -> tuple[LegacyMappingRecord, ...]:
+    required_row_keys = frozenset(LegacyMappingRecord.__dataclass_fields__)
+
+    def exact_text(value: object) -> TypeGuard[str]:
+        return isinstance(value, str) and bool(value) and value.strip() == value
+
+    def exact_optional_text(value: object) -> TypeGuard[str | None]:
+        return value is None or exact_text(value)
+
+    def exact_ids(value: object) -> tuple[str, ...] | None:
+        if not isinstance(value, (list, tuple)):
+            return None
+        ids: list[str] = []
+        for item in value:
+            if not exact_text(item):
+                return None
+            ids.append(item)
+        return tuple(ids)
+
+    def exact_project(value: object) -> tuple[str, str, str, str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)) or len(value) != 4:
+            return None
+        project_values: list[str] = []
+        for item in value:
+            if not exact_text(item):
+                return None
+            project_values.append(item)
+        return (
+            project_values[0],
+            project_values[1],
+            project_values[2],
+            project_values[3],
+        )
+
+    def exact_status(
+        value: object,
+    ) -> TypeGuard[Literal["accepted", "rejected", "unresolved"]]:
+        return isinstance(value, str) and value in {"accepted", "rejected", "unresolved"}
+
+    rows: list[LegacyMappingRecord] = []
+    for index, raw_row in enumerate(manifest.rows):
+        if isinstance(raw_row, LegacyMappingRecord):
+            serialized_row: dict[str, object] = asdict(raw_row)
+        elif isinstance(raw_row, Mapping) and frozenset(raw_row) == required_row_keys:
+            serialized_row = dict(raw_row)
+        else:
+            raise DatabaseError(f"legacy mapping manifest row {index} has an invalid shape")
+        observation_id = serialized_row.get("observation_id")
+        producer = serialized_row.get("producer")
+        producer_surface = serialized_row.get("producer_surface")
+        correlation_id = serialized_row.get("correlation_id")
+        source_at_ns = serialized_row.get("source_at_ns")
+        source_ids = exact_ids(serialized_row.get("source_ids"))
+        evidence_ids = exact_ids(serialized_row.get("evidence_ids"))
+        project_value = serialized_row.get("project")
+        project = exact_project(project_value)
+        status = serialized_row.get("status")
+        reason_code = serialized_row.get("reason_code")
+        evidence_hash = serialized_row.get("evidence_hash")
+        if not exact_optional_text(correlation_id):
+            raise DatabaseError(f"legacy mapping manifest row {index} has invalid field types")
+        if (
+            not exact_text(observation_id)
+            or not exact_optional_text(producer)
+            or not exact_optional_text(producer_surface)
+            or not isinstance(source_at_ns, int)
+            or isinstance(source_at_ns, bool)
+            or source_at_ns < 0
+            or source_ids is None
+            or evidence_ids is None
+            or not exact_status(status)
+            or not exact_optional_text(reason_code)
+            or not exact_text(evidence_hash)
+            or (project is None and project_value is not None)
+        ):
+            raise DatabaseError(f"legacy mapping manifest row {index} has invalid field types")
+        rows.append(
+            LegacyMappingRecord(
+                observation_id=observation_id,
+                producer=producer,
+                producer_surface=producer_surface,
+                correlation_id=correlation_id,
+                source_at_ns=source_at_ns,
+                source_ids=source_ids,
+                project=project,
+                status=status,
+                reason_code=reason_code,
+                evidence_ids=evidence_ids,
+                evidence_hash=evidence_hash,
+            )
+        )
+    normalized_rows = tuple(rows)
+    if (
+        not isinstance(manifest.schema_version, int)
+        or isinstance(manifest.schema_version, bool)
+        or manifest.schema_version != 1
+        or not exact_text(manifest.created_at)
+        or not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in (
+                manifest.accepted,
+                manifest.rejected,
+                manifest.unresolved,
+                manifest.denominator,
+            )
+        )
+        or not exact_text(manifest.population_hash)
+        or not exact_text(manifest.checksum)
+        or manifest.denominator != len(normalized_rows)
+    ):
+        raise DatabaseError("legacy mapping manifest has an invalid schema or denominator")
+    expected_counts = tuple(
+        sum(row.status == status for row in normalized_rows)
+        for status in ("accepted", "rejected", "unresolved")
+    )
+    if (manifest.accepted, manifest.rejected, manifest.unresolved) != expected_counts:
+        raise DatabaseError("legacy mapping manifest disposition counts do not match its rows")
+    serialized_rows = [asdict(row) for row in normalized_rows]
+    if manifest.population_hash != _legacy_mapping_digest(serialized_rows):
+        raise DatabaseError("legacy mapping manifest population hash does not match its rows")
+    body = {
+        "schema_version": manifest.schema_version,
+        "created_at": manifest.created_at,
+        "population_hash": manifest.population_hash,
+        "rows": serialized_rows,
+        "accepted": manifest.accepted,
+        "rejected": manifest.rejected,
+        "unresolved": manifest.unresolved,
+        "denominator": manifest.denominator,
+    }
+    if manifest.checksum != _legacy_mapping_digest(body):
+        raise DatabaseError("legacy mapping manifest checksum does not match its rows")
+    observation_ids: set[str] = set()
+    for row in normalized_rows:
+        row_source_ids = set(row.source_ids)
+        if (
+            row.observation_id in observation_ids
+            or not row.source_ids
+            or len(row_source_ids) != len(row.source_ids)
+            or tuple(sorted(row_source_ids)) != row.source_ids
+            or row.evidence_hash
+            != _legacy_mapping_digest(
+                {"source_ids": row.source_ids, "evidence_ids": row.evidence_ids}
+            )
+        ):
+            raise DatabaseError("legacy mapping manifest observation or source IDs are not exact")
+        observation_ids.add(row.observation_id)
+        if row.status == "accepted":
+            if (
+                not exact_text(row.producer)
+                or not exact_text(row.producer_surface)
+                or not exact_text(row.correlation_id)
+                or row.project is None
+                or row.project[3] != "git"
+                or row.reason_code is not None
+            ):
+                raise DatabaseError("accepted legacy mapping row is incomplete")
+        elif row.project is not None or not exact_text(row.reason_code):
+            raise DatabaseError("noncanonical legacy mapping row is incomplete")
+    return normalized_rows
+
+
+def _legacy_mapping_candidate(
+    connection: sqlite3.Connection,
+    row: LegacyMappingRecord,
+    manifest_created_at: str,
+) -> tuple[str, CanonicalActivity, CanonicalAttribution, str]:
+    observation = connection.execute(
+        f"SELECT {_OBSERVATION_COLUMNS} FROM observations WHERE id = ?",
+        (row.observation_id,),
+    ).fetchone()
+    if observation is None:
+        raise DatabaseError(f"rehearsal copy has no observation {row.observation_id!r}")
+    try:
+        attributes = json.loads(str(observation[16]))
+    except json.JSONDecodeError as exc:
+        raise DatabaseError(
+            f"observation {row.observation_id!r} has invalid attributes_json"
+        ) from exc
+    if not isinstance(attributes, dict):
+        raise DatabaseError(f"observation {row.observation_id!r} attributes must be an object")
+    event_ids = tuple(sorted(set(_migration_ids(attributes, "event_ids", row.observation_id))))
+    if row.source_ids != event_ids:
+        raise DatabaseError(
+            f"rehearsal manifest source IDs do not exactly match observation {row.observation_id!r}"
+        )
+    evidence_rows = connection.execute(
+        """
+        SELECT id, evidence_kind, source_reference
+        FROM evidence
+        WHERE observation_id = ?
+        ORDER BY id
+        """,
+        (row.observation_id,),
+    ).fetchall()
+    evidence_ids = tuple(str(evidence[0]) for evidence in evidence_rows)
+    if row.evidence_ids != evidence_ids:
+        raise DatabaseError(
+            "rehearsal manifest evidence IDs do not exactly match "
+            f"observation {row.observation_id!r}"
+        )
+    log_ids, span_ids = _migration_evidence_membership(
+        tuple((evidence[1], evidence[2]) for evidence in evidence_rows),
+        row.observation_id,
+    )
+    membership = CanonicalSourceMembership(event_ids=event_ids, log_ids=log_ids, span_ids=span_ids)
+    assert row.producer is not None
+    assert row.producer_surface is not None
+    assert row.correlation_id is not None
+    assert row.project is not None
+    activity = CanonicalActivity(
+        producer=row.producer,
+        producer_surface=row.producer_surface,
+        correlation_id=row.correlation_id,
+        source_started_at_ns=_migration_int(observation[8], "occurred_at_ns", row.observation_id),
+        source_ended_at_ns=_migration_int(observation[8], "occurred_at_ns", row.observation_id),
+        detector_id=str(observation[2]),
+        detector_version=_migration_int(observation[3], "detector_version", row.observation_id),
+        normalization_version=_migration_int(
+            observation[14], "normalization_version", row.observation_id
+        ),
+        source_membership=membership,
+        operation_kind=str(observation[10]),
+        target_kind=str(observation[11]),
+        normalized_target=str(observation[12]),
+        normalized_failure_class=str(observation[13]),
+        created_at=str(observation[17]),
+    )
+    attribution = CanonicalAttribution(
+        "resolved",
+        row.project[0],
+        "legacy_mapping_rehearsal",
+        row.evidence_ids[0] if len(row.evidence_ids) == 1 else None,
+        None,
+        manifest_created_at,
+    )
+    mapping_hash = _legacy_mapping_digest(
+        {
+            "activity": activity.values(),
+            "attribution": attribution.values(activity.id, 1),
+            "observation_id": row.observation_id,
+        }
+    )
+    return row.observation_id, activity, attribution, mapping_hash
+
+
+def _prepare_rehearsal_manifest_for_activity_reuse(connection: sqlite3.Connection) -> None:
+    """Make the isolated rehearsal ledger capable of recording activity reuse."""
+    connection.execute("DROP TABLE observation_activity_migration_manifest")
+    connection.execute(
+        """
+        CREATE TABLE observation_activity_migration_manifest (
+            observation_id TEXT PRIMARY KEY REFERENCES observations(id),
+            activity_id TEXT NOT NULL REFERENCES canonical_activities(id),
+            source_membership_hash TEXT NOT NULL CHECK (length(source_membership_hash) = 64),
+            mapping_hash TEXT NOT NULL CHECK (length(mapping_hash) = 64),
+            migrated_at TEXT NOT NULL
+        ) STRICT, WITHOUT ROWID
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX observation_activity_migration_manifest_activity_idx
+        ON observation_activity_migration_manifest(activity_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER observation_activity_migration_manifest_no_update
+        BEFORE UPDATE ON observation_activity_migration_manifest BEGIN
+            SELECT RAISE(ABORT, 'observation activity migration manifest is immutable');
+        END
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER observation_activity_migration_manifest_no_delete
+        BEFORE DELETE ON observation_activity_migration_manifest BEGIN
+            SELECT RAISE(ABORT, 'observation activity migration manifest cannot be deleted');
+        END
+        """
+    )
+
+
+def rehearse_legacy_mapping_copy(
+    source_database_path: Path,
+    rehearsal_copy_path: Path,
+    manifest: LegacyMappingManifest,
+    *,
+    rehearsal_copy_marker: str,
+) -> LegacyMappingRehearsalResult:
+    """Apply a verified legacy-mapping manifest only to an explicitly marked database copy."""
+
+    rows = _validate_legacy_mapping_manifest(manifest)
+    source = source_database_path.expanduser().resolve(strict=False)
+    target = rehearsal_copy_path.expanduser().resolve(strict=False)
+    live = DEFAULT_DATABASE_PATH.expanduser().resolve(strict=False)
+    if (
+        not rehearsal_copy_marker
+        or rehearsal_copy_marker not in target.name
+        or target in (source, live)
+        or target.exists()
+    ):
+        raise DatabaseError("rehearsal target requires an explicit non-live copy marker")
+    if not source.is_file():
+        raise DatabaseError(f"rehearsal source database does not exist: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source_connection = _read_only_connection(source)
+    copy_connection = sqlite3.connect(target)
+    try:
+        source_connection.backup(copy_connection)
+    finally:
+        copy_connection.close()
+        source_connection.close()
+    connection = sqlite3.connect(target, isolation_level="DEFERRED")
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        observation_ids = tuple(sorted(row.observation_id for row in rows))
+        copied_observation_ids = (
+            tuple(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM observations "
+                    f"WHERE id IN ({','.join('?' for _ in observation_ids)}) ORDER BY id",
+                    observation_ids,
+                )
+            )
+            if observation_ids
+            else ()
+        )
+        if copied_observation_ids != observation_ids:
+            raise DatabaseError("rehearsal copy observation IDs do not exactly match manifest")
+        projects = tuple(
+            sorted({row.project for row in rows if row.status == "accepted" and row.project})
+        )
+        for project_id, project_name, project_root, project_kind in projects:
+            persisted = connection.execute(
+                "SELECT id, canonical_name, canonical_path, identity_kind "
+                "FROM project_identities WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+            expected_project = (project_id, project_name, project_root, project_kind)
+            if persisted is None or tuple(str(value) for value in persisted) != expected_project:
+                raise DatabaseError("rehearsal copy project tuple does not match manifest")
+        candidates = tuple(
+            _legacy_mapping_candidate(connection, row, manifest.created_at)
+            for row in rows
+            if row.status == "accepted"
+        )
+        expected_manifest_rows = tuple(
+            sorted(
+                (
+                    observation_id,
+                    activity.id,
+                    activity.source_membership.hash,
+                    mapping_hash,
+                )
+                for observation_id, activity, _, mapping_hash in candidates
+            )
+        )
+        existing_manifest_rows = tuple(
+            connection.execute(
+                """
+                SELECT observation_id, activity_id, source_membership_hash, mapping_hash
+                FROM observation_activity_migration_manifest
+                ORDER BY observation_id
+                """
+            ).fetchall()
+        )
+        if existing_manifest_rows:
+            raise DatabaseError("rehearsal copy already has an observation migration manifest")
+        _prepare_rehearsal_manifest_for_activity_reuse(connection)
+        before_activity_ids = tuple(
+            str(row[0])
+            for row in connection.execute("SELECT id FROM canonical_activities ORDER BY id")
+        )
+        before_observation_ids = tuple(
+            str(row[0]) for row in connection.execute("SELECT id FROM observations ORDER BY id")
+        )
+        activity_ids: list[str] = []
+        outbox_event_ids: list[str] = []
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for observation_id, activity, attribution, mapping_hash in candidates:
+                write = persist_canonical_activity(connection, activity, attribution)
+                activity_ids.append(write.activity_id)
+                connection.execute(
+                    """
+                    INSERT INTO observation_activity_migration_manifest (
+                        observation_id, activity_id, source_membership_hash,
+                        mapping_hash, migrated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        observation_id,
+                        activity.id,
+                        activity.source_membership.hash,
+                        mapping_hash,
+                        manifest.created_at,
+                    ),
+                )
+                if write.version_inserted:
+                    if attribution.project_identity_id is None:
+                        raise DatabaseError("accepted legacy mapping attribution is incomplete")
+                    outbox_event_ids.append(
+                        enqueue_canonical_activity_version(
+                            connection,
+                            CanonicalActivityVersionEvent(
+                                activity_id=write.activity_id,
+                                version=write.version,
+                                timestamp_ns=activity.source_started_at_ns,
+                                attributes={
+                                    "activity.attribution.method": attribution.method,
+                                    "activity.attribution.project_identity_id": (
+                                        attribution.project_identity_id
+                                    ),
+                                    "activity.attribution.state": attribution.state,
+                                },
+                            ),
+                        )
+                    )
+            persisted_manifest_rows = tuple(
+                connection.execute(
+                    """
+                    SELECT observation_id, activity_id, source_membership_hash, mapping_hash
+                    FROM observation_activity_migration_manifest
+                    ORDER BY observation_id
+                    """
+                ).fetchall()
+            )
+            if persisted_manifest_rows != expected_manifest_rows:
+                raise DatabaseError("rehearsal migration manifest verification failed")
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        after_activity_ids = tuple(
+            str(row[0])
+            for row in connection.execute("SELECT id FROM canonical_activities ORDER BY id")
+        )
+        after_observation_ids = tuple(
+            str(row[0]) for row in connection.execute("SELECT id FROM observations ORDER BY id")
+        )
+        integrity_result = tuple(
+            str(row[0]) for row in connection.execute("PRAGMA integrity_check")
+        )
+        foreign_key_result = tuple(
+            tuple(row) for row in connection.execute("PRAGMA foreign_key_check")
+        )
+        if integrity_result != ("ok",) or foreign_key_result:
+            raise DatabaseIntegrityError("rehearsal copy integrity verification failed")
+        return LegacyMappingRehearsalResult(
+            observation_ids_before=before_observation_ids,
+            observation_ids_after=after_observation_ids,
+            source_ids=tuple(sorted(source_id for row in rows for source_id in row.source_ids)),
+            project_tuples=projects,
+            activity_ids_before=before_activity_ids,
+            activity_ids_after=after_activity_ids,
+            activity_ids=tuple(sorted(activity_ids)),
+            outbox_event_ids=tuple(sorted(outbox_event_ids)),
+            accepted=manifest.accepted,
+            rejected=manifest.rejected,
+            unresolved=manifest.unresolved,
+            denominator=manifest.denominator,
+            population_hash=manifest.population_hash,
+            checksum=manifest.checksum,
+            integrity_result=integrity_result,
+            foreign_key_result=foreign_key_result,
+            purge_ready=manifest.accepted == manifest.denominator,
+            noncanonical_rows=tuple(row for row in rows if row.status != "accepted"),
+        )
+    except sqlite3.Error as exc:
+        if connection.in_transaction:
+            connection.rollback()
+        raise DatabaseIntegrityError("rehearsal copy database operation failed") from exc
+    finally:
+        connection.close()
 
 
 def _utc_stamp() -> str:
