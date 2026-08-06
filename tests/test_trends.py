@@ -60,7 +60,7 @@ def test_canonical_recomputation_supersedes_late_project_membership_idempotently
         """
         CREATE TABLE project_identities (
             id TEXT PRIMARY KEY,
-            identity_kind TEXT NOT NULL CHECK (identity_kind IN ('git', 'non_git')),
+            identity_kind TEXT NOT NULL CHECK (identity_kind = 'git'),
             canonical_path TEXT NOT NULL,
             git_common_dir TEXT,
             created_at TEXT NOT NULL,

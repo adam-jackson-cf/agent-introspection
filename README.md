@@ -41,8 +41,6 @@ bash scripts/run-ci-quality-gates.sh
 uv run agent-introspection doctor
 uv run agent-introspection health
 uv run agent-introspection scan
-uv run agent-introspection analysis-generation stage
-uv run agent-introspection analysis-generation activate <generation-id>
 uv run agent-introspection candidates export
 uv run agent-introspection classification import --input-json -
 uv run agent-introspection proposal list
@@ -57,10 +55,9 @@ All command results are structured JSON on stdout. Diagnostics are written to st
 
 The installed user LaunchAgent runs at minute zero of each hour and once at user-session load. Missed hour boundaries coalesce into one run after wake. Scheduled mode permits one successful or no-data scan per UTC hourly slot, terminalizes interrupted runs before recovery, and uses a shared lease to prevent overlap. Each ClickHouse query has a ten-minute limit and each scan has a fifteen-minute deadline, so a stalled source produces a terminal failure instead of blocking later hourly slots.
 
-Normal scan projections require a remotely verified active analysis generation
-whose source and runtime semantic contracts match before extraction. Stage the
-bounded local projection and activate it before relying on dashboard signal
-panels. Pipeline health remains available when a generation is not active.
+Normal scans persist canonical activities and monotonic attribution versions, reconcile
+session context at source-event time, and deliver deterministic activity events to SigNoz.
+The insight dashboard selects the latest activity version within its source-time range.
 
 ## Local SigNoz
 

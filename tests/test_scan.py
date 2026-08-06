@@ -302,7 +302,6 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
     assert [(event["activity.id"], event["activity.version"]) for event in outbox] == [
         (activity_id, 1)
     ]
-    assert all("analysis.generation" not in event for event in outbox)
 
 
 def test_late_context_bumps_one_canonical_activity_once(

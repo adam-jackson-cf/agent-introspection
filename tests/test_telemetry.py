@@ -11,6 +11,7 @@ from agent_introspection.telemetry import (
     CANONICAL_ACTIVITY_EVENT_NAME,
     CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION,
     OPERATIONAL_SCOPE,
+    REVIEW_SCOPE,
     CanonicalActivityVersionEvent,
     DerivedEvent,
     drain_outbox,
@@ -41,18 +42,6 @@ def outbox_database() -> sqlite3.Connection:
     return connection
 
 
-def event() -> DerivedEvent:
-    return DerivedEvent(
-        scope="generation:generation-1",
-        entity_id="finding-1",
-        entity_version=2,
-        event_sequence=3,
-        event_name="introspection.trend.promoted",
-        attributes={"trend.state": "actionable", "occurrence.count": 3},
-        timestamp_ns=1_700_000_000_000_000_000,
-    )
-
-
 def canonical_activity_database(tmp_path: Path) -> sqlite3.Connection:
     connection = connect_database(tmp_path / "canonical-activity.sqlite3")
     connection.execute(
@@ -79,6 +68,18 @@ def canonical_activity_database(tmp_path: Path) -> sqlite3.Connection:
     )
     connection.commit()
     return connection
+
+
+def event() -> DerivedEvent:
+    return DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id="finding-1",
+        entity_version=2,
+        event_sequence=3,
+        event_name="introspection.trend.promoted",
+        attributes={"trend.state": "actionable", "occurrence.count": 3},
+        timestamp_ns=1_700_000_000_000_000_000,
+    )
 
 
 def canonical_activity_event(
@@ -190,7 +191,7 @@ def test_conflicting_payload_reports_immutable_identity_and_changed_fields() -> 
     connection = outbox_database()
     enqueue_event(connection, event())
     conflicting = DerivedEvent(
-        scope="generation:generation-1",
+        scope=OPERATIONAL_SCOPE,
         entity_id="finding-1",
         entity_version=2,
         event_sequence=3,
@@ -198,8 +199,11 @@ def test_conflicting_payload_reports_immutable_identity_and_changed_fields() -> 
         attributes={"trend.state": "isolated", "occurrence.count": 3},
         timestamp_ns=1_700_000_000_000_000_000,
     )
+
     with pytest.raises(ValueError, match=r"entity_id=finding-1.*trend.state"):
         enqueue_event(connection, conflicting)
+
+    assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 1
 
 
 def test_failed_delivery_retains_identical_payload_for_retry() -> None:
@@ -222,7 +226,7 @@ def test_empty_outbox_drain_is_a_valid_noop() -> None:
 def test_event_batches_commit_all_deterministic_payloads() -> None:
     connection = outbox_database()
     second = DerivedEvent(
-        scope="generation:generation-1",
+        scope=OPERATIONAL_SCOPE,
         entity_id="finding-2",
         entity_version=1,
         event_sequence=1,
@@ -323,7 +327,7 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
 
 def test_remote_observation_event_preflight_uses_parameterized_candidate_ids() -> None:
     event = DerivedEvent(
-        scope="generation:generation-1",
+        scope=OPERATIONAL_SCOPE,
         entity_id="observation-1",
         entity_version=1,
         event_sequence=1,
@@ -352,8 +356,8 @@ def test_remote_observation_event_preflight_uses_parameterized_candidate_ids() -
 
 def test_event_scope_is_part_of_immutable_event_identity() -> None:
     generated = event()
-    operational = DerivedEvent(
-        scope=OPERATIONAL_SCOPE,
+    review = DerivedEvent(
+        scope=REVIEW_SCOPE,
         entity_id=generated.entity_id,
         entity_version=generated.entity_version,
         event_sequence=generated.event_sequence,
@@ -361,8 +365,8 @@ def test_event_scope_is_part_of_immutable_event_identity() -> None:
         attributes=generated.attributes,
         timestamp_ns=generated.timestamp_ns,
     )
-    assert generated.event_id != operational.event_id
-    assert generated.payload()["event.scope"] == "generation:generation-1"
+    assert generated.event_id != review.event_id
+    assert generated.payload()["event.scope"] == OPERATIONAL_SCOPE
 
 
 def test_observation_reconciliation_requires_explicit_failed_scan(tmp_path: Path) -> None:

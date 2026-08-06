@@ -607,7 +607,7 @@ class ClickHouseClient:
             )
         )
         if len(rows) != 1 or rows[0].get("retained") not in (1, True):
-            raise SourceError("source retention is not proven for the requested reanalysis window")
+            raise SourceError("source retention is not proven for the requested retained window")
 
     def hydrate(
         self,

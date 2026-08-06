@@ -136,8 +136,6 @@ def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
 def test_cli_help_exposes_only_canonical_commands() -> None:
     help_text = cli._parser().format_help()
 
-    assert "generation" not in help_text
-    assert "legacy-project-attribution" not in help_text
     for command in (
         "doctor",
         "health",

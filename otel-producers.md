@@ -38,7 +38,7 @@ The canonical record contains the event identity, producer, session ID, event ty
 - Agent telemetry is associated only when its producer and explicit session correlation key match an active interval.
 - No matching context interval leaves telemetry unresolved.
 
-The runtime is the only live project-attribution path. The legacy-project-attribution workflow remains the only legacy recovery workflow; it uses `project_evidence` and reanalysis.
+The runtime is the only live project-attribution path.
 
 ## Managed installation and configuration
 
