@@ -16,6 +16,7 @@ from agent_introspection.legacy_attribution import (
     LEGACY_PROJECT_ATTRIBUTION_QUERY,
     _parse_candidate,
     parse_rfc3339,
+    recover_legacy_project_attribution,
     run_legacy_project_attribution,
 )
 
@@ -36,6 +37,10 @@ def test_cli_requires_explicit_legacy_run_arguments() -> None:
             "operator",
         ]
     )
+    recovery = parser.parse_args(
+        ["legacy-project-attribution", "recover", "--fact-set-id", "fact-set"]
+    )
+    assert recovery.fact_set_id == "fact-set"
     assert parsed.approved_by == "operator"
 
 
@@ -217,7 +222,7 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
     try:
         with (
             patch("urllib.request.urlopen", return_value=response),
-            pytest.raises(RuntimeError, match="remote event IDs did not exactly match"),
+            pytest.raises(RuntimeError, match="remote_event_id_mismatch"),
         ):
             run_legacy_project_attribution(
                 connection,
@@ -232,5 +237,37 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
         ).fetchone()
         assert fact_count == (1,)
         assert connection.execute("SELECT status FROM otlp_outbox").fetchone() == ("delivered",)
+        attempt = connection.execute(
+            """
+            SELECT intended_event_count, remote_event_count, failure_reason, verified_at
+            FROM legacy_attribution_delivery_attempts
+            """
+        ).fetchone()
+        assert attempt == (1, 0, "remote_event_id_mismatch", None)
+        fact_set_id = connection.execute("SELECT id FROM legacy_attribution_fact_sets").fetchone()[
+            0
+        ]
+
+        class RecoveryClient:
+            def query(self, sql: str, parameters: dict[str, int | str]):
+                assert "attributes_string['event.id']" in sql
+                return iter([{"event_id": parameters["event_0"]}])
+
+        with patch("urllib.request.urlopen", return_value=response):
+            recovered = recover_legacy_project_attribution(
+                connection, client=RecoveryClient(), fact_set_id=fact_set_id
+            )
+        assert recovered["status"] == "verified"
+        assert recovered["idempotent"] is False
+        assert connection.execute(
+            "SELECT count(*) FROM canonical_activity_versions"
+        ).fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM canonical_activities").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT count(*) FROM legacy_attribution_delivery_attempts"
+        ).fetchone() == (2,)
+        assert recover_legacy_project_attribution(
+            connection, client=RecoveryClient(), fact_set_id=fact_set_id
+        ) == {"status": "verified", "fact_set_id": fact_set_id, "idempotent": True}
     finally:
         connection.close()

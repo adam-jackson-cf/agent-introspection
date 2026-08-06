@@ -195,6 +195,141 @@ def _fact_set_identity(*, start: datetime, end: datetime, source_ids: Iterable[s
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def _event_set_fingerprint(event_ids: Iterable[str]) -> tuple[list[str], str]:
+    ids = sorted(event_ids)
+    if len(ids) != len(set(ids)):
+        raise ValueError("legacy delivery event IDs must be unique")
+    encoded = json.dumps(ids, separators=(",", ":"))
+    return ids, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _append_delivery_attempt(
+    connection: sqlite3.Connection,
+    *,
+    fact_set_id: str,
+    intended_ids: Iterable[str],
+    delivery: dict[str, int],
+    remote_ids: Iterable[str],
+) -> dict[str, Any]:
+    intended, intended_hash = _event_set_fingerprint(intended_ids)
+    observed, observed_hash = _event_set_fingerprint(remote_ids)
+    verified = set(observed) == set(intended)
+    failure_reason = None
+    if not verified:
+        failure_reason = (
+            "local_delivery_incomplete"
+            if delivery["pending"] != 0 or delivery["delivered"] != len(intended)
+            else "remote_event_id_mismatch"
+        )
+    verified_at = datetime.now(UTC).isoformat() if verified else None
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO legacy_attribution_delivery_attempts(
+                fact_set_id, attempted_at, intended_event_ids_json, intended_event_count,
+                intended_event_hash, local_delivery_result_json, remote_event_ids_json,
+                remote_event_count, remote_event_hash, failure_reason, verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fact_set_id,
+                datetime.now(UTC).isoformat(),
+                json.dumps(intended, separators=(",", ":")),
+                len(intended),
+                intended_hash,
+                json.dumps(delivery, sort_keys=True, separators=(",", ":")),
+                json.dumps(observed, separators=(",", ":")),
+                len(observed),
+                observed_hash,
+                failure_reason,
+                verified_at,
+            ),
+        )
+    return {
+        "verified": verified,
+        "failure_reason": failure_reason,
+        "intended_event_count": len(intended),
+        "intended_event_hash": intended_hash,
+        "remote_event_count": len(observed),
+        "remote_event_hash": observed_hash,
+        "verified_at": verified_at,
+    }
+
+
+def _remote_references(
+    connection: sqlite3.Connection, event_ids: Iterable[str]
+) -> list[RemoteEventReference]:
+    ids, _ = _event_set_fingerprint(event_ids)
+    if not ids:
+        return []
+    placeholders = ", ".join("?" for _ in ids)
+    rows = connection.execute(
+        f"SELECT event_id, payload_json FROM otlp_outbox WHERE event_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    if len(rows) != len(ids):
+        raise RuntimeError(
+            "legacy fact set immutable evidence event IDs are not an exact local set"
+        )
+    references = []
+    for event_id, payload_json in rows:
+        payload = json.loads(str(payload_json))
+        references.append(
+            RemoteEventReference(
+                event_id=str(event_id),
+                event_name=str(payload["event.name"]),
+                timestamp_ns=int(payload["timestamp_ns"]),
+            )
+        )
+    return references
+
+
+def recover_legacy_project_attribution(
+    connection: sqlite3.Connection,
+    *,
+    client: ClickHouseClient,
+    fact_set_id: str,
+    delivery_endpoint: str = "http://localhost:4318/v1/logs",
+) -> dict[str, Any]:
+    """Redeliver and verify the immutable event set of one existing legacy fact set."""
+    row = connection.execute(
+        """
+        SELECT intended_event_ids_json, verified_at
+        FROM legacy_attribution_delivery_attempts
+        WHERE fact_set_id = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (fact_set_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"legacy fact set {fact_set_id} has no delivery evidence")
+    intended_ids = json.loads(str(row[0]))
+    if row[1] is not None:
+        return {"status": "verified", "fact_set_id": fact_set_id, "idempotent": True}
+    references = _remote_references(connection, intended_ids)
+    delivery = (
+        drain_outbox_event_ids(
+            connection, intended_ids, endpoint=delivery_endpoint, include_delivered=True
+        )
+        if intended_ids
+        else {"selected": 0, "delivered": 0, "pending": 0}
+    )
+    remote_ids = remote_event_ids(client, references) if references else set()
+    result = _append_delivery_attempt(
+        connection,
+        fact_set_id=fact_set_id,
+        intended_ids=intended_ids,
+        delivery=delivery,
+        remote_ids=remote_ids,
+    )
+    if not result["verified"]:
+        raise RuntimeError(
+            f"legacy fact set {fact_set_id} recovery verification failed: "
+            f"{result['failure_reason']}"
+        )
+    return {"status": "verified", "fact_set_id": fact_set_id, "idempotent": False, **result}
+
+
 def run_legacy_project_attribution(
     connection: sqlite3.Connection,
     config: AppConfig,
@@ -339,17 +474,24 @@ def run_legacy_project_attribution(
                     timestamp_ns=candidate.timestamp_ns,
                 )
             )
-    if outbox_ids:
-        delivery = drain_outbox_event_ids(connection, outbox_ids, endpoint=delivery_endpoint)
-        if delivery["delivered"] != len(outbox_ids) or delivery["pending"] != 0:
-            raise RuntimeError(
-                f"legacy fact set {fact_set_id} delivery did not complete for its exact event IDs"
-            )
-        remote_ids = remote_event_ids(client, remote_references)
-        if remote_ids != set(outbox_ids):
-            raise RuntimeError(
-                f"legacy fact set {fact_set_id} remote event IDs did not exactly match delivery"
-            )
+    delivery = (
+        drain_outbox_event_ids(connection, outbox_ids, endpoint=delivery_endpoint)
+        if outbox_ids
+        else {"selected": 0, "delivered": 0, "pending": 0}
+    )
+    remote_ids = remote_event_ids(client, remote_references) if remote_references else set()
+    verification = _append_delivery_attempt(
+        connection,
+        fact_set_id=fact_set_id,
+        intended_ids=outbox_ids,
+        delivery=delivery,
+        remote_ids=remote_ids,
+    )
+    if not verification["verified"]:
+        raise RuntimeError(
+            f"legacy fact set {fact_set_id} delivery verification failed: "
+            f"{verification['failure_reason']}"
+        )
     return {
         "status": "applied",
         "approved_by": approved_by,
@@ -360,4 +502,5 @@ def run_legacy_project_attribution(
         "denominator": denominator,
         "activity_ids": accepted_ids,
         "outbox_event_ids": outbox_ids,
+        **verification,
     }

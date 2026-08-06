@@ -94,6 +94,14 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
         assert proof["otel_span_count"] > 0
         assert set(proof["project"]) == {"id", "name", "root", "kind"}
         assert set(proof["scenarios"]) == required_scenarios
+    assert supported["codex-cli"]["scenarios"] == {
+        "fresh": "passed",
+        "resume": "passed",
+        "end": "not_exposed_by_installed_notify",
+        "concurrent_projects": "passed",
+        "non_git": "passed",
+        "workspace_change": "not_exposed_by_installed_notify",
+    }
 
     unsupported = {proof["producer"]: proof for proof in evidence["unsupported"]}
     assert set(unsupported) == {"claude-code", "codex-app"}

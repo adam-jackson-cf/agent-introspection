@@ -37,7 +37,11 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
-from agent_introspection.legacy_attribution import parse_rfc3339, run_legacy_project_attribution
+from agent_introspection.legacy_attribution import (
+    parse_rfc3339,
+    recover_legacy_project_attribution,
+    run_legacy_project_attribution,
+)
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -586,6 +590,19 @@ def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
 
 
+def _legacy_project_attribution_recover(args: argparse.Namespace) -> dict[str, Any]:
+    config, connection = _open(args)
+    try:
+        return recover_legacy_project_attribution(
+            connection,
+            client=_client(config),
+            fact_set_id=args.fact_set_id,
+            delivery_endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+        )
+    finally:
+        connection.close()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
@@ -617,6 +634,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     legacy_run.add_argument("--end", required=True)
     legacy_run.add_argument("--approved-by", required=True)
+    legacy_recover = legacy_project_attribution.add_parser("recover")
+    legacy_recover.add_argument("--fact-set-id", required=True)
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -690,7 +709,9 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "session-context":
         return _session_context_hook(args)
     if args.command == "legacy-project-attribution":
-        return _legacy_project_attribution(args)
+        if args.legacy_project_attribution_command == "run":
+            return _legacy_project_attribution(args)
+        return _legacy_project_attribution_recover(args)
     if args.command == "candidates":
         return _candidates_export(args)
     if args.command == "classification":

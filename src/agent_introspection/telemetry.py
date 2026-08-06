@@ -525,6 +525,7 @@ def drain_outbox_event_ids(
     *,
     endpoint: str = "http://localhost:4318/v1/logs",
     timeout_seconds: float = 10,
+    include_delivered: bool = False,
 ) -> dict[str, int]:
     """Deliver only an explicit immutable event set, in bounded requests."""
     requested = tuple(event_ids)
@@ -550,11 +551,14 @@ def drain_outbox_event_ids(
             f"""
             SELECT event_id, payload_json, attempt_count
             FROM otlp_outbox
-            WHERE status = 'pending' AND next_attempt_at <= ?
-              AND event_id IN ({batch_placeholders})
+            WHERE event_id IN ({batch_placeholders})
+              AND (
+                  (status = 'pending' AND (next_attempt_at <= ? OR ?))
+                  OR (status = 'delivered' AND ?)
+              )
             ORDER BY created_at, event_id
             """,
-            (now, *batch_ids),
+            (*batch_ids, now, include_delivered, include_delivered),
         ).fetchall()
         selected += len(rows)
         if not rows:

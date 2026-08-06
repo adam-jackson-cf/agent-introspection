@@ -712,6 +712,29 @@ _LEGACY_ATTRIBUTION_FACT_SCHEMA: Final[tuple[str, ...]] = (
     "CREATE TRIGGER legacy_attribution_fact_sets_no_delete BEFORE DELETE ON legacy_attribution_fact_sets BEGIN SELECT RAISE(ABORT, 'legacy attribution fact sets cannot be deleted'); END",
 )
 
+_LEGACY_ATTRIBUTION_DELIVERY_LEDGER_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE legacy_attribution_delivery_attempts (
+        id INTEGER PRIMARY KEY,
+        fact_set_id TEXT NOT NULL REFERENCES legacy_attribution_fact_sets(id),
+        attempted_at TEXT NOT NULL,
+        intended_event_ids_json TEXT NOT NULL CHECK (json_valid(intended_event_ids_json)),
+        intended_event_count INTEGER NOT NULL CHECK (intended_event_count >= 0),
+        intended_event_hash TEXT NOT NULL CHECK (length(intended_event_hash) = 64),
+        local_delivery_result_json TEXT NOT NULL CHECK (json_valid(local_delivery_result_json)),
+        remote_event_ids_json TEXT NOT NULL CHECK (json_valid(remote_event_ids_json)),
+        remote_event_count INTEGER NOT NULL CHECK (remote_event_count >= 0),
+        remote_event_hash TEXT NOT NULL CHECK (length(remote_event_hash) = 64),
+        failure_reason TEXT CHECK (failure_reason IN ('local_delivery_incomplete', 'remote_event_id_mismatch')),
+        verified_at TEXT,
+        CHECK ((failure_reason IS NULL) = (verified_at IS NOT NULL))
+    ) STRICT
+    """,
+    "CREATE INDEX legacy_attribution_delivery_attempts_fact_set_idx ON legacy_attribution_delivery_attempts(fact_set_id, id)",
+    "CREATE TRIGGER legacy_attribution_delivery_attempts_no_update BEFORE UPDATE ON legacy_attribution_delivery_attempts BEGIN SELECT RAISE(ABORT, 'legacy attribution delivery attempts are immutable'); END",
+    "CREATE TRIGGER legacy_attribution_delivery_attempts_no_delete BEFORE DELETE ON legacy_attribution_delivery_attempts BEGIN SELECT RAISE(ABORT, 'legacy attribution delivery attempts cannot be deleted'); END",
+)
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
     Migration(
@@ -728,6 +751,11 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         version=4,
         name="canonical rejection reason vocabulary",
         statements=_REJECTION_REASON_CHECK_SCHEMA,
+    ),
+    Migration(
+        version=5,
+        name="legacy attribution delivery attempt ledger",
+        statements=_LEGACY_ATTRIBUTION_DELIVERY_LEDGER_SCHEMA,
     ),
 )
 
