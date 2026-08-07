@@ -10,6 +10,7 @@ const runtimePath = resolve(
 
 type LifecycleEvent = "session_start" | "session_end";
 type NativeLifecycleEvent = "session_start" | "session_shutdown";
+const BOUNDED_REJECTION_STATUS = 65;
 
 interface OmpExtensionContext {
   cwd: unknown;
@@ -78,7 +79,7 @@ function emitLifecycleEvent(
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 && result.status !== BOUNDED_REJECTION_STATUS) {
     throw new Error(`OMP session-context runtime exited with status ${result.status}`);
   }
 }

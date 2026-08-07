@@ -19,7 +19,10 @@ def omp_adapter_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     shutil.copyfile(ADAPTER, adapter)
 
     runtime = tmp_path / "scripts" / "session-context-runtime.sh"
-    runtime.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$OMP_RUNTIME_LOG"\n')
+    runtime.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$OMP_RUNTIME_LOG"\n'
+        'exit "${OMP_RUNTIME_EXIT_STATUS:-0}"\n'
+    )
     runtime.chmod(0o755)
     return adapter, tmp_path / "runtime-argv.txt"
 
@@ -32,6 +35,7 @@ def _invoke_adapter(
     session_id: str,
     workspace: str,
     native_event: dict[str, object],
+    runtime_status: int = 0,
 ) -> dict[str, str | None]:
     driver = tmp_path / "invoke.ts"
     driver.write_text(
@@ -63,7 +67,11 @@ try {
         check=True,
         capture_output=True,
         text=True,
-        env={**os.environ, "OMP_RUNTIME_LOG": str(runtime_log)},
+        env={
+            **os.environ,
+            "OMP_RUNTIME_LOG": str(runtime_log),
+            "OMP_RUNTIME_EXIT_STATUS": str(runtime_status),
+        },
     )
     return json.loads(completed.stdout)
 
@@ -99,6 +107,37 @@ def test_omp_lifecycle_events_invoke_canonical_runtime(
         "/workspaces/authoritative",
     )
     assert occurred_at == "2026-08-05T12:34:56.789Z"
+
+
+@pytest.mark.parametrize(
+    ("runtime_status", "expected_error"),
+    (
+        (65, None),
+        (64, "OMP session-context runtime exited with status 64"),
+        (70, "OMP session-context runtime exited with status 70"),
+    ),
+)
+def test_omp_adapter_distinguishes_bounded_rejection_from_runtime_failure(
+    tmp_path: Path,
+    omp_adapter_sandbox: tuple[Path, Path],
+    runtime_status: int,
+    expected_error: str | None,
+) -> None:
+    adapter, runtime_log = omp_adapter_sandbox
+
+    outcome = _invoke_adapter(
+        tmp_path,
+        adapter,
+        runtime_log,
+        "session_start",
+        "omp-session-42",
+        "/workspaces/authoritative",
+        {"timestamp": "2026-08-05T12:34:56.789Z"},
+        runtime_status,
+    )
+
+    assert outcome == {"error": expected_error}
+    assert runtime_log.exists()
 
 
 def test_omp_uses_synchronous_time_when_native_timestamp_is_absent(
