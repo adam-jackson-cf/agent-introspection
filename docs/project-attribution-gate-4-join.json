@@ -1,0 +1,140 @@
+{
+  "attributed_project_tuples": [
+    {
+      "project": {
+        "id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+        "kind": "git",
+        "name": "fitness",
+        "root": "/Users/adamjackson/Projects/inflight/fitness"
+      },
+      "record_count": 292
+    },
+    {
+      "project": {
+        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "kind": "git",
+        "name": "signoz-introspection",
+        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      "record_count": 2987
+    }
+  ],
+  "authority": {
+    "canonical_association": "exact canonical producer and native session ID join to accepted session-context records",
+    "completion_mapping": "only codex-cli with exactly one exact-producer project tuple; never app-server or cross-producer",
+    "context_scope": "accepted context records loaded independently of telemetry range",
+    "lifecycle_interval": "started_at <= source_timestamp_ns < ended_at when ended_at exists"
+  },
+  "conservation": {
+    "included_equals_terminal_outcomes": true,
+    "included_record_count": 12830131,
+    "terminal_outcomes": {
+      "attributed": 3279,
+      "blocked": 1,
+      "failed": 12826851
+    }
+  },
+  "expected_source": {
+    "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/gate-4-expected-source.jsonl",
+    "record_count": 12830131,
+    "record_fields": [
+      "record_identity",
+      "producer",
+      "native_session_id",
+      "source_timestamp_ns",
+      "terminal_outcome",
+      "terminal_outcome_reason",
+      "project (attributed only)"
+    ],
+    "serialization": "one JSON object per input record, sorted object keys, compact separators, input order",
+    "sha256": "ae5f324f75e0dc08f715054407ea39153a574bf765c019f67f321622ed05ab5a"
+  },
+  "frozen_at_utc": "2026-08-07T17:45:58.546340000Z",
+  "gate_2_comparison": {
+    "compared_fields": [
+      "terminal_outcome",
+      "terminal_outcome_reason",
+      "project"
+    ],
+    "mismatch_count": 946,
+    "mismatch_groups": [
+      {
+        "gate_2": {
+          "reason": "unique_codex_completion_context",
+          "terminal_outcome": "attributed"
+        },
+        "gate_4": {
+          "reason": "exact_context_interval",
+          "terminal_outcome": "attributed"
+        },
+        "record_count": 946
+      }
+    ],
+    "outcome_mismatch_count": 0,
+    "reason_or_project_mismatch_count": 946
+  },
+  "inputs": {
+    "accepted_context": {
+      "accepted_context_event_count": 30,
+      "context_interval_count": 20,
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-context.jsonl",
+      "record_count": 50,
+      "sha256": "381f22dd6ca28f5eddaeb3385fb7459d2f1e11505dd73dee4290bb33123d4d44"
+    },
+    "included_source": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/included-source.jsonl",
+      "record_count": 12830131,
+      "sha256": "d50b6a91ae6f2a3f4a9e8e8ff6fb774fee5d14b53a00c72eeaa0c6f476778b7b"
+    },
+    "raw_source": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/raw-source.jsonl",
+      "record_count": 12831230,
+      "sha256": "5fb339ca81cf78d63f960fdb8d342a6ecf683856f8ded1269f1940d38668850d"
+    }
+  },
+  "join_safety": {
+    "cross_producer_joins": 0,
+    "missing_or_conflicting_native_session_keys_are_failures": true,
+    "project_present_only_on_attributed_rows": true
+  },
+  "outcomes_by_reason": [
+    {
+      "reason": "exact_context_interval",
+      "record_count": 965,
+      "terminal_outcome": "attributed"
+    },
+    {
+      "reason": "unique_codex_completion_context",
+      "record_count": 2314,
+      "terminal_outcome": "attributed"
+    },
+    {
+      "reason": "missing_gate_3_identity_proof",
+      "record_count": 1,
+      "terminal_outcome": "blocked"
+    },
+    {
+      "reason": "accepted_context_missing",
+      "record_count": 107097,
+      "terminal_outcome": "failed"
+    },
+    {
+      "reason": "native_session_key_conflicting",
+      "record_count": 5576,
+      "terminal_outcome": "failed"
+    },
+    {
+      "reason": "native_session_key_missing",
+      "record_count": 12714178,
+      "terminal_outcome": "failed"
+    }
+  ],
+  "result": "Gate 4 independently classified every included record exactly once; Gate 2 differs only in reason labeling for active codex-cli interval rows.",
+  "schema": "project-attribution-gate-4-join",
+  "schema_version": 1,
+  "source_time_range": {
+    "end_exclusive": "2026-08-07T17:45:58.546340000Z",
+    "start_inclusive": "2026-08-06T14:53:18.170773000Z"
+  },
+  "status": "complete_with_gate_2_classification_mismatches"
+}

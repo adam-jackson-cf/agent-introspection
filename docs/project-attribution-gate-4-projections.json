@@ -1,0 +1,613 @@
+{
+  "authority": {
+    "accepted_context_only": true,
+    "codex_cli_completion_context": "a unique Codex CLI completion context may map earlier telemetry from that exact Codex CLI session only",
+    "join": "exact canonical producer plus exact native session ID",
+    "remote_fields": "materialized projection; not an independent authority"
+  },
+  "checksums": {
+    "gate_4_projection_divergences_jsonl_sha256": "a89a6c4ee419ab72f132f313226843ad70d3146713f530a06decbca07fd3a4b7",
+    "reconciliation_rows_sha256": "be37688f4be2ebce4525ae04e9adbd577adea912413cdc38e08ee98efde98bc7"
+  },
+  "counts": {
+    "correct_projection": 12,
+    "divergences": 5,
+    "identity_mismatch": 0,
+    "missing_hook_or_context": 0,
+    "temporal_selection_error": 5,
+    "upstream_materialization_error": 0
+  },
+  "divergence_artifact": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/gate-4-projection-divergences.jsonl",
+  "frozen_population": {
+    "comparison_rows": 17,
+    "local_rows": 17,
+    "remote_rows": 17,
+    "source_manifest_sha256": {
+      "local-activities.jsonl": "962c6ea4d172cb5bca065fb63234e97407d18c40fa4cf72226b289bc2e563a03",
+      "local-context.jsonl": "381f22dd6ca28f5eddaeb3385fb7459d2f1e11505dd73dee4290bb33123d4d44",
+      "remote-activities.jsonl": "79d47d9121afad8e37010d55c1bd902cabe7388c1f2beba766d41c63019afd16",
+      "source-sessions.jsonl": "b84afa42ea2de25cec656b4e1c2a4d7485e822de7b0bc28649719aebe9e0b140"
+    },
+    "source_time_selection": "canonical activity source_ended_at_ns; intervals are half-open"
+  },
+  "projection_equality": {
+    "conclusion": "Local activity versions and frozen remote materializations are equal after unresolved-value normalization for all 17 rows, but both diverge from Gate 1 authority on five earlier same-session Codex CLI activities; accepted context is authoritative.",
+    "expected_equal_both_rows": 12,
+    "local_remote_equal_rows": 17
+  },
+  "rows": [
+    {
+      "canonical_activity_id": "0c3860bc023b05ac718d10a7da9feac5a8c292534dd8c69d06ec0a0a5d38f44e",
+      "classification": "temporal_selection_error",
+      "expected": {
+        "basis": "unique_codex_completion_context",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "local_matches_expected": false,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": false,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031421579304960,
+      "source_started_at_ns": 1786031419850476032
+    },
+    {
+      "canonical_activity_id": "1b258d032406d861445c5c4563b41146f39e372f81cc78edd76c157b855f5248",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "exact_half_open_context_interval",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "name": "signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "source_ended_at_ns": 1786031797751149824,
+      "source_started_at_ns": 1786031419850476032
+    },
+    {
+      "canonical_activity_id": "2a00d0f77ebae0b53c35e8ed4ca81857d652476cf428805f086364ecbf5f4e38",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "exact_half_open_context_interval",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "name": "signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "source_ended_at_ns": 1786031797751149824,
+      "source_started_at_ns": 1786031419850476032
+    },
+    {
+      "canonical_activity_id": "30a98e80f98aef9bb95a7ed9d41b6d782af99e7a55e341eb005e8d2e5c22a6bd",
+      "classification": "temporal_selection_error",
+      "expected": {
+        "basis": "unique_codex_completion_context",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "local_matches_expected": false,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": false,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031419850476032,
+      "source_started_at_ns": 1786031419850476032
+    },
+    {
+      "canonical_activity_id": "4951ff5b529a072f05b2bd3644971cfc134cb905e878a9a4c379e7dfa44f6412",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786041719795286784,
+      "source_started_at_ns": 1786041719795286784
+    },
+    {
+      "canonical_activity_id": "502011b10553846d0e4d97a67d5c6d891224f10f6847621868bc66bc1ac289aa",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031161629021952,
+      "source_started_at_ns": 1786031161629021952
+    },
+    {
+      "canonical_activity_id": "5058a05bba518b00d692367f79a09bcf313116dd0624156bfda5c5011065ba37",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd861-dbf3-7ee3-a3be-96e6632d5e36",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786041719795286784,
+      "source_started_at_ns": 1786041719795286784
+    },
+    {
+      "canonical_activity_id": "6e3eb710f7ffbfabcaa9bf5cc2c6cd40b73c9231c0e15f467c33895bc1d2dfe3",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "exact_half_open_context_interval",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "name": "signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "source_ended_at_ns": 1786031797751149824,
+      "source_started_at_ns": 1786031795335853056
+    },
+    {
+      "canonical_activity_id": "7193853cec9e67046bf9814edb1027276e4e96c04c959e68df12825629992829",
+      "classification": "temporal_selection_error",
+      "expected": {
+        "basis": "unique_codex_completion_context",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "local_matches_expected": false,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": false,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031421579304960,
+      "source_started_at_ns": 1786031421579304960
+    },
+    {
+      "canonical_activity_id": "a1cd5eb57ef66b5498f5d2b16b6995bb49c59f1430f33ec36ba659c0b36fd995",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786032774941422848,
+      "source_started_at_ns": 1786032774941422848
+    },
+    {
+      "canonical_activity_id": "bdd3d4e326cf1e13a2c28db2f92e128b6a29e2380e55f1139ea7137a94460097",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7d9-5f1d-79e1-99a7-9e62b4611c11",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786032774941422848,
+      "source_started_at_ns": 1786032774941422848
+    },
+    {
+      "canonical_activity_id": "be742425d4283bd336449e6b0d9c115f717d88b9f88780d83a250c16e61e030a",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786030559105329920,
+      "source_started_at_ns": 1786030559105329920
+    },
+    {
+      "canonical_activity_id": "bfe53ab63eb5296a005002776c5d9cc38bf26e233cf50f1de578df8cf8390556",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "exact_half_open_context_interval",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "name": "signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "source_ended_at_ns": 1786031797751149824,
+      "source_started_at_ns": 1786031795335853056
+    },
+    {
+      "canonical_activity_id": "c790be4f67854b55791e76ea6bc32c399113b5c5adc702ea7f7e18457eb48b47",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c0-c11d-7e81-baa3-7173fb8374f3",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031161629021952,
+      "source_started_at_ns": 1786031161629021952
+    },
+    {
+      "canonical_activity_id": "d32a58a33e769c78e5ad4d522123cba12879c2167f2faaa8e6775a512b80f7eb",
+      "classification": "temporal_selection_error",
+      "expected": {
+        "basis": "unique_codex_completion_context",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "local_matches_expected": false,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": false,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031421579304960,
+      "source_started_at_ns": 1786031421579304960
+    },
+    {
+      "canonical_activity_id": "d57cf0f21195774a3f064a67ccfda3655cb424dc4fa439ad5fa001ef4e636276",
+      "classification": "temporal_selection_error",
+      "expected": {
+        "basis": "unique_codex_completion_context",
+        "context_event_id": "2f35064cb0358bd5231fc1d9f23d7f2c6285c32f3c090163ec6c757aa2f4ae2a",
+        "producer": "codex-cli",
+        "project": {
+          "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+          "kind": "git",
+          "name": "signoz-introspection",
+          "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+        },
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "resolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "local_matches_expected": false,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": false,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786031419850476032,
+      "source_started_at_ns": 1786031419850476032
+    },
+    {
+      "canonical_activity_id": "d7e2ada76e3630dd1e97fc7ece7e5a28b9c01c3585dbe5f65f061550f393ee21",
+      "classification": "correct_projection",
+      "expected": {
+        "basis": "missing_hook_or_context",
+        "context_event_id": null,
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "local_activity_version": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "local_matches_expected": true,
+      "local_remote_projection_equal": true,
+      "remote_matches_expected": true,
+      "remote_materialized": {
+        "producer": "codex-cli",
+        "project": null,
+        "session_id": "019fd7b7-8f81-70f3-a565-e378cd1c1862",
+        "status": "unresolved"
+      },
+      "source_ended_at_ns": 1786030559105329920,
+      "source_started_at_ns": 1786030559105329920
+    }
+  ],
+  "schema": "project-attribution-gate-4-projections",
+  "schema_version": 1,
+  "status": "failed"
+}

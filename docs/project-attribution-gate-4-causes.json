@@ -1,0 +1,240 @@
+{
+  "schema": "project-attribution-gate-4-causes",
+  "schema_version": 1,
+  "status": "complete",
+  "authority": {
+    "source_attribution": "Exact canonical producer plus exact native session ID join to accepted context; accepted context is not constrained by telemetry display range.",
+    "projection": "Accepted context is authoritative; local activity and remote materialized fields are projections only.",
+    "dashboard": "Dashboard activity fields and aggregate rows are derived output, not an independent attribution resolver.",
+    "non_additivity": "Counts are retained in their native source-event, session, activity, remote, or dashboard denominator and are never summed across granularities."
+  },
+  "evidence": {
+    "gate_4_join": {
+      "path": "docs/project-attribution-gate-4-join.json",
+      "expected_source_sha256": "ae5f324f75e0dc08f715054407ea39153a574bf765c019f67f321622ed05ab5a",
+      "included_source_sha256": "d50b6a91ae6f2a3f4a9e8e8ff6fb774fee5d14b53a00c72eeaa0c6f476778b7b",
+      "accepted_context_sha256": "381f22dd6ca28f5eddaeb3385fb7459d2f1e11505dd73dee4290bb33123d4d44"
+    },
+    "gate_4_projections": {
+      "path": "docs/project-attribution-gate-4-projections.json",
+      "divergences_sha256": "a89a6c4ee419ab72f132f313226843ad70d3146713f530a06decbca07fd3a4b7"
+    },
+    "gate_4_dashboard": {
+      "path": "docs/project-attribution-gate-4-dashboard.json",
+      "divergences_sha256": "e37d52bf90a5d0533c8cde60e16203660086ca5b5e841f992aa0258d03c1afee"
+    },
+    "gate_4_coverage": {
+      "path": "docs/project-attribution-gate-4-coverage.json"
+    },
+    "gate_2_source": {
+      "path": "docs/project-attribution-gate-2-source.json",
+      "source_sessions_sha256": "b84afa42ea2de25cec656b4e1c2a4d7485e822de7b0bc28649719aebe9e0b140"
+    }
+  },
+  "denominators": {
+    "source_events_included": {
+      "granularity": "source_event",
+      "count": 12830131,
+      "evidence_pointer": "gate_4_join.conservation.included_record_count"
+    },
+    "sessions_with_valid_exact_native_id": {
+      "granularity": "session",
+      "count": 84,
+      "evidence_pointer": "gate_4_coverage.aggregate.session_attribution_coverage.denominator"
+    },
+    "activity_projection_rows": {
+      "granularity": "activity",
+      "count": 17,
+      "evidence_pointer": "gate_4_projections.frozen_population.comparison_rows"
+    },
+    "remote_projection_rows": {
+      "granularity": "remote",
+      "count": 17,
+      "evidence_pointer": "gate_4_projections.frozen_population.remote_rows"
+    },
+    "dashboard_expected_exact_tuples": {
+      "granularity": "dashboard_exact_tuple",
+      "count": 14,
+      "evidence_pointer": "gate_4_dashboard.expected_exact_set.count"
+    },
+    "dashboard_divergence_records": {
+      "granularity": "dashboard_divergence_record",
+      "count": 16,
+      "evidence_pointer": "gate_4_dashboard.divergences.count"
+    }
+  },
+  "causes": [
+    {
+      "id": "missing_native_key",
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "count": 12714178,
+      "terminal_outcome": "failed",
+      "reason": "native_session_key_missing",
+      "evidence_pointer": "gate_4_join.outcomes_by_reason[reason=native_session_key_missing]"
+    },
+    {
+      "id": "conflicting_native_key",
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "count": 5576,
+      "terminal_outcome": "failed",
+      "reason": "native_session_key_conflicting",
+      "evidence_pointer": "gate_4_join.outcomes_by_reason[reason=native_session_key_conflicting]"
+    },
+    {
+      "id": "missing_accepted_context",
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "count": 107097,
+      "terminal_outcome": "failed",
+      "reason": "accepted_context_missing",
+      "evidence_pointer": "gate_4_join.outcomes_by_reason[reason=accepted_context_missing]"
+    },
+    {
+      "id": "inactive_interval",
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "count": 0,
+      "terminal_outcome": "failed",
+      "reason": "accepted_context_interval_not_active",
+      "evidence_pointer": "gate_2_source.classification.terminal_outcome_reasons.failed; no corresponding Gate 4 outcomes_by_reason row"
+    },
+    {
+      "id": "claude_identity_source_blocked",
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "count": 1,
+      "terminal_outcome": "blocked",
+      "reason": "missing_gate_3_identity_proof",
+      "evidence_pointer": "gate_4_join.outcomes_by_reason[reason=missing_gate_3_identity_proof]"
+    },
+    {
+      "id": "source_query_ts_bucket_omission",
+      "granularity": "source_query_selection",
+      "count": 1841506,
+      "unit": "additional_deduplicated_trace_records",
+      "denominator": null,
+      "interpretation": "Selection-query correction evidence, not a terminal attribution class or coverage denominator.",
+      "evidence_pointer": "gate_2_source.query.ts_bucket_omission_evidence"
+    },
+    {
+      "id": "gate_2_reason_label_drift",
+      "granularity": "source_event_comparison",
+      "denominator": "source_events_included",
+      "count": 946,
+      "terminal_outcome_changed": 0,
+      "difference": "Gate 2 unique_codex_completion_context versus Gate 4 exact_context_interval; both attributed.",
+      "evidence_pointer": "gate_4_join.gate_2_comparison.mismatch_groups[0]"
+    },
+    {
+      "id": "temporal_selection_errors",
+      "granularity": "activity",
+      "denominator": "activity_projection_rows",
+      "count": 5,
+      "local_matches_expected": false,
+      "remote_matches_expected": false,
+      "evidence_pointer": "gate_4_projections.counts.temporal_selection_error"
+    },
+    {
+      "id": "upstream_materialization_errors",
+      "granularity": "activity",
+      "denominator": "activity_projection_rows",
+      "count": 0,
+      "evidence_pointer": "gate_4_projections.counts.upstream_materialization_error"
+    },
+    {
+      "id": "remote_delivery_equality",
+      "granularity": "remote",
+      "denominator": "remote_projection_rows",
+      "count": 17,
+      "relation": "local_activity_version equals frozen remote materialization after unresolved-value normalization",
+      "authority_matches": 12,
+      "authority_diverges": 5,
+      "evidence_pointer": "gate_4_projections.projection_equality"
+    },
+    {
+      "id": "dashboard_embedded_field_authority",
+      "granularity": "dashboard_exact_tuple",
+      "denominator": "dashboard_expected_exact_tuples",
+      "count": 14,
+      "dashboard_exact_rows": 0,
+      "classification": "missing_exact_tuple",
+      "interpretation": "All authority tuples are absent from the dashboard output schema; embedded activity project fields are not treated as an independent resolver.",
+      "evidence_pointer": "gate_4_dashboard.comparison; gate_4_dashboard.persisted_dashboard_sql.observable_project_attribution_rows"
+    },
+    {
+      "id": "dashboard_embedded_field_semantic_mismatch",
+      "granularity": "dashboard_semantic_comparison",
+      "denominator": null,
+      "count": 2,
+      "interpretation": "Activity count and producer/surface output are not an exact producer/session/project tuple set and are not reconciled by inference.",
+      "evidence_pointer": "gate_4_dashboard.comparison.semantic_mismatch_count"
+    },
+    {
+      "id": "dashboard_range_coupling",
+      "granularity": "dashboard_divergence_record",
+      "denominator": "dashboard_divergence_records",
+      "count": 1,
+      "authority_relevant_outside_display_records": 1,
+      "outside_display_context_records": 6,
+      "interpretation": "The dashboard filters accepted context by its display range before exact-key joining.",
+      "evidence_pointer": "gate_4_dashboard.context_range_test; gate_4_dashboard.divergences.classification_counts.context_range_coupling"
+    }
+  ],
+  "reconciliations": {
+    "source_event_terminal_outcomes": {
+      "denominator": "source_events_included",
+      "attributed": 3279,
+      "failed": 12826851,
+      "blocked": 1,
+      "total": 12830131,
+      "conserved": true,
+      "evidence_pointer": "gate_4_join.conservation"
+    },
+    "source_event_failed_reason_partition": {
+      "denominator": "source_events_included",
+      "missing_native_key": 12714178,
+      "conflicting_native_key": 5576,
+      "missing_accepted_context": 107097,
+      "inactive_interval": 0,
+      "total": 12826851,
+      "equals_failed_terminal_outcome": true,
+      "evidence_pointer": "gate_4_join.outcomes_by_reason"
+    },
+    "session_coverage": {
+      "granularity": "session",
+      "denominator": "sessions_with_valid_exact_native_id",
+      "attributed": 14,
+      "failed": 69,
+      "blocked": 1,
+      "percentage": 16.666666666667,
+      "missing_or_conflicting_session_groups": 6,
+      "evidence_pointer": "gate_4_coverage.aggregate.session_attribution_coverage"
+    },
+    "source_event_coverage": {
+      "granularity": "source_event",
+      "denominator": "source_events_included",
+      "attributed": 3279,
+      "percentage": 0.025557026659,
+      "evidence_pointer": "gate_4_coverage.aggregate.source_event_attribution_coverage"
+    },
+    "project_tuple_accuracy": {
+      "granularity": "attributed_source_event",
+      "denominator": 3279,
+      "matching": 3279,
+      "unverifiable_or_mismatched": 0,
+      "percentage": 100.0,
+      "evidence_pointer": "gate_4_coverage.aggregate.project_tuple_accuracy"
+    },
+    "dashboard_divergence_partition": {
+      "denominator": "dashboard_divergence_records",
+      "missing_exact_tuple": 14,
+      "missing_producer_surface": 1,
+      "context_range_coupling": 1,
+      "total": 16,
+      "conserved": true,
+      "evidence_pointer": "gate_4_dashboard.divergences.classification_counts"
+    }
+  }
+}

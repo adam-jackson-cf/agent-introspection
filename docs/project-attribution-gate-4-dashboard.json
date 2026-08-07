@@ -1,0 +1,264 @@
+{
+  "authority": {
+    "context_lookup": "must not be constrained by telemetry display range",
+    "dashboard_project_fields": "derived projection only; not used as authority",
+    "expected_set": "Gate 2 source-sessions terminal_outcome=attributed, joined under Gate 1 exact canonical producer + native_session_id authority"
+  },
+  "comparison": {
+    "exact_extras_count": 0,
+    "exact_mismatches_count": 0,
+    "exact_omissions_count": 14,
+    "notes": [
+      "All 14 authority tuples are unobservable as dashboard project-attribution rows; this is an exact output-schema omission, not an inference from embedded activity fields.",
+      "The sole observable producer/surface is codex-cli/codex-cli; expected omp/omp is absent.",
+      "Attributed=4 is an activity count, while expected=14 is a producer/session/project tuple count; they cannot be reconciled as a set."
+    ],
+    "semantic_mismatch_count": 2,
+    "verdict": "failed"
+  },
+  "context_range_test": {
+    "authority_relevant_outside_display_records_count": 1,
+    "outside_display_context_records_count": 6,
+    "sql_behavior": "_context_coverage_query applies COMMON_FILTER to accepted_context, so a context record outside selected display bounds is excluded before exact-key joining.",
+    "status": "failed",
+    "telemetry_display_observation_range_ns": {
+      "end_inclusive": 1786041719795286784,
+      "start_inclusive": 1786030559105329920
+    },
+    "tested_record": {
+      "classification": "context_range_coupling",
+      "native_session_id": "019fdbb4-e4a3-7000-98de-3038ab08d80c",
+      "occurred_at": "2026-08-07T16:49:36.091000+00:00",
+      "producer": "omp",
+      "project": {
+        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "kind": "git",
+        "name": "signoz-introspection",
+        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      "reason": "accepted_context CTE applies the display-range COMMON_FILTER, contrary to Gate 1 unrestricted exact-key context lookup",
+      "status": "failed"
+    },
+    "verdict": "range-coupled; violates Gate 1 context_lookup requirement"
+  },
+  "divergences": {
+    "classification_counts": {
+      "context_range_coupling": 1,
+      "missing_exact_tuple": 14,
+      "missing_producer_surface": 1
+    },
+    "count": 16,
+    "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/gate-4-dashboard-divergences.jsonl",
+    "sha256": "e37d52bf90a5d0533c8cde60e16203660086ca5b5e841f992aa0258d03c1afee"
+  },
+  "expected_exact_set": {
+    "by_producer": {
+      "codex-cli": 6,
+      "omp": 8
+    },
+    "count": 14,
+    "key": [
+      "producer",
+      "native_session_id",
+      "project_id",
+      "project_kind",
+      "project_name",
+      "project_root"
+    ],
+    "members": [
+      {
+        "native_session_id": "019fd7b9-edf2-76d2-ab78-64ff9c3b1e6d",
+        "producer": "codex-cli",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd7c3-88d6-7e82-a264-2f271f03b567",
+        "producer": "codex-cli",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd7c4-a118-7c03-b281-1976e9f1c152",
+        "producer": "codex-cli",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd82f-7f9a-7f12-8f6b-9b4132720888",
+        "producer": "codex-cli",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd830-abe3-70f2-87df-f42a15655c7a",
+        "producer": "codex-cli",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd830-ad0b-7c41-98d0-340058ea477f",
+        "producer": "codex-cli",
+        "project_id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+        "project_kind": "git",
+        "project_name": "fitness",
+        "project_root": "/Users/adamjackson/Projects/inflight/fitness"
+      },
+      {
+        "native_session_id": "019fd7ba-3cda-7000-a9dd-5ded507bc421",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd7c3-c17f-7000-9177-047143b41469",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd80e-2eec-7000-b3c3-a6aefb21cb31",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd818-c0d7-7000-acd0-419bf7709b32",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd818-db55-7000-b684-62d294ce0aa6",
+        "producer": "omp",
+        "project_id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+        "project_kind": "git",
+        "project_name": "fitness",
+        "project_root": "/Users/adamjackson/Projects/inflight/fitness"
+      },
+      {
+        "native_session_id": "019fd81a-2dd0-7000-b56e-76726f2af576",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      },
+      {
+        "native_session_id": "019fd81a-2e48-7000-813f-ef850855aeed",
+        "producer": "omp",
+        "project_id": "89acfd5574bbedccc00410bae1eff4cd66cefcd1651d4610a93a40c4cf168efb",
+        "project_kind": "git",
+        "project_name": "fitness",
+        "project_root": "/Users/adamjackson/Projects/inflight/fitness"
+      },
+      {
+        "native_session_id": "019fdbb4-e4a3-7000-98de-3038ab08d80c",
+        "producer": "omp",
+        "project_id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
+        "project_kind": "git",
+        "project_name": "signoz-introspection",
+        "project_root": "/Users/adamjackson/Projects/inflight/signoz-introspection"
+      }
+    ],
+    "sha256": "cff0b66a2613bdd3ae3a511fe8bb55bd5e2e436b88a8be6deef847332c5e333f"
+  },
+  "expected_set_construction": {
+    "context_selector": "all accepted_context_event records, without applying dashboard display bounds",
+    "join": [
+      "producer exact canonical namespace",
+      "native_session_id exact"
+    ],
+    "missing_or_conflicting_context": "failure (none: 14 exact joins, 0 missing, 0 conflicting)",
+    "project_tuple_source": "accepted context record after exact join",
+    "telemetry_selector": "source-sessions included records with terminal_outcome=attributed in frozen half-open source_time_range"
+  },
+  "frozen_investigation": "20260807T174558546340Z",
+  "inputs": {
+    "accepted_context": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-context.jsonl",
+      "sha256": "381f22dd6ca28f5eddaeb3385fb7459d2f1e11505dd73dee4290bb33123d4d44"
+    },
+    "dashboard_asset": {
+      "path": "src/agent_introspection/assets/agent-introspection.json",
+      "sha256": "69efb9b7f05597b73091ecd0da1fd13de6f3c13f1fe9dc4487b4e3501d3b994a"
+    },
+    "dashboard_results": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/dashboard-results.jsonl",
+      "sha256": "bde9dc64cc399ddb456de51a55d6938d2350b300a2ef35f2581f83b744a37663"
+    },
+    "source_sessions": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/source-sessions.jsonl",
+      "sha256": "b84afa42ea2de25cec656b4e1c2a4d7485e822de7b0bc28649719aebe9e0b140"
+    }
+  },
+  "persisted_dashboard_sql": {
+    "aggregate_counts": {
+      "activity_coverage": {
+        "codex-cli/codex-cli": {
+          "Attributed": 4,
+          "Eligible": 17,
+          "Unresolved": 13
+        }
+      },
+      "session_context_coverage": {
+        "codex-cli/codex-cli": {
+          "Accepted context sessions": 2,
+          "Matched sessions": 1,
+          "Source sessions": 5,
+          "Telemetry without context": 4
+        },
+        "empty/empty": {
+          "Accepted context sessions": 18,
+          "Matched sessions": 1,
+          "Project-context records without telemetry": 18,
+          "Source sessions": 1
+        }
+      }
+    },
+    "asset_matches_current_source": true,
+    "execution": "Gate 2 persisted insight-dashboard SQL executed read-only with end_timestamp_nano = end_exclusive - 1",
+    "observable_producer_surface_set": {
+      "count": 1,
+      "members": [
+        {
+          "producer": "codex-cli",
+          "surface": "codex-cli"
+        }
+      ],
+      "sha256": "d267844b712411c9b4f662a6c89d690f507888e74eea69042662e18886188e5"
+    },
+    "observable_project_attribution_rows": {
+      "count": 0,
+      "reason": "no persisted dashboard result row carries producer + native_session_id + project tuple",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "projection_authority_behavior": "CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE selects latest canonical activity version within the display range and activity-coverage counts embedded activity attribution/project fields; it neither joins accepted context nor emits native_session_id/project tuples. session-context-coverage joins exact producer/session keys but only emits aggregate counts and filters accepted context by COMMON_FILTER."
+  },
+  "schema": "project-attribution-gate-4-dashboard",
+  "schema_version": 1,
+  "source_time_range": {
+    "end_exclusive": "2026-08-07T17:45:58.546340000Z",
+    "semantics": "half-open",
+    "start_inclusive": "2026-08-06T14:53:18.170773000Z"
+  },
+  "status": "failed"
+}
