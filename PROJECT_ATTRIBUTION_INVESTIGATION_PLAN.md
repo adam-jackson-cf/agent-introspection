@@ -62,9 +62,31 @@ No producer is declared issue-free until the installed path passes the same end-
 | Codex CLI | Source traces carry `thread.id` or `thread_id`; direct adapter proof established the same `thread-id` in a notify envelope. | `agent-turn-complete` is mislabeled as start; direct proof bypassed the active Computer Use notify chain; only one of five activity-bearing sessions has accepted context; repeated notify semantics conflict with replay. |
 | Codex app-server | Retained protocol proof established thread/start response ID equality with source `thread.id`/`thread_id` and concurrent namespace isolation. | The current post-cutover population does not provide a fresh installed end-to-end dashboard proof. End and workspace-change behavior remain unproven by the retained fixture. |
 | Codex app | Installed surface exists separately from app-server. | Retained proof marks app workspace lifecycle identity equality and source ingestion unsupported. It cannot be silently grouped with app-server or omitted from the capability verdict. |
-| OMP | Retained proof matched extension `getSessionId()` to `gen_ai.conversation.id`; true native start and shutdown hooks exist; local context contains accepted OMP intervals. A bounded non-Git rejection fix is present. | No current OMP canonical activities exist, so activity yield cannot serve as proof. The installed extension path, all eligible trace ingestion, exact downstream session join, remote delivery, dashboard project assignment, concurrency, and restart behavior require an end-to-end proof. |
+| OMP | The retained fixture names extension `getSessionId()` as the native lifecycle field and `gen_ai.conversation.id` as the OTEL field; true native start and shutdown hooks exist; local context contains accepted OMP intervals. A bounded non-Git rejection fix is present. | The fixture does not retain an observed hook/session value alongside the OTEL value, so native identity equality remains unproven. No current OMP canonical activities exist, so activity yield cannot serve as proof. The installed extension path, all in-scope trace ingestion, exact downstream session join, remote delivery, dashboard project assignment, concurrency, and restart behavior require an end-to-end proof. |
 
 A producer with telemetry but no detector activity still belongs in the attribution denominator. Detector yield and project-attribution coverage are separate measurements.
+
+## Frozen denominator contract
+
+Gate 2 must freeze the inclusion predicate before any coverage query or probe. A raw source record is in scope when all of the following are true:
+
+1. its authoritative source timestamp is inside the exact frozen half-open range;
+2. its OTEL service maps to an installed producer surface under the approved source contract;
+3. its signal and record type are consumed or intended to be consumed by the project-attributed dashboard path;
+4. its immutable source identity is present even if its native session key, context, detector output, or project attribution is missing.
+
+The predicate must not depend on a record having a native session key, accepted context, detector output, canonical activity, project tuple, or successful join. Missing or conflicting native keys, missing context, delivery failure, and query omission remain in-scope failures and reduce coverage.
+
+Every in-scope record enters exactly one terminal manifest row:
+
+- `attributed`: exactly one canonical project tuple;
+- `expected_rejection`: only a pre-approved non-project case such as a validated non-Git workspace or a native lifecycle event type explicitly outside an otherwise supported producer contract;
+- `failed`: missing or conflicting native key, missing context, ambiguous project, ingestion omission, delivery failure, or dashboard-query omission;
+- `blocked`: required evidence is unavailable.
+
+Records outside the predicate enter a complementary excluded manifest with one allowlisted exclusion reason. Non-Git records, records missing native keys, and records without detector activities are never excluded merely because they cannot currently be attributed.
+
+Coverage cannot be improved by changing the predicate after the population is frozen. Any predicate change creates a new population, manifests, checksums, and Gate 2 decision.
 
 ## Audit of `otel-producers.md`
 
@@ -107,15 +129,19 @@ Fresh probes run only after a frozen cutoff. Every probe uses allowlisted native
 
 1. Record exact UTC telemetry bounds, local and remote cutoffs, database identity, inbox identity, installed runtime checksums, active hook configuration identities, scheduler state, and dashboard revision.
 2. Back up the local ledger using the repository workflow and verify integrity.
-3. Export per-producer manifests for:
-   - all eligible raw telemetry sessions and source events;
+3. Freeze the exact raw-source inclusion predicate by producer, service, signal, record type, and half-open source-time range before calculating coverage.
+4. Export per-producer manifests for:
+   - every in-scope raw telemetry session and source event, including missing or conflicting native keys;
+   - one terminal outcome per in-scope record: `attributed`, `expected_rejection`, `failed`, or `blocked`;
+   - every excluded raw record with exactly one allowlisted exclusion reason;
    - accepted and rejected context records;
    - local context intervals or session mappings;
    - canonical activities only as a downstream comparison population;
    - outbox and remote context/projected events;
    - dashboard query results.
-4. Namespace every ID by producer and surface. Record session and source-event denominators separately.
-5. Reconcile local accepted context, outbox delivery, and remote context records by immutable identity, timestamp, project tuple, and checksum.
+5. Namespace every ID by producer and surface. Record raw, included, excluded, attributed, expected-rejection, failed, and blocked denominators separately at session and source-event granularity.
+6. Require conservation: `raw = included + excluded` and `included = attributed + expected_rejection + failed + blocked`.
+7. Reconcile local accepted context, outbox delivery, and remote context records by immutable identity, timestamp, project tuple, and checksum.
 
 **Gate 2 — Frozen population.** Approve exact all-producer denominators and probe exclusion. Unknown or inaccessible evidence is `Blocked`.
 
@@ -147,26 +173,28 @@ Producer-specific gates:
 
 ### Phase 4 — Prove the downstream join
 
-1. Select telemetry by the dashboard’s source-event time range.
+1. Select the frozen in-scope telemetry population by the Gate 2 predicate and dashboard source-event time range.
 2. Independently load the context records required for those producer/session IDs; do not constrain context lookup to the same source-event range when records may arrive earlier or later.
 3. Join only on canonical producer, exact native session ID, and the Gate 1 time semantics.
-4. Require exactly one project tuple for every eligible telemetry source event.
-5. Fail conflicting, absent, or ambiguous context explicitly.
+4. Require exactly one project tuple for every in-scope project-capable telemetry source event.
+5. Assign exactly one terminal outcome to every other in-scope record. Missing or conflicting keys and missing context are failures, not exclusions.
 6. Compare the independent expected set with:
    - current local activity-version project fields;
    - current remote materialized activity records;
    - persisted dashboard SQL.
-7. Classify divergence as missing hook/context, source-ingestion omission, identity mismatch, temporal-selection error, upstream materialization error, remote delivery error, or dashboard-query error.
+7. Classify divergence as missing hook/context, source-ingestion omission, identity mismatch, temporal-selection error, upstream materialization error, remote delivery error, dashboard-query error, or approved expected rejection.
 
 Coverage oracles:
 
 ```text
-session_coverage = attributed eligible sessions / all eligible sessions
-source_event_coverage = attributed eligible source events / all eligible source events
+population_conservation = (included + excluded) / raw
+classification_coverage = (attributed + expected_rejection + failed + blocked) / included
+session_attribution_coverage = attributed project-capable sessions / all in-scope project-capable sessions
+source_event_attribution_coverage = attributed project-capable source events / all in-scope project-capable source events
 project_tuple_accuracy = correctly joined source events / attributed source events
 ```
 
-All three must equal 100% for every supported producer and in aggregate. A blocked producer prevents `Complete`; it is not removed from the denominator without an explicit capability decision.
+Population conservation, classification coverage, both attribution coverage measures, and project-tuple accuracy must equal 100% for every supported producer and in aggregate. `failed` and `blocked` must both equal zero at `Complete`. Expected rejections must match the pre-approved reason allowlist and exact manifest. A blocked producer prevents `Complete`; it is not removed from the denominator.
 
 **Gate 4 — Join correctness.** Approve the independently computed producer/session/project set and exact dashboard comparison.
 
@@ -245,13 +273,13 @@ For each supported producer, run post-cutoff probes in Git projects A and B and 
 
 **Gate 7 — Mutation approval.** Approve exact local and remote mutation inventories after dry-run evidence.
 
-**Gate 8 — Final acceptance.** Require 100% session coverage, 100% source-event coverage, and 100% project-tuple accuracy for every supported producer and in aggregate, with no `Blocked` producer presented as complete.
+**Gate 8 — Final acceptance.** Require 100% population conservation, classification coverage, session attribution coverage, source-event attribution coverage, and project-tuple accuracy for every supported producer and in aggregate; require zero failed or blocked rows; and reconcile every expected rejection to the approved manifest.
 
 ## Acceptance criteria
 
 - `otel-producers.md` and implementation describe one approved authority and downstream join without contradiction.
 - Claude Code, Codex CLI, Codex app-server, Codex app, and OMP each have an installed-version capability verdict backed by live evidence.
-- Every supported producer has 100% eligible session and source-event project attribution through the real installed path.
+- Every supported producer has 100% in-scope project-capable session and source-event attribution through the real installed path, with zero failed or blocked rows.
 - Claude native hook/source identity equality and source ingestion are proven before support is claimed.
 - Codex completion is not represented as a false session start, and the active notify wrapper path is proven.
 - Codex app and app-server are not conflated.
