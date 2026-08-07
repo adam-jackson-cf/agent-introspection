@@ -2,157 +2,225 @@
 
 ## Objective
 
-Establish why canonical activities still fail project attribution after the canonical ingestion cutover, separate data defects from dashboard-query defects, and produce an evidence-backed remediation decision. The investigation is complete only when every unresolved activity in a frozen population has one classified cause and the temporal attribution contract has been checked at source-membership granularity.
+Establish the remaining project-attribution defects, agree the canonical attribution contract, and only then approve a file-specific remediation plan. The work is complete when every activity in a reproducible frozen population has one evidence-backed outcome, every supported producer passes native identity and project-context probes, and source-member attribution remains correct under replay, late context, workspace transitions, and scan failure.
 
-This plan investigates the active pipeline. It does not restore direct trace-CWD attribution, infer identity from prompts or paths, add producer-specific project resolvers, or introduce compatibility behavior. The canonical contract remains: a validated native lifecycle record establishes a half-open project-context interval, and each source event is attributed by canonical producer, native correlation identifier, and source-event time.
+This plan does not restore direct trace-CWD attribution, infer project identity from prompts, paths, CWD aliases, process state, or request content, add producer-specific project resolvers, or introduce compatibility behavior. Missing evidence is `Blocked`, not proof that a producer is unsupported.
 
-## Observed baseline
+## Current evidence and remaining issues
 
-The earlier 24-hour inspection suggested 17 canonical activities, 4 resolved activities, 13 `missing_workspace` activities, and only one producer-namespaced Codex CLI identifier shared between activity-bearing and accepted-context sets. It also suggested two resolved activities whose stored source extrema crossed their accepted context start. These population claims are provisional hypotheses: Phase 1 must re-establish them from an exact UTC range, database snapshot, remote cutoff, retained queries, namespaced identifier manifests, and checksums before they are used as denominators.
+The following results come from a read-only inspection of the current local ledger. They establish the investigation targets, but they are not Gate 1 denominators because the database and remote cutoff were not frozen for this inspection.
 
-Two code-contract observations motivate focused tests. The late-context path in `scan.py` calls `reconcile_activity` with `activity.source_ended_at_ns`, which can select an interval using an aggregate end time. `_bounds` reads `source_watermarks`, while the canonical persistence path does not visibly advance that watermark. Neither observation is accepted as the root cause until controlled experiments establish its runtime effect.
+| ID | Current evidence | Required verdict |
+|---|---|---|
+| I1 | 17 canonical activities exist: 4 resolved and 13 unresolved with `missing_workspace`. | Re-establish from a frozen cutoff and classify every activity. |
+| I2 | 9 activities have a producer-and-correlation-ID match in `session_context_intervals`; only 4 have an interval containing the activity end time. The 13 unresolved activities therefore divide provisionally into 8 without any matching lifecycle identity and 5 with matching identity but no containing interval. | Distinguish missing lifecycle capture from late or temporally invalid lifecycle capture. |
+| I3 | 2 of the 4 resolved activities start before the interval used as attribution evidence. | Recover every authoritative source-member timestamp and determine whether these activities contain mixed pre-context and post-context members. Aggregate end-time attribution is not accepted as proof. |
+| I4 | The Codex CLI adapter maps native `agent-turn-complete` notifications to `session_start`. Retained producer proof shows the first OTEL timestamp can precede the resulting context timestamp. | Decide whether an authoritative pre-source Codex lifecycle surface exists. A completion callback must not be relabelled as a start event. |
+| I5 | `_partition_observations_by_context` partitions newly detected observations by source-member timestamps, but `_persist_canonical_activities` and `_reconcile_late_context` resolve stored activities using `source_ended_at_ns`. | Prove the late-context behavior with mixed-interval membership and replace aggregate endpoint resolution with source-member reconciliation. |
+| I6 | The `signoz_logs` watermark remains at the original cutover point while each scan extends the end bound. Recent scans processed 546,795 and 595,635 rows and ended with `ScanDeadlineExceeded`. | Establish whether the non-advancing range delays or prevents canonical persistence, then approve separate range semantics that preserve late-source handling. |
+| I7 | Existing attribution, scan, Codex-adapter, and source tests pass, including a synthetic workspace-transition split and a simple late-context version bump. They do not exercise the observed post-turn timing, late arrival across a transition, or an end-to-end supported-producer project assertion. | Add behavioral coverage that fails on the observed mechanisms rather than on the current example values. |
+| I8 | Local activity versions, canonical outbox rows, and remote canonical records have not yet been reconciled at immutable event-tuple granularity for one frozen cutoff. | Separate storage defects from delivery and query defects before mutation. |
 
-## Scope and evidence rules
+The current rejection population is not the attribution denominator. Raw traces without a canonical native correlation ID are source-capability evidence; they become attribution cases only if they produce a canonical activity. This prevents high-volume source diagnostics from obscuring the 17 activity outcomes.
 
-The investigation covers:
+## Why OpenTelemetry logs appear in an agent-trace investigation
 
-- installed Claude Code, Codex CLI, Codex app, Codex app-server, and OMP lifecycle surfaces;
-- managed runtime configuration and the canonical session-context inbox;
-- `session_context_events`, `session_context_intervals`, `canonical_rejections`, `canonical_activities`, and `canonical_activity_versions`;
-- raw SigNoz producer logs and traces used by `LOG_QUERY` and `TRACE_QUERY`;
-- activity source membership, authoritative detector-event timestamps, provenance-only identifiers, and source-time partitioning;
-- late-context reconciliation and monotonic version insertion;
-- source range and scheduler behavior where it can omit, duplicate, or delay evidence;
-- the persisted Agent Introspection dashboard identity, SQL, latest-version selection, source-time predicate, and returned stable-ID population.
+“Logs” in this repository means structured OpenTelemetry log records emitted by the agent runtime, not application log scraping, shell history, or project inference from command text.
 
-Evidence must use bounded time ranges and presence, count, identifier, timestamp, and project-tuple fields only. Never capture prompt text, response text, command output, environment values, or arbitrary payloads. Every comparison must record its cutoff, query, denominator, and immutable identifier set.
+The two signals have different roles:
 
-## Ownership and decision authority
+- trace spans provide the native producer correlation identity and trace-episode timing;
+- selected OTEL log records provide detector events such as tool failure, repeated attempt, tool loop, and transport instability;
+- project identity comes only from validated native project-context evidence;
+- source members are joined to project context by canonical producer, native correlation ID, and authoritative source-member time.
 
-One investigation operator owns the cutoff, probe schedule, evidence index, and cause ledger. Before work starts, record accountable owners for: local ledger backup and SQLite evidence; installed producer configuration and native probes; raw and canonical SigNoz queries; dashboard SQL validation; scan-range disposition; security review of retained evidence; and final remediation approval. Each gate names its evidence, decision owner, decision, and handoff artifact. Destructive remote correction remains outside this investigation and requires separate explicit approval.
+All 17 current activities are detector activities whose 26 authoritative event members are log-backed. Omitting those records would remove the activities being diagnosed, not narrow their attribution. The investigation must therefore retain the minimum log fields needed to identify each canonical source member and its timestamp.
 
-## Investigation questions
+The following are outside this attribution investigation:
 
-1. Did each activity-bearing producer session invoke the managed lifecycle adapter?
-2. Did the adapter receive the same native identifier emitted by source telemetry?
-3. Was the lifecycle envelope accepted, rejected, quarantined, left pending, or never created?
-4. Does exactly one half-open context interval contain each source member timestamp?
-5. Can a canonical activity contain source members from different attribution intervals?
-6. Does late context produce one higher version without changing `activity.id` or source membership?
-7. Are apparent coverage gaps actually sessions with telemetry but no detector output?
-8. Does repeated full-range scanning alter attribution outcomes or merely create load and delay?
+- redesigning detectors or deciding which tool events should become activities;
+- capturing prompts, responses, command output, arbitrary tool arguments, environment values, or secrets;
+- using log attributes, span CWD, targets, or request content to derive project identity;
+- treating every raw trace or log rejection as a failed activity;
+- dashboard layout or insight redesign.
+
+Dashboard SQL is checked only after canonical local and remote data agree. The separate dashboard plans remain responsible for dashboard migration and presentation changes.
+
+## Canonical contract to approve
+
+The recommended contract is strict because it makes unsupported coverage visible instead of manufacturing project attribution:
+
+1. **Truthful native context evidence.** A context event records the native event that actually occurred. `session_start`, `workspace_changed`, and `session_end` cannot be synthesized from a post-turn completion callback.
+2. **Producer-neutral join.** A source member joins context only by canonical producer, native correlation ID, and source-member time. Project fields in traces, logs, prompts, requests, filesystem paths, process state, or aliases are never attribution inputs.
+3. **Half-open intervals.** A validated start or workspace-change opens `[started_at, ended_at)`; the next workspace-change or session end closes it. Exact start is included and exact end is excluded.
+4. **Source-member granularity.** Each authoritative detector event resolves independently. An aggregate endpoint is never an attribution oracle.
+5. **Single-project activities.** All authoritative members of one canonical activity must resolve to one interval and one project. Members across intervals are deterministically partitioned before canonical identity is created.
+6. **Late evidence replays the same rule.** Late context re-evaluates retained source members. It must not promote an existing mixed or temporally invalid activity from its end timestamp.
+7. **Immutable evidence.** Existing activity bases and event payload identities are not rewritten. A valid attribution-only change creates exactly version `N+1`; changed source partitioning creates new canonical activity identities under an approved bounded reconstruction disposition.
+8. **Explicit capability.** A producer is supported only if an installed-version native proof shows the lifecycle identity equals the source identity and the context event occurs early enough to cover source members. If Codex CLI exposes no authoritative pre-source lifecycle surface, its interval-based attribution is `Blocked` or unsupported; the completion callback is not backdated.
+9. **Signal neutrality.** The rule is identical for trace-episode and log-detector members. Signal type determines the authoritative timestamp field, not the project-resolution algorithm.
+10. **Denominator conservation.** Partitioning, replay, and reconstruction preserve the exact authoritative source-member set. No valid member is dropped or counted twice.
+
+No remediation implementation begins until Gate 4 approves this contract and the Codex CLI lifecycle capability verdict.
+
+## Ownership and evidence rules
+
+One investigation operator owns the cutoff, evidence index, probe schedule, and cause ledger. Record accountable owners for local SQLite backup, installed producer probes, raw and canonical SigNoz queries, scan-range disposition, evidence-security review, bounded reconstruction, and final remediation approval.
+
+Retained evidence is limited to allowlisted identifiers, timestamps, counts, project tuples, statuses, checksums, installed versions, and presence checks. Never retain prompts, responses, command output, arbitrary payloads, environment values, or secrets. Every query records exact UTC bounds, cutoff, denominator, immutable identifier set, and checksum.
+
+Fresh probes occur only after the baseline cutoff is frozen. Probe IDs and source times must be isolated after that cutoff, and probe evidence is retained rather than deleted.
 
 ## Work plan
 
-### Phase 1 — Freeze and reconcile the current population
+### Phase 1 — Freeze the activity population
 
-1. Record exact UTC source-time bounds and cutoff. Back up the local SQLite ledger using the established workflow and record local database, inbox, installed-runtime, and remote snapshot identities.
-2. Export stable, redacted inventories for activity bases and all versions, context events and intervals, rejection occurrence evidence, inbox files, canonical outbox evidence, and outbox rows partitioned by delivery status.
-3. Retain producer-namespaced immutable identifier manifests, the allowlisted queries that created them, row counts, and checksums. Approve this frozen population before causal classification.
-4. Define three explicit canonical event populations: locally required activity-version events, corresponding outbox rows partitioned as pending/failed/delivered, and remote rows selected by the canonical source-event timestamp domain.
-5. Reconcile event ID, activity ID, version, event name, payload schema version, source-event timestamp, attribution tuple, project tuple, and an allowlisted payload checksum. Classify pending, failed, missing, duplicate, and mismatched rows instead of treating unequal sets as inherently incomparable.
-6. Produce one row per activity containing producer, surface, correlation ID, source membership, source extrema, all attribution versions, outbox/remote state, matching interval candidates, and a provisional data-versus-query classification.
+1. Record exact UTC source bounds, local cutoff, remote ingestion cutoff, database identity, installed runtime identity, inbox identity, and scheduler state.
+2. Create an online SQLite backup using the repository workflow and verify its integrity.
+3. Export redacted inventories for canonical activity bases and every version, source membership, context events and intervals, rejection occurrences relevant to activity members, inbox rows, recomputation rows, and canonical outbox rows by status.
+4. Export corresponding remote canonical activity-version events selected by the canonical source timestamp.
+5. Retain the exact queries, producer-namespaced identifier manifests, row counts, and checksums.
 
-Gate 1 approves the reproducible frozen population. Gate 2 approves local/outbox/remote comparability. Inaccessible evidence or an unbounded population produces a blocked result with affected IDs, attempted acquisition, owner, and unblock action; it is not completion.
+**Gate 1 — Frozen population.** Approve reproducibility, exact denominators, and the probe-exclusion cutoff. An unbounded or inaccessible population is `Blocked`.
 
-Deliverable: a frozen attribution ledger with exact denominators, tuple-level remote reconciliation, and probe-exclusion cutoff.
+### Phase 2 — Reconcile storage, delivery, and source membership
 
-### Phase 2 — Trace lifecycle evidence by producer
+1. Reconcile locally required activity-version events, outbox rows, and remote rows by event ID, activity ID, version, event name, payload schema version, source timestamp, attribution tuple, project tuple, checksum, status, and duplicate count.
+2. Produce one row per activity with producer, surface, correlation ID, detector ID, source-member IDs, source extrema, all attribution versions, outbox and remote state, and candidate context intervals.
+3. Recover the authoritative timestamp for every detector event member. A log member uses its retained log timestamp; a trace episode uses its canonical trace-episode timestamp. Provenance-only log and span IDs do not become additional attribution members.
+4. Partition raw source diagnostics from activity-bearing cases. Record correlation coverage separately without adding non-activity traces to the attribution denominator.
 
-For every activity-bearing correlation identifier, trace the lifecycle path in order:
+**Gate 2 — Comparable evidence.** Approve local/outbox/remote equality or classify each difference as storage, pending delivery, failed delivery, missing remote row, duplicate, or payload mismatch.
 
-1. Native producer lifecycle invocation.
-2. Thin adapter normalization.
-3. Shared runtime validation and Git project resolution.
-4. Inbox spool identity.
-5. Ordered replay into `session_context_events` and `session_context_intervals`.
-6. Rejection or quarantine when acceptance did not occur.
-7. OTLP acceptance event and remote delivery identity.
+### Phase 3 — Establish causes and producer capability
 
-Classify each missing context as one of: producer capability absent, installed hook absent or stale, hook not invoked, malformed native envelope, producer/native-ID mismatch, non-Git workspace, ordered replay rejection, inbox delivery failure, or remote delivery-only failure. “No matching context” is an observation, not a root-cause category.
+1. For each activity correlation ID, trace native lifecycle invocation, adapter normalization, shared runtime validation, Git project resolution, inbox spool, ordered replay, rejection or quarantine, and remote lifecycle delivery.
+2. Classify each unresolved activity as exactly one of: no authoritative lifecycle capability, installed hook absent or stale, hook not invoked, malformed native envelope, producer/native-ID mismatch, non-Git workspace, context occurred after all source members, ordered replay rejection, inbox failure, or canonical delivery failure.
+3. Run isolated installed-version probes for Codex CLI, Codex app, Codex app-server, OMP, and Claude Code. Record lifecycle capability, source capability, detector capability, native ID equality, and timing independently.
+4. For Codex CLI, explicitly prove or disprove an authoritative native event that provides the source correlation ID and project context before attributable source members. `agent-turn-complete` timing is measured as completion evidence only.
+5. Prove Codex app/app-server namespace safety, concurrent same-producer sessions in different Git projects, resume behavior, non-Git rejection, workspace change where exposed, and session end where exposed.
 
-Before live probes, prove isolation from the frozen cohort: keep the scheduler state explicit, select test Git roots, record every probe identifier, ensure probe source times are after the frozen cutoff, and partition all local and remote queries by exact allowlisted IDs. Probe evidence is durable and must not be deleted after the run. Abort if baseline and probe populations cannot be separated.
+**Gate 3 — Cause ledger.** Approve one evidence-backed cause for every activity and a complete installed-surface capability matrix. Unknown or unavailable evidence remains `Blocked`.
 
-Run the surface-specific matrix through documented native lifecycle mechanisms. The matrix covers Codex CLI, Codex app, Codex app-server, OMP, and Claude Code; records installed version, native lifecycle field, local artifact field, OTEL service/field, and lifecycle/source/detector capability; and marks fresh, resume, concurrent-project, workspace-change, end, fork, and non-Git scenarios as required, conditional, or not applicable. Prove Codex app/app-server shared-namespace collision safety. Claude Code hook equality is assessed without requiring a canonical activity while its source ingestion remains unsupported. Unsupported capability requires retained failed live-proof evidence; inability to run or observe a probe is blocked.
+### Phase 4 — Approve canonical behavior
 
-### Phase 3 — Verify source correlation semantics
+1. Review the recommended canonical contract against the frozen cause ledger and installed producer capabilities.
+2. Resolve the Codex CLI contradiction: select a truthful pre-source native lifecycle acquisition surface or classify interval attribution for that surface as unsupported. Do not retain the current completion-to-start mapping.
+3. Resolve every source member independently against half-open intervals and compare the result with stored activity versions.
+4. Identify activities with mixed projects, mixed resolved and unresolved members, no interval, or a stored attribution selected only by the aggregate end.
+5. Approve stable-ID and immutable-history consequences for attribution-only versioning versus changed source partitioning.
 
-1. Recompute producer/session sets directly from raw SigNoz logs and traces using the extraction rules in `source.py`.
-2. Separate lifecycle-capable, source-capable, detector-capable, telemetry-bearing, and activity-bearing surfaces; detector yield must not be treated as ingestion coverage.
-3. Count missing, single, and conflicting native identifiers by canonical producer and surface.
-4. Verify Codex CLI service aliases, Codex app/app-server shared thread namespace, and OMP conversation fields against retained producer proofs.
-5. Record Claude Code as lifecycle-only under the current source contract unless a separately approved capability change is made. Cover native fork behavior and the conditional availability of workspace-change and end lifecycle signals.
-6. Attribute each canonical rejection to exact raw source evidence and confirm repeated scans update bounded occurrence evidence rather than create new identities.
+**Gate 4 — Canonical contract.** The final decision owner approves the attribution rule, producer capability verdicts, and mutation semantics. No code change is planned against an unapproved contract.
 
-Gate 3 approves the complete per-surface capability matrix and native identifier equality results. A surface is “unsupported” only when its installed-version live identity proof fails with retained evidence.
+### Phase 5 — Design the remediation
 
-Deliverable: a producer capability and identifier matrix tied to installed versions, conditional scenarios, and isolated probe evidence.
+After Gate 4, produce a file-specific implementation plan grouped by proven mechanism:
 
-### Phase 4 — Audit temporal attribution integrity
+1. **Lifecycle acquisition:** remove false lifecycle mappings and implement only the approved native producer surfaces in `.agents/skills/introspection-onboarding/scripts/adapters/` and `session-context-runtime.sh`.
+2. **Temporal attribution:** centralize one source-member resolver in `src/agent_introspection/attribution.py`; make initial and late paths use the same result.
+3. **Canonical construction:** update `src/agent_introspection/scan.py` so partitioning occurs from authoritative members before persistence and late context triggers deterministic re-evaluation rather than aggregate end-time promotion.
+4. **Persistence and versioning:** update `database.py` and `telemetry.py` only where the approved immutable reconstruction or `N+1` version transaction requires it.
+5. **Range processing:** separately correct `source_watermarks`, boundary semantics, and failure behavior in `scan.py`, `database.py`, and `scheduler.py` after the controlled range experiment proves the cursor contract.
+6. **Bounded historical disposition:** inventory affected rows and choose no mutation, higher attribution version, deterministic reconstructed activities, or canonical rejection. Never rewrite activity bases or reuse an event ID for different content.
+7. **Remote disposition:** any destructive remote correction requires a separate backup, exact predicate, dry-run count, rollback or stop condition, and explicit approval.
 
-1. Define the authoritative temporal unit before checking containment. Detector source-event IDs carry attribution time: a log detector event uses its retained log timestamp, and a trace episode uses the canonical trace episode timestamp. Log and span IDs included only as source provenance do not independently determine attribution.
-2. For each temporal source-event ID, define the exact bounded raw SigNoz lookup, timestamp field, identity cardinality, and expected join to retained canonical membership. Record timestamp provenance and lookup cardinality.
-3. Run a retention gate. If any authoritative event cannot be recovered, mark the affected activity temporally unverified and block completion until the evidence is acquired or the canonical contract confirms that the missing identifier is provenance-only.
-4. Resolve every authoritative detector event independently against half-open intervals. Fail any activity whose events resolve to different projects, mixed resolved/unresolved states, or different evidence intervals.
-5. Trace failures through `_partition_observations_by_context`, `_canonical_activity`, `resolve_attribution`, `_reconcile_late_context`, and `reconcile_activity`.
-6. Reproduce an observation whose valid source events fall on opposite sides of a workspace transition. The only valid oracle is deterministic partitioning into canonical activities whose complete authoritative membership falls within one interval. Rejection is allowed only for an individual malformed, ambiguously correlated, or unsupported source event.
-7. Verify exact-start inclusion, exact-end exclusion, ordered lifecycle replay, clock-skew bounds, resume, workspace transition, duplicate delivery, and transaction rollback.
-8. Approve the stable-ID consequences of partitioning and prove source-event denominator preservation before recommending reconstruction of existing rows.
+**Gate 5 — Remediation design.** Approve exact files, contracts, migration implications, bounded reconstruction rules, remote disposition, and rollback or stop conditions.
 
-Gate 4 approves the authoritative temporal-member model. Gate 5 approves event-granularity partitioning, stable-ID effects, and denominator conservation.
+### Phase 6 — Approve the robust testing plan
 
-Deliverable: a timestamp-provenance manifest, source-event containment report, and behavioral reproduction for every temporal defect.
+The implementation plan must contain all of the following behavioral layers.
 
-### Phase 5 — Diagnose scan-range effects
+#### A. Contract tests
 
-Run a controlled matrix with frozen bounds: identical repeat; adjacent windows with boundary rows; late source arrival; late context arrival; partial or deadline failure; and separate log-versus-trace time semantics. For every run record the exact query bounds, returned raw IDs, activity and version IDs, rejection occurrences, recomputation rows, outbox status and latency, and watermark before and after.
+- exact-start inclusion and exact-end exclusion;
+- no interval, one interval, and conflicting interval outcomes;
+- producer namespace isolation for identical native IDs;
+- truthful lifecycle normalization: a completion event cannot become `session_start`;
+- nanosecond source ordering without float-derived boundary drift;
+- identical resolution for log-detector and trace-episode source members.
 
-The required invariants are no boundary omission, immutable stable identity across replay, idempotent repeat results, explicit late-arrival handling, atomic failure behavior, and no inflation of rejection or recomputation identities. Gate 6 records the causal verdict before any cursor or scheduler change is proposed. Cursor remediation remains a separate decision because it must preserve late source and context semantics.
+#### B. Source-member and partition tests
 
-### Phase 6 — Separate canonical data defects from dashboard-query defects
+- one activity whose members all resolve to one project;
+- members on opposite sides of a workspace transition partition into separate stable activities;
+- mixed resolved and unresolved members do not inherit the aggregate end-time project;
+- late context produces the same partition and attribution as context present before the scan;
+- exact source-member denominator conservation across partitioning;
+- replay preserves stable IDs and membership checksums.
 
-After the local/outbox/remote population is reconciled, capture the deployed Agent Introspection route ID, nested UUID, revision, panel SQL, selected source-time range, latest-version rule, and deduplication rule. Independently compute the expected stable activity-ID and project-tuple population for that identical range, including per-producer denominators and `eligible = attributed + unresolved`.
+#### C. Lifecycle integration tests
 
-Execute the persisted SQL and require exact stable-ID, attribution tuple, project tuple, and denominator equality. Classify each discrepancy as storage, delivery, query selection, aggregation, or rendering. Browser checks prove range interaction and rendering only; they are not the data oracle.
+- fresh, resume, concurrent projects, workspace change, end, fork, and non-Git scenarios, marked required only where the installed native surface exposes them;
+- lifecycle ID equals the source telemetry ID for every supported producer;
+- context evidence precedes or truthfully covers every attributed source member;
+- Codex app and app-server shared thread namespaces cannot cross-attribute;
+- hook absence, stale installation, malformed input, and quarantine fail closed.
 
-Gate 7 approves the data-versus-query verdict. Deliverable: an independent expected-set manifest and dashboard SQL comparison.
+#### D. Late-context transaction tests
 
-### Phase 7 — Root-cause decision and remediation handoff
+- unresolved to resolved creates exactly version `N+1` for the same activity ID when membership is unchanged;
+- exactly one deterministic outbox event and one schedule row per aggregate kind are inserted in the caller-owned transaction;
+- identical replay inserts no version, outbox row, or schedule row;
+- an injected failure commits none of those rows;
+- changed partitioning never mutates the original activity base.
 
-Create a cause table with one row per failed activity and columns for retained evidence, responsible boundary, data-versus-query classification, reproducibility, blast radius, accountable owner, and required change. Group remediation only where activities share the same mechanism. For each proposed change, identify exact files, behavioral contracts, migration implications, remote replay requirements, and rollback or stop conditions.
+#### E. Scan-range tests
 
-Gate 8 requires the final decision owner to approve the cause ledger and mutation disposition. The decision must state whether existing canonical rows require bounded reconstruction, higher attribution versions, valid source-event partitioning, canonical rejection, or no mutation. Never rewrite immutable activity bases or reuse an event ID for different payload content.
+- identical repeat, adjacent windows with boundary rows, late source arrival, late context arrival, separate log and trace timestamp semantics, deadline interruption, and restart;
+- no boundary omission or duplication;
+- watermark advances only after atomic persistence of the corresponding source set;
+- failed scans do not advance the watermark or expose partial canonical state;
+- replay does not inflate rejection, activity, version, outbox, or recomputation identities.
 
-## Likely code and test surfaces
+#### F. Frozen-ledger reconstruction tests
 
-- `.agents/skills/introspection-onboarding/scripts/session-context-runtime.sh`
-- `.agents/skills/introspection-onboarding/scripts/adapters/*.py` and `omp.ts`
-- `src/agent_introspection/source.py`
-- `src/agent_introspection/session_context.py`
-- `src/agent_introspection/attribution.py`
-- `src/agent_introspection/scan.py`
-- `src/agent_introspection/database.py`
-- `src/agent_introspection/telemetry.py`
-- `src/agent_introspection/scheduler.py`
-- `src/agent_introspection/dashboard.py`
-- `src/agent_introspection/assets/agent-introspection.json`
-- producer adapter, source, session-context, attribution, scan, telemetry, migration, scheduler, and dashboard tests
+- run the approved remediation against a redacted copy of the frozen ledger;
+- compare pre- and post-state manifests by immutable source-member IDs and checksums;
+- require every formerly unresolved activity to retain its classified outcome: resolved, validly partitioned, canonically rejected, unsupported, or `Blocked`;
+- require immutable base rows and historical versions to remain unchanged;
+- require local/outbox/remote event-tuple equality for newly created versions or activities.
+
+#### G. Live end-to-end acceptance
+
+For every supported producer, create isolated post-cutoff activity-bearing probes in two Git projects and one non-Git directory. Query raw source telemetry, accepted context, local canonical rows, outbox state, and remote canonical events. Require exact native ID equality, exact project tuple, one containing interval per source member, stable replay identity, and no cross-project attribution under concurrency.
+
+The smoke test must exercise the real scheduled scan and remote SigNoz query path. Dashboard rendering is not the oracle; a persisted dashboard query may be compared only after the canonical expected set is independently established.
+
+#### H. Quality gates
+
+Run the focused behavioral scenarios first, then the repository’s existing `uv` test, type, lint, and pre-commit gates without suppressions or skips. A test passes only when it defends an observable contract and fails against the corresponding plausible defect.
+
+**Gate 6 — Test design.** Approve scenario coverage, expected sets, failure injection, producer probe matrix, and reconstruction oracle before implementation.
+
+### Phase 7 — Implement, reconstruct, and accept
+
+1. Implement the Gate 5 plan in causal order: lifecycle evidence, shared temporal resolver, canonical partitioning and late reconciliation, then separately approved scan-range behavior.
+2. Run focused tests after each contract change and the complete approved test matrix after integration.
+3. Apply bounded local reconstruction only after backup, inventory, dry-run manifest, and explicit mutation approval.
+4. Reconcile new local, outbox, and remote events at tuple and checksum granularity.
+5. Independently compute the stable activity-ID and project-tuple set for the acceptance range. Only then compare persisted dashboard SQL to separate data correctness from query correctness.
+
+**Gate 7 — Mutation approval.** Approve the exact bounded local and remote mutation manifests after dry-run counts and backups.
+
+**Gate 8 — Final acceptance.** Approve the post-remediation cause ledger, supported-producer live proofs, source-member containment report, scan-range invariants, reconstruction reconciliation, and independent expected set.
 
 ## Acceptance criteria
 
-- Every frozen unresolved activity has one evidence-backed cause; no unknown or evidence-unavailable row enters a complete verdict.
-- Raw telemetry sessions, accepted lifecycle sessions, activity-bearing sessions, and matched sessions have separate producer-namespaced exact denominators.
-- The full surface matrix records lifecycle, source, and detector capability independently, including Codex app/app-server namespace safety and Claude Code conditional scenarios.
-- Every resolved activity’s authoritative detector-event membership is recoverable and contained by exactly one accepted interval and one project.
-- Valid events across a workspace transition are deterministically partitioned with denominator preservation; no activity is promoted using only its end timestamp.
-- An unresolved-to-resolved late-context transition inserts exactly version N+1 for the same `activity.id`, one deterministic outbox event, and one schedule row per aggregate kind in one transaction; identical replay adds zero versions, outbox rows, or schedules; failure commits none.
-- Local required events, outbox rows by status, and remote rows reconcile by immutable identity, version, timestamp, attribution tuple, project tuple, checksum, occurrence evidence, and duplicate count.
-- Controlled scan experiments establish boundary, replay, late-arrival, failure, and watermark behavior.
-- Persisted dashboard SQL returns the exact independently computed stable-ID and project-tuple set, and `eligible = attributed + unresolved`.
-- Completion produces an approved, file-specific remediation handoff. Unsupported capability is accepted only with retained failed live-proof evidence.
+- Every frozen activity has one evidence-backed outcome; no unknown row enters `Complete`.
+- Every supported producer proves native lifecycle/source identity equality and truthful temporal coverage on its installed version.
+- The Codex CLI completion callback is not represented as `session_start`.
+- Every attributed authoritative source member is contained by exactly one half-open interval and one project.
+- No activity is attributed from `source_ended_at_ns` alone.
+- Valid members across a workspace transition are deterministically partitioned with exact denominator conservation.
+- Late context yields the same canonical result as context available before detection.
+- Attribution-only reconciliation creates exactly `N+1`, one outbox identity, and one schedule row per aggregate kind atomically; replay adds nothing and failure commits nothing.
+- Scan repeats, boundaries, late arrivals, deadlines, and restarts preserve stable identity and atomic watermark semantics.
+- Frozen-ledger reconstruction preserves immutable evidence and reconciles every new local, outbox, and remote event.
+- Independent canonical expected sets, not dashboard rendering, determine data correctness.
+- Completion produces approved file-specific changes, robust behavioral proof, and a cause ledger with no unsupported claim based only on missing evidence.
 
 ## Terminal states and stop conditions
 
-`Complete` requires every acceptance criterion and all eight gates. `Blocked` is not acceptance: record affected IDs, missing evidence, acquisition attempts, accountable owner, and unblock action. An unsupported producer capability is a classified result only after its installed-version native proof fails with retained evidence; an unavailable probe remains blocked.
+`Complete` requires all eight gates and every acceptance criterion. `Blocked` records affected activity or producer IDs, missing evidence, acquisition attempts, accountable owner, and unblock action.
 
-Stop before mutation if the bounded population cannot be established, authoritative source-event timestamps are inaccessible, a proposed repair would rewrite immutable evidence, or bounded replay cannot be distinguished from duplicate delivery. Any destructive remote correction requires a separate inventory, backup, exact predicate, dry-run count, and explicit approval.
+Stop before mutation if the population is not reproducible, any authoritative source-member timestamp is unavailable, the Codex lifecycle surface cannot satisfy the approved contract, reconstruction would rewrite immutable evidence, or bounded replay cannot be distinguished from duplicate delivery. Destructive remote correction remains a separately approved operation.
