@@ -1,0 +1,182 @@
+{
+  "schema": "project-attribution-gate-3-codex-app",
+  "schema_version": 1,
+  "status": "Blocked",
+  "probe": {
+    "producer": "codex-app",
+    "surface": "codex-app",
+    "probe_id": "codex-app-gate-3-20260807T185131122956613Z",
+    "cutoff_utc": "2026-08-07T17:45:58.546340000Z",
+    "observed_at_utc": "2026-08-07T18:51:31.122956613Z",
+    "app_bundle_id": "com.openai.codex",
+    "app_bundle_version": "6119",
+    "app_short_version": "26.727.51351",
+    "app_executable": "ChatGPT",
+    "native_application_path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "native_application_sha256": "d96ae1ca1ff6fc8587842fa04c92d3ee4d31651a811c2f89b65fcfd9c28473e2"
+  },
+  "projects": [
+    {
+      "project": "/Users/adamjackson/Projects/inflight/signoz-introspection",
+      "status": "Blocked",
+      "native_workspace_id": null,
+      "native_session_id": null
+    },
+    {
+      "project": "/Users/adamjackson/Projects/inflight/codex-otel-producer",
+      "status": "Blocked",
+      "native_workspace_id": null,
+      "native_session_id": null
+    }
+  ],
+  "installed_boundaries": {
+    "bundle_metadata": {
+      "status": "present",
+      "bundle_id": "com.openai.codex",
+      "bundle_version": "6119",
+      "short_version": "26.727.51351",
+      "executable": "ChatGPT"
+    },
+    "native_binary": {
+      "status": "present",
+      "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "sha256": "d96ae1ca1ff6fc8587842fa04c92d3ee4d31651a811c2f89b65fcfd9c28473e2"
+    },
+    "native_window": {
+      "status": "Blocked",
+      "window_id": 24178,
+      "window_index": 0,
+      "pid": 41992,
+      "is_minimized": false,
+      "is_offscreen": false,
+      "restore_state_attempted": true,
+      "accessibility_window_present": false,
+      "screenshot_permission": "granted",
+      "accessibility_permission": "granted"
+    },
+    "installed_lifecycle_configuration": {
+      "status": "Blocked",
+      "present": false,
+      "identity": null,
+      "reason": "No serializable installed codex-app lifecycle configuration identity is available."
+    },
+    "local_source_service_identity": {
+      "status": "Blocked",
+      "query_status": "complete",
+      "post_cutoff_window_minutes": 65,
+      "source_observed_at_utc": "2026-08-07T18:51:31.122956613Z",
+      "trace_service": "codex-app",
+      "trace_record_count": 0,
+      "log_resource_service": "codex-app",
+      "log_record_count": 0,
+      "native_identity_field": null,
+      "source_identity_field": null
+    }
+  },
+  "app_lifecycle_context": {
+    "status": "Blocked",
+    "resume_restart_status": "Blocked",
+    "concurrent_projects_status": "Blocked",
+    "fresh_git_a_workspace_session_attempted": false,
+    "missing_capability": "A fresh list-windows result identified running, visible, non-minimized native window 24178 for com.openai.codex. Targeted get-app-state with that window ID and restore-state still returned no accessibility window while both required permissions were granted, so no UI control was safely available for the one bounded Git A workspace/session attempt."
+  },
+  "scenario_matrix": {
+    "lifecycle_context": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "source_ingestion": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "join_identity": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "dashboard_attribution": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "fresh_window_retry": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "resume_restart": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "concurrent_project_a_b": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "non_git": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "malformed": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "duplicate": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "process_failure": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "transition_capability": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "end_capability": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    },
+    "fork_capability": {
+      "status": "Blocked",
+      "blocked_by": "inaccessible_native_ui_identity_boundary"
+    }
+  },
+  "source_telemetry": {
+    "status": "Blocked",
+    "otel_service": null,
+    "native_identity_field": null,
+    "source_identity_field": null,
+    "record_count": 0,
+    "missing_capability": "The bounded post-cutoff local-source checks found zero trace records for serviceName codex-app and zero log records for resource service.name codex-app. They establish no codex-app source identity field and do not use codex-app-server."
+  },
+  "native_key_equality": {
+    "status": "Blocked",
+    "equality": null,
+    "missing_capability": "The native window exposes no accessibility metadata identity, and the independently bounded codex-app source checks expose neither a source record nor an identity field; native/source equality cannot be evaluated."
+  },
+  "adapter_runtime_path": {
+    "status": "Blocked",
+    "path": null,
+    "missing_capability": "No installed codex-app lifecycle adapter/runtime path is independently evidenced; codex-app-server is a distinct producer surface and is excluded."
+  },
+  "join_dashboard_readiness": {
+    "status": "Blocked",
+    "join_status": "Blocked",
+    "dashboard_status": "Blocked",
+    "missing_capability": "A native codex-app workspace/session identity equal to a codex-app source identity is required before a producer-scoped join or dashboard can be ready."
+  },
+  "evidence_policy": {
+    "contains_prompts_or_responses": false,
+    "contains_command_output": false,
+    "contains_environment_values_or_secrets": false,
+    "retained_categories": [
+      "producer",
+      "surface",
+      "version",
+      "native IDs",
+      "timestamps",
+      "project tuples",
+      "statuses",
+      "checksums",
+      "presence",
+      "counts"
+    ]
+  }
+}

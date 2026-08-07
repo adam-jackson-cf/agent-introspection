@@ -1,0 +1,143 @@
+{
+  "schema": "project-attribution-gate-3-codex-cli",
+  "schema_version": 1,
+  "status": "Blocked",
+  "cutoff_utc": "2026-08-07T17:45:58.546340000Z",
+  "observed_at_utc": "2026-08-07T18:52:20.000Z",
+  "producer": {
+    "id": "codex-cli",
+    "surface": "codex-cli",
+    "version": "0.147.0",
+    "version_presence": "Verified",
+    "version_status": "Verified",
+    "version_source_status": "Gate2_verified"
+  },
+  "installed_computer_use_notify_chain": {
+    "status": "Blocked",
+    "config_path": "/Users/adamjackson/.codex/config.toml",
+    "config_present": true,
+    "config_sha256": "1015dcf4ab2c808f76c4a1074f721a2867ac38f315f5ef4b8ab984d1a1ac609a",
+    "active_configuration_reference_present": true,
+    "managed_adapter_id": "codex.py",
+    "managed_adapter_path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py",
+    "managed_adapter_present": true,
+    "managed_adapter_sha256": "5d19a6062ccb52ae8f56a752ff07ef4d54a9dcad8f7d8c43179e49561baf29ed",
+    "installed_binary_path": "/opt/homebrew/Caskroom/codex/0.147.0/bin/codex",
+    "installed_binary_present": true,
+    "installed_binary_sha256": "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37",
+    "execution_status": "Blocked",
+    "first_failed_boundary": "installed_binary_invocation_timeout_45s"
+  },
+  "attempts": [
+    {
+      "project_tuple": {"kind": "git_a", "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:41:23.697534Z",
+      "ended_at_utc": "2026-08-07T18:42:08.724059Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    },
+    {
+      "project_tuple": {"kind": "git_a", "root": "/Users/adamjackson/Projects/inflight/signoz-introspection"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:42:15.601979Z",
+      "ended_at_utc": "2026-08-07T18:43:00.638565Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    },
+    {
+      "project_tuple": {"kind": "git_b", "root": "/Users/adamjackson/Projects/inflight/codex-otel-producer"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:41:23.697831Z",
+      "ended_at_utc": "2026-08-07T18:42:08.708949Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    },
+    {
+      "project_tuple": {"kind": "git_b", "root": "/Users/adamjackson/Projects/inflight/codex-otel-producer"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:42:15.602133Z",
+      "ended_at_utc": "2026-08-07T18:43:00.638696Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    },
+    {
+      "project_tuple": {"kind": "non_git", "root": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/non-git/"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:41:23.698081Z",
+      "ended_at_utc": "2026-08-07T18:42:08.722045Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    },
+    {
+      "project_tuple": {"kind": "non_git", "root": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/non-git/"},
+      "no_override": true,
+      "started_at_utc": "2026-08-07T18:42:15.602248Z",
+      "ended_at_utc": "2026-08-07T18:43:00.612705Z",
+      "completion_status": "timeout_45s",
+      "callback_id": null,
+      "inbox_id": null,
+      "source_id": null
+    }
+  ],
+  "counts": {
+    "attempts": 6,
+    "timeout_45s": 6,
+    "callback_ids": 0,
+    "inbox_ids": 0,
+    "source_ids": 0
+  },
+  "evidence_matrix": {
+    "lifecycle_context": "Blocked",
+    "source_ingestion": "Blocked",
+    "join_identity": "Blocked",
+    "dashboard_attribution": "Blocked",
+    "fresh_session": "Blocked",
+    "resume_restart": "Blocked",
+    "concurrent_git_a_git_b": "Blocked",
+    "non_git": "Blocked",
+    "repeated_completion": "Blocked",
+    "malformed": "Blocked",
+    "duplicate": "Blocked",
+    "process_failure": "Blocked",
+    "workspace_change": "Blocked",
+    "end": "Blocked",
+    "fork": "Blocked"
+  },
+  "identity_equality": {
+    "status": "Blocked",
+    "callback_id_equals_source_id": null
+  },
+  "join_dashboard_readiness": {
+    "status": "Blocked",
+    "join_status": "Blocked",
+    "dashboard_status": "Blocked"
+  },
+  "evidence_policy": {
+    "contains_prompts_or_responses": false,
+    "contains_command_output": false,
+    "contains_environment_values_or_secrets": false,
+    "retained_categories": [
+      "producer",
+      "surface",
+      "version",
+      "native IDs",
+      "timestamps",
+      "counts",
+      "project tuples",
+      "statuses",
+      "checksums",
+      "presence"
+    ]
+  }
+}

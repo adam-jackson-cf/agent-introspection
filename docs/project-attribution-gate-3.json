@@ -1,0 +1,624 @@
+{
+  "approval": {
+    "criterion": "every capability and required-scenario cell is Supported or Blocked",
+    "status": "approved_with_blocked_capabilities"
+  },
+  "baseline_cutoff_utc": "2026-08-07T17:45:58.546340000Z",
+  "cell_counts": {
+    "Supported": 10,
+    "Blocked": 90
+  },
+  "cell_status_vocabulary": [
+    "Supported",
+    "Blocked"
+  ],
+  "common_failure_evidence": {
+    "path": "docs/project-attribution-gate-3-failures.json",
+    "sha256": "efaa06eb4ee2520622a039bcab0c38b86b4357bb9cf456b286cf7433b79b5a80"
+  },
+  "evidence_artifacts": [
+    {
+      "path": "docs/project-attribution-gate-3-claude.json",
+      "producer": "claude-code",
+      "sha256": "ed626c29318819d38e1c32d65f76e91bae7ec4e5877243b2ce86c8cc8166d698"
+    },
+    {
+      "path": "docs/project-attribution-gate-3-codex-cli.json",
+      "producer": "codex-cli",
+      "sha256": "f9fefc7e813e7fce2592fe38603e9a394210c082a8dc80aa30a874ff48851844"
+    },
+    {
+      "path": "docs/project-attribution-gate-3-codex-app-server.json",
+      "producer": "codex-app-server",
+      "sha256": "169926dce79d06fabc96b4301d5f0cd8cfae73391404cfb658fd76b0632184fd"
+    },
+    {
+      "path": "docs/project-attribution-gate-3-codex-app.json",
+      "producer": "codex-app",
+      "sha256": "ff68bca972c50aebb394f1c624c5da9404d3cc30585641933690fcc916371c48"
+    },
+    {
+      "path": "docs/project-attribution-gate-3-omp.json",
+      "producer": "omp",
+      "sha256": "4db1f63f6a838635003904c4f6ad9d0d8a902f441fcbb8d72ba814b5f0f53886"
+    }
+  ],
+  "matrix_columns": {
+    "capabilities": [
+      "installed_presence",
+      "lifecycle_context",
+      "source_ingestion",
+      "join_identity",
+      "inbox_ledger",
+      "remote_delivery",
+      "downstream_join",
+      "dashboard"
+    ],
+    "required_scenarios": [
+      "fresh_session",
+      "resume_or_restart",
+      "concurrent_a_b",
+      "non_git",
+      "malformed",
+      "duplicate",
+      "process_failure",
+      "transition",
+      "end",
+      "fork",
+      "repeated_completion",
+      "fresh_window_retry"
+    ]
+  },
+  "producers": [
+    {
+      "capability_matrix": {
+        "dashboard": {
+          "evidence_pointer": "/capability_verdicts/dashboard_attribution",
+          "status": "Blocked"
+        },
+        "downstream_join": {
+          "evidence_pointer": "/capability_verdicts/native_to_source_identity_join",
+          "status": "Blocked"
+        },
+        "inbox_ledger": {
+          "evidence_pointer": "/probes/0/inbox/status",
+          "status": "Supported"
+        },
+        "installed_presence": {
+          "evidence_pointer": "/installed_path/managed_adapter/invocation_status",
+          "status": "Supported"
+        },
+        "join_identity": {
+          "evidence_pointer": "/capability_verdicts/native_to_source_identity_join",
+          "status": "Blocked"
+        },
+        "lifecycle_context": {
+          "evidence_pointer": "/capability_verdicts/lifecycle_fresh_native_session",
+          "status": "Supported"
+        },
+        "remote_delivery": {
+          "evidence_pointer": "/capability_verdicts/source_ingestion",
+          "status": "Blocked"
+        },
+        "source_ingestion": {
+          "evidence_pointer": "/capability_verdicts/source_ingestion",
+          "status": "Blocked"
+        }
+      },
+      "first_failed_boundary": {
+        "boundary": "source_ingestion",
+        "evidence_pointer": "/capability_verdicts/source_ingestion",
+        "status": "Blocked"
+      },
+      "installed": {
+        "adapter_path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/claude-code.py",
+        "adapter_presence": "Supported",
+        "adapter_sha256": "db386262e73cb95cbf2afdf67a2c4c8906cdd5eb1097dfff38ab5dfc8edbd72c",
+        "evidence_pointer": "/installed_path",
+        "path": "/Users/adamjackson/.local/bin/claude",
+        "path_presence": "Supported",
+        "runtime_path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/session-context-runtime.sh",
+        "runtime_presence": "Supported",
+        "runtime_sha256": "ff1b3260058b17e7cae14cb91c45d75a032baa34d165bebc67c50d9fbd450bae",
+        "settings_path": "/Users/adamjackson/.claude/settings.json",
+        "settings_sha256": "362b3d832971a0f079777fae2837f5e09dd99d4ee025d0bcb2109d29f9a31002",
+        "sha256": "e3cb61abc8a2ec7b98976cee1ffdde5a3fa755c9990bc8d688cd89290e0dcec0",
+        "version": "2.1.199",
+        "version_presence": "Supported"
+      },
+      "producer": "claude-code",
+      "producer_artifact": {
+        "path": "docs/project-attribution-gate-3-claude.json",
+        "sha256": "ed626c29318819d38e1c32d65f76e91bae7ec4e5877243b2ce86c8cc8166d698"
+      },
+      "scenario_matrix": {
+        "concurrent_a_b": {
+          "evidence_pointer": "/scenario_capability_matrix/concurrent_a_b",
+          "status": "Supported"
+        },
+        "duplicate": {
+          "evidence_pointer": "/scenario_capability_matrix/duplicate",
+          "status": "Blocked"
+        },
+        "end": {
+          "evidence_pointer": "/scenario_capability_matrix/end",
+          "status": "Supported"
+        },
+        "fork": {
+          "evidence_pointer": "/scenario_capability_matrix/fork",
+          "status": "Blocked"
+        },
+        "fresh_session": {
+          "evidence_pointer": "/scenario_capability_matrix/fresh_native_session",
+          "status": "Supported"
+        },
+        "fresh_window_retry": {
+          "evidence_pointer": "/capability_verdicts/lifecycle_cwd_changed",
+          "status": "Blocked"
+        },
+        "malformed": {
+          "evidence_pointer": "/scenario_capability_matrix/malformed",
+          "status": "Blocked"
+        },
+        "non_git": {
+          "evidence_pointer": "/scenario_capability_matrix/non_git",
+          "status": "Supported"
+        },
+        "process_failure": {
+          "evidence_pointer": "/scenario_capability_matrix/process_failure",
+          "status": "Supported"
+        },
+        "repeated_completion": {
+          "evidence_pointer": "/capability_verdicts/duplicate_native_session_boundary",
+          "status": "Blocked"
+        },
+        "resume_or_restart": {
+          "evidence_pointer": "/scenario_capability_matrix/resume_or_restart",
+          "status": "Supported"
+        },
+        "transition": {
+          "evidence_pointer": "/scenario_capability_matrix/transition",
+          "status": "Blocked"
+        }
+      },
+      "surface": "claude-code"
+    },
+    {
+      "capability_matrix": {
+        "dashboard": {
+          "evidence_pointer": "/evidence_matrix/dashboard_attribution",
+          "status": "Blocked"
+        },
+        "downstream_join": {
+          "evidence_pointer": "/join_dashboard_readiness/join_status",
+          "status": "Blocked"
+        },
+        "inbox_ledger": {
+          "evidence_pointer": "/counts/inbox_ids",
+          "status": "Blocked"
+        },
+        "installed_presence": {
+          "evidence_pointer": "/installed_computer_use_notify_chain/installed_binary_present",
+          "status": "Supported"
+        },
+        "join_identity": {
+          "evidence_pointer": "/evidence_matrix/join_identity",
+          "status": "Blocked"
+        },
+        "lifecycle_context": {
+          "evidence_pointer": "/evidence_matrix/lifecycle_context",
+          "status": "Blocked"
+        },
+        "remote_delivery": {
+          "evidence_pointer": "/counts/callback_ids",
+          "status": "Blocked"
+        },
+        "source_ingestion": {
+          "evidence_pointer": "/evidence_matrix/source_ingestion",
+          "status": "Blocked"
+        }
+      },
+      "first_failed_boundary": {
+        "boundary": "installed_binary_invocation_timeout_45s",
+        "evidence_pointer": "/installed_computer_use_notify_chain/first_failed_boundary",
+        "status": "Blocked"
+      },
+      "installed": {
+        "adapter_path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py",
+        "adapter_presence": "Supported",
+        "adapter_sha256": "5d19a6062ccb52ae8f56a752ff07ef4d54a9dcad8f7d8c43179e49561baf29ed",
+        "config_path": "/Users/adamjackson/.codex/config.toml",
+        "config_presence": "Supported",
+        "config_sha256": "1015dcf4ab2c808f76c4a1074f721a2867ac38f315f5ef4b8ab984d1a1ac609a",
+        "evidence_pointer": "/installed_computer_use_notify_chain",
+        "path": "/opt/homebrew/Caskroom/codex/0.147.0/bin/codex",
+        "path_presence": "Supported",
+        "sha256": "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37",
+        "version": "0.147.0",
+        "version_presence": "Supported"
+      },
+      "producer": "codex-cli",
+      "producer_artifact": {
+        "path": "docs/project-attribution-gate-3-codex-cli.json",
+        "sha256": "f9fefc7e813e7fce2592fe38603e9a394210c082a8dc80aa30a874ff48851844"
+      },
+      "scenario_matrix": {
+        "concurrent_a_b": {
+          "evidence_pointer": "/evidence_matrix/concurrent_git_a_git_b",
+          "status": "Blocked"
+        },
+        "duplicate": {
+          "evidence_pointer": "/evidence_matrix/duplicate",
+          "status": "Blocked"
+        },
+        "end": {
+          "evidence_pointer": "/evidence_matrix/end",
+          "status": "Blocked"
+        },
+        "fork": {
+          "evidence_pointer": "/evidence_matrix/fork",
+          "status": "Blocked"
+        },
+        "fresh_session": {
+          "evidence_pointer": "/evidence_matrix/fresh_session",
+          "status": "Blocked"
+        },
+        "fresh_window_retry": {
+          "evidence_pointer": "/evidence_matrix/fresh_session",
+          "status": "Blocked"
+        },
+        "malformed": {
+          "evidence_pointer": "/evidence_matrix/malformed",
+          "status": "Blocked"
+        },
+        "non_git": {
+          "evidence_pointer": "/evidence_matrix/non_git",
+          "status": "Blocked"
+        },
+        "process_failure": {
+          "evidence_pointer": "/evidence_matrix/process_failure",
+          "status": "Blocked"
+        },
+        "repeated_completion": {
+          "evidence_pointer": "/evidence_matrix/repeated_completion",
+          "status": "Blocked"
+        },
+        "resume_or_restart": {
+          "evidence_pointer": "/evidence_matrix/resume_restart",
+          "status": "Blocked"
+        },
+        "transition": {
+          "evidence_pointer": "/evidence_matrix/workspace_change",
+          "status": "Blocked"
+        }
+      },
+      "surface": "codex-cli"
+    },
+    {
+      "capability_matrix": {
+        "dashboard": {
+          "evidence_pointer": "/capabilities/dashboard_attribution",
+          "status": "Blocked"
+        },
+        "downstream_join": {
+          "evidence_pointer": "/capabilities/downstream_join",
+          "status": "Blocked"
+        },
+        "inbox_ledger": {
+          "evidence_pointer": "/capabilities/lifecycle_context",
+          "status": "Blocked"
+        },
+        "installed_presence": {
+          "evidence_pointer": "/installed_adapter/status",
+          "status": "Blocked"
+        },
+        "join_identity": {
+          "evidence_pointer": "/capabilities/native_source_equality",
+          "status": "Blocked"
+        },
+        "lifecycle_context": {
+          "evidence_pointer": "/capabilities/lifecycle_context",
+          "status": "Blocked"
+        },
+        "remote_delivery": {
+          "evidence_pointer": "/capabilities/source_ingestion",
+          "status": "Blocked"
+        },
+        "source_ingestion": {
+          "evidence_pointer": "/capabilities/source_ingestion",
+          "status": "Blocked"
+        }
+      },
+      "first_failed_boundary": {
+        "boundary": "protocol_response",
+        "evidence_pointer": "/first_failed_boundary",
+        "status": "Blocked"
+      },
+      "installed": {
+        "adapter_presence": "Blocked",
+        "evidence_pointer": "/installed_binary",
+        "path": "/opt/homebrew/Caskroom/codex/0.147.0/bin/codex",
+        "path_presence": "Supported",
+        "sha256": "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37",
+        "version": "0.147.0",
+        "version_presence": "Supported"
+      },
+      "producer": "codex-app-server",
+      "producer_artifact": {
+        "path": "docs/project-attribution-gate-3-codex-app-server.json",
+        "sha256": "169926dce79d06fabc96b4301d5f0cd8cfae73391404cfb658fd76b0632184fd"
+      },
+      "scenario_matrix": {
+        "concurrent_a_b": {
+          "evidence_pointer": "/capabilities/concurrent_a_b",
+          "status": "Blocked"
+        },
+        "duplicate": {
+          "evidence_pointer": "/capabilities/duplicate",
+          "status": "Blocked"
+        },
+        "end": {
+          "evidence_pointer": "/capabilities/end",
+          "status": "Blocked"
+        },
+        "fork": {
+          "evidence_pointer": "/capabilities/fork",
+          "status": "Blocked"
+        },
+        "fresh_session": {
+          "evidence_pointer": "/capabilities/fresh",
+          "status": "Blocked"
+        },
+        "fresh_window_retry": {
+          "evidence_pointer": "/capabilities/fresh",
+          "status": "Blocked"
+        },
+        "malformed": {
+          "evidence_pointer": "/capabilities/malformed",
+          "status": "Blocked"
+        },
+        "non_git": {
+          "evidence_pointer": "/capabilities/non_git",
+          "status": "Blocked"
+        },
+        "process_failure": {
+          "evidence_pointer": "/capabilities/process_failure",
+          "status": "Blocked"
+        },
+        "repeated_completion": {
+          "evidence_pointer": "/capabilities/fresh",
+          "status": "Blocked"
+        },
+        "resume_or_restart": {
+          "evidence_pointer": "/capabilities/resume_restart",
+          "status": "Blocked"
+        },
+        "transition": {
+          "evidence_pointer": "/capabilities/workspace_change",
+          "status": "Blocked"
+        }
+      },
+      "surface": "codex-app-server"
+    },
+    {
+      "capability_matrix": {
+        "dashboard": {
+          "evidence_pointer": "/join_dashboard_readiness",
+          "status": "Blocked"
+        },
+        "downstream_join": {
+          "evidence_pointer": "/join_dashboard_readiness",
+          "status": "Blocked"
+        },
+        "inbox_ledger": {
+          "evidence_pointer": "/installed_boundaries/installed_lifecycle_configuration",
+          "status": "Blocked"
+        },
+        "installed_presence": {
+          "evidence_pointer": "/installed_boundaries/installed_lifecycle_configuration/status",
+          "status": "Blocked"
+        },
+        "join_identity": {
+          "evidence_pointer": "/native_key_equality",
+          "status": "Blocked"
+        },
+        "lifecycle_context": {
+          "evidence_pointer": "/app_lifecycle_context",
+          "status": "Blocked"
+        },
+        "remote_delivery": {
+          "evidence_pointer": "/source_telemetry",
+          "status": "Blocked"
+        },
+        "source_ingestion": {
+          "evidence_pointer": "/source_telemetry",
+          "status": "Blocked"
+        }
+      },
+      "first_failed_boundary": {
+        "boundary": "inaccessible_native_ui_identity_boundary",
+        "evidence_pointer": "/scenario_matrix/lifecycle_context/blocked_by",
+        "status": "Blocked"
+      },
+      "installed": {
+        "adapter_presence": "Blocked",
+        "bundle_id": "com.openai.codex",
+        "bundle_version": "6119",
+        "evidence_pointer": "/installed_boundaries",
+        "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "path_presence": "Supported",
+        "sha256": "d96ae1ca1ff6fc8587842fa04c92d3ee4d31651a811c2f89b65fcfd9c28473e2",
+        "version": "26.727.51351",
+        "version_presence": "Supported"
+      },
+      "producer": "codex-app",
+      "producer_artifact": {
+        "path": "docs/project-attribution-gate-3-codex-app.json",
+        "sha256": "ff68bca972c50aebb394f1c624c5da9404d3cc30585641933690fcc916371c48"
+      },
+      "scenario_matrix": {
+        "concurrent_a_b": {
+          "evidence_pointer": "/scenario_matrix/concurrent_project_a_b",
+          "status": "Blocked"
+        },
+        "duplicate": {
+          "evidence_pointer": "/scenario_matrix/duplicate",
+          "status": "Blocked"
+        },
+        "end": {
+          "evidence_pointer": "/scenario_matrix/end_capability",
+          "status": "Blocked"
+        },
+        "fork": {
+          "evidence_pointer": "/scenario_matrix/fork_capability",
+          "status": "Blocked"
+        },
+        "fresh_session": {
+          "evidence_pointer": "/scenario_matrix/fresh_window_retry",
+          "status": "Blocked"
+        },
+        "fresh_window_retry": {
+          "evidence_pointer": "/scenario_matrix/fresh_window_retry",
+          "status": "Blocked"
+        },
+        "malformed": {
+          "evidence_pointer": "/scenario_matrix/malformed",
+          "status": "Blocked"
+        },
+        "non_git": {
+          "evidence_pointer": "/scenario_matrix/non_git",
+          "status": "Blocked"
+        },
+        "process_failure": {
+          "evidence_pointer": "/scenario_matrix/process_failure",
+          "status": "Blocked"
+        },
+        "repeated_completion": {
+          "evidence_pointer": "/scenario_matrix/fresh_window_retry",
+          "status": "Blocked"
+        },
+        "resume_or_restart": {
+          "evidence_pointer": "/scenario_matrix/resume_restart",
+          "status": "Blocked"
+        },
+        "transition": {
+          "evidence_pointer": "/scenario_matrix/transition_capability",
+          "status": "Blocked"
+        }
+      },
+      "surface": "codex-app"
+    },
+    {
+      "capability_matrix": {
+        "dashboard": {
+          "evidence_pointer": "/dashboard_readiness",
+          "status": "Blocked"
+        },
+        "downstream_join": {
+          "evidence_pointer": "/join_readiness",
+          "status": "Blocked"
+        },
+        "inbox_ledger": {
+          "evidence_pointer": "/inbox_and_rejection_artifacts",
+          "status": "Blocked"
+        },
+        "installed_presence": {
+          "evidence_pointer": "/integrity_precondition",
+          "status": "Blocked"
+        },
+        "join_identity": {
+          "evidence_pointer": "/join_readiness",
+          "status": "Blocked"
+        },
+        "lifecycle_context": {
+          "evidence_pointer": "/lifecycle_readiness",
+          "status": "Blocked"
+        },
+        "remote_delivery": {
+          "evidence_pointer": "/source_readiness",
+          "status": "Blocked"
+        },
+        "source_ingestion": {
+          "evidence_pointer": "/source_readiness",
+          "status": "Blocked"
+        }
+      },
+      "first_failed_boundary": {
+        "boundary": "integrity_precondition",
+        "evidence_pointer": "/integrity_precondition",
+        "status": "Blocked"
+      },
+      "installed": {
+        "evidence_pointer": "/probe",
+        "extension_bytes": 2536,
+        "path": "/Users/adamjackson/.omp/agent/extensions/agent-introspection.ts",
+        "path_presence": "Supported",
+        "runtime_path": "/Users/adamjackson/.omp/agent/session-context-runtime.sh",
+        "runtime_presence": "Blocked",
+        "runtime_sha256": null,
+        "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83",
+        "version": "17.2.10",
+        "version_presence": "Supported"
+      },
+      "producer": "omp",
+      "producer_artifact": {
+        "path": "docs/project-attribution-gate-3-omp.json",
+        "sha256": "4db1f63f6a838635003904c4f6ad9d0d8a902f441fcbb8d72ba814b5f0f53886"
+      },
+      "scenario_matrix": {
+        "concurrent_a_b": {
+          "evidence_pointer": "/scenario_matrix/concurrent_git_a_git_b",
+          "status": "Blocked"
+        },
+        "duplicate": {
+          "evidence_pointer": "/scenario_matrix/duplicate_delivery",
+          "status": "Blocked"
+        },
+        "end": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        },
+        "fork": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        },
+        "fresh_session": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        },
+        "fresh_window_retry": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        },
+        "malformed": {
+          "evidence_pointer": "/scenario_matrix/malformed_native_envelope",
+          "status": "Blocked"
+        },
+        "non_git": {
+          "evidence_pointer": "/scenario_matrix/non_git_workspace",
+          "status": "Blocked"
+        },
+        "process_failure": {
+          "evidence_pointer": "/scenario_matrix/adapter_runtime_process_failure",
+          "status": "Blocked"
+        },
+        "repeated_completion": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        },
+        "resume_or_restart": {
+          "evidence_pointer": "/scenario_matrix/resume_restart",
+          "status": "Blocked"
+        },
+        "transition": {
+          "evidence_pointer": "/scenario_matrix/fresh_git_a",
+          "status": "Blocked"
+        }
+      },
+      "surface": "installed-omp-extension"
+    }
+  ],
+  "schema": "project-attribution-gate-3",
+  "schema_version": 1,
+  "status": "approved_with_blocked_capabilities"
+}
