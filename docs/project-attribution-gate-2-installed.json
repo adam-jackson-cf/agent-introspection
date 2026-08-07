@@ -1,0 +1,308 @@
+{
+  "blocked_fields": [
+    {
+      "field": "identity_equality_boundary",
+      "producer": "claude-code",
+      "reason": "missing_gate_3_identity_proof",
+      "surface": "claude-code"
+    },
+    {
+      "field": "detector_context_and_attribution_outcome",
+      "producer": "codex-cli",
+      "reason": "not_evaluated_by_installed_manifest",
+      "surface": "codex-cli"
+    },
+    {
+      "field": "managed_adapter",
+      "producer": "codex-app-server",
+      "reason": "installed_app_server_adapter_not_present_in_managed_runtime",
+      "surface": "codex-app-server"
+    },
+    {
+      "field": "native_identity_and_otel_service",
+      "producer": "codex-app",
+      "reason": "no_independently_proven_contract",
+      "surface": "codex-app"
+    },
+    {
+      "field": "native_to_context_value_equality",
+      "producer": "omp",
+      "reason": "pending_gate_3_value_equality",
+      "surface": "omp"
+    }
+  ],
+  "dashboard": {
+    "health": {
+      "asset": {
+        "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/src/agent_introspection/assets/agent-introspection-health.json",
+        "present": true,
+        "sha256": "cff0c6ad736d2db5ca3c9e9b40c0fc24b263d9caddb58fcc70828d63334c5ce7"
+      },
+      "revision": "v1",
+      "route_id": "019f7fb0-6f30-77e0-ad12-6d2e44964a7d",
+      "uuid": "0500ebd3-0d77-4294-b2b5-352ba884daa7"
+    },
+    "insight": {
+      "asset": {
+        "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/src/agent_introspection/assets/agent-introspection.json",
+        "present": true,
+        "sha256": "69efb9b7f05597b73091ecd0da1fd13de6f3c13f1fe9dc4487b4e3501d3b994a"
+      },
+      "revision": "v5",
+      "route_id": "019f4da0-4a13-7c62-9ac9-fc6d850d633b",
+      "uuid": "576f5068-d183-5cab-88b7-395f65cf1094"
+    },
+    "verification_status": "verified"
+  },
+  "evidence_policy": {
+    "contains_commands_or_payload_bodies": false,
+    "contains_environment_values_or_secrets": false,
+    "contains_prompts_or_responses": false,
+    "retained_categories": [
+      "producer_surface_names",
+      "installed_versions",
+      "native_session_identifiers",
+      "timestamps",
+      "statuses",
+      "checksums",
+      "presence_checks",
+      "project_tuples"
+    ]
+  },
+  "frozen_at_utc": "2026-08-07T17:45:58.546340000Z",
+  "local_state": {
+    "database": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/introspection.sqlite3",
+      "present": true,
+      "sha256": "21e489846c052f646b4ba4dc095bd560439052ab52caa9fbeed481f709e05504"
+    },
+    "managed_runtime": {
+      "path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1",
+      "present": true,
+      "sha256": "31c43a94ead1937e082529de1830c8b8cd1af199a768f0a854d96fa6db0fde6c"
+    },
+    "orbstack_signoz": {
+      "docker_context": "orbstack",
+      "loopback_only": true,
+      "observed_at_utc": "2026-08-07T17:45:58.546340000Z",
+      "orbstack_lan_exposure": false,
+      "status": "ok"
+    },
+    "scheduler": {
+      "current_slot": {
+        "slot_start": "2026-08-07T17:00:00+00:00",
+        "status": "due"
+      },
+      "installed": true,
+      "label": "com.adamjackson.agent-introspection",
+      "last_exit_code": 60,
+      "latest_terminal": {
+        "completed_at": "2026-08-07T17:15:49.755904+00:00",
+        "error_code": "ScanDeadlineExceeded",
+        "run_id": "f04959c0-80c5-492b-a9ad-eee3cb906a60",
+        "started_at": "2026-08-07T17:00:49.187752+00:00",
+        "status": "failed"
+      },
+      "observed_at_utc": "2026-08-07T17:45:58.546340000Z",
+      "scan_lease_present": false,
+      "state": "not running"
+    },
+    "session_context_inbox": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/session-context-inbox",
+      "present": true,
+      "sha256": "aa9a8b6347ada0e9c5e7151e8f0988a61494c77c2094d2face6b562e1843468f"
+    }
+  },
+  "population_contract": {
+    "path": "docs/project-attribution-gate-2-population-contract.json",
+    "sha256": "ee841e88f8e685e99c3de645b4249be8beb78ef1bad46f68ed0ea25240a2612e"
+  },
+  "schema": "project-attribution-gate-2-installed",
+  "schema_version": 1,
+  "source_time_range": {
+    "end_exclusive": "2026-08-07T17:45:58.546340000Z",
+    "start_inclusive": "2026-08-06T14:53:18.170773000Z"
+  },
+  "status": "frozen_baseline",
+  "surfaces": {
+    "claude-code": {
+      "adapter": {
+        "installed": {
+          "path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/claude-code.py",
+          "present": true,
+          "sha256": "db386262e73cb95cbf2afdf67a2c4c8906cdd5eb1097dfff38ab5dfc8edbd72c"
+        },
+        "repository": {
+          "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/.agents/skills/introspection-onboarding/scripts/adapters/claude-code.py",
+          "present": true,
+          "sha256": "db386262e73cb95cbf2afdf67a2c4c8906cdd5eb1097dfff38ab5dfc8edbd72c"
+        },
+        "sha256_equal": true
+      },
+      "blocked_reason": "missing_gate_3_identity_proof",
+      "configuration_identity": {
+        "managed_reference_presence": "present",
+        "path": "/Users/adamjackson/.claude/settings.json",
+        "present": true,
+        "sha256": "362b3d832971a0f079777fae2837f5e09dd99d4ee025d0bcb2109d29f9a31002"
+      },
+      "installed_version": "2.1.199",
+      "native_identity_field": "session_id",
+      "source_identity_field": "session.id",
+      "otel_service": "claude-code",
+      "producer": "claude-code",
+      "surface": "claude-code",
+      "terminal_outcome": "blocked"
+    },
+    "codex-app": {
+      "application_identity": {
+        "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "present": true,
+        "sha256": "d96ae1ca1ff6fc8587842fa04c92d3ee4d31651a811c2f89b65fcfd9c28473e2"
+      },
+      "blocked_reason": "installed_surface_has_no_independently_proven_otel_service_and_native_identity_contract",
+      "configuration_identity": {
+        "path_identity": "unavailable_without_serializing_application_state",
+        "present": false,
+        "sha256": null
+      },
+      "installed_version": "0.146.0-alpha.9.2",
+      "native_identity_field": null,
+      "source_identity_field": null,
+      "otel_service": null,
+      "producer": "codex-app",
+      "surface": "codex-app",
+      "terminal_outcome": "blocked"
+    },
+    "codex-app-server": {
+      "adapter": {
+        "installed": {
+          "path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex-app-server.sh",
+          "present": false,
+          "sha256": null
+        },
+        "repository": {
+          "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/.agents/skills/introspection-onboarding/scripts/adapters/codex-app-server.sh",
+          "present": true,
+          "sha256": "ab1daa3266b7010aade001e582aaf59c94dcebccfefa1aa8618de28c009c2512"
+        },
+        "sha256_equal": false
+      },
+      "blocked_reason": "installed_app_server_adapter_not_present_in_managed_runtime",
+      "configuration_identity": {
+        "path": "/opt/homebrew/Caskroom/codex/0.147.0/bin/codex",
+        "present": true,
+        "sha256": "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37"
+      },
+      "installed_version": "0.147.0",
+      "native_identity_field": "thread/start response thread ID",
+      "source_identity_field": "thread.id or thread_id",
+      "otel_service": "codex-app-server",
+      "producer": "codex-app-server",
+      "surface": "codex-app-server",
+      "terminal_outcome": "blocked"
+    },
+    "codex-cli": {
+      "adapter": {
+        "installed": {
+          "path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py",
+          "present": true,
+          "sha256": "5d19a6062ccb52ae8f56a752ff07ef4d54a9dcad8f7d8c43179e49561baf29ed"
+        },
+        "repository": {
+          "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/.agents/skills/introspection-onboarding/scripts/adapters/codex.py",
+          "present": true,
+          "sha256": "5d19a6062ccb52ae8f56a752ff07ef4d54a9dcad8f7d8c43179e49561baf29ed"
+        },
+        "sha256_equal": true
+      },
+      "blocked_reason": "detector_and_context_evidence_not_evaluated_by_installed_manifest",
+      "computer_use_wrapper_chain": {
+        "chain_presence": true,
+        "configuration": {
+          "path": "/Users/adamjackson/.codex/config.toml",
+          "present": true,
+          "sha256": "1015dcf4ab2c808f76c4a1074f721a2867ac38f315f5ef4b8ab984d1a1ac609a"
+        },
+        "launcher": {
+          "path": "/Users/adamjackson/.codex/.tmp/bundled-marketplaces/openai-bundled/plugins/computer-use/bin/computer-use-client-launcher",
+          "present": true,
+          "sha256": "096edf245e994f4a9a00177da90969acd2abe7d8acd73dad23844a40aea007f2"
+        },
+        "native_client": {
+          "path": "/Users/adamjackson/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+          "present": true,
+          "sha256": "0cf6488963df4b9ca2e2c3b67d8b6af317d8a61c7f52773dde2c4177648db3fe"
+        },
+        "plugin_configuration": {
+          "path": "/Users/adamjackson/.codex/.tmp/bundled-marketplaces/openai-bundled/plugins/computer-use/.mcp.json",
+          "present": true,
+          "sha256": "3516e1755f57daa9cc705c4dc048a149d5561f6d3b18059dc72fff721d7e9a73"
+        }
+      },
+      "configuration_identity": {
+        "managed_reference_presence": "present",
+        "path": "/Users/adamjackson/.codex/config.toml",
+        "present": true,
+        "sha256": "1015dcf4ab2c808f76c4a1074f721a2867ac38f315f5ef4b8ab984d1a1ac609a"
+      },
+      "installed_version": "0.147.0",
+      "native_identity_field": "notify thread-id",
+      "source_identity_field": "thread.id or thread_id",
+      "orca_runtime_configuration_identity": {
+        "managed_reference_presence": "present",
+        "path": "/Users/adamjackson/Library/Application Support/orca/codex-runtime-home/home/config.toml",
+        "present": true,
+        "sha256": "565a8f77a7df78052741a2e9d1bcae3672ec1bda9323f3942360d21c1981f9db"
+      },
+      "otel_services": [
+        "codex_cli_rs",
+        "codex_exec"
+      ],
+      "producer": "codex-cli",
+      "surface": "codex-cli",
+      "terminal_outcome": "blocked"
+    },
+    "omp": {
+      "blocked_reason": "pending_gate_3_value_equality",
+      "configuration_identity": {
+        "path": "/Users/adamjackson/.omp/agent/extensions/agent-introspection.ts",
+        "present": true,
+        "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83"
+      },
+      "extension": {
+        "installed": {
+          "path": "/Users/adamjackson/.omp/agent/extensions/agent-introspection.ts",
+          "present": true,
+          "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83"
+        },
+        "repository": {
+          "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/.agents/skills/introspection-onboarding/scripts/adapters/omp.ts",
+          "present": true,
+          "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83"
+        },
+        "sha256_equal": true
+      },
+      "installed_version": "17.2.10",
+      "native_identity_field": "getSessionId()",
+      "source_identity_field": "gen_ai.conversation.id",
+      "otel_service": "oh-my-pi",
+      "producer": "omp",
+      "runtime_adapter": {
+        "installed": {
+          "path": "/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/omp.ts",
+          "present": true,
+          "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83"
+        },
+        "repository": {
+          "path": "/Users/adamjackson/Projects/inflight/signoz-introspection/.agents/skills/introspection-onboarding/scripts/adapters/omp.ts",
+          "present": true,
+          "sha256": "323cf49ffe9740d96fc06720742249c576397d1d3aca86da861caff05d4cfb83"
+        },
+        "sha256_equal": true
+      },
+      "surface": "omp",
+      "terminal_outcome": "blocked"
+    }
+  }
+}

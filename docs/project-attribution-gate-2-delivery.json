@@ -1,0 +1,76 @@
+{
+  "schema": "project-attribution-gate-2-delivery",
+  "schema_version": 1,
+  "status": "baseline_blocked_failed_recorded",
+  "frozen_at_utc": "2026-08-07T17:45:58.546340000Z",
+  "source_time_range": {
+    "start_inclusive": "2026-08-06T14:53:18.170773000Z",
+    "end_exclusive": "2026-08-07T17:45:58.546340000Z"
+  },
+  "population_contract": {
+    "path": "docs/project-attribution-gate-2-population-contract.json",
+    "sha256": "ee841e88f8e685e99c3de645b4249be8beb78ef1bad46f68ed0ea25240a2612e"
+  },
+  "local_evidence": {
+    "path": "docs/project-attribution-gate-2-local.json",
+    "sha256": "cdf23c0fcb7756ef5e87e2e53d8d95d643430af603f5718832fb1edbabdf1c93",
+    "database_backup": {
+      "path": "/Users/adamjackson/.local/share/agent-introspection/backups/introspection-gate-2-20260807T174558546340Z.sqlite3",
+      "sha256": "c08c1a6e7c884c854c4e0765c0e0c60ac044e1159e6e4a4cd6ab201f70dcae73",
+      "integrity_check": "ok",
+      "foreign_key_check": "ok"
+    },
+    "manifests": {
+      "local-context": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-context.jsonl", "count": 50, "sha256": "381f22dd6ca28f5eddaeb3385fb7459d2f1e11505dd73dee4290bb33123d4d44"},
+      "local-activities": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-activities.jsonl", "count": 17, "sha256": "962c6ea4d172cb5bca065fb63234e97407d18c40fa4cf72226b289bc2e563a03"},
+      "local-outbox": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-outbox.jsonl", "count": 93, "sha256": "1d92816b539c88cd3f34d8a3995ce51ea8a5658cde9416b8404cd43871a22bae"},
+      "local-rejections": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/local-rejections.jsonl", "count": 470062, "sha256": "39b60d2cc766b7ea71c035970d99a8e934c3c2630706678ccd3253a08755e7dc"}
+    }
+  },
+  "remote_read_only_query": {
+    "table": "signoz_logs.distributed_logs_v2",
+    "service": "agent-introspection",
+    "timestamp_predicate": "timestamp >= start_inclusive AND timestamp < end_exclusive",
+    "query_bounds_ns": {"start_inclusive": 1786027998170773000, "end_exclusive": 1786124758546340000},
+    "probe_policy": "No producer probes were generated; only existing frozen records were queried."
+  },
+  "remote_manifests": {
+    "remote-context": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/remote-context.jsonl", "count": 30, "sha256": "380ae3fe3708724eb8228efe535f3f6a96113a233dcfa28f0dc5921e59b85157"},
+    "remote-activities": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/remote-activities.jsonl", "count": 17, "sha256": "79d47d9121afad8e37010d55c1bd902cabe7388c1f2beba766d41c63019afd16"}
+  },
+  "local_to_remote_reconciliation": {
+    "identity_namespace": "producer/native_session_identity; activities additionally producer_surface_identity/canonical_activity_id",
+    "project_tuple": "project.id/project.name, with unresolved/unresolved as the unresolved activity sentinel",
+    "timestamp_basis": "accepted context occurred_at and canonical activity source_ended_at_ns versus remote timestamp_ns",
+    "accepted_context": {"local": 30, "remote": 30, "matched": 30, "local_only": 0, "remote_only": 0, "timestamp_mismatches": 0, "project_tuple_mismatches": 0},
+    "canonical_activities": {"local": 17, "remote": 17, "matched": 17, "local_only": 0, "remote_only": 0, "timestamp_mismatches": 0, "status_mismatches": 0, "project_tuple_mismatches": 0},
+    "conservation": {"scope": "local/remote immutable delivery reconciliation only; source trace/log raw, included, and excluded population conservation is recorded by the source manifest", "remote_projection_records": 47, "local_projection_records": 47, "matched": 47, "local_only": 0, "remote_only": 0, "equations": ["local_projection_records = matched + local_only", "remote_projection_records = matched + remote_only"]},
+    "missing_remote_evidence": {"failed": 0, "blocked": 0, "excluded": 0}
+  },
+  "dashboard": {
+    "asset_path": "src/agent_introspection/assets/agent-introspection.json",
+    "asset_sha256": "69efb9b7f05597b73091ecd0da1fd13de6f3c13f1fe9dc4487b4e3501d3b994a",
+    "dashboard_uuid": "576f5068-d183-5cab-88b7-395f65cf1094",
+    "route_id": "019f4da0-4a13-7c62-9ac9-fc6d850d633b",
+    "schema_version": 1,
+    "execution": "Persisted insight-dashboard SQL was executed read-only with end_timestamp_nano = end_exclusive - 1, preserving the frozen half-open range.",
+    "results": {"path": "/Users/adamjackson/.local/share/agent-introspection/project-attribution-investigation/20260807T174558546340Z/dashboard-results.jsonl", "count": 15, "sha256": "bde9dc64cc399ddb456de51a55d6938d2350b300a2ef35f2581f83b744a37663"}
+  },
+  "source_evidence": {
+    "path": "docs/project-attribution-gate-2-source.json",
+    "sha256": "afd71586f7d0d0c93f1bc1c7c6d28cc03c704c32a774a286b056031a0a192418",
+    "population": {
+      "scope": "frozen source trace/log population and terminal classification; distinct from the 47-record local/remote immutable delivery reconciliation",
+      "counts": {"raw": 12831230, "included": 12830131, "excluded": 1099, "attributed": 3279, "expected_rejection": 0, "failed": 12826851, "blocked": 1, "source_sessions": 94},
+      "conservation": {"raw_equals_included_plus_excluded": true, "included_equals_attributed_plus_expected_rejection_plus_failed_plus_blocked": true}
+    },
+    "manifests": {
+      "raw": {"count": 12831230, "sha256": "5fb339ca81cf78d63f960fdb8d342a6ecf683856f8ded1269f1940d38668850d"},
+      "included": {"count": 12830131, "sha256": "d50b6a91ae6f2a3f4a9e8e8ff6fb774fee5d14b53a00c72eeaa0c6f476778b7b"},
+      "excluded": {"count": 1099, "sha256": "6a4c5fccb0614fc1990baddd008eb5fc21e54c8527b6b6820f12d1d829feee60"},
+      "sessions": {"count": 94, "sha256": "b84afa42ea2de25cec656b4e1c2a4d7485e822de7b0bc28649719aebe9e0b140"}
+    }
+  },
+  "installed_evidence": {"path": "docs/project-attribution-gate-2-installed.json", "sha256": "b4d19fb3b069c8ba21e6d37277c90de296880cd1fcaf65e74d3dbb3fceacf539", "surfaces": 5, "terminal_outcome": "blocked"},
+  "retention_policy": "Artifacts retain only allowlisted producer/surface identities, native session identifiers, timestamps, project tuples, statuses, counts, checksums, and presence checks; they retain no prompts, responses, commands, payload bodies, environment values, or secrets."
+}
