@@ -1,0 +1,224 @@
+{
+  "schema": "project-attribution-gate-5",
+  "schema_version": 7,
+  "status": "approved_design_with_phase_7_stop",
+  "decision_boundary": {
+    "approved": "This artifact approves an implementation-grade Phase 5 design only.",
+    "prohibited_now": [
+      "implementation",
+      "migration or replay execution",
+      "tests",
+      "asset/config/runtime mutation",
+      "publication",
+      "source replay",
+      "Git actions"
+    ],
+    "phase_7": "Stopped. No installed, local database, asset, remote, or runtime mutation is authorized."
+  },
+  "authority": {
+    "resolver": "The shared session-context runtime is the sole Git project resolver.",
+    "association": "Accepted context joins only exact producer and exact native session_id; no aliases, fallback, inferred identity, or projection authority.",
+    "projection": "All canonical, outbox, remote, and dashboard values are deterministic comparison projections and never context authority."
+  },
+  "implementation_order": [
+    "v6 immutable migration and retained-v5 proof",
+    "context ingestion, supersession, v2 projection, and durable schedule",
+    "durable combined source windows",
+    "caller-owned reconciliation and versioned projections",
+    "detector-independent dashboard asset",
+    "isolated staged publication after independent Gate 7 approval"
+  ],
+  "phase_5_items": [
+    {
+      "id": "P5-01-v6-migration-and-supersession",
+      "paths_symbols": [
+        "src/agent_introspection/migrations.py::MIGRATIONS",
+        "src/agent_introspection/migrations.py::apply_migrations",
+        "src/agent_introspection/session_context.py::_replay_intervals",
+        "session_context_event_supersessions",
+        "session_context_replay_mutations"
+      ],
+      "design": "Append v6 only; retain v1-v5 statements/checksums. Rebuild session_context_events, session_context_intervals, canonical_rejections and every dependent FK/index/trigger transactionally, including canonical_rejections session_context acceptance. session_context_event_supersessions has original_event_id and replacement_event_id each FK session_context_events, original_event_id != replacement_event_id, evidence_sha256 exactly 64 lowercase hex, reason_code CHECK = 'event_type_misclassified', and nonempty approved_at/approved_by. BEFORE INSERT triggers require equality of producer, session_id, occurred_at, project_id, project_name, project_root, and project_kind between original and replacement; only event_type and deterministically recomputed event_id differ. Original is a true lifecycle event; replacement is an unsuperseded session_context; and neither ID occurs on either side of any supersession, prohibiting chains and cycles. evidence_sha256 hashes canonical compact sorted-key UTF-8 bytes of a Gate 7 evidence object containing schema, original_event_id, replacement_event_id, original_event_type, replacement_event_type, unchanged full tuple/timestamp, source evidence paths/checksums, approval identity/time; Gate 7 binds the exact pair/hash. No-update and no-delete triggers make supersession rows immutable. A lawful future correction is exactly one BEGIN IMMEDIATE: insert corrected immutable event; insert supersession; open session_context_replay_mutations guard; rebuild intervals excluding superseded originals; close guard; insert exact context-attribution schedule; COMMIT. There is no correction row now.",
+      "oracle": "Upgrade an actual retained v5 fixture preserving prior identities/rows, pass integrity/FK/quick checks, prove copy/validate/swap rollback, all supersession trigger failures including changed occurred_at and each changed project_id/project_name/project_root/project_kind, immutability, exact Gate 7 pair/hash binding, and each correction crash boundary."
+    },
+    {
+      "id": "P5-02-context-semantics-and-v2-projection",
+      "paths_symbols": [
+        "src/agent_introspection/session_context.py::EventType",
+        "src/agent_introspection/session_context.py::drain_inbox",
+        "src/agent_introspection/session_context.py::_replay_intervals",
+        "src/agent_introspection/telemetry.py::_ensure_current_context_outbox",
+        "session_context_events"
+      ],
+      "design": "Only producer/surface codex-cli/codex-cli under agent-turn-complete is authorized to ingest session_context and perform non-temporal association. Shell runtime and parse_event reject session_context for Claude, codex-app-server, and OMP; resolver leaves them unresolved. Any extension requires a new producer-specific Gate 1/3 authority decision. Codex agent-turn-complete emits session_context, never session_start. session_context is non-temporal, can repeat a complete tuple, creates no interval, and cannot alter replay order; only session_start, workspace_changed, session_end create intervals. In the same accepted-inbox transaction persist the event and durable exact producer/session/context-event schedule, then unlink inbox input after commit. Name _ensure_current_context_outbox and run it over every session_context_events row. It emits deterministic accepted-context entity version 2 containing the complete producer/session/project id/name/root/kind tuple; retained v1 remains unchanged. Emit immutable introspection.session_context.superseded with original/replacement IDs and exact producer/session/evidence for each lawful supersession. Pending-context schedule worker and startup repair invoke v2 idempotently so all retained 30 rows gain v2. Dashboard highest-version CTE excludes originals named by supersession events. No remote event is emitted now.",
+      "oracle": "Exercise authorized codex-cli agent-turn-complete ingestion and non-temporal association; reject session_context in shell runtime and parse_event for Claude, codex-app-server, and OMP and leave each unresolved; exercise repeated context, lifecycle-only intervals, before/after-commit inbox crashes, all retained v2 rows, v1 preservation, superseded-event identity, and exact producer isolation."
+    },
+    {
+      "id": "P5-03-resolution-and-scheduled-reconciliation",
+      "paths_symbols": [
+        "src/agent_introspection/attribution.py::resolve_attribution",
+        "src/agent_introspection/attribution.py::reconcile_activity",
+        "src/agent_introspection/scan.py::_reconcile_late_context",
+        "src/agent_introspection/scan.py::_persist_event_project_identity",
+        "src/agent_introspection/database.py::persist_canonical_activity",
+        "src/agent_introspection/telemetry.py::enqueue_canonical_activity_version",
+        "src/agent_introspection/trends.py::recompute_canonical_findings",
+        "session_context_attribution_schedule"
+      ],
+      "design": "Exclude superseded originals. Only producer/surface codex-cli/codex-cli under agent-turn-complete is authorized for session_context ingestion and non-temporal association; Claude, codex-app-server, and OMP remain unresolved, and any extension requires a new producer-specific Gate 1/3 authority decision. For exact producer/session, lifecycle has precedence: if unsuperseded true lifecycle rows exist, resolve exactly one half-open interval at source time. Otherwise collapse authorized unsuperseded session_context rows by complete project tuple, accept exactly one tuple and MIN(event_id), and fail closed for zero/multiple tuples. Replace _reconcile_late_context with the schedule worker. Plan scan.py::_persist_event_project_identity: inside the worker-owned BEGIN IMMEDIATE, before version insert, select the complete tuple from selected unsuperseded session_context_events evidence and insert project_identities; an existing ID must match kind/root/name and derived git path exactly or fail. It replaces _persist_context_projects and _persist_attribution_project interval-only writes. Refactor the real attribution.py::reconcile_activity to accept manage_transaction in the same caller-owned invariant style as persistence APIs. The worker opens one BEGIN IMMEDIATE with manage_transaction=false, selects identity, resolves, persists event project identity before version insert, writes activity version, schema-3 outbox, findings and trends, then completes the schedule before COMMIT; crash rolls back every write and leaves the schedule pending. canonical_recomputation_schedule remains findings/trends-only.",
+      "oracle": "Test lifecycle precedence, boundaries, completion collapse/conflict, cross-producer failure, unauthorized producer unresolved behavior, exact project-identity matching including derived git path, schedule retry, and injected crash at every worker write boundary; completion occurs only with all dependent rows committed."
+    },
+    {
+      "id": "P5-04-half-open-source-and-durable-window",
+      "paths_symbols": [
+        "src/agent_introspection/source.py::LOG_QUERY",
+        "src/agent_introspection/source.py::TRACE_QUERY",
+        "src/agent_introspection/source.py::_HYDRATION_SELECT",
+        "src/agent_introspection/source.py::HYDRATION_QUERIES",
+        "src/agent_introspection/source.py::ClickHouseClient.logs",
+        "src/agent_introspection/source.py::ClickHouseClient.traces",
+        "src/agent_introspection/source.py::ClickHouseClient.hydrate",
+        "src/agent_introspection/source.py::RETENTION_PROOF_QUERY",
+        "src/agent_introspection/source.py::ClickHouseClient.prove_retained_window",
+        "src/agent_introspection/scan.py::_bounds",
+        "src/agent_introspection/scan.py::_claim_source_window",
+        "src/agent_introspection/scan.py::run_scan",
+        "src/agent_introspection/database.py::persist_source_watermark",
+        "source_extraction_windows"
+      ],
+      "design": "All log, trace, hydration membership uses timestamp >= start AND timestamp < end; remove start_bucket/end_bucket APIs/callers/tests. Retention proof is availability-only. v6 adds source_extraction_windows(id,start_ns,end_ns,claimed_at,committed_at), bound/order checks, a partial unique uncommitted claim for signoz_canonical_window, guarded immutable bounds, and no-delete trigger. _claim_source_window commits its exact start/end claim before external queries; retry reuses that pending claim verbatim. The final canonical BEGIN IMMEDIATE writes all source-derived state, persist_source_watermark for signoz_canonical_window, and committed_at together. Crash before final commit leaves pending claim and retry uses identical bounds. signoz_logs watermark is audit-only and never seeds the combined checkpoint. The first combined window requires separate Gate 7 approval of a full-retention/safe replay anchor proved for both streams; there is no default seven-day bootstrap.",
+      "oracle": "Test endpoint membership/equal timestamps/hydration, every claim/query/final-transaction crash boundary, identical retry bounds, combined stream atomicity, audit-only legacy watermark, and required dual-stream anchor approval."
+    },
+    {
+      "id": "P5-05-detector-independent-source-session-projection-and-dashboard",
+      "paths_symbols": [
+        "src/agent_introspection/source.py::RAW_SOURCE_SESSION_LOG_QUERY",
+        "src/agent_introspection/source.py::RAW_SOURCE_SESSION_TRACE_QUERY",
+        "src/agent_introspection/source.py::SourceSessionRow",
+        "src/agent_introspection/source.py::ClickHouseClient.source_sessions",
+        "src/agent_introspection/source.py::LOG_QUERY",
+        "src/agent_introspection/source.py::TRACE_QUERY",
+        "src/agent_introspection/scan.py::run_scan",
+        "src/agent_introspection/dashboard.py::_context_coverage_query",
+        "src/agent_introspection/dashboard.py::build_dashboard",
+        "src/agent_introspection/assets/agent-introspection.json"
+      ],
+      "design": "Add one detector-independent raw acquisition contract beside the detector queries: RAW_SOURCE_SESSION_LOG_QUERY reads the full half-open log table with no service filter and deduplicates by resource service.name/id; RAW_SOURCE_SESSION_TRACE_QUERY reads the full half-open trace table with no service filter and deduplicates by serviceName/spanID. Both select service namespace, native record ID, source timestamp, session.id, thread.id, thread_id, and gen_ai.conversation.id. SourceSessionRow and ClickHouseClient.source_sessions preserve those exact fields and derive candidate-set status without payload content. run_scan executes these raw queries in the same durable claimed window and final atomic transaction as LOG_QUERY/TRACE_QUERY; raw rows drive source-session projection and raw/included/excluded conservation, while only the explicit included partition feeds the existing detector membership queries. The two detector queries remain consumers of the same source window but cannot define or narrow the 94-group population. Emit one introspection.source_session.recorded event per deduplicated raw source record and retain inclusion_status, inclusion reason, native-key status, and terminal classification. It is a projection, never authority. Entity key is sha256(signal, service namespace, native record ID), with entity version 1. Native identity extraction is exactly the frozen Gate 2 contract: trace and log claude-code map to claude-code/claude-code and use session.id; trace and log codex_exec/codex_cli_rs map to codex-cli/codex-cli and use thread.id/thread_id; trace and log codex-app-server map to codex-app-server/codex-app-server and use thread.id/thread_id; trace oh-my-pi maps to omp/omp and uses gen_ai.conversation.id; excluded oh-my-pi logs retain their observed native-key status; unmapped services retain null producer/surface and missing status. Logs never inherit identity through trace_id. Source-session identity is (producer,surface,signal,native_session_id) when valid and (producer,surface,signal,native_session_key_status) when missing or conflicting. source.session_group_id is sha256 of canonical compact sorted-key UTF-8 JSON for that exact identity. Dashboard CTEs latest-deduplicate each raw source-record entity/version, aggregate strictly by exact source-session identity, and require identity, inclusion status, native-key status/ID, source-record membership/count, terminal outcome, and reason equality to every one of the 94 frozen Gate 2 source-session groups before any context resolution. Only then they resolve included groups by exact producer/session with lifecycle precedence and the Codex-CLI-only completion association, retain terminal attributed groups, then SELECT DISTINCT exactly producer, session_id, project_id, project_name, project_root, project_kind.",
+      "oracle": "Prove raw queries have no service or bucket membership filter, select every frozen native field, and conserve their full deduplicated rows independently of LOG_QUERY/TRACE_QUERY detector yield. Prove one event per deduplicated raw source record; exact Gate 2 per-signal native extraction including Claude trace session.id and no trace_id inheritance; exact source-sessions.jsonl checksum and group-by-group equality for all 94 identities, classifications, memberships, and counts with zero omissions, extras, merges, or splits; then prove exactly 14 attributed six-field DISTINCT tuples with omissions=0, extras=0, and cross-producer joins=0. Excluded, missing, conflicting, failed, blocked, and expected-rejection groups remain visible through the 94-group equality gate and yield no tuple extra. Detector yield is never a denominator."
+    },
+    {
+      "id": "P5-06-versioned-activity-projection",
+      "paths_symbols": [
+        "src/agent_introspection/attribution.py::canonical_activity_event_attributes",
+        "src/agent_introspection/database.py::persist_canonical_activity",
+        "src/agent_introspection/telemetry.py::enqueue_canonical_activity_version"
+      ],
+      "design": "Canonical activity schema version 3 serializes complete project id/name/root/kind with absent values normalized only to unresolved. _ensure_current_activity_outbox appends schema-3 current versions without mutating immutable schema-2 outbox/remote rows. Latest selection orders activity version then payload schema version.",
+      "oracle": "Compare complete exact tuple across canonical DB, outbox, frozen remote and dashboard under one unresolved normalization and latest selection."
+    },
+    {
+      "id": "P5-07-installed-producer-boundary",
+      "paths_symbols": [
+        ".agents/skills/introspection-onboarding/scripts/session-context-runtime.sh",
+        ".agents/skills/introspection-onboarding/scripts/adapters/codex.py",
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Users/adamjackson/.omp/agent/extensions/agent-introspection.ts",
+        "/Users/adamjackson/.omp/agent/session-context-runtime.sh"
+      ],
+      "design": "Record explicit installed-state no-change for Claude Code, Codex CLI, Codex app-server, Codex app, and OMP. Repository design never substitutes for installed OMP. Any app-server/OMP work needs producer-specific Gate 3 rerun and separate approval. Codex app has no approved repair and blocks all-producer completion.",
+      "oracle": "No producer advances without independent Gate 3 native/context/source identity and exact-join proof."
+    },
+    {
+      "id": "P5-08-staged-publication-and-forward-only-recovery",
+      "paths_symbols": [
+        "src/agent_introspection/migrations.py::apply_migrations",
+        "src/agent_introspection/scan.py::run_scan",
+        "src/agent_introspection/telemetry.py::drain_outbox_event_ids",
+        "docs/project-attribution-gate-2-source.json",
+        "docs/project-attribution-gate-4-causes.json",
+        "docs/project-attribution-gate-4-projections.json"
+      ],
+      "design": "Before any publication, quiesce scheduler and every DB writer while preserving inbox; backup; run migration/replay on an isolated DB copy with delivery disabled and isolated SigNoz/ClickHouse fixture; validate exact local/outbox IDs and payloads plus generated asset; obtain separate Gate 7 approval for the exact DB mutation and remote event-ID inventory. Apply only while live writers remain quiesced, deliver only approved IDs through telemetry.py::drain_outbox_event_ids, perform post-publication remote/dashboard equality, then release scheduler. run_scan must not run live between migration and approval. Restore the pre-migration backup only with zero post-backup writes and before publication; after publication corrections are forward-only append-only versions/events. No installed mutation is authorized now.",
+      "equations": [
+        "raw = included ⊎ excluded",
+        "included ∩ excluded = ∅",
+        "included = attributed ⊎ expected_rejection ⊎ failed ⊎ blocked",
+        "attributed, expected_rejection, failed, and blocked are pairwise disjoint subsets of included",
+        "expected_rejection is the subset of frozen Gate 2 included-source rows classified to that terminal outcome with a reason in expected_rejection_reason_allowlist",
+        "excluded is exactly the frozen Gate 2 excluded-source manifest with a reason in exclusion_reason_allowlist"
+      ],
+      "oracle": "Require retained-v5 upgrade/crash proof, all context/supersession/schedule/window/source-session/dashboard crash and equality proofs, exact approval inventory enforcement, post-publication equality, raw/included and included/terminal set identities, pairwise disjointness within each partition, and no-double-count proofs against the actual Gate 2 included-source, excluded-source, expected_rejection_reason_allowlist, and exclusion_reason_allowlist evidence. Historical five temporal divergences remain frozen unless future lawful authoritative evidence supports correction."
+    }
+  ],
+  "pj_closure_matrix": [
+    {
+      "id": "PJ1",
+      "closure": "P5-01 gives lawful immutable supersession schema, triggers, atomic correction and frozen-evidence disposition."
+    },
+    {
+      "id": "PJ2",
+      "closure": "P5-04 gives durable exact pre-query claims, combined atomic watermark, retry and anchor gate."
+    },
+    {
+      "id": "PJ3",
+      "closure": "P5-02/P5-03 use event rows, exact precedence, v2 outbox and caller-owned durable schedule."
+    },
+    {
+      "id": "PJ4",
+      "closure": "P5-05 makes source-session projection—not detector/canonical activity—the dashboard population with frozen 14 tuple oracle."
+    },
+    {
+      "id": "PJ5",
+      "closure": "P5-04 preserves exact half-open membership and separate retention proof."
+    },
+    {
+      "id": "PJ6",
+      "closure": "Named paths/symbols are real implementation surfaces and obsolete interval-only lookups are removed."
+    },
+    {
+      "id": "PJ7",
+      "closure": "P5-07 preserves producer no-change gates and Codex-app blocker."
+    },
+    {
+      "id": "PJ8",
+      "closure": "P5-02/P5-06 define complete versioned context/activity payloads while immutable prior rows remain."
+    },
+    {
+      "id": "PJ9",
+      "closure": "P5-08 requires isolated rehearsal, separate Gate 7 inventory approval, quiescence, exact-ID drain and forward-only recovery."
+    },
+    {
+      "id": "PJ10",
+      "closure": "P5-08 preserves equations and non-circular exact local/outbox/remote/dashboard oracles."
+    },
+    {
+      "id": "PJ11",
+      "closure": "P5-01 requires unchanged producer/session/timestamp/project tuple, canonical Gate 7 evidence hashing and exact pair/hash binding for immutable supersession."
+    },
+    {
+      "id": "PJ12",
+      "closure": "P5-02/P5-03 authorize session_context only for codex-cli agent-turn-complete and reject Claude, app-server, and OMP without a new producer-specific Gate 1/3 decision."
+    },
+    {
+      "id": "PJ13",
+      "closure": "P5-03 plans _persist_event_project_identity inside the worker transaction before version insert, exact identity validation, and crash rollback."
+    },
+    {
+      "id": "PJ14",
+      "closure": "P5-05 projects the full raw population, uses the exact frozen producer/surface/signal/native-or-status identity and per-signal extraction without trace inheritance, proves every field/count of all 94 groups before resolution, and then proves the exact 14 attributed DISTINCT tuples."
+    },
+    {
+      "id": "PJ15",
+      "closure": "P5-08 defines the two exact disjoint unions, scopes pairwise disjointness to each partition, and binds expected rejection and exclusion to actual Gate 2 included/excluded manifests and reason allowlists."
+    }
+  ],
+  "residual_blockers": [
+    "Phase 7 remains stopped.",
+    "Codex app lacks independent native/context/source/runtime proof and blocks all-producer completion.",
+    "Older-timestamp late source arrivals remain unobservable without an authoritative ingestion cursor or separately approved full-retention replay.",
+    "The five historical temporal divergences remain frozen unless future lawful authoritative correction evidence exists."
+  ],
+  "intentionally_unchanged": {
+    "scope": "Only this design JSON and its mirrored Markdown are changed; Gate 1-4 artifacts, source, tests, configs, installed state, external evidence, Git, and user-deleted files remain untouched."
+  }
+}
