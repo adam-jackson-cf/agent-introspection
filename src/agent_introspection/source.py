@@ -9,6 +9,7 @@ import subprocess
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Literal
 
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
@@ -16,19 +17,30 @@ _DURATION_MS = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
 _QUERY_TIMEOUT_SECONDS = 600.0
 
 
+CANONICAL_SERVICE_PRODUCERS: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        "codex-cli": ("codex-cli", "codex-cli"),
+        "claude-code": ("claude-code", "claude-code"),
+        "omp": ("omp", "omp"),
+        "codex_exec": ("codex-cli", "codex-cli"),
+        "codex_cli_rs": ("codex-cli", "codex-cli"),
+        "codex-app-server": ("codex-app-server", "codex-app-server"),
+        "oh-my-pi": ("omp", "omp"),
+    }
+)
+
 LOG_QUERY = r"""
 SELECT
     timestamp,
     id,
     trace_id,
     span_id,
+    resource.`service.name`::String AS service_name,
     attributes_string['event.name'] AS event_name,
     attributes_string['conversation.id'] AS conversation_id,
-    multiIf(
-      resource.`service.name`::String IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
-      resource.`service.name`::String = 'codex-app-server', 'codex-app-server',
-      NULL
-    ) AS producer,
+    attributes_string['thread.id'] AS thread_id,
+    attributes_string['thread_id'] AS thread_id_legacy,
+    attributes_string['gen_ai.conversation.id'] AS gen_ai_conversation_id,
     attributes_string['call_id'] AS call_id,
     attributes_string['tool_name'] AS tool_name,
     attributes_string['success'] AS success_string,
@@ -47,110 +59,36 @@ SELECT
     if(mapContains(attributes_number, 'prompt_length'),
        toInt64(attributes_number['prompt_length']), NULL) AS prompt_length
 FROM signoz_logs.distributed_logs_v2
-WHERE timestamp > {start_ns:UInt64}
-  AND timestamp <= {end_ns:UInt64}
+WHERE timestamp >= {start_ns:UInt64}
+  AND timestamp < {end_ns:UInt64}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND resource.`service.name`::String IN ('codex_exec', 'codex_cli_rs', 'codex-app-server')
 ORDER BY timestamp, id
 """.strip()
 
 
 TRACE_QUERY = r"""
-WITH
-    multiIf(
-      serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
-      serviceName = 'codex-app-server', 'codex-app-server',
-      serviceName = 'oh-my-pi', 'omp',
-      NULL
-    ) AS correlation_producer,
-    multiIf(
-      serviceName IN ('codex_exec', 'codex_cli_rs'), 'codex-cli',
-      serviceName = 'codex-app-server', 'codex-app-server',
-      serviceName = 'oh-my-pi', 'omp',
-      NULL
-    ) AS correlation_producer_surface,
-    arrayJoin(
-      if(
-        empty(
-          arrayFilter(
-            value -> value != '',
-            multiIf(
-              serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
-              [attributes_string['thread.id'], attributes_string['thread_id']],
-              serviceName = 'oh-my-pi',
-              [attributes_string['gen_ai.conversation.id']],
-              []
-            )
-          )
-        ),
-        [''],
-        arrayDistinct(
-          arrayFilter(
-            value -> value != '',
-            multiIf(
-              serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server'),
-              [attributes_string['thread.id'], attributes_string['thread_id']],
-              serviceName = 'oh-my-pi',
-              [attributes_string['gen_ai.conversation.id']],
-              []
-            )
-          )
-        )
-      )
-    ) AS native_correlation_id,
-    native_correlation_id != '' AS has_native_correlation,
-    correlation_producer IS NOT NULL AS has_correlation_producer
 SELECT
     trace_id,
     arraySort(groupUniqArray(spanID)) AS source_span_ids,
-    coalesce(
-      nullIf(anyIf(attributes_string['turn.id'], attributes_string['turn.id'] != ''), ''),
-      nullIf(anyIf(attributes_string['turn_id'], attributes_string['turn_id'] != ''), '')
-    ) AS turn_id,
-    coalesce(
-      nullIf(anyIf(attributes_string['thread.id'], attributes_string['thread.id'] != ''), ''),
-      nullIf(anyIf(attributes_string['thread_id'], attributes_string['thread_id'] != ''), '')
-    ) AS thread_id,
-    multiIf(
-      uniqExactIf(
-        attributes_string['conversation.id'],
-        attributes_string['conversation.id'] != ''
-      ) = 1,
-      anyIf(
-        attributes_string['conversation.id'],
-        attributes_string['conversation.id'] != ''
-      ),
-      NULL
-    ) AS conversation_id,
-    multiIf(
-      uniqExactIf(native_correlation_id, has_native_correlation) = 0,
-      'missing',
-      uniqExactIf(native_correlation_id, has_native_correlation) = 1
-        AND uniqExactIf(correlation_producer, has_correlation_producer) = 1,
-      'valid',
-      'conflicting'
-    ) AS correlation_status,
-    multiIf(
-      correlation_status = 'valid',
-      anyIf(native_correlation_id, has_native_correlation),
-      NULL
-    ) AS correlation_id,
-    multiIf(
-      uniqExactIf(
-        tuple(correlation_producer, correlation_producer_surface),
-        has_correlation_producer
-      ) = 1,
-      anyIf(correlation_producer_surface, has_correlation_producer),
-      NULL
-    ) AS producer_surface,
-    multiIf(
-      uniqExactIf(correlation_producer, has_correlation_producer) = 1,
-      anyIf(correlation_producer, has_correlation_producer),
-      NULL
-    ) AS producer,
+    arraySort(arrayFilter(value -> value != '', groupUniqArray(serviceName))) AS service_names,
+    arraySort(groupUniqArrayIf(attributes_string['turn.id'], attributes_string['turn.id'] != ''))
+      AS turn_ids,
+    arraySort(groupUniqArrayIf(attributes_string['turn_id'], attributes_string['turn_id'] != ''))
+      AS legacy_turn_ids,
+    arraySort(groupUniqArrayIf(
+      attributes_string['thread.id'], attributes_string['thread.id'] != ''
+    )) AS thread_ids,
+    arraySort(groupUniqArrayIf(
+      attributes_string['thread_id'], attributes_string['thread_id'] != ''
+    )) AS legacy_thread_ids,
+    arraySort(groupUniqArrayIf(
+      attributes_string['conversation.id'], attributes_string['conversation.id'] != ''
+    )) AS conversation_ids,
+    arraySort(groupUniqArrayIf(
+      attributes_string['gen_ai.conversation.id'], attributes_string['gen_ai.conversation.id'] != ''
+    )) AS gen_ai_conversation_ids,
     min(timestamp) AS started_at,
     max(timestamp) AS ended_at,
-    min(timestamp) AS source_event_timestamp,
     sumIf(
       attributes_number['codex.turn.token_usage.total_tokens'],
       mapContains(attributes_number, 'codex.turn.token_usage.total_tokens')
@@ -163,11 +101,112 @@ SELECT
       OR notEmpty(attributes_string['gen_ai.tool.name'])
     ) AS tool_calls
 FROM signoz_traces.distributed_signoz_index_v3
-WHERE timestamp BETWEEN {start:DateTime64(9)} AND {end:DateTime64(9)}
+WHERE timestamp >= {start:DateTime64(9)}
+  AND timestamp < {end:DateTime64(9)}
   AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
-  AND serviceName IN ('codex_exec', 'codex_cli_rs', 'codex-app-server', 'oh-my-pi')
 GROUP BY trace_id
 ORDER BY started_at, trace_id
+""".strip()
+
+
+RAW_SOURCE_SESSION_LOG_QUERY = r"""
+SELECT
+    resource.`service.name`::String AS service_name,
+    id AS source_id,
+    min(timestamp) AS source_timestamp_ns,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['session.id'])
+    )) AS session_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['thread.id'])
+    )) AS thread_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['thread_id'])
+    )) AS legacy_thread_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['gen_ai.conversation.id'])
+    )) AS gen_ai_conversation_ids
+FROM signoz_logs.distributed_logs_v2
+WHERE timestamp >= {start_ns:UInt64}
+  AND timestamp < {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND resource.`service.name`::String IN (
+    'codex-cli', 'claude-code', 'omp', 'codex_exec',
+    'codex_cli_rs', 'codex-app-server', 'oh-my-pi'
+  )
+  AND (
+    (resource.`service.name`::String = 'claude-code'
+      AND mapContains(attributes_string, 'session.id'))
+    OR (resource.`service.name`::String IN (
+        'codex-cli', 'codex_exec', 'codex_cli_rs', 'codex-app-server'
+      )
+      AND (
+        mapContains(attributes_string, 'thread.id')
+        OR mapContains(attributes_string, 'thread_id')
+      ))
+    OR (resource.`service.name`::String IN ('omp', 'oh-my-pi')
+      AND mapContains(attributes_string, 'gen_ai.conversation.id'))
+  )
+GROUP BY service_name, source_id
+ORDER BY source_timestamp_ns, service_name, source_id
+""".strip()
+
+
+RAW_SOURCE_SESSION_TRACE_QUERY = r"""
+SELECT
+    serviceName AS service_name,
+    spanID AS source_id,
+    min(timestamp) AS source_timestamp,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['session.id'])
+    )) AS session_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['thread.id'])
+    )) AS thread_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['thread_id'])
+    )) AS legacy_thread_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['gen_ai.conversation.id'])
+    )) AS gen_ai_conversation_ids
+FROM signoz_traces.distributed_signoz_index_v3
+WHERE timestamp >= {start:DateTime64(9)}
+  AND timestamp < {end:DateTime64(9)}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND serviceName IN (
+    'codex-cli', 'claude-code', 'omp', 'codex_exec',
+    'codex_cli_rs', 'codex-app-server', 'oh-my-pi'
+  )
+  AND (
+    (serviceName = 'claude-code' AND mapContains(attributes_string, 'session.id'))
+    OR (serviceName IN (
+        'codex-cli', 'codex_exec', 'codex_cli_rs', 'codex-app-server'
+      )
+      AND (
+        mapContains(attributes_string, 'thread.id')
+        OR mapContains(attributes_string, 'thread_id')
+      ))
+    OR (serviceName IN ('omp', 'oh-my-pi')
+      AND mapContains(attributes_string, 'gen_ai.conversation.id'))
+  )
+GROUP BY service_name, source_id
+ORDER BY source_timestamp, service_name, source_id
+""".strip()
+
+
+RAW_SOURCE_WINDOW_ANCHOR_QUERY = r"""
+SELECT
+  (SELECT min(timestamp) FROM signoz_logs.distributed_logs_v2) AS logs_earliest_ns,
+  (SELECT toUnixTimestamp64Nano(min(timestamp))
+   FROM signoz_traces.distributed_signoz_index_v3) AS traces_earliest_ns
 """.strip()
 
 
@@ -260,6 +299,10 @@ class LogRow:
     output_tokens: int | None
     reasoning_tokens: int | None
     prompt_length: int | None
+    service_name: str | None = None
+    thread_id: str | None = None
+    legacy_thread_id: str | None = None
+    gen_ai_conversation_id: str | None = None
     producer: str | None = None
 
 
@@ -272,6 +315,14 @@ class TraceRow:
     ended_at: datetime
     total_tokens: int
     tool_calls: int
+    source_span_ids: tuple[str, ...] = ()
+    service_names: tuple[str, ...] = ()
+    turn_ids: tuple[str, ...] = ()
+    legacy_turn_ids: tuple[str, ...] = ()
+    thread_ids: tuple[str, ...] = ()
+    legacy_thread_ids: tuple[str, ...] = ()
+    conversation_ids: tuple[str, ...] = ()
+    gen_ai_conversation_ids: tuple[str, ...] = ()
     correlation: SourceActivityCorrelation | None = None
     correlation_status: SourceCorrelationStatus | None = None
 
@@ -322,6 +373,51 @@ class HydrationRow:
     success_bool: bool | None
     status_code: int | None
     exit_code: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSessionRow:
+    """One deduplicated, detector-independent bounded source record."""
+
+    source_kind: Literal["log", "trace"]
+    source_id: str
+    source_timestamp: datetime
+    service_name: str
+    session_ids: tuple[str, ...]
+    thread_ids: tuple[str, ...]
+    legacy_thread_ids: tuple[str, ...]
+    gen_ai_conversation_ids: tuple[str, ...]
+
+    @property
+    def native_session_ids(self) -> tuple[str, ...]:
+        """Return only the native IDs authorized for this signal/service contract."""
+        if self.service_name == "claude-code":
+            identifiers = self.session_ids
+        elif self.service_name in {"codex-cli", "codex_exec", "codex_cli_rs", "codex-app-server"}:
+            identifiers = (*self.thread_ids, *self.legacy_thread_ids)
+        elif self.source_kind == "trace" and self.service_name in {"omp", "oh-my-pi"}:
+            identifiers = self.gen_ai_conversation_ids
+        else:
+            identifiers = ()
+        return tuple(sorted(set(identifiers)))
+
+    @property
+    def session_status(self) -> Literal["missing", "wrong_field", "exact", "conflicting"]:
+        count = len(self.native_session_ids)
+        if count == 0:
+            return (
+                "wrong_field"
+                if any(
+                    (
+                        self.session_ids,
+                        self.thread_ids,
+                        self.legacy_thread_ids,
+                        self.gen_ai_conversation_ids,
+                    )
+                )
+                else "missing"
+            )
+        return "exact" if count == 1 else "conflicting"
 
 
 def _optional_text(value: object) -> str | None:
@@ -379,7 +475,7 @@ def parse_source_activity_correlation(
     producer_surface = _optional_text(data.get("producer_surface"))
     correlation_id = _optional_text(data.get("correlation_id"))
     source_event_timestamp = _optional_timestamp(data.get("source_event_timestamp"))
-    if producer is None:
+    if producer is None or producer_surface is None:
         raise SourceError("source correlation producer is invalid")
     producer_surface_for_producer = _PRODUCER_SURFACES.get(producer)
     if producer_surface_for_producer is None:
@@ -414,7 +510,11 @@ def _parse_source_correlation_status(
         if correlation is None:
             raise SourceError("valid source correlation status requires a correlation")
         return None
-    if value not in {"missing", "conflicting"}:
+    if value == "missing":
+        state: Literal["missing", "conflicting"] = "missing"
+    elif value == "conflicting":
+        state = "conflicting"
+    else:
         raise SourceError("source correlation status is invalid")
     if correlation is not None or data.get("correlation_id") is not None:
         raise SourceError("rejected source correlation must not include a correlation ID")
@@ -436,7 +536,7 @@ def _parse_source_correlation_status(
         if _provenance_ids(data, field):
             raise SourceError("rejected source correlation must only contain source span IDs")
     return SourceCorrelationStatus(
-        state=value,
+        state=state,
         producer=producer,
         producer_surface=producer_surface,
         source_event_timestamp=source_event_timestamp,
@@ -454,6 +554,23 @@ def _optional_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SourceError(f"expected integer or null, got {type(value).__name__}")
     return value
+
+
+def _string_array(data: Mapping[str, object], field: str) -> tuple[str, ...]:
+    value = data.get(field, ())
+    if not isinstance(value, (list, tuple)):
+        raise SourceError(f"{field} must be an array of non-empty strings")
+    values = tuple(value)
+    if any(not isinstance(item, str) or not item for item in values):
+        raise SourceError(f"{field} must be an array of non-empty strings")
+    if values != tuple(sorted(set(values))):
+        raise SourceError(f"{field} must contain sorted unique identifiers")
+    return values
+
+
+def _single_raw_identity(*values: tuple[str, ...]) -> str | None:
+    identities = tuple(sorted({identity for group in values for identity in group}))
+    return identities[0] if len(identities) == 1 else None
 
 
 def parse_duration_ms(value: object) -> float | None:
@@ -484,6 +601,37 @@ def _clickhouse_datetime64(value: datetime) -> str:
     return utc.strftime("%Y-%m-%d %H:%M:%S.%f") + "000"
 
 
+def parse_source_session_row(
+    data: Mapping[str, object], *, source_kind: Literal["log", "trace"]
+) -> SourceSessionRow:
+    """Parse a raw source record without deriving detector eligibility."""
+
+    source_id = _optional_text(data.get("source_id"))
+    service_name = _optional_text(data.get("service_name"))
+    if source_id is None or service_name is None:
+        raise SourceError("raw source record requires service name and source ID")
+    if source_kind == "log":
+        timestamp_ns = _optional_int(data.get("source_timestamp_ns"))
+        if timestamp_ns is None or timestamp_ns < 0:
+            raise SourceError("raw log source timestamp must be an unsigned integer")
+        source_timestamp = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC)
+    else:
+        parsed_timestamp = _optional_timestamp(data.get("source_timestamp"))
+        if parsed_timestamp is None:
+            raise SourceError("raw trace source timestamp must be ISO-8601")
+        source_timestamp = parsed_timestamp
+    return SourceSessionRow(
+        source_kind=source_kind,
+        source_id=source_id,
+        source_timestamp=source_timestamp,
+        service_name=service_name,
+        session_ids=_string_array(data, "session_ids"),
+        thread_ids=_string_array(data, "thread_ids"),
+        legacy_thread_ids=_string_array(data, "legacy_thread_ids"),
+        gen_ai_conversation_ids=_string_array(data, "gen_ai_conversation_ids"),
+    )
+
+
 def parse_log_row(data: Mapping[str, object]) -> LogRow:
     success_bool = data.get("success_bool")
     if success_bool is not None and not isinstance(success_bool, bool):
@@ -502,6 +650,10 @@ def parse_log_row(data: Mapping[str, object]) -> LogRow:
         span_id=_optional_text(data.get("span_id")),
         event_name=event_name,
         conversation_id=_optional_text(data.get("conversation_id")),
+        service_name=_optional_text(data.get("service_name")),
+        thread_id=_optional_text(data.get("thread_id")),
+        legacy_thread_id=_optional_text(data.get("thread_id_legacy")),
+        gen_ai_conversation_id=_optional_text(data.get("gen_ai_conversation_id")),
         producer=_optional_text(data.get("producer")),
         call_id=_optional_text(data.get("call_id")),
         tool_name=_optional_text(data.get("tool_name")),
@@ -531,10 +683,6 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
         started = started.replace(tzinfo=UTC)
     if ended.tzinfo is None:
         ended = ended.replace(tzinfo=UTC)
-    started = started.astimezone(UTC)
-    ended = ended.astimezone(UTC)
-    if ended < started:
-        raise SourceError("trace timestamps must be ordered")
     correlation = (
         parse_source_activity_correlation(data)
         if data.get("correlation_status") not in {"missing", "conflicting"}
@@ -544,14 +692,30 @@ def parse_trace_row(data: Mapping[str, object]) -> TraceRow:
     tool_calls = _optional_int(data.get("tool_calls"))
     if total_tokens is None or tool_calls is None or total_tokens < 0 or tool_calls < 0:
         raise SourceError("trace counters must be non-negative integers")
+    turn_ids = _string_array(data, "turn_ids")
+    legacy_turn_ids = _string_array(data, "legacy_turn_ids")
+    thread_ids = _string_array(data, "thread_ids")
+    legacy_thread_ids = _string_array(data, "legacy_thread_ids")
+    conversation_ids = _string_array(data, "conversation_ids")
+    gen_ai_conversation_ids = _string_array(data, "gen_ai_conversation_ids")
     return TraceRow(
         trace_id=trace_id,
-        thread_id=_optional_text(data.get("thread_id")),
-        turn_id=_optional_text(data.get("turn_id")),
+        thread_id=_single_raw_identity(thread_ids, legacy_thread_ids)
+        or _optional_text(data.get("thread_id")),
+        turn_id=_single_raw_identity(turn_ids, legacy_turn_ids)
+        or _optional_text(data.get("turn_id")),
         started_at=started,
         ended_at=ended,
         total_tokens=total_tokens,
         tool_calls=tool_calls,
+        source_span_ids=_string_array(data, "source_span_ids"),
+        service_names=_string_array(data, "service_names"),
+        turn_ids=turn_ids,
+        legacy_turn_ids=legacy_turn_ids,
+        thread_ids=thread_ids,
+        legacy_thread_ids=legacy_thread_ids,
+        conversation_ids=conversation_ids,
+        gen_ai_conversation_ids=gen_ai_conversation_ids,
         correlation=correlation,
         correlation_status=_parse_source_correlation_status(data, correlation),
     )
@@ -586,6 +750,11 @@ def parse_hydration_row(data: Mapping[str, object]) -> HydrationRow:
         status_code=_optional_int(data.get("status_code")),
         exit_code=_optional_int(data.get("exit_code")),
     )
+
+
+def _window_buckets(*, start_ns: int, end_ns: int) -> tuple[int, int]:
+    """Return safe partition bounds for a nanosecond half-open source window."""
+    return max(0, start_ns // 1_000_000_000 - 1_800), end_ns // 1_000_000_000
 
 
 class ClickHouseClient:
@@ -641,11 +810,39 @@ class ClickHouseClient:
                 raise SourceError(f"JSONEachRow line {line_number} is not an object")
             yield decoded
 
-    def logs(
-        self, *, start_ns: int, end_ns: int, start_bucket: int, end_bucket: int
-    ) -> Iterator[LogRow]:
-        if not (0 <= start_ns < end_ns and 0 <= start_bucket <= end_bucket):
+    def source_sessions(
+        self, *, start: datetime, end: datetime, start_ns: int, end_ns: int
+    ) -> Iterator[SourceSessionRow]:
+        """Yield the full detector-independent source population in one window."""
+
+        if start.tzinfo is None or end.tzinfo is None or start >= end or not 0 <= start_ns < end_ns:
+            raise ValueError("invalid raw source extraction bounds")
+        start_bucket, end_bucket = _window_buckets(start_ns=start_ns, end_ns=end_ns)
+        for row in self.query(
+            RAW_SOURCE_SESSION_LOG_QUERY,
+            {
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "start_bucket": start_bucket,
+                "end_bucket": end_bucket,
+            },
+        ):
+            yield parse_source_session_row(row, source_kind="log")
+        for row in self.query(
+            RAW_SOURCE_SESSION_TRACE_QUERY,
+            {
+                "start": _clickhouse_datetime64(start),
+                "end": _clickhouse_datetime64(end),
+                "start_bucket": start_bucket,
+                "end_bucket": end_bucket,
+            },
+        ):
+            yield parse_source_session_row(row, source_kind="trace")
+
+    def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
+        if not 0 <= start_ns < end_ns:
             raise ValueError("invalid log extraction bounds")
+        start_bucket, end_bucket = _window_buckets(start_ns=start_ns, end_ns=end_ns)
         for row in self.query(
             LOG_QUERY,
             {
@@ -657,13 +854,12 @@ class ClickHouseClient:
         ):
             yield parse_log_row(row)
 
-    def traces(
-        self, *, start: datetime, end: datetime, start_bucket: int, end_bucket: int
-    ) -> Iterator[TraceRow]:
+    def traces(self, *, start: datetime, end: datetime) -> Iterator[TraceRow]:
         if start.tzinfo is None or end.tzinfo is None or start >= end:
             raise ValueError("trace bounds must be ordered, timezone-aware datetimes")
-        if not 0 <= start_bucket <= end_bucket:
-            raise ValueError("invalid trace bucket bounds")
+        start_ns = int(start.astimezone(UTC).timestamp() * 1_000_000_000)
+        end_ns = int(end.astimezone(UTC).timestamp() * 1_000_000_000)
+        start_bucket, end_bucket = _window_buckets(start_ns=start_ns, end_ns=end_ns)
         parameters: Mapping[str, str | int] = {
             "start": _clickhouse_datetime64(start),
             "end": _clickhouse_datetime64(end),
@@ -672,6 +868,31 @@ class ClickHouseClient:
         }
         for row in self.query(TRACE_QUERY, parameters):
             yield parse_trace_row(row)
+
+    def raw_source_window_anchor(self) -> tuple[int, int]:
+        """Return earliest timestamps for both raw source streams."""
+
+        rows = list(self.query(RAW_SOURCE_WINDOW_ANCHOR_QUERY, {}))
+        if len(rows) != 1:
+            raise SourceError("raw source window anchor is unavailable")
+
+        def timestamp_ns(value: object) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError) as exc:
+                timestamp = _optional_timestamp(value)
+                if timestamp is None:
+                    raise SourceError("raw source window anchor is unavailable") from exc
+                return int(timestamp.timestamp() * 1_000_000_000)
+
+        try:
+            logs = timestamp_ns(rows[0]["logs_earliest_ns"])
+            traces = timestamp_ns(rows[0]["traces_earliest_ns"])
+        except KeyError as exc:
+            raise SourceError("raw source window anchor requires both source streams") from exc
+        if logs < 0 or traces < 0:
+            raise SourceError("raw source window anchor is invalid")
+        return logs, traces
 
     def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
         """Fail closed unless both source streams retain data at the requested start."""

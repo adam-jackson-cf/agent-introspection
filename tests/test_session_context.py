@@ -8,14 +8,17 @@ from pathlib import Path
 
 import pytest
 
+from agent_introspection.attribution import resolve_attribution
 from agent_introspection.migrations import apply_migrations
 from agent_introspection.session_context import (
     SessionContextError,
+    SessionContextEvent,
     correlated_project,
     drain_inbox,
     event_payload,
     parse_event,
     spool_event,
+    supersede_context,
 )
 
 
@@ -26,7 +29,9 @@ def _connection(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _event(root: Path, event_type: str, moment: datetime, *, event_id: str | None = None):
+def _event(
+    root: Path, event_type: str, moment: datetime, *, event_id: str | None = None
+) -> SessionContextEvent:
     project_id = hashlib.sha256(root.as_posix().encode()).hexdigest()
     if event_id is None:
         event_id = hashlib.sha256(
@@ -154,6 +159,158 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
         connection.close()
 
 
+def test_codex_cli_session_context_is_repeatable_non_temporal_and_reconciles(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    root = tmp_path / "project"
+    root.mkdir()
+    connection = _connection(database)
+    try:
+        inbox = tmp_path / "inbox"
+        occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
+        first = _event(root, "session_start", occurred_at, event_id="a" * 64)
+        first_payload = event_payload(first)
+        first_payload.update({"producer": "codex-cli", "event_type": "session_context"})
+        first = parse_event(first_payload)
+        repeated = _event(
+            root, "session_start", occurred_at + timedelta(minutes=1), event_id="b" * 64
+        )
+        repeated_payload = event_payload(repeated)
+        repeated_payload.update({"producer": "codex-cli", "event_type": "session_context"})
+        repeated = parse_event(repeated_payload)
+        spool_event(first, directory=inbox)
+        spool_event(repeated, directory=inbox)
+
+        assert [event.entity_id for event in drain_inbox(connection, directory=inbox)] == [
+            first.event_id,
+            repeated.event_id,
+        ]
+        assert connection.execute("SELECT COUNT(*) FROM session_context_intervals").fetchone() == (
+            0,
+        )
+        attribution = resolve_attribution(
+            connection,
+            producer="codex-cli",
+            correlation_id="session-1",
+            source_at=occurred_at - timedelta(days=1),
+        )
+        assert (attribution.state, attribution.project_id, attribution.method) == (
+            "resolved",
+            first.project.identity,
+            "session_context",
+        )
+    finally:
+        connection.close()
+
+
+def test_superseded_context_is_immutable_excluded_and_replaced(tmp_path: Path) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    first_root = tmp_path / "first-project"
+    corrected_root = tmp_path / "corrected-project"
+    first_root.mkdir()
+    corrected_root.mkdir()
+    connection = _connection(database)
+    try:
+        inbox = tmp_path / "inbox"
+        occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
+        events = []
+        for root, event_id in ((first_root, "e" * 64), (corrected_root, "f" * 64)):
+            payload = event_payload(_event(root, "session_start", occurred_at, event_id=event_id))
+            payload.update({"producer": "codex-cli", "event_type": "session_context"})
+            events.append(parse_event(payload))
+            spool_event(events[-1], directory=inbox)
+        accepted = drain_inbox(connection, directory=inbox)
+        assert [event.entity_version for event in accepted] == [2, 2]
+
+        supersession = supersede_context(
+            connection,
+            original_event_id=events[0].event_id,
+            replacement_event_id=events[1].event_id,
+        )
+        assert (
+            supersession.scope,
+            supersession.entity_id,
+            supersession.entity_version,
+            supersession.event_name,
+        ) == (
+            "session-context-supersession",
+            events[0].event_id,
+            1,
+            "introspection.session_context.superseded",
+        )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM otlp_outbox WHERE event_id = ?",
+            (supersession.event_id,),
+        ).fetchone() == (1,)
+        assert (
+            supersede_context(
+                connection,
+                original_event_id=events[0].event_id,
+                replacement_event_id=events[1].event_id,
+            ).event_id
+            == supersession.event_id
+        )
+        attribution = resolve_attribution(
+            connection,
+            producer="codex-cli",
+            correlation_id="session-1",
+            source_at=occurred_at,
+        )
+        assert (attribution.state, attribution.project_id, attribution.evidence_id) == (
+            "resolved",
+            events[1].project.identity,
+            events[1].event_id,
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE session_context_event_supersessions SET replacement_event_id = ?",
+                (events[0].event_id,),
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("producer", ("claude-code", "codex-app-server", "omp"))
+def test_session_context_rejects_non_codex_cli_producers(tmp_path: Path, producer: str) -> None:
+    event = _event(tmp_path / "project", "session_start", datetime(2026, 1, 1, tzinfo=UTC))
+    payload = event_payload(event)
+    payload.update({"producer": producer, "event_type": "session_context"})
+
+    with pytest.raises(SessionContextError, match="only supported"):
+        parse_event(payload)
+
+
+def test_codex_cli_session_context_conflicting_projects_fail_closed(tmp_path: Path) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    first_root = tmp_path / "first-project"
+    second_root = tmp_path / "second-project"
+    first_root.mkdir()
+    second_root.mkdir()
+    connection = _connection(database)
+    try:
+        inbox = tmp_path / "inbox"
+        occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
+        for root, event_id in ((first_root, "c" * 64), (second_root, "d" * 64)):
+            payload = event_payload(_event(root, "session_start", occurred_at, event_id=event_id))
+            payload.update({"producer": "codex-cli", "event_type": "session_context"})
+            spool_event(parse_event(payload), directory=inbox)
+
+        assert len(drain_inbox(connection, directory=inbox)) == 2
+        attribution = resolve_attribution(
+            connection,
+            producer="codex-cli",
+            correlation_id="session-1",
+            source_at=occurred_at,
+        )
+        assert (attribution.state, attribution.reason_code) == (
+            "unresolved",
+            "conflicting_correlation_id",
+        )
+    finally:
+        connection.close()
+
+
 def test_reused_event_id_conflict_is_quarantined_without_mutating_ledger_or_outbox(
     tmp_path: Path,
 ) -> None:
@@ -233,26 +390,24 @@ def test_ordered_replay_and_end_exclusive_correlation(tmp_path: Path) -> None:
             changed.event_id,
             ended.event_id,
         ]
-        assert (
-            correlated_project(
-                connection,
-                producer="claude-code",
-                session_id="session-1",
-                started_at=start_at,
-                ended_at=changed_at,
-            ).identity
-            == start.project.identity
+        first_project = correlated_project(
+            connection,
+            producer="claude-code",
+            session_id="session-1",
+            started_at=start_at,
+            ended_at=changed_at,
         )
-        assert (
-            correlated_project(
-                connection,
-                producer="claude-code",
-                session_id="session-1",
-                started_at=changed_at,
-                ended_at=session_end,
-            ).identity
-            == changed.project.identity
+        assert first_project is not None
+        assert first_project.identity == start.project.identity
+        second_project = correlated_project(
+            connection,
+            producer="claude-code",
+            session_id="session-1",
+            started_at=changed_at,
+            ended_at=session_end,
         )
+        assert second_project is not None
+        assert second_project.identity == changed.project.identity
         assert (
             correlated_project(
                 connection,
@@ -284,7 +439,11 @@ def test_event_schema_rejects_missing_and_noncanonical_fields(tmp_path: Path) ->
     with pytest.raises(SessionContextError):
         parse_event(payload)
     payload = event_payload(event)
-    payload["agent"]["project"]["kind"] = "non_git"
+    agent = payload["agent"]
+    assert isinstance(agent, dict)
+    project = agent["project"]
+    assert isinstance(project, dict)
+    project["kind"] = "non_git"
     with pytest.raises(SessionContextError):
         parse_event(payload)
 

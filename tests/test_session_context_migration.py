@@ -11,7 +11,7 @@ def test_session_context_producer_rebuild_preserves_rows_and_expands_enum(tmp_pa
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA foreign_keys = ON")
     try:
-        apply_migrations(connection, path, MIGRATIONS[:9])
+        apply_migrations(connection, path, MIGRATIONS[:5])
         event_id = "a" * 64
         project_id = "b" * 64
         connection.execute(
@@ -62,6 +62,25 @@ def test_session_context_producer_rebuild_preserves_rows_and_expands_enum(tmp_pa
                 )
                 """,
                 ("e" * 64, project_id),
+            )
+        connection.execute(
+            """
+            INSERT INTO session_context_events VALUES (
+                ?, 'codex-cli', 'thread-1', 'session_context',
+                '2026-01-02T00:03:00+00:00', ?, 'project', '/project', 'git'
+            )
+            """,
+            ("f" * 64, project_id),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO session_context_events VALUES (
+                    ?, 'omp', 'session-2', 'session_context',
+                    '2026-01-02T00:04:00+00:00', ?, 'project', '/project', 'git'
+                )
+                """,
+                ("0" * 64, project_id),
             )
     finally:
         connection.close()

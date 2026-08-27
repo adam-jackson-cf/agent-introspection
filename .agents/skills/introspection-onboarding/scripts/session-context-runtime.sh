@@ -97,7 +97,13 @@ if [ -z "$session_id" ] || contains_ascii_control "$session_id"; then
 fi
 case $event_type in
   session_start|workspace_changed|session_end) ;;
-  *) printf '%s\n' 'event type must be session_start, workspace_changed, or session_end' >&2; exit 64 ;;
+  session_context)
+    if [ "$producer" != "codex-cli" ]; then
+      printf '%s\n' 'session_context is only supported for producer codex-cli' >&2
+      exit 64
+    fi
+    ;;
+  *) printf '%s\n' 'event type must be session_start, workspace_changed, session_end, or session_context for codex-cli' >&2; exit 64 ;;
 esac
 if contains_ascii_control "$occurred_at" || ! validate_occurred_at "$occurred_at"; then
   printf '%s\n' 'occurred-at must be an RFC 3339 timestamp with an offset and no ASCII control characters' >&2

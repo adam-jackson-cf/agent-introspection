@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import Literal, cast
 
 from agent_introspection.identities import ProjectIdentity
-from agent_introspection.telemetry import DerivedEvent
+from agent_introspection.telemetry import DerivedEvent, enqueue_event
 
 _EVENT_ID = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 Producer = Literal["claude-code", "codex-cli", "codex-app-server", "omp"]
-EventType = Literal["session_start", "workspace_changed", "session_end"]
+EventType = Literal["session_start", "workspace_changed", "session_end", "session_context"]
 _OPEN_INTERVAL_QUERY = (
     "SELECT event_id FROM session_context_intervals "
     "WHERE producer = ? AND session_id = ? AND ended_at IS NULL"
@@ -43,6 +43,22 @@ _SELECT_EVENT_CANONICAL_FIELDS = (
     "project_name, project_root, project_kind "
     "FROM session_context_events WHERE event_id = ?"
 )
+_OPEN_RAW_RECONCILIATION = (
+    "INSERT INTO source_session_reconciliation_pending("
+    "producer, session_id, context_event_id, created_at, completed_at"
+    ") VALUES (?, ?, ?, ?, NULL) "
+    "ON CONFLICT(producer, session_id) DO UPDATE SET "
+    "context_event_id = excluded.context_event_id, created_at = excluded.created_at, "
+    "completed_at = NULL"
+)
+
+_INSERT_SUPERSESSION = (
+    "INSERT INTO session_context_event_supersessions("
+    "original_event_id, replacement_event_id, created_at"
+    ") VALUES (?, ?, ?) ON CONFLICT(original_event_id) DO NOTHING"
+)
+
+
 _INSERT_REJECTION = (
     "INSERT OR IGNORE INTO canonical_rejections("
     "id, producer, producer_surface, correlation_id, lifecycle_event, occurred_at, "
@@ -138,8 +154,10 @@ def parse_event(value: object) -> SessionContextEvent:
     if producer not in ("claude-code", "codex-cli", "codex-app-server", "omp"):
         raise SessionContextError("producer is unsupported")
     event_type = _text(value["event_type"], "event_type")
-    if event_type not in ("session_start", "workspace_changed", "session_end"):
+    if event_type not in ("session_start", "workspace_changed", "session_end", "session_context"):
         raise SessionContextError("event_type is unsupported")
+    if event_type == "session_context" and producer != "codex-cli":
+        raise SessionContextError("session_context is only supported for producer codex-cli")
     producer = cast(Producer, producer)
     agent = value["agent"]
     if not isinstance(agent, dict) or set(agent) != {"project"}:
@@ -225,7 +243,12 @@ def _rejection_details(value: object, reason_code: str) -> tuple[str, str, str |
     lifecycle_event = value.get("event_type")
     if producer not in ("claude-code", "codex-cli", "codex-app-server", "omp"):
         raise SessionContextError("rejection requires a canonical producer")
-    if lifecycle_event not in ("session_start", "workspace_changed", "session_end"):
+    if lifecycle_event not in (
+        "session_start",
+        "workspace_changed",
+        "session_end",
+        "session_context",
+    ) or (lifecycle_event == "session_context" and producer != "codex-cli"):
         raise SessionContextError("rejection requires a canonical lifecycle event")
     correlation_id = value.get("session_id")
     if not isinstance(correlation_id, str):
@@ -264,7 +287,9 @@ def _rejection_envelope_details(
     if (
         _EVENT_ID.fullmatch(rejection_id) is None
         or producer not in ("claude-code", "codex-cli", "codex-app-server", "omp")
-        or lifecycle_event not in ("session_start", "workspace_changed", "session_end")
+        or lifecycle_event
+        not in ("session_start", "workspace_changed", "session_end", "session_context")
+        or (lifecycle_event == "session_context" and producer != "codex-cli")
         or reason_code not in _REJECTION_REASONS
     ):
         raise SessionContextError("rejection envelope is not canonical")
@@ -362,11 +387,18 @@ def _parse_rejection_reason(error: SessionContextError) -> str:
     return "invalid_workspace"
 
 
+def _open_raw_reconciliation(connection: sqlite3.Connection, event: SessionContextEvent) -> None:
+    """Durably request exact raw-session reconciliation for accepted context."""
+    connection.execute(
+        _OPEN_RAW_RECONCILIATION,
+        (event.producer, event.session_id, event.event_id, datetime.now(UTC).isoformat()),
+    )
+
+
 def _replay_intervals(
     connection: sqlite3.Connection, event: SessionContextEvent, *, clock_skew_seconds: int
 ) -> str | None:
-    """Insert one event and rebuild its ordered half-open interval projection."""
-
+    """Insert a non-temporal context or rebuild an ordered lifecycle interval projection."""
     existing = connection.execute(_SELECT_EVENT_CANONICAL_FIELDS, (event.event_id,)).fetchone()
     if existing is not None:
         return (
@@ -374,6 +406,10 @@ def _replay_intervals(
             if tuple(existing) == _canonical_event_fields(event)
             else "duplicate_conflict"
         )
+    if event.event_type == "session_context":
+        connection.execute(_INSERT_EVENT, _event_parameters(event))
+        _open_raw_reconciliation(connection, event)
+        return None
     latest = connection.execute(
         "SELECT latest_occurred_at FROM session_context_replay_state "
         "WHERE producer = ? AND session_id = ?",
@@ -463,13 +499,84 @@ def _replay_intervals(
         "DELETE FROM session_context_replay_mutations WHERE producer = ? AND session_id = ?",
         (event.producer, event.session_id),
     )
+    _open_raw_reconciliation(connection, event)
     return None
+
+
+def supersede_context(
+    connection: sqlite3.Connection, *, original_event_id: str, replacement_event_id: str
+) -> DerivedEvent:
+    """Append one immutable correction that withdraws an accepted context identity."""
+    if (
+        _EVENT_ID.fullmatch(original_event_id) is None
+        or _EVENT_ID.fullmatch(replacement_event_id) is None
+        or original_event_id == replacement_event_id
+    ):
+        raise SessionContextError("supersession requires distinct canonical event IDs")
+    original = connection.execute(
+        "SELECT producer, session_id FROM session_context_events WHERE event_id = ?",
+        (original_event_id,),
+    ).fetchone()
+    replacement = connection.execute(
+        "SELECT producer, session_id FROM session_context_events WHERE event_id = ?",
+        (replacement_event_id,),
+    ).fetchone()
+    if original is None or replacement is None:
+        raise SessionContextError("supersession requires accepted context events")
+    if tuple(original) != tuple(replacement):
+        raise SessionContextError("supersession requires the same producer and session")
+    existing = connection.execute(
+        "SELECT replacement_event_id FROM session_context_event_supersessions "
+        "WHERE original_event_id = ?",
+        (original_event_id,),
+    ).fetchone()
+    if existing is not None and str(existing[0]) != replacement_event_id:
+        raise SessionContextError("context event already has an immutable supersession")
+    connection.execute(
+        _INSERT_SUPERSESSION,
+        (original_event_id, replacement_event_id, datetime.now(UTC).isoformat()),
+    )
+    connection.execute(
+        _OPEN_RAW_RECONCILIATION,
+        (
+            str(replacement[0]),
+            str(replacement[1]),
+            replacement_event_id,
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    timestamp_ns = int(datetime.now(UTC).timestamp() * 1_000_000_000)
+    event = DerivedEvent(
+        scope="session-context-supersession",
+        entity_id=original_event_id,
+        entity_version=1,
+        event_sequence=1,
+        event_name="introspection.session_context.superseded",
+        attributes={"replacement.event_id": replacement_event_id},
+        timestamp_ns=timestamp_ns,
+    )
+    outbox = connection.execute(
+        "SELECT payload_json FROM otlp_outbox WHERE event_id = ?", (event.event_id,)
+    ).fetchone()
+    if outbox is not None:
+        timestamp_ns = int(json.loads(str(outbox[0]))["timestamp_ns"])
+        event = DerivedEvent(
+            scope=event.scope,
+            entity_id=event.entity_id,
+            entity_version=event.entity_version,
+            event_sequence=event.event_sequence,
+            event_name=event.event_name,
+            attributes=event.attributes,
+            timestamp_ns=timestamp_ns,
+        )
+    enqueue_event(connection, event)
+    return event
 
 
 def drain_inbox(
     connection: sqlite3.Connection, *, directory: Path, clock_skew_seconds: int = 300
 ) -> tuple[DerivedEvent, ...]:
-    """Transactionally replay ordered lifecycle records and quarantine every rejection."""
+    """Transactionally ingest canonical context and quarantine every rejection."""
     if not directory.exists():
         return ()
     pending: list[tuple[Path, bytes, object, SessionContextEvent]] = []
@@ -543,7 +650,7 @@ def drain_inbox(
             DerivedEvent(
                 scope="session-context",
                 entity_id=event.event_id,
-                entity_version=1,
+                entity_version=2,
                 event_sequence=1,
                 event_name="introspection.session_context.accepted",
                 attributes=attributes,

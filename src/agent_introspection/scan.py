@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from agent_introspection import scheduler
 from agent_introspection.attribution import (
@@ -38,9 +38,15 @@ from agent_introspection.detectors import DetectorEngine, DetectorEvent, Observa
 from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
-from agent_introspection.scheduler import recover_interrupted_scan_runs
 from agent_introspection.session_context import drain_inbox, inbox_path
-from agent_introspection.source import ClickHouseClient, HydrationRow, LogRow, TraceRow
+from agent_introspection.source import (
+    CANONICAL_SERVICE_PRODUCERS,
+    ClickHouseClient,
+    HydrationRow,
+    LogRow,
+    SourceSessionRow,
+    TraceRow,
+)
 from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
     CanonicalActivityVersionEvent,
@@ -64,6 +70,7 @@ class ScanDeadlineExceeded(ScanError):
 
 
 _SCAN_TIMEOUT_SECONDS = 900.0
+_ACTIVITY_FORWARD_WINDOW_SECONDS = 900
 
 
 def _arm_scan_deadline() -> tuple[Any, tuple[float, float]]:
@@ -234,20 +241,96 @@ def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _initial_start_ns(end_ns: int) -> int:
-    return max(0, end_ns - int(timedelta(days=7).total_seconds() * 1_000_000_000))
+def _bounds(
+    connection: sqlite3.Connection,
+    snapshot_end_ns: int,
+    *,
+    initial_start_ns: int,
+    replay_overlap_seconds: int,
+) -> tuple[int, int, int, int]:
+    """Bound detector queries to a jointly committed cursor and forward window."""
 
-
-def _bounds(connection: sqlite3.Connection, end_ns: int) -> tuple[int, int, int, int]:
-    row = connection.execute(
-        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
-    ).fetchone()
-    start_ns = int(row[0]) if row is not None else _initial_start_ns(end_ns)
+    rows = connection.execute(
+        """
+        SELECT timestamp_ns FROM source_watermarks
+        WHERE source IN ('signoz_logs', 'signoz_raw_source_sessions')
+        """
+    ).fetchall()
+    cursor_ns = max((int(row[0]) for row in rows), default=initial_start_ns)
+    end_ns = (
+        min(snapshot_end_ns, cursor_ns + _ACTIVITY_FORWARD_WINDOW_SECONDS * 1_000_000_000)
+        if cursor_ns > 0
+        else snapshot_end_ns
+    )
+    start_ns = max(0, cursor_ns - replay_overlap_seconds * 1_000_000_000)
     if start_ns >= end_ns:
         start_ns = max(0, end_ns - 1)
     start_bucket = max(0, start_ns // 1_000_000_000 - 1800)
     end_bucket = end_ns // 1_000_000_000
     return start_ns, end_ns, start_bucket, end_bucket
+
+
+def _claim_raw_source_window(
+    connection: sqlite3.Connection, *, end_ns: int
+) -> tuple[int, int] | None:
+    """Durably claim one exact raw-source window before querying ClickHouse."""
+
+    pending = connection.execute(
+        """
+        SELECT claims.start_ns, claims.end_ns
+        FROM raw_source_window_claims AS claims
+        LEFT JOIN raw_source_window_completions AS completions
+          ON completions.source = claims.source
+         AND completions.start_ns = claims.start_ns
+         AND completions.end_ns = claims.end_ns
+        WHERE claims.source = 'signoz_raw_source_sessions'
+          AND completions.source IS NULL
+        ORDER BY claims.claimed_at, claims.start_ns, claims.end_ns
+        LIMIT 1
+        """
+    ).fetchone()
+    if pending is not None:
+        return int(pending[0]), int(pending[1])
+    row = connection.execute(
+        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_raw_source_sessions'"
+    ).fetchone()
+    start_ns = int(row[0]) if row is not None else _raw_source_anchor(connection)
+    if start_ns >= end_ns:
+        return None
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO raw_source_window_claims (source, start_ns, end_ns, claimed_at)
+            VALUES ('signoz_raw_source_sessions', ?, ?, ?)
+            """,
+            (start_ns, end_ns, _iso_now()),
+        )
+    return start_ns, end_ns
+
+
+def _raw_source_anchor(connection: sqlite3.Connection) -> int:
+    row = connection.execute(
+        "SELECT start_ns FROM raw_source_window_anchors WHERE source = 'signoz_raw_source_sessions'"
+    ).fetchone()
+    if row is None:
+        raise ScanError("raw source window requires an approved dual-stream anchor")
+    return int(row[0])
+
+
+def _approve_raw_source_anchor(
+    connection: sqlite3.Connection, *, logs_earliest_ns: int, traces_earliest_ns: int
+) -> None:
+    start_ns = max(logs_earliest_ns, traces_earliest_ns)
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO raw_source_window_anchors (
+                source, start_ns, logs_earliest_ns, traces_earliest_ns, approved_at
+            ) VALUES ('signoz_raw_source_sessions', ?, ?, ?, ?)
+            ON CONFLICT(source) DO NOTHING
+            """,
+            (start_ns, logs_earliest_ns, traces_earliest_ns, _iso_now()),
+        )
 
 
 def _trace_indexes(logs: list[LogRow], traces: list[TraceRow]) -> dict[str, TraceRow]:
@@ -463,6 +546,406 @@ def _persist_source_rejections(connection: sqlite3.Connection, traces: list[Trac
         )
 
 
+def _source_session_identity(row: SourceSessionRow) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            (row.source_kind, row.service_name, row.source_id),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _source_session_group_id(row: SourceSessionRow) -> str:
+    """Return the deterministic identifier of this record's native-key candidate set."""
+    return hashlib.sha256(
+        json.dumps(row.native_session_ids, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _source_native_key(row: SourceSessionRow) -> tuple[str, str] | None:
+    """Return the one canonical producer and native session for an exact raw record."""
+    producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
+    if producer is None or row.session_status != "exact":
+        return None
+    return producer[0], row.native_session_ids[0]
+
+
+_SourceSessionTerminal = tuple[str, str, str | None, tuple[str, str, str, str] | None]
+_ResolvedSourceSessionInterval = tuple[datetime, datetime | None, _SourceSessionTerminal]
+
+
+def _source_session_terminal(
+    connection: sqlite3.Connection,
+    row: SourceSessionRow,
+    *,
+    clock_skew_seconds: int = 0,
+    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]] | None = None,
+) -> _SourceSessionTerminal:
+    """Resolve a raw record through its canonical producer and one native session."""
+    producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
+    if producer is None:
+        return "failed", "unmapped_service_name", None, None
+    if row.session_status == "missing":
+        return "failed", "missing_native_session_id", None, None
+    if row.session_status == "wrong_field":
+        return "failed", "wrong_native_session_field", None, None
+    if row.session_status == "conflicting":
+        return "failed", "conflicting_native_session_id", None, None
+    cache_key = (producer[0], row.native_session_ids[0])
+    source_at = row.source_timestamp.astimezone(UTC)
+    if resolved_intervals is not None:
+        for started_at, ended_at, terminal in resolved_intervals.get(cache_key, []):
+            if started_at <= source_at and (ended_at is None or source_at < ended_at):
+                return terminal
+    attribution = resolve_attribution(
+        connection,
+        producer=producer[0],
+        correlation_id=row.native_session_ids[0],
+        source_at=source_at,
+        clock_skew_seconds=clock_skew_seconds,
+    )
+    if attribution.state == "resolved":
+        project = connection.execute(
+            """
+            SELECT project_id, project_name, project_root, project_kind
+            FROM session_context_intervals WHERE event_id = ?
+            UNION
+            SELECT project_id, project_name, project_root, project_kind
+            FROM session_context_events WHERE event_id = ?
+            """,
+            (attribution.evidence_id, attribution.evidence_id),
+        ).fetchone()
+        if project is None:
+            raise ScanError("resolved source session attribution lacks context evidence")
+        terminal = ("attributed", "accepted_git_context", attribution.evidence_id, tuple(project))
+        if resolved_intervals is not None:
+            interval = connection.execute(
+                """
+                SELECT started_at, ended_at
+                FROM session_context_intervals
+                WHERE event_id = ? AND producer = ? AND session_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM session_context_event_supersessions AS supersession
+                      WHERE supersession.original_event_id = session_context_intervals.event_id
+                         OR supersession.original_event_id = session_context_intervals.end_event_id
+                  )
+                """,
+                (attribution.evidence_id, producer[0], row.native_session_ids[0]),
+            ).fetchone()
+            if interval is not None:
+                started_at = datetime.fromisoformat(str(interval[0])).astimezone(UTC)
+                ended_at = (
+                    datetime.fromisoformat(str(interval[1])).astimezone(UTC)
+                    if interval[1] is not None
+                    else None
+                )
+                resolved_intervals.setdefault(cache_key, []).append(
+                    (started_at, ended_at, terminal)
+                )
+        return terminal
+    rejection = connection.execute(
+        """
+        SELECT id FROM canonical_rejections
+        WHERE producer = ? AND producer_surface = ? AND correlation_id = ?
+          AND reason_code = 'non_git_workspace'
+        ORDER BY occurred_at, id LIMIT 1
+        """,
+        (producer[0], producer[1], row.native_session_ids[0]),
+    ).fetchone()
+    if rejection is not None:
+        return "expected_rejection", "approved_non_git_workspace", str(rejection[0]), None
+    return (
+        "failed",
+        "conflicting_correlation_id"
+        if attribution.reason_code == "conflicting_correlation_id"
+        else "no_authoritative_context",
+        None,
+        None,
+    )
+
+
+def _persist_source_sessions(
+    connection: sqlite3.Connection,
+    *,
+    scan_run_id: str,
+    rows: list[SourceSessionRow],
+    persist_records: bool = True,
+    clock_skew_seconds: int = 0,
+) -> dict[str, int]:
+    """Append raw history and version the canonical current projection only when it changes."""
+    outcomes = {
+        "included": 0,
+        "attributed": 0,
+        "expected_rejection": 0,
+        "failed": 0,
+        "blocked": 0,
+    }
+    keys = tuple(sorted({(row.source_kind, row.service_name, row.source_id) for row in rows}))
+    current_by_key: dict[tuple[str, str, str], tuple[object, ...]] = {}
+    for offset in range(0, len(keys), 300):
+        batch = keys[offset : offset + 300]
+        placeholders = ",".join("(?, ?, ?)" for _ in batch)
+        parameters = tuple(value for key in batch for value in key)
+        for current in connection.execute(
+            f"""
+            SELECT source_kind, service_name, source_id, version, terminal_outcome,
+                   terminal_reason, context_evidence_id, project_id, project_name,
+                   project_root, project_kind, projection_event_id
+            FROM source_session_current
+            WHERE (source_kind, service_name, source_id) IN ({placeholders})
+            """,
+            parameters,
+        ):
+            current_by_key[(str(current[0]), str(current[1]), str(current[2]))] = tuple(current[3:])
+
+    events: list[DerivedEvent] = []
+    current_versions: list[tuple[object, ...]] = []
+    current_rows: list[tuple[object, ...]] = []
+    records: list[tuple[object, ...]] = []
+    persisted_at = _iso_now()
+    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]] = {}
+    for row in rows:
+        terminal_outcome, terminal_reason, evidence_id, project = _source_session_terminal(
+            connection,
+            row,
+            clock_skew_seconds=clock_skew_seconds,
+            resolved_intervals=resolved_intervals,
+        )
+        if terminal_outcome == "blocked":
+            raise ScanError("observed raw source session cannot be blocked")
+        key = (row.source_kind, row.service_name, row.source_id)
+        current = current_by_key.get(key)
+        projection = (
+            terminal_outcome,
+            terminal_reason,
+            evidence_id,
+            *(project if project is not None else (None, None, None, None)),
+        )
+        current_projection = tuple(current[1:8]) if current is not None else None
+        if current_projection == projection:
+            assert current is not None
+            version = int(cast(int, current[0]))
+            projection_event_id = str(current[8])
+        else:
+            version = 1 if current is None else int(cast(int, current[0])) + 1
+            source_timestamp_ns = int(row.source_timestamp.timestamp() * 1_000_000_000)
+            attributes: dict[str, str | int | float | bool] = {
+                "source.signal": row.source_kind,
+                "source.service": row.service_name,
+                "source.record.id": row.source_id,
+                "source.timestamp_ns": source_timestamp_ns,
+                "source.native_key.status": row.session_status,
+                "source.session_group.id": _source_session_group_id(row),
+                "source.inclusion.status": "included",
+                "source.inclusion.reason": "mapped_to_frozen_source_contract",
+                "source.terminal.outcome": terminal_outcome,
+                "source.terminal.reason": terminal_reason,
+            }
+            producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
+            if row.session_status == "exact" and producer is not None:
+                attributes.update(
+                    {
+                        "source.producer": producer[0],
+                        "source.producer_surface": producer[1],
+                        "source.session.id": row.native_session_ids[0],
+                    }
+                )
+            if evidence_id is not None:
+                attributes["source.context.evidence_id"] = evidence_id
+            if project is not None:
+                attributes.update(
+                    {
+                        "agent.project.id": project[0],
+                        "agent.project.name": project[1],
+                        "agent.project.root": project[2],
+                        "agent.project.kind": project[3],
+                    }
+                )
+            events.append(
+                DerivedEvent(
+                    scope="source-session",
+                    event_name="introspection.source_session.recorded",
+                    entity_id=_source_session_identity(row),
+                    entity_version=version,
+                    event_sequence=1,
+                    timestamp_ns=source_timestamp_ns,
+                    attributes=attributes,
+                )
+            )
+            projection_event_id = hashlib.sha256(
+                f"{_source_session_identity(row)}\x1f{version}".encode()
+            ).hexdigest()
+            current_versions.append(
+                (
+                    row.source_kind,
+                    row.service_name,
+                    row.source_id,
+                    version,
+                    scan_run_id,
+                    *projection,
+                    projection_event_id,
+                    persisted_at,
+                )
+            )
+            session_identifiers = (
+                json.dumps(row.session_ids, separators=(",", ":")),
+                json.dumps(row.thread_ids, separators=(",", ":")),
+                json.dumps(row.legacy_thread_ids, separators=(",", ":")),
+                json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
+            )
+            native_key = _source_native_key(row)
+            current_rows.append(
+                (
+                    row.source_kind,
+                    row.service_name,
+                    row.source_id,
+                    version,
+                    *projection,
+                    projection_event_id,
+                    row.source_timestamp.isoformat(),
+                    *session_identifiers,
+                    *(native_key if native_key is not None else (None, None)),
+                    persisted_at,
+                )
+            )
+            current_by_key[key] = (version, *projection, projection_event_id)
+        if persist_records:
+            records.append(
+                (
+                    scan_run_id,
+                    row.source_kind,
+                    row.service_name,
+                    row.source_id,
+                    row.source_timestamp.isoformat(),
+                    json.dumps(row.session_ids, separators=(",", ":")),
+                    json.dumps(row.thread_ids, separators=(",", ":")),
+                    json.dumps(row.legacy_thread_ids, separators=(",", ":")),
+                    json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
+                    *projection,
+                    projection_event_id,
+                    persisted_at,
+                )
+            )
+        outcomes["included"] += 1
+        outcomes[terminal_outcome] += 1
+
+    if events:
+        enqueue_events(connection, events)
+    if current_versions:
+        connection.executemany(
+            """
+            INSERT INTO source_session_current_versions (
+                source_kind, service_name, source_id, version, scan_run_id,
+                terminal_outcome, terminal_reason, context_evidence_id,
+                project_id, project_name, project_root, project_kind,
+                projection_event_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            current_versions,
+        )
+        connection.executemany(
+            """
+            INSERT INTO source_session_current (
+                source_kind, service_name, source_id, version,
+                terminal_outcome, terminal_reason, context_evidence_id,
+                project_id, project_name, project_root, project_kind,
+                projection_event_id, source_timestamp, session_ids_json,
+                thread_ids_json, legacy_thread_ids_json,
+                gen_ai_conversation_ids_json, native_producer, native_session_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_kind, service_name, source_id) DO UPDATE SET
+                version = excluded.version,
+                terminal_outcome = excluded.terminal_outcome,
+                terminal_reason = excluded.terminal_reason,
+                context_evidence_id = excluded.context_evidence_id,
+                project_id = excluded.project_id,
+                project_name = excluded.project_name,
+                project_root = excluded.project_root,
+                project_kind = excluded.project_kind,
+                projection_event_id = excluded.projection_event_id,
+                source_timestamp = excluded.source_timestamp,
+                session_ids_json = excluded.session_ids_json,
+                thread_ids_json = excluded.thread_ids_json,
+                legacy_thread_ids_json = excluded.legacy_thread_ids_json,
+                gen_ai_conversation_ids_json = excluded.gen_ai_conversation_ids_json,
+                native_producer = excluded.native_producer,
+                native_session_id = excluded.native_session_id,
+                updated_at = excluded.updated_at
+            """,
+            current_rows,
+        )
+    if records:
+        connection.executemany(
+            """
+            INSERT INTO source_session_records (
+                scan_run_id, source_kind, service_name, source_id, source_timestamp,
+                session_ids_json, thread_ids_json, legacy_thread_ids_json,
+                gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+                context_evidence_id, project_id, project_name, project_root, project_kind,
+                projection_event_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            records,
+        )
+    if outcomes["blocked"] != 0:
+        raise ScanError("observed raw source sessions cannot be blocked")
+    if outcomes["included"] != sum(
+        outcomes[name] for name in ("attributed", "expected_rejection", "failed")
+    ):
+        raise ScanError("raw source terminal outcomes do not conserve the included population")
+    return outcomes
+
+
+def _complete_raw_source_window(
+    connection: sqlite3.Connection, *, start_ns: int, end_ns: int
+) -> None:
+    """Record completion and advance the raw watermark in the caller's transaction."""
+
+    connection.execute(
+        """
+        INSERT INTO raw_source_window_completions (source, start_ns, end_ns, completed_at)
+        VALUES ('signoz_raw_source_sessions', ?, ?, ?)
+        """,
+        (start_ns, end_ns, _iso_now()),
+    )
+    _advance_raw_source_watermark(connection, end_ns=end_ns)
+
+
+def _advance_raw_source_watermark(connection: sqlite3.Connection, *, end_ns: int) -> None:
+    """Advance the half-open raw-source boundary only inside a successful scan."""
+
+    connection.execute(
+        """
+        INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
+        VALUES ('signoz_raw_source_sessions', ?, '', ?)
+        ON CONFLICT(source) DO UPDATE SET
+            timestamp_ns = excluded.timestamp_ns,
+            row_id = excluded.row_id,
+            updated_at = excluded.updated_at
+        WHERE (excluded.timestamp_ns, excluded.row_id)
+            > (source_watermarks.timestamp_ns, source_watermarks.row_id)
+        """,
+        (end_ns, _iso_now()),
+    )
+
+
+def _advance_activity_source_watermark(connection: sqlite3.Connection, *, end_ns: int) -> None:
+    """Advance the detector source cursor only with a successful extraction commit."""
+
+    connection.execute(
+        """
+        INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
+        VALUES ('signoz_logs', ?, '', ?)
+        ON CONFLICT(source) DO UPDATE SET
+            timestamp_ns = excluded.timestamp_ns,
+            row_id = excluded.row_id,
+            updated_at = excluded.updated_at
+        WHERE excluded.timestamp_ns > source_watermarks.timestamp_ns
+        """,
+        (end_ns, _iso_now()),
+    )
+
+
 def _canonical_activity(
     observation: Observation,
     event_index: dict[str, DetectorEvent],
@@ -527,9 +1010,42 @@ def _canonical_activity(
     )
 
 
+def _project_from_attribution_evidence(
+    connection: sqlite3.Connection, attribution: CanonicalAttribution
+) -> ProjectIdentity:
+    """Load the immutable project tuple selected by the central resolver."""
+    if attribution.project_identity_id is None or attribution.evidence_id is None:
+        raise ScanError("resolved canonical attribution lacks context evidence")
+    if attribution.method == "session_context_interval":
+        row = connection.execute(
+            """
+            SELECT project_id, project_name, project_root, project_kind
+            FROM session_context_intervals
+            WHERE event_id = ? AND project_id = ?
+            """,
+            (attribution.evidence_id, attribution.project_identity_id),
+        ).fetchone()
+    elif attribution.method == "session_context":
+        row = connection.execute(
+            """
+            SELECT project_id, project_name, project_root, project_kind
+            FROM session_context_events
+            WHERE event_id = ? AND producer = 'codex-cli'
+              AND event_type = 'session_context' AND project_id = ?
+            """,
+            (attribution.evidence_id, attribution.project_identity_id),
+        ).fetchone()
+    else:
+        raise ScanError("resolved canonical attribution has an unsupported context method")
+    if row is None:
+        raise ScanError("resolved canonical attribution lacks a context project identity")
+    return ProjectIdentity(str(row[3]), Path(str(row[2])), str(row[0]), str(row[1]))
+
+
 def _persist_context_projects(
     connection: sqlite3.Connection, context_events: tuple[DerivedEvent, ...]
 ) -> None:
+    """Persist approved context project tuples before late reconciliation."""
     event_ids = tuple(event.entity_id for event in context_events)
     if not event_ids:
         return
@@ -537,9 +1053,14 @@ def _persist_context_projects(
         """
         SELECT project_id, project_name, project_root, project_kind
         FROM session_context_intervals
-        WHERE event_id IN ({})
-        """.format(",".join("?" for _ in event_ids)),
-        event_ids,
+        WHERE event_id IN ({placeholders})
+        UNION ALL
+        SELECT project_id, project_name, project_root, project_kind
+        FROM session_context_events
+        WHERE event_id IN ({placeholders}) AND producer = 'codex-cli'
+          AND event_type = 'session_context'
+        """.format(placeholders=",".join("?" for _ in event_ids)),
+        (*event_ids, *event_ids),
     ).fetchall()
     _persist_projects(
         connection,
@@ -556,22 +1077,8 @@ def _persist_attribution_project(
 ) -> None:
     if attribution.project_identity_id is None:
         return
-    if attribution.evidence_id is None:
-        raise ScanError("resolved canonical attribution lacks context evidence")
-    row = connection.execute(
-        """
-        SELECT project_id, project_name, project_root, project_kind
-        FROM session_context_intervals
-        WHERE event_id = ? AND project_id = ?
-        """,
-        (attribution.evidence_id, attribution.project_identity_id),
-    ).fetchone()
-    if row is None:
-        raise ScanError("resolved canonical attribution lacks a context project identity")
-    _persist_projects(
-        connection,
-        {str(row[0]): ProjectIdentity(str(row[3]), Path(str(row[2])), str(row[0]), str(row[1]))},
-    )
+    project = _project_from_attribution_evidence(connection, attribution)
+    _persist_projects(connection, {project.identity: project})
 
 
 def _persist_canonical_activities(
@@ -693,6 +1200,117 @@ def _ensure_current_activity_outbox(connection: sqlite3.Connection) -> None:
         )
 
 
+def _reconcile_late_source_sessions(
+    connection: sqlite3.Connection,
+    *,
+    scan_run_id: str,
+    clock_skew_seconds: int = 0,
+) -> dict[str, int]:
+    """Reproject every exact current raw row and close durable obligations."""
+    pending = connection.execute(
+        """
+        SELECT producer, session_id
+        FROM source_session_reconciliation_pending
+        WHERE completed_at IS NULL
+        ORDER BY producer, session_id
+        """
+    ).fetchall()
+    rows_to_reconcile: list[SourceSessionRow] = []
+    row_identities: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for producer_value, session_value in pending:
+        producer = str(producer_value)
+        session_id = str(session_value)
+        row_identities.setdefault((producer, session_id), set())
+        if producer not in {
+            canonical_producer[0] for canonical_producer in CANONICAL_SERVICE_PRODUCERS.values()
+        }:
+            raise ScanError("pending raw reconciliation has unknown producer")
+        rows = connection.execute(
+            """
+            SELECT source_kind, source_id, source_timestamp, service_name,
+                   session_ids_json, thread_ids_json, legacy_thread_ids_json,
+                   gen_ai_conversation_ids_json
+            FROM source_session_current
+            WHERE native_producer = ? AND native_session_id = ?
+            """,
+            (producer, session_id),
+        ).fetchall()
+        for raw in rows:
+            source_kind = str(raw[0])
+            if source_kind not in ("log", "trace"):
+                raise ScanError("current raw source session has invalid source kind")
+            if any(value is None for value in raw[2:]):
+                raise ScanError("current raw source session lacks durable native-key payload")
+            row = SourceSessionRow(
+                source_kind=cast(Literal["log", "trace"], source_kind),
+                source_id=str(raw[1]),
+                source_timestamp=datetime.fromisoformat(str(raw[2])).astimezone(UTC),
+                service_name=str(raw[3]),
+                session_ids=tuple(json.loads(str(raw[4]))),
+                thread_ids=tuple(json.loads(str(raw[5]))),
+                legacy_thread_ids=tuple(json.loads(str(raw[6]))),
+                gen_ai_conversation_ids=tuple(json.loads(str(raw[7]))),
+            )
+            if row.session_status != "exact" or row.native_session_ids[0] != session_id:
+                continue
+            identity = (row.source_kind, row.service_name, row.source_id)
+            row_identities.setdefault((producer, session_id), set()).add(identity)
+            if identity not in seen:
+                seen.add(identity)
+                rows_to_reconcile.append(row)
+    outcomes = _persist_source_sessions(
+        connection,
+        scan_run_id=scan_run_id,
+        rows=rows_to_reconcile,
+        persist_records=False,
+        clock_skew_seconds=clock_skew_seconds,
+    )
+    completed_at = _iso_now()
+    for pending_identity, source_identities in row_identities.items():
+        if source_identities and all(
+            (
+                current := connection.execute(
+                    """
+                    SELECT terminal_outcome, version
+                    FROM source_session_current
+                    WHERE source_kind = ? AND service_name = ? AND source_id = ?
+                    """,
+                    source_identity,
+                ).fetchone()
+            )
+            is not None
+            and str(current[0]) != "blocked"
+            and connection.execute(
+                "SELECT 1 FROM otlp_outbox WHERE event_id = ?",
+                (
+                    DerivedEvent(
+                        scope="source-session",
+                        event_name="introspection.source_session.recorded",
+                        entity_id=hashlib.sha256(
+                            json.dumps(source_identity, separators=(",", ":")).encode()
+                        ).hexdigest(),
+                        entity_version=int(current[1]),
+                        event_sequence=1,
+                        timestamp_ns=0,
+                        attributes={},
+                    ).event_id,
+                ),
+            ).fetchone()
+            is not None
+            for source_identity in source_identities
+        ):
+            connection.execute(
+                """
+                UPDATE source_session_reconciliation_pending
+                SET completed_at = ?
+                WHERE producer = ? AND session_id = ? AND completed_at IS NULL
+                """,
+                (completed_at, *pending_identity),
+            )
+    return outcomes
+
+
 def _reconcile_late_context(
     connection: sqlite3.Connection, context_events: tuple[DerivedEvent, ...]
 ) -> list[str]:
@@ -773,6 +1391,14 @@ def run_scan(
     logs: list[LogRow] = []
     traces: list[TraceRow] = []
     hydration: list[HydrationRow] = []
+    source_sessions: list[SourceSessionRow] = []
+    source_conservation = {
+        "included": 0,
+        "attributed": 0,
+        "expected_rejection": 0,
+        "failed": 0,
+        "blocked": 0,
+    }
     activities: list[CanonicalActivity] = []
     trend_evaluations: list[TrendEvaluation] = []
     context_events: tuple[DerivedEvent, ...] = ()
@@ -793,12 +1419,28 @@ def run_scan(
         raise
     deadline_armed = True
     try:
-        recovered_interrupted_scan_runs = recover_interrupted_scan_runs(connection)
-        start_ns, end_ns, start_bucket, end_bucket = _bounds(connection, end_ns)
-        started_at = _iso_now()
+        raw_source_window: tuple[int, int] | None = None
         try:
             verify_network_perimeter(docker_context=config.signoz.docker_context)
             enforce_approved_schema(connection, discover_source_schema(source))
+            try:
+                initial_start_ns = _raw_source_anchor(connection)
+            except ScanError:
+                logs_earliest_ns, traces_earliest_ns = source.raw_source_window_anchor()
+                _approve_raw_source_anchor(
+                    connection,
+                    logs_earliest_ns=logs_earliest_ns,
+                    traces_earliest_ns=traces_earliest_ns,
+                )
+                initial_start_ns = _raw_source_anchor(connection)
+            start_ns, end_ns, start_bucket, end_bucket = _bounds(
+                connection,
+                end_ns,
+                initial_start_ns=initial_start_ns,
+                replay_overlap_seconds=config.lifecycle.clock_skew_seconds,
+            )
+            started_at = _iso_now()
+            raw_source_window = _claim_raw_source_window(connection, end_ns=end_ns)
             with connection:
                 connection.execute(
                     """
@@ -828,14 +1470,7 @@ def run_scan(
                         """.format(",".join("?" for _ in late_activity_ids)),
                         (_iso_now(), *late_activity_ids),
                     )
-            logs = list(
-                source.logs(
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    start_bucket=start_bucket,
-                    end_bucket=end_bucket,
-                )
-            )
+            logs = list(source.logs(start_ns=start_ns, end_ns=end_ns))
             logs_stream = PipelineStream(
                 query_status="available",
                 data_state="records" if logs else "no_data",
@@ -843,11 +1478,23 @@ def run_scan(
             )
             start_dt = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
             end_dt = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
-            traces = list(
-                source.traces(
-                    start=start_dt, end=end_dt, start_bucket=start_bucket, end_bucket=end_bucket
+            if raw_source_window is not None:
+                raw_source_start_ns, raw_source_end_ns = raw_source_window
+                raw_source_start_dt = datetime.fromtimestamp(
+                    raw_source_start_ns / 1_000_000_000, tz=UTC
                 )
-            )
+                raw_source_end_dt = datetime.fromtimestamp(
+                    raw_source_end_ns / 1_000_000_000, tz=UTC
+                )
+                source_sessions = list(
+                    source.source_sessions(
+                        start=raw_source_start_dt,
+                        end=raw_source_end_dt,
+                        start_ns=raw_source_start_ns,
+                        end_ns=raw_source_end_ns,
+                    )
+                )
+            traces = list(source.traces(start=start_dt, end=end_dt))
             traces_stream = PipelineStream(
                 query_status="available",
                 data_state="records" if traces else "no_data",
@@ -892,6 +1539,24 @@ def run_scan(
             _persist_source_rejections(connection, traces)
             _, current_evaluations = _persist_canonical_activities(connection, activities, now=now)
             trend_evaluations.extend(current_evaluations)
+            source_conservation = _persist_source_sessions(
+                connection,
+                scan_run_id=scan_run_id,
+                rows=source_sessions,
+                clock_skew_seconds=config.lifecycle.clock_skew_seconds,
+            )
+            _reconcile_late_source_sessions(
+                connection,
+                scan_run_id=scan_run_id,
+                clock_skew_seconds=config.lifecycle.clock_skew_seconds,
+            )
+            if raw_source_window is not None:
+                _complete_raw_source_window(
+                    connection,
+                    start_ns=raw_source_window[0],
+                    end_ns=raw_source_window[1],
+                )
+            _advance_activity_source_watermark(connection, end_ns=end_ns)
             _ensure_current_activity_outbox(connection)
             terminal_status = "no_data" if not logs and not traces else "succeeded"
             connection.commit()
@@ -950,6 +1615,8 @@ def run_scan(
                 "traces": len(traces),
                 "trends": len(trend_evaluations),
                 "session_context_events": len(context_events),
+                "source_sessions": len(source_sessions),
+                "source_conservation": source_conservation,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -990,6 +1657,8 @@ def run_scan(
             "session_context_events": len(context_events),
             "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
             "telemetry_delivered": telemetry_delivered,
+            "source_sessions": len(source_sessions),
+            "conservation": source_conservation,
             "telemetry_pending": pending,
         }
     finally:

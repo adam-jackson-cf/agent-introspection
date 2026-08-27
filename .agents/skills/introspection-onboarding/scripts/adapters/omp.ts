@@ -19,6 +19,12 @@ interface OmpExtensionContext {
   };
 }
 
+interface OmpCommandContext {
+  ui: {
+    notify(message: string, level: "info"): void;
+  };
+}
+
 interface NativeEvent {
   timestamp?: unknown;
 }
@@ -27,6 +33,13 @@ interface OmpExtensionAPI {
   on(
     event: NativeLifecycleEvent,
     handler: (event: NativeEvent, context: OmpExtensionContext) => void,
+  ): void;
+  registerCommand(
+    name: string,
+    command: {
+      description: string;
+      handler: (args: string, context: OmpCommandContext) => Promise<void>;
+    },
   ): void;
 }
 
@@ -85,6 +98,12 @@ function emitLifecycleEvent(
 }
 
 export default function registerOmpLifecycleAdapter(api: OmpExtensionAPI): void {
+  api.registerCommand("extension-health-agent-introspection", {
+    description: "Verify agent-introspection extension registration",
+    handler: async (_args, context) => {
+      context.ui.notify("Extension registered: agent-introspection", "info");
+    },
+  });
   api.on("session_start", (event, context) => {
     emitLifecycleEvent(event, context, "session_start");
   });

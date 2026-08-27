@@ -9,7 +9,8 @@ Install one shared session-context runtime and only the thin producer adapters r
 - Set `source_dir` to the directory containing this skill's `scripts/` directory.
 - Set `managed_dir` to the current versioned path under `$HOME/.local/lib/agent-introspection`.
 - Copy the shared session-context runtime and only the required producer adapters into `managed_dir`; ensure copied scripts are executable.
-- Configure Claude Code `SessionStart` and `SessionEnd`, Codex `notify`, and the OMP native extension only with their copied managed adapter path.
+- Configure Claude Code `SessionStart` and `SessionEnd`, Codex CLI `notify`, and the OMP native extension only with their copied managed adapter path.
+- Do not copy or configure `codex-app-server.sh` until the installed app-server protocol provides a persistent callback registration. Its current generated client notification surface is only `initialized`; a repository adapter alone is not an installed integration.
 - Never execute a skill source path, mutable shell alias, prompt fragment, inline command, or static project value from a hook.
 - The shared runtime accepts exactly `PRODUCER SESSION_ID EVENT_TYPE OCCURRED_AT WORKSPACE`.
 - Require canonical producer `claude-code`, `codex-cli`, `codex-app-server`, or `omp`; non-empty single-line session ID; canonical event type `session_start`, `workspace_changed`, or `session_end`; RFC3339 timestamp with an offset; and existing absolute workspace.

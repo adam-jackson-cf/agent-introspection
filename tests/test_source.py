@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_introspection.source import (
     LOG_QUERY,
+    RAW_SOURCE_SESSION_LOG_QUERY,
+    RAW_SOURCE_SESSION_TRACE_QUERY,
+    RAW_SOURCE_WINDOW_ANCHOR_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
     SourceError,
@@ -20,33 +25,94 @@ from agent_introspection.source import (
 )
 
 
-def test_broad_queries_are_bounded_and_exclude_raw_content() -> None:
-    assert "{start_ns:UInt64}" in LOG_QUERY
-    assert "{end_ns:UInt64}" in LOG_QUERY
-    assert "{start_bucket:UInt64}" in LOG_QUERY
-    assert "{end_bucket:UInt64}" in LOG_QUERY
+def test_broad_queries_enumerate_all_services_in_a_half_open_window() -> None:
+    assert "timestamp >= {start_ns:UInt64}" in LOG_QUERY
+    assert "timestamp < {end_ns:UInt64}" in LOG_QUERY
+    assert "ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}" in LOG_QUERY
+    assert "resource.`service.name`::String AS service_name" in LOG_QUERY
+    assert "AS producer" not in LOG_QUERY
     assert "attributes_string['duration_ms']" in LOG_QUERY
     assert "AS duration_ms" in LOG_QUERY
     assert "attributes_number['duration_ms']" not in LOG_QUERY
-    assert "AS producer" in LOG_QUERY
     for raw_key in ("prompt", "arguments", "output", "error.message", "body"):
         assert f"['{raw_key}']" not in LOG_QUERY
-    assert "{start:DateTime64(9)}" in TRACE_QUERY
-    assert "{end:DateTime64(9)}" in TRACE_QUERY
-    assert "{{start:DateTime64(9)}}" not in TRACE_QUERY
-    assert "{{end:DateTime64(9)}}" not in TRACE_QUERY
-    assert "attributes_string['thread.id']" in TRACE_QUERY
-    assert "attributes_string['thread_id']" in TRACE_QUERY
-    assert "attributes_string['gen_ai.conversation.id']" in TRACE_QUERY
-    assert "attributes_string['session.id']" not in TRACE_QUERY
-    assert "attributes_string['sessionId']" not in TRACE_QUERY
-    assert "native_correlation_id" in TRACE_QUERY
-    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 1" in TRACE_QUERY
-    assert "correlation_session_id" not in TRACE_QUERY
-    assert "AS correlation_id" in TRACE_QUERY
-    assert "AS producer_surface" in TRACE_QUERY
-    assert "AS source_event_timestamp" in TRACE_QUERY
+
+    assert "timestamp >= {start:DateTime64(9)}" in TRACE_QUERY
+    assert "timestamp < {end:DateTime64(9)}" in TRACE_QUERY
+    assert "ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}" in TRACE_QUERY
+    assert "serviceName IN" not in TRACE_QUERY
+    assert "groupUniqArray(serviceName)" in TRACE_QUERY
     assert "arraySort(groupUniqArray(spanID)) AS source_span_ids" in TRACE_QUERY
+    for field in (
+        "turn_ids",
+        "legacy_turn_ids",
+        "thread_ids",
+        "legacy_thread_ids",
+        "conversation_ids",
+        "gen_ai_conversation_ids",
+    ):
+        assert f"AS {field}" in TRACE_QUERY
+
+
+def test_raw_source_session_queries_scope_canonical_services_in_a_half_open_window() -> None:
+    for query, start, end, service_expression in (
+        (
+            RAW_SOURCE_SESSION_LOG_QUERY,
+            "{start_ns:UInt64}",
+            "{end_ns:UInt64}",
+            "resource.`service.name`::String IN",
+        ),
+        (
+            RAW_SOURCE_SESSION_TRACE_QUERY,
+            "{start:DateTime64(9)}",
+            "{end:DateTime64(9)}",
+            "serviceName IN",
+        ),
+    ):
+        assert f"timestamp >= {start}" in query
+        assert f"timestamp < {end}" in query
+        assert service_expression in query
+        for service_name in (
+            "codex-cli",
+            "claude-code",
+            "omp",
+            "codex_exec",
+            "codex_cli_rs",
+            "codex-app-server",
+            "oh-my-pi",
+        ):
+            assert f"'{service_name}'" in query
+        for native_key in (
+            "session.id",
+            "thread.id",
+            "thread_id",
+            "gen_ai.conversation.id",
+        ):
+            assert f"mapContains(attributes_string, '{native_key}')" in query
+        assert "mapContains(attributes_string, 'thread.id')" in query
+        assert "'oh-my-pi')" in query
+        assert "mapContains(attributes_string, 'gen_ai.conversation.id')" in query
+        assert "GROUP BY service_name, source_id" in query
+        assert "session_ids" in query
+        assert "thread_ids" in query
+        assert "legacy_thread_ids" in query
+        assert "gen_ai_conversation_ids" in query
+
+        assert "ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}" in query
+
+
+def test_raw_source_window_anchor_converts_normal_datetime64_output() -> None:
+    class AnchorClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            assert sql == RAW_SOURCE_WINDOW_ANCHOR_QUERY
+            assert parameters == {}
+            yield {
+                "logs_earliest_ns": 10,
+                "traces_earliest_ns": "2026-01-01 00:00:00.000000000",
+            }
+
+    client = AnchorClient(docker_context="test")
+    assert client.raw_source_window_anchor() == (10, 1_767_225_600_000_000_000)
 
 
 def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_surfaces() -> None:
@@ -60,7 +126,7 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
         "identifiers_and_counts_only": True,
     }
     supported = {proof["producer"]: proof for proof in evidence["supported"]}
-    assert set(supported) == {"omp", "codex-cli", "codex-app-server"}
+    assert set(supported) == {"omp", "codex-cli"}
     required_fields = {
         "version",
         "command_argv_without_prompt",
@@ -104,23 +170,29 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
     }
 
     unsupported = {proof["producer"]: proof for proof in evidence["unsupported"]}
-    assert set(unsupported) == {"claude-code", "codex-app"}
+    assert set(unsupported) == {"claude-code", "codex-app-server", "codex-app"}
+    assert unsupported["codex-app-server"]["missing_equality_boundary"] == (
+        "installed protocol exposes only the client notification `initialized`; "
+        "no persistent callback can invoke the managed adapter with protocol thread.id"
+    )
     assert all(proof["source_ingestion_enabled"] is False for proof in unsupported.values())
     serialized = json.dumps(evidence, sort_keys=True).lower()
     for forbidden in ("prompt_text", "response_text", "command_output", "environment_values"):
         assert forbidden not in serialized
 
 
-def test_trace_query_reports_bounded_native_correlation_status() -> None:
-    assert "arrayJoin(" in TRACE_QUERY
-    assert "[attributes_string['thread.id'], attributes_string['thread_id']]" in TRACE_QUERY
-    assert "native_correlation_id != '' AS has_native_correlation" in TRACE_QUERY
-    assert "uniqExactIf(native_correlation_id, has_native_correlation) = 0" in TRACE_QUERY
-    assert "'missing'" in TRACE_QUERY
-    assert "'conflicting'" in TRACE_QUERY
-    assert "'valid'" in TRACE_QUERY
-    assert "AS correlation_status" in TRACE_QUERY
-    assert "anyIf(native_correlation_id, has_native_correlation)" in TRACE_QUERY
+def test_trace_query_retains_raw_identity_candidates_without_producer_detection() -> None:
+    assert "arrayJoin(" not in TRACE_QUERY
+    assert "native_correlation_id" not in TRACE_QUERY
+    assert "AS correlation_status" not in TRACE_QUERY
+    assert "AS correlation_id" not in TRACE_QUERY
+    assert "AS producer" not in TRACE_QUERY
+    for field in (
+        "attributes_string['thread.id']",
+        "attributes_string['thread_id']",
+        "attributes_string['gen_ai.conversation.id']",
+    ):
+        assert field in TRACE_QUERY
 
 
 @pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
@@ -185,12 +257,24 @@ def test_trace_parser_interprets_installed_clickhouse_naive_datetime_as_utc() ->
             "trace_id": "trace-1",
             "started_at": "2026-07-10 14:53:47.565735000",
             "ended_at": "2026-07-10 14:53:48.565735000",
+            "source_span_ids": ["span-1", "span-2"],
+            "service_names": ["other-service"],
+            "thread_ids": [],
+            "legacy_thread_ids": [],
+            "turn_ids": [],
+            "legacy_turn_ids": [],
+            "conversation_ids": [],
+            "gen_ai_conversation_ids": [],
             "total_tokens": "123",
             "tool_calls": "2",
         }
     )
     assert parsed.started_at.tzinfo is UTC
     assert parsed.ended_at.tzinfo is UTC
+    assert parsed.source_span_ids == ("span-1", "span-2")
+    assert parsed.service_names == ("other-service",)
+    assert parsed.thread_id is None
+    assert parsed.correlation is None
 
 
 @pytest.mark.parametrize(
@@ -336,6 +420,34 @@ def test_client_fails_closed_for_invalid_json_and_clickhouse_failure(
         list(client.query("SELECT 1", {}))
 
 
+def test_client_bounds_every_source_window_to_safe_partitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, str | int]] = []
+
+    def query(_sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+        calls.append(dict(parameters))
+        return iter(())
+
+    client = ClickHouseClient(docker_context="orbstack")
+    monkeypatch.setattr(client, "query", query)
+    start_ns = 2_000_000_000_000
+    end_ns = 2_120_000_000_000
+    start = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
+    end = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
+
+    assert list(client.logs(start_ns=start_ns, end_ns=end_ns)) == []
+    assert list(client.traces(start=start, end=end)) == []
+    assert (
+        list(client.source_sessions(start=start, end=end, start_ns=start_ns, end_ns=end_ns)) == []
+    )
+    assert len(calls) == 4
+    assert all(
+        parameters["start_bucket"] == 200 and parameters["end_bucket"] == 2_120
+        for parameters in calls
+    )
+
+
 def test_trace_bounds_must_be_timezone_aware() -> None:
     client = ClickHouseClient(docker_context="orbstack")
     with pytest.raises(ValueError, match="timezone-aware"):
@@ -343,8 +455,6 @@ def test_trace_bounds_must_be_timezone_aware() -> None:
             client.traces(
                 start=datetime(2026, 1, 1),
                 end=datetime(2026, 1, 2),
-                start_bucket=1,
-                end_bucket=2,
             )
         )
     with pytest.raises(ValueError, match="ordered"):
@@ -352,8 +462,6 @@ def test_trace_bounds_must_be_timezone_aware() -> None:
             client.traces(
                 start=datetime(2026, 1, 2, tzinfo=UTC),
                 end=datetime(2026, 1, 1, tzinfo=UTC),
-                start_bucket=1,
-                end_bucket=2,
             )
         )
 

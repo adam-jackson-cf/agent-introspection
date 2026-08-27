@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from agent_introspection.database import (
     CanonicalActivity,
@@ -51,10 +51,13 @@ def resolve_attribution(
     producer: str | None,
     correlation_id: str | None,
     source_at: datetime,
+    clock_skew_seconds: int = 0,
 ) -> Attribution:
     """Resolve exactly one half-open session-context interval or one fixed reason."""
     if source_at.tzinfo is None:
         raise ValueError("source time must be timezone-aware")
+    if clock_skew_seconds < 0:
+        raise ValueError("clock skew must not be negative")
     if producer not in {"claude-code", "codex-cli", "codex-app-server", "omp"} or not (
         correlation_id
     ):
@@ -62,9 +65,14 @@ def resolve_attribution(
     rows = connection.execute(
         """
         SELECT event_id, project_id
-        FROM session_context_intervals
+        FROM session_context_intervals AS interval
         WHERE producer = ? AND session_id = ? AND started_at <= ?
           AND (ended_at IS NULL OR ? < ended_at)
+          AND NOT EXISTS (
+              SELECT 1 FROM session_context_event_supersessions AS supersession
+              WHERE supersession.original_event_id = interval.event_id
+                 OR supersession.original_event_id = interval.end_event_id
+          )
         """,
         (
             producer,
@@ -73,12 +81,50 @@ def resolve_attribution(
             source_at.astimezone(UTC).isoformat(),
         ),
     ).fetchall()
+    if not rows and clock_skew_seconds:
+        rows = connection.execute(
+            """
+            SELECT interval.event_id, interval.project_id
+            FROM session_context_intervals AS interval
+            JOIN session_context_events AS event ON event.event_id = interval.event_id
+            WHERE interval.producer = ? AND interval.session_id = ?
+              AND event.event_type = 'session_start'
+              AND ? < interval.started_at AND interval.started_at <= ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM session_context_event_supersessions AS supersession
+                  WHERE supersession.original_event_id = interval.event_id
+                     OR supersession.original_event_id = interval.end_event_id
+              )
+            """,
+            (
+                producer,
+                correlation_id,
+                source_at.astimezone(UTC).isoformat(),
+                (source_at.astimezone(UTC) + timedelta(seconds=clock_skew_seconds)).isoformat(),
+            ),
+        ).fetchall()
+    method = "session_context_interval"
+    if not rows and producer == "codex-cli":
+        rows = connection.execute(
+            """
+            SELECT MIN(event_id), project_id
+            FROM session_context_events AS context
+            WHERE producer = ? AND session_id = ? AND event_type = 'session_context'
+              AND NOT EXISTS (
+                  SELECT 1 FROM session_context_event_supersessions AS supersession
+                  WHERE supersession.original_event_id = context.event_id
+              )
+            GROUP BY project_id
+            """,
+            (producer, correlation_id),
+        ).fetchall()
+        method = "session_context"
     if not rows:
         return Attribution("unresolved", None, "session_context", None, _NO_CONTEXT_INTERVAL)
     if len(rows) != 1:
         return Attribution("unresolved", None, "session_context", None, _AMBIGUOUS_CONTEXT_INTERVAL)
     event_id, project_id = rows[0]
-    return Attribution("resolved", str(project_id), "session_context_interval", str(event_id), None)
+    return Attribution("resolved", str(project_id), method, str(event_id), None)
 
 
 def canonical_activity_event_attributes(

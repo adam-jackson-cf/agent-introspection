@@ -46,7 +46,7 @@ class ProposalInput:
     scope: str
     target: str
     intended_change: str
-    established_tool_audit: list[dict[str, str]]
+    established_tool_audit: list[dict[str, str | bool | None]]
     rejected_alternatives: list[str]
     validation_criteria: list[str]
     rollback_criteria: list[str]

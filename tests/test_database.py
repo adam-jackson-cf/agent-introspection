@@ -111,7 +111,7 @@ def _canonical_activity(
     ("producer", "producer_surface", "valid"),
     (
         ("codex-cli", "codex-cli", True),
-        ("codex-app-server", "codex-app", True),
+        ("codex-app-server", "codex-app", False),
         ("codex-app-server", "codex-app-server", True),
         ("omp", "omp", True),
         ("claude-code", "claude-code", True),

@@ -117,37 +117,6 @@
         "non_git": "passed",
         "workspace_change": "not_exposed_by_installed_notify"
       }
-    },
-    {
-      "producer": "codex-app-server",
-      "version": "0.146.0",
-      "command_argv_without_prompt": ["codex", "app-server"],
-      "native_lifecycle_field": "thread/start response thread ID",
-      "local_artifact_field": "protocol thread metadata ID",
-      "otel_service": "codex-app-server",
-      "otel_field": "thread.id or thread_id",
-      "correlation_id": "019fd25b-c7e2-71d0-9aaf-652dbc1f366b",
-      "local_artifact_ids": ["019fd25b-c7e2-71d0-9aaf-652dbc1f366b"],
-      "first_context_at": "2026-08-05T14:37:38.256868Z",
-      "last_context_at": "2026-08-05T14:37:38.414027Z",
-      "first_otel_at": "2026-08-05T14:37:38.256868Z",
-      "last_otel_at": "2026-08-05T14:37:38.414027Z",
-      "otel_trace_count": 3,
-      "otel_span_count": 3,
-      "project": {
-        "id": "b496f343ee46fc47aad0cd2b1b5e5fc9535f947dbddf2d578c72a449863f0a6e",
-        "name": "signoz-introspection",
-        "root": "/Users/adamjackson/Projects/inflight/signoz-introspection",
-        "kind": "git"
-      },
-      "scenarios": {
-        "fresh": "passed",
-        "resume": "passed",
-        "end": "not_exposed_by_protocol_fixture",
-        "concurrent_projects": "passed_with_isolated_thread_ids",
-        "non_git": "covered_by_shared_runtime",
-        "workspace_change": "not_exposed_by_protocol_fixture"
-      }
     }
   ],
   "unsupported": [
@@ -163,6 +132,13 @@
     {
       "producer": "codex-app",
       "missing_equality_boundary": "app workspace lifecycle ID = protocol local metadata ID",
+      "source_ingestion_enabled": false
+    },
+    {
+      "producer": "codex-app-server",
+      "version": "0.147.0",
+      "command_argv_without_prompt": ["codex", "app-server", "generate-json-schema", "--experimental"],
+      "missing_equality_boundary": "installed protocol exposes only the client notification `initialized`; no persistent callback can invoke the managed adapter with protocol thread.id",
       "source_ingestion_enabled": false
     }
   ]

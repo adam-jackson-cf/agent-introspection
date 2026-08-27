@@ -33,7 +33,7 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
     finally:
         connection.close()
 
-    assert len(MIGRATIONS) == len(applied) == 5
+    assert len(MIGRATIONS) == len(applied) == 15
     assert all(migration.backup_path.is_file() for migration in applied)
     assert tables == {
         "canonical_activities",
@@ -57,18 +57,61 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
         "proposal_drafts",
         "proposal_events",
         "proposals",
+        "raw_source_window_anchors",
+        "raw_source_window_claims",
+        "raw_source_window_completions",
         "review_sessions",
         "scan_runs",
         "scheduler_leases",
         "semantic_classifications",
+        "session_context_event_supersessions",
         "session_context_events",
         "session_context_intervals",
         "session_context_replay_mutations",
         "session_context_replay_state",
+        "source_session_records",
+        "source_session_current",
+        "source_session_current_versions",
+        "source_session_reconciliation_pending",
         "source_schema_snapshots",
         "source_watermarks",
         "trend_evaluations",
     }
+
+
+def test_native_source_session_index_backfills_exact_canonical_keys(tmp_path: Path) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    try:
+        apply_migrations(connection, path, MIGRATIONS[:14])
+        connection.execute(
+            """
+            INSERT INTO source_session_current (
+                source_kind, service_name, source_id, version,
+                terminal_outcome, terminal_reason, context_evidence_id,
+                project_id, project_name, project_root, project_kind,
+                projection_event_id, updated_at, source_timestamp, session_ids_json,
+                thread_ids_json, legacy_thread_ids_json, gen_ai_conversation_ids_json
+            ) VALUES (
+                'log', 'codex_exec', 'source', 1,
+                'failed', 'no_authoritative_context', NULL,
+                NULL, NULL, NULL, NULL,
+                'event', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
+                '[]', '["thread"]', '[]', '[]'
+            )
+            """
+        )
+        connection.commit()
+        apply_migrations(connection, path)
+        assert connection.execute(
+            """
+            SELECT native_producer, native_session_id
+            FROM source_session_current
+            WHERE native_producer = 'codex-cli' AND native_session_id = 'thread'
+            """
+        ).fetchone() == ("codex-cli", "thread")
+    finally:
+        connection.close()
 
 
 def test_canonical_activity_contract_enforces_versions_and_foreign_keys(tmp_path: Path) -> None:

@@ -93,7 +93,7 @@ def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
     connection.close()
 
     class ControlledClock:
-        current = datetime(2026, 7, 10, 12, 30, tzinfo=UTC)
+        current = datetime(2026, 7, 10, 12, 9, tzinfo=UTC)
 
         @classmethod
         def now(cls, tz: object = None) -> datetime:
@@ -111,23 +111,23 @@ def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
     assert main(["--config", str(config), "scan", "--scheduled"]) == 0
     skipped = json.loads(capsys.readouterr().out)
     assert skipped == {
-        "interval_seconds": 3600,
+        "interval_seconds": 300,
         "qualifying_run_id": "success-current",
         "qualifying_run_started_at": "2026-07-10T12:05:00+00:00",
-        "slot_start": "2026-07-10T12:00:00+00:00",
+        "slot_start": "2026-07-10T12:05:00+00:00",
         "status": "already_completed_in_slot",
     }
     assert calls == []
 
-    ControlledClock.current = datetime(2026, 7, 10, 13, 0, tzinfo=UTC)
+    ControlledClock.current = datetime(2026, 7, 10, 12, 10, tzinfo=UTC)
     assert main(["--config", str(config), "scan", "--scheduled"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "executed"}
 
-    ControlledClock.current = datetime(2026, 7, 10, 13, 30, tzinfo=UTC)
+    ControlledClock.current = datetime(2026, 7, 10, 12, 15, tzinfo=UTC)
     assert main(["--config", str(config), "scan", "--scheduled"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "executed"}
 
-    ControlledClock.current = datetime(2026, 7, 10, 15, 10, tzinfo=UTC)
+    ControlledClock.current = datetime(2026, 7, 10, 12, 20, tzinfo=UTC)
     assert main(["--config", str(config), "scan", "--scheduled"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "executed"}
     assert calls == ["run", "run", "run"]

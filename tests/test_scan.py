@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -6,17 +7,24 @@ from typing import Any
 
 import pytest
 
+import agent_introspection.scan as scan_module
 from agent_introspection.capabilities import approve_schema, discover_source_schema
 from agent_introspection.config import AppConfig, DatabaseConfig
 from agent_introspection.database import connect_database
 from agent_introspection.scan import run_scan
-from agent_introspection.session_context import parse_event, spool_event
+from agent_introspection.session_context import (
+    SessionContextEvent,
+    parse_event,
+    spool_event,
+)
 from agent_introspection.source import (
     ClickHouseClient,
+    HydrationIdentityKind,
     HydrationRow,
     LogRow,
     SourceActivityCorrelation,
     SourceCorrelationStatus,
+    SourceSessionRow,
     TraceRow,
 )
 
@@ -33,9 +41,11 @@ class FakeSource(ClickHouseClient):
         self.trace_reads = 0
         self.hydration_batch_sizes: list[int] = []
 
-    def query(self, sql: str, _parameters: object) -> list[dict[str, Any]]:
+    def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+        del parameters
         if "timezone()" in sql:
-            return [{"timezone": "UTC"}]
+            yield {"timezone": "UTC"}
+            return
         if "system.columns" in sql:
             names = {
                 ("signoz_logs", "distributed_logs_v2"): {
@@ -59,7 +69,7 @@ class FakeSource(ClickHouseClient):
                     "ts_bucket_start",
                 },
             }
-            return [
+            yield from (
                 {
                     "database": database,
                     "table": table,
@@ -70,29 +80,75 @@ class FakeSource(ClickHouseClient):
                 }
                 for (database, table), column_names in names.items()
                 for name in sorted(column_names)
-            ]
+            )
+            return
         if "system.tables" in sql:
-            return [
+            yield from (
                 {"database": "signoz_logs", "name": "distributed_logs_v2"},
                 {"database": "signoz_traces", "name": "distributed_signoz_index_v3"},
-            ]
-        return [{"event_names": [], "string_attribute_keys": [], "number_attribute_keys": []}]
+            )
+            return
+        yield {"event_names": [], "string_attribute_keys": [], "number_attribute_keys": []}
 
-    def logs(self, **_bounds: object) -> list[LogRow]:
+    def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
+        del start_ns, end_ns
         self.log_reads += 1
-        return self.log_rows
+        yield from self.log_rows
 
-    def traces(self, **_bounds: object) -> list[TraceRow]:
+    def traces(self, *, start: datetime, end: datetime) -> Iterator[TraceRow]:
+        del start, end
         self.trace_reads += 1
-        return self.trace_rows
+        yield from self.trace_rows
 
-    def prove_retained_window(self, **_bounds: object) -> None:
-        return None
+    def raw_source_window_anchor(self) -> tuple[int, int]:
+        return 0, 0
 
-    def hydrate(self, *, identifiers: list[str], **_bounds: object) -> list[HydrationRow]:
+    def source_sessions(
+        self, *, start: datetime, end: datetime, start_ns: int, end_ns: int
+    ) -> Iterator[SourceSessionRow]:
+        del start, end, start_ns, end_ns
+        for log in self.log_rows:
+            yield SourceSessionRow(
+                source_kind="log",
+                source_id=log.log_id,
+                source_timestamp=datetime.fromtimestamp(log.timestamp_ns / 1_000_000_000, tz=UTC),
+                service_name=log.service_name or "codex-cli",
+                session_ids=tuple(value for value in (log.conversation_id,) if value),
+                thread_ids=tuple(value for value in (log.thread_id,) if value),
+                legacy_thread_ids=tuple(value for value in (log.legacy_thread_id,) if value),
+                gen_ai_conversation_ids=tuple(
+                    value for value in (log.gen_ai_conversation_id,) if value
+                ),
+            )
+        for trace in self.trace_rows:
+            yield SourceSessionRow(
+                source_kind="trace",
+                source_id=trace.trace_id,
+                source_timestamp=trace.started_at,
+                service_name=(trace.service_names[0] if trace.service_names else "codex-cli"),
+                session_ids=trace.conversation_ids,
+                thread_ids=trace.thread_ids,
+                legacy_thread_ids=trace.legacy_thread_ids,
+                gen_ai_conversation_ids=trace.gen_ai_conversation_ids,
+            )
+
+    def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
+        del start, start_ns, start_bucket
+
+    def hydrate(
+        self,
+        *,
+        identity_kind: HydrationIdentityKind,
+        identifiers: Sequence[str],
+        start_ns: int,
+        end_ns: int,
+        start_bucket: int,
+        end_bucket: int,
+    ) -> Iterator[HydrationRow]:
+        del identity_kind, start_ns, end_ns, start_bucket, end_bucket
         self.hydration_batch_sizes.append(len(identifiers))
         selected = set(identifiers)
-        return [
+        yield from (
             HydrationRow(
                 timestamp_ns=row.timestamp_ns,
                 log_id=row.log_id,
@@ -115,7 +171,7 @@ class FakeSource(ClickHouseClient):
             )
             for row in self.log_rows
             if row.log_id in selected
-        ]
+        )
 
 
 @pytest.fixture
@@ -147,6 +203,8 @@ def log_row(
     trace_id: str | None = None,
     conversation_id: str | None = None,
     producer: str | None = None,
+    thread_id: str | None = None,
+    service_name: str | None = None,
 ) -> LogRow:
     return LogRow(
         timestamp_ns=timestamp_ns,
@@ -168,6 +226,8 @@ def log_row(
         reasoning_tokens=None,
         prompt_length=None,
         producer=producer,
+        service_name=service_name,
+        thread_id=thread_id,
     )
 
 
@@ -178,7 +238,7 @@ def _context_event(
     root: Path,
     project_id: str,
     occurred_at: datetime,
-) -> object:
+) -> SessionContextEvent:
     return parse_event(
         {
             "event_id": event_id,
@@ -437,6 +497,79 @@ def test_late_context_bumps_one_canonical_activity_once(
     ).fetchone() == (1,)
 
 
+def test_codex_session_context_resolves_and_conflicts_fail_closed(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path
+) -> None:
+    connection, config = scan_environment
+    occurred_at = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = FakeSource(
+        logs=[
+            log_row(
+                "log-1",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                trace_id="trace-1",
+                producer="codex-cli",
+            )
+        ],
+        traces=[_trace("trace-1", occurred_at)],
+    )
+    approve(connection, source)
+
+    run_scan(connection, config, client=source, end_time=occurred_at)
+    activity_id, state, version, project_id = _activity_rows(connection)[0]
+    assert (state, version, project_id) == ("unresolved", 1, None)
+
+    context = _context_event(
+        event_id="e" * 64,
+        event_type="session_context",
+        root=root,
+        project_id="5" * 64,
+        occurred_at=occurred_at + timedelta(seconds=1),
+    )
+    inbox = config.database.path.parent / "session-context-inbox"
+    spool_event(context, directory=inbox)
+    run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=1))
+
+    assert _activity_rows(connection) == [(activity_id, "resolved", 2, "5" * 64)]
+    assert connection.execute(
+        "SELECT COUNT(*) FROM canonical_activity_versions WHERE activity_id = ?",
+        (activity_id,),
+    ).fetchone() == (2,)
+    assert connection.execute(
+        """
+        SELECT attribution_method, attribution_evidence_id
+        FROM canonical_activity_versions
+        WHERE activity_id = ? AND version = 2
+        """,
+        (activity_id,),
+    ).fetchone() == ("session_context", context.event_id)
+    assert connection.execute(
+        "SELECT id FROM project_identities WHERE id = ?", ("5" * 64,)
+    ).fetchone() == ("5" * 64,)
+
+    spool_event(context, directory=inbox)
+    run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=2))
+    assert _activity_rows(connection) == [(activity_id, "resolved", 2, "5" * 64)]
+
+    conflicting_root = tmp_path / "conflicting-workspace"
+    conflicting_root.mkdir()
+    spool_event(
+        _context_event(
+            event_id="f" * 64,
+            event_type="session_context",
+            root=conflicting_root,
+            project_id="6" * 64,
+            occurred_at=occurred_at + timedelta(seconds=3),
+        ),
+        directory=inbox,
+    )
+    run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=3))
+
+    assert _activity_rows(connection) == [(activity_id, "unresolved", 3, None)]
+
+
 def test_workspace_transition_splits_canonical_activities(
     scan_environment: tuple[Any, AppConfig], tmp_path: Path
 ) -> None:
@@ -517,3 +650,358 @@ def test_workspace_transition_splits_canonical_activities(
         ).fetchall()
         == projects
     )
+
+
+def test_run_scan_closes_context_obligation_after_persisting_first_raw(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path
+) -> None:
+    connection, config = scan_environment
+    occurred_at = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = FakeSource(
+        logs=[
+            log_row(
+                "raw-1",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                thread_id="session-1",
+                producer="codex-cli",
+            )
+        ]
+    )
+    approve(connection, source)
+    spool_event(
+        _context_event(
+            event_id="a" * 64,
+            event_type="session_context",
+            root=root,
+            project_id="1" * 64,
+            occurred_at=occurred_at,
+        ),
+        directory=config.database.path.parent / "session-context-inbox",
+    )
+
+    run_scan(connection, config, client=source, end_time=occurred_at)
+
+    assert connection.execute(
+        """SELECT terminal_outcome FROM source_session_current
+           WHERE source_kind = 'log' AND service_name = 'codex-cli' AND source_id = 'raw-1'"""
+    ).fetchone() == ("attributed",)
+    assert connection.execute(
+        """SELECT completed_at IS NOT NULL FROM source_session_reconciliation_pending
+           WHERE producer = 'codex-cli' AND session_id = 'session-1'"""
+    ).fetchone() == (1,)
+
+
+def test_run_scan_keeps_accepted_context_pending_without_raw_population(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path
+) -> None:
+    connection, config = scan_environment
+    occurred_at = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = FakeSource()
+    approve(connection, source)
+    spool_event(
+        _context_event(
+            event_id="c" * 64,
+            event_type="session_context",
+            root=root,
+            project_id="1" * 64,
+            occurred_at=occurred_at,
+        ),
+        directory=config.database.path.parent / "session-context-inbox",
+    )
+
+    run_scan(connection, config, client=source, end_time=occurred_at)
+
+    assert connection.execute(
+        """SELECT completed_at IS NULL FROM source_session_reconciliation_pending
+           WHERE producer = 'codex-cli' AND session_id = 'session-1'"""
+    ).fetchone() == (1,)
+
+
+def test_run_scan_recloses_later_context_for_attributed_raw(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path
+) -> None:
+    connection, config = scan_environment
+    occurred_at = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = FakeSource(
+        logs=[
+            log_row(
+                "raw-1",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                thread_id="session-1",
+                producer="codex-cli",
+            )
+        ]
+    )
+    approve(connection, source)
+    inbox = config.database.path.parent / "session-context-inbox"
+    for event_id, at in (("a" * 64, occurred_at), ("b" * 64, occurred_at + timedelta(seconds=1))):
+        spool_event(
+            _context_event(
+                event_id=event_id,
+                event_type="session_context",
+                root=root,
+                project_id="1" * 64,
+                occurred_at=at,
+            ),
+            directory=inbox,
+        )
+        run_scan(connection, config, client=source, end_time=at)
+
+    assert connection.execute(
+        """SELECT completed_at IS NOT NULL FROM source_session_reconciliation_pending
+           WHERE producer = 'codex-cli' AND session_id = 'session-1'"""
+    ).fetchone() == (1,)
+
+
+def test_run_scan_rolls_back_reconciliation_and_recovers_durable_raw(
+    scan_environment: tuple[Any, AppConfig], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, config = scan_environment
+    occurred_at = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = FakeSource(
+        logs=[
+            log_row(
+                "raw-1",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                thread_id="session-1",
+                producer="codex-cli",
+            ),
+            log_row(
+                "raw-2",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                thread_id="session-1",
+                producer="codex-cli",
+            ),
+            log_row(
+                "claude-raw",
+                int(occurred_at.timestamp() * 1_000_000_000),
+                conversation_id="session-1",
+                service_name="claude-code",
+                producer="claude-code",
+            ),
+        ]
+    )
+    approve(connection, source)
+    run_scan(connection, config, client=source, end_time=occurred_at)
+    spool_event(
+        _context_event(
+            event_id="a" * 64,
+            event_type="session_context",
+            root=root,
+            project_id="1" * 64,
+            occurred_at=occurred_at + timedelta(seconds=1),
+        ),
+        directory=config.database.path.parent / "session-context-inbox",
+    )
+    original = scan_module._reconcile_late_source_sessions
+
+    def fail_after_reconciliation(*args: Any, **kwargs: Any) -> dict[str, int]:
+        original(*args, **kwargs)
+        raise RuntimeError("forced reconciliation rollback")
+
+    monkeypatch.setattr(scan_module, "_reconcile_late_source_sessions", fail_after_reconciliation)
+    with pytest.raises(RuntimeError, match="forced reconciliation rollback"):
+        run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=1))
+    assert connection.execute(
+        """
+        SELECT source_id, terminal_outcome, version
+        FROM source_session_current
+        WHERE source_kind = 'log' AND service_name = 'codex-cli'
+        ORDER BY source_id
+        """
+    ).fetchall() == [("raw-1", "failed", 1), ("raw-2", "failed", 1)]
+    assert connection.execute(
+        """
+        SELECT terminal_outcome, version FROM source_session_current
+        WHERE source_kind = 'log' AND service_name = 'claude-code'
+          AND source_id = 'claude-raw'
+        """
+    ).fetchone() == ("failed", 1)
+    assert connection.execute(
+        """SELECT completed_at FROM source_session_reconciliation_pending
+           WHERE producer = 'codex-cli' AND session_id = 'session-1'"""
+    ).fetchone() == (None,)
+    assert connection.execute(
+        """
+        SELECT COUNT(*) FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."source.service"') = 'codex-cli'
+          AND json_extract(payload_json, '$."entity.version"') = 2
+        """
+    ).fetchone() == (0,)
+
+    monkeypatch.setattr(scan_module, "_reconcile_late_source_sessions", original)
+    source.log_rows.clear()
+    run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=2))
+
+    assert connection.execute(
+        """
+        SELECT source_id, terminal_outcome, version, project_id
+        FROM source_session_current
+        WHERE source_kind = 'log' AND service_name = 'codex-cli'
+        ORDER BY source_id
+        """
+    ).fetchall() == [
+        ("raw-1", "attributed", 2, "1" * 64),
+        ("raw-2", "attributed", 2, "1" * 64),
+    ]
+    assert connection.execute(
+        """
+        SELECT json_extract(payload_json, '$."source.record.id"'),
+               json_extract(payload_json, '$."source.terminal.outcome"'),
+               json_extract(payload_json, '$."entity.version"')
+        FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."source.service"') = 'codex-cli'
+          AND json_extract(payload_json, '$."entity.version"') = 2
+        ORDER BY json_extract(payload_json, '$."source.record.id"')
+        """
+    ).fetchall() == [("raw-1", "attributed", 2), ("raw-2", "attributed", 2)]
+    assert connection.execute(
+        """
+        SELECT terminal_outcome, version FROM source_session_current
+        WHERE source_kind = 'log' AND service_name = 'claude-code'
+          AND source_id = 'claude-raw'
+        """
+    ).fetchone() == ("failed", 1)
+    assert connection.execute(
+        """SELECT completed_at IS NOT NULL FROM source_session_reconciliation_pending
+           WHERE producer = 'codex-cli' AND session_id = 'session-1'"""
+    ).fetchone() == (1,)
+
+
+def test_raw_source_claim_precedes_query_retries_exact_window_and_advances(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    first_end = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class ClaimObservingSource(FakeSource):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[int, int]] = []
+            self.fail = True
+
+        def raw_source_window_anchor(self) -> tuple[int, int]:
+            return 10, 20
+
+        def source_sessions(
+            self, *, start: datetime, end: datetime, start_ns: int, end_ns: int
+        ) -> Iterator[SourceSessionRow]:
+            assert connection.execute(
+                """
+                SELECT start_ns, end_ns FROM raw_source_window_claims
+                WHERE source = 'signoz_raw_source_sessions'
+                  AND start_ns = ? AND end_ns = ?
+                """,
+                (start_ns, end_ns),
+            ).fetchone() == (start_ns, end_ns)
+            self.calls.append((start_ns, end_ns))
+            if self.fail:
+                raise RuntimeError("raw source query failed")
+            return iter(())
+
+    source = ClaimObservingSource()
+    approve(connection, source)
+    with pytest.raises(RuntimeError, match="raw source query failed"):
+        run_scan(connection, config, client=source, end_time=first_end)
+
+    first_window = (20, 20 + scan_module._ACTIVITY_FORWARD_WINDOW_SECONDS * 1_000_000_000)
+    assert source.calls == [first_window]
+    assert (
+        connection.execute(
+            "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_raw_source_sessions'"
+        ).fetchone()
+        is None
+    )
+    assert (
+        connection.execute(
+            "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
+        ).fetchone()
+        is None
+    )
+    assert connection.execute(
+        "SELECT start_ns, end_ns FROM raw_source_window_claims"
+    ).fetchall() == [first_window]
+
+    source.fail = False
+    second_end = first_end + timedelta(seconds=10)
+    run_scan(connection, config, client=source, end_time=second_end)
+    assert source.calls == [first_window, first_window]
+    assert connection.execute(
+        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_raw_source_sessions'"
+    ).fetchone() == (first_window[1],)
+    assert connection.execute(
+        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
+    ).fetchone() == (first_window[1],)
+
+    third_end = second_end + timedelta(seconds=10)
+    run_scan(connection, config, client=source, end_time=third_end)
+    assert source.calls[-1] == (
+        first_window[1],
+        first_window[1] + scan_module._ACTIVITY_FORWARD_WINDOW_SECONDS * 1_000_000_000,
+    )
+
+
+def test_raw_source_cursor_bounds_stale_activity_replays(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    first_end = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class WindowRecordingSource(FakeSource):
+        def __init__(self) -> None:
+            super().__init__()
+            self.log_windows: list[tuple[int, int]] = []
+            self.trace_windows: list[tuple[datetime, datetime]] = []
+            self.anchor_reads = 0
+
+        def raw_source_window_anchor(self) -> tuple[int, int]:
+            self.anchor_reads += 1
+            if self.anchor_reads > 1:
+                raise RuntimeError("approved raw source anchor was queried again")
+            return 0, 0
+
+        def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
+            self.log_windows.append((start_ns, end_ns))
+            yield from super().logs(start_ns=start_ns, end_ns=end_ns)
+
+        def traces(self, *, start: datetime, end: datetime) -> Iterator[TraceRow]:
+            self.trace_windows.append((start, end))
+            yield from super().traces(start=start, end=end)
+
+    source = WindowRecordingSource()
+    approve(connection, source)
+    run_scan(connection, config, client=source, end_time=first_end)
+
+    first_end_ns = int(first_end.timestamp() * 1_000_000_000)
+    assert connection.execute(
+        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
+    ).fetchone() == (first_end_ns,)
+    with connection:
+        connection.execute(
+            "UPDATE source_watermarks SET timestamp_ns = 0 WHERE source = 'signoz_logs'"
+        )
+
+    second_end = first_end + timedelta(hours=3)
+    run_scan(connection, config, client=source, end_time=second_end)
+
+    bounded_end = first_end + timedelta(seconds=scan_module._ACTIVITY_FORWARD_WINDOW_SECONDS)
+    assert bounded_end - first_end <= timedelta(minutes=15)
+    bounded_end_ns = int(bounded_end.timestamp() * 1_000_000_000)
+    expected_start_ns = first_end_ns - config.lifecycle.clock_skew_seconds * 1_000_000_000
+    assert source.log_windows == [(0, first_end_ns), (expected_start_ns, bounded_end_ns)]
+    assert source.trace_windows == [
+        (datetime.fromtimestamp(0, tz=UTC), first_end),
+        (datetime.fromtimestamp(expected_start_ns / 1_000_000_000, tz=UTC), bounded_end),
+    ]
+    assert connection.execute(
+        "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
+    ).fetchone() == (bounded_end_ns,)
+    assert source.anchor_reads == 1

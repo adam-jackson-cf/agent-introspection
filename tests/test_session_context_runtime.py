@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,33 @@ def test_runtime_writes_compact_canonical_json_for_valid_rfc3339_events(
     assert raw_record == json.dumps(record, separators=(",", ":")) + "\n"
 
 
+def test_runtime_accepts_session_context_only_for_codex_cli(tmp_path: Path) -> None:
+    workspace = make_repository(tmp_path)
+    home = tmp_path / "home"
+
+    accepted = run_runtime(
+        home,
+        "codex-cli",
+        "thread-123",
+        "session_context",
+        "2026-08-03T12:34:56Z",
+        str(workspace),
+    )
+    rejected = run_runtime(
+        home,
+        "codex-app-server",
+        "thread-123",
+        "session_context",
+        "2026-08-03T12:34:56Z",
+        str(workspace),
+    )
+
+    assert accepted.returncode == 0
+    assert rejected.returncode == 64
+    record = json.loads(next(inbox(home).glob("*.json")).read_text())
+    assert record["event_type"] == "session_context"
+
+
 @pytest.mark.parametrize(
     "occurred_at",
     [
@@ -151,7 +179,7 @@ def test_runtime_rejects_every_representable_ascii_control_before_inbox_commit(
     ],
 )
 def test_runtime_spools_bounded_workspace_rejections(
-    tmp_path: Path, workspace_factory, reason_code: str
+    tmp_path: Path, workspace_factory: Callable[[Path], Path], reason_code: str
 ) -> None:
     workspace = workspace_factory(tmp_path)
     if reason_code == "non_git_workspace":

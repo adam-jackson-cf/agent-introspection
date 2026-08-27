@@ -54,7 +54,34 @@ CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE = f"""{CANONICAL_ACTIVITY_EVENT_PRED
     GROUP BY attributes_string['activity.id']
   )"""
 CONTEXT_ACCEPTED_EVENT = "introspection.session_context.accepted"
+CONTEXT_SUPERSEDED_EVENT = "introspection.session_context.superseded"
 PIPELINE_SNAPSHOT_EVENT = "introspection.pipeline.snapshot"
+SOURCE_SESSION_EVENT = "introspection.source_session.recorded"
+SOURCE_SESSION_EVENT_PREDICATE = f"attributes_string['event.name'] = '{SOURCE_SESSION_EVENT}'"
+SOURCE_SESSION_LATEST_VERSION_PREDICATE = f"""{SOURCE_SESSION_EVENT_PREDICATE}
+  AND attributes_string['event.scope'] = 'source-session'
+  AND notEmpty(attributes_string['entity.id'])
+  AND (
+    attributes_string['entity.id'],
+    attributes_number['entity.version']
+  ) IN (
+    SELECT
+      attributes_string['entity.id'],
+      max(attributes_number['entity.version'])
+    FROM signoz_logs.distributed_logs_v2
+    WHERE {COMMON_FILTER}
+      AND {SOURCE_SESSION_EVENT_PREDICATE}
+      AND attributes_string['event.scope'] = 'source-session'
+      AND notEmpty(attributes_string['entity.id'])
+    GROUP BY attributes_string['entity.id']
+  )"""
+
+SOURCE_SESSION_PROJECT_ATTRIBUTION_PREDICATE = f"""{SOURCE_SESSION_LATEST_VERSION_PREDICATE}
+  AND attributes_string['source.terminal.outcome'] = 'attributed'
+  AND notEmpty(attributes_string['agent.project.id'])
+  AND notEmpty(attributes_string['agent.project.name'])
+  AND notEmpty(attributes_string['agent.project.root'])
+  AND notEmpty(attributes_string['agent.project.kind'])"""
 
 DETECTOR_LABELS = {
     "tool_failure": "Tool failure",
@@ -99,20 +126,116 @@ Panel = tuple[str, str, str, str, str, tuple[int, int, int, int]]
 
 
 def _context_coverage_query(select: str, query_tail: str = "") -> str:
-    """Query canonical source activities and accepted context in one source-time range."""
+    """Query source activities in the selected range against accepted context."""
 
     return f"""WITH latest_activities AS (
   SELECT *
   FROM signoz_logs.distributed_logs_v2
   WHERE {COMMON_FILTER}
     AND {CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE}
-), accepted_context AS (
+), accepted_context_authority AS (
   SELECT *
   FROM signoz_logs.distributed_logs_v2
-  WHERE {COMMON_FILTER}
-    AND attributes_string['event.name'] = '{CONTEXT_ACCEPTED_EVENT}'
-)
-{select}{query_tail}"""
+  WHERE resource.`service.name`::String = 'agent-introspection'
+    AND attributes_string['event.name'] = 'introspection.session_context.accepted'
+    AND attributes_string['event.scope'] = 'session-context'
+    AND notEmpty(attributes_string['entity.id'])
+), accepted_context_valid_versions AS (
+  SELECT
+    attributes_string['entity.id'] AS entity_id,
+    attributes_number['entity.version'] AS entity_version
+  FROM accepted_context_authority
+  GROUP BY entity_id, entity_version
+  HAVING uniqExact(tuple(
+    timestamp,
+    attributes_string['event.id'],
+    attributes_number['event.sequence'],
+    attributes_string['producer'],
+    attributes_string['producer.surface'],
+    attributes_string['session.id'],
+    attributes_string['event.type'],
+    attributes_string['agent.project.id'],
+    attributes_string['agent.project.name'],
+    attributes_string['agent.project.root'],
+    attributes_string['agent.project.kind']
+  )) = 1
+), accepted_context_deliveries AS (
+  SELECT
+    attributes_string['entity.id'] AS entity_id,
+    attributes_number['entity.version'] AS entity_version,
+    min(timestamp) AS timestamp,
+    attributes_string['producer'] AS producer,
+    attributes_string['session.id'] AS session_id
+  FROM accepted_context_authority
+  WHERE (
+    attributes_string['entity.id'], attributes_number['entity.version']
+  ) IN (
+    SELECT entity_id, entity_version
+    FROM accepted_context_valid_versions
+  )
+  GROUP BY
+    entity_id,
+    entity_version,
+    producer,
+    session_id,
+    attributes_string['event.type'],
+    attributes_string['agent.project.id'],
+    attributes_string['agent.project.name']
+), latest_accepted_context AS (
+  SELECT *
+  FROM accepted_context_deliveries
+  WHERE (entity_id, entity_version) IN (
+    SELECT entity_id, max(entity_version)
+    FROM accepted_context_deliveries
+    GROUP BY entity_id
+  )
+), supersession_authority AS (
+  SELECT *
+  FROM signoz_logs.distributed_logs_v2
+  WHERE resource.`service.name`::String = 'agent-introspection'
+    AND attributes_string['event.name'] = 'introspection.session_context.superseded'
+    AND attributes_string['event.scope'] = 'session-context-supersession'
+    AND notEmpty(attributes_string['entity.id'])
+), supersession_valid_versions AS (
+  SELECT
+    attributes_string['entity.id'] AS entity_id,
+    attributes_number['entity.version'] AS entity_version
+  FROM supersession_authority
+  GROUP BY entity_id, entity_version
+  HAVING uniqExact(tuple(
+    timestamp,
+    attributes_string['event.id'],
+    attributes_number['event.sequence'],
+    attributes_string['replacement.event_id']
+  )) = 1
+), supersession_deliveries AS (
+  SELECT
+    attributes_string['entity.id'] AS entity_id,
+    attributes_number['entity.version'] AS entity_version
+  FROM supersession_authority
+  WHERE (
+    attributes_string['entity.id'], attributes_number['entity.version']
+  ) IN (
+    SELECT entity_id, entity_version
+    FROM supersession_valid_versions
+  )
+  GROUP BY
+    entity_id,
+    entity_version,
+    attributes_string['replacement.event_id']
+), latest_supersessions AS (
+  SELECT entity_id AS original_event_id
+  FROM supersession_deliveries
+  WHERE (entity_id, entity_version) IN (
+    SELECT entity_id, max(entity_version)
+    FROM supersession_deliveries
+    GROUP BY entity_id
+  )
+), accepted_context AS (
+  SELECT *
+  FROM latest_accepted_context
+  WHERE entity_id NOT IN (SELECT original_event_id FROM latest_supersessions)
+){select}{query_tail}"""
 
 
 INSIGHT_PANELS: tuple[Panel, ...] = (
@@ -173,39 +296,20 @@ ORDER BY `Eligible` DESC, `Attribution method`, `Rejection reason`""",
         (0, 5, 12, 5),
     ),
     (
-        "session-context-coverage",
-        "Session context coverage",
+        "source-session-project-attribution",
+        "Source session project attribution",
         "table",
-        "Source sessions and accepted context coverage in the selected source-event time range.",
-        _context_coverage_query(
-            """SELECT
-  coalesce(
-    activity.attributes_string['activity.producer'],
-    context.attributes_string['producer']
-  ) AS `Producer`,
-  coalesce(activity.attributes_string['activity.producer_surface'], 'context') AS `Surface`,
-  toFloat64(uniqExact(activity.attributes_string['activity.correlation_id'])) AS `Source sessions`,
-  toFloat64(uniqExact(context.attributes_string['session.id'])) AS `Accepted context sessions`,
-  toFloat64(uniqExactIf(
-    activity.attributes_string['activity.correlation_id'],
-    notEmpty(context.attributes_string['session.id'])
-  )) AS `Matched sessions`,
-  toFloat64(uniqExactIf(
-    context.attributes_string['session.id'],
-    empty(activity.attributes_string['activity.correlation_id'])
-  )) AS `Project-context records without telemetry`,
-  toFloat64(uniqExactIf(
-    activity.attributes_string['activity.correlation_id'],
-    empty(context.attributes_string['session.id'])
-  )) AS `Telemetry without context`
-FROM latest_activities AS activity
-FULL OUTER JOIN accepted_context AS context
-  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']
-  AND activity.attributes_string['activity.correlation_id']
-    = context.attributes_string['session.id']""",
-            """
-GROUP BY `Producer`, `Surface`
-ORDER BY `Producer`, `Surface`""",
+        "Exact source-session project attribution in the selected source-event time range.",
+        _query(
+            """SELECT DISTINCT
+  attributes_string['source.producer'] AS `Producer`,
+  attributes_string['source.session.id'] AS `Session ID`,
+  attributes_string['agent.project.id'] AS `Project ID`,
+  attributes_string['agent.project.name'] AS `Project name`,
+  attributes_string['agent.project.root'] AS `Project root`,
+  attributes_string['agent.project.kind'] AS `Project kind`""",
+            f"""{SOURCE_SESSION_PROJECT_ATTRIBUTION_PREDICATE}
+ORDER BY `Producer`, `Session ID`, `Project ID`, `Project name`, `Project root`, `Project kind`""",
         ),
         (0, 10, 12, 6),
     ),
@@ -226,9 +330,9 @@ ORDER BY `Producer`, `Surface`""",
   )) AS value
 FROM latest_activities AS activity
 INNER JOIN accepted_context AS context
-  ON activity.attributes_string['activity.producer'] = context.attributes_string['producer']
+  ON activity.attributes_string['activity.producer'] = context.producer
   AND activity.attributes_string['activity.correlation_id']
-    = context.attributes_string['session.id']""",
+    = context.session_id""",
             """
 GROUP BY ts
 ORDER BY ts""",
@@ -308,7 +412,9 @@ HEALTH_PANELS: tuple[Panel, ...] = (
     ),
 )
 PROJECTION_PANEL_IDS = frozenset(
-    panel[0] for panel in INSIGHT_PANELS if panel[0] != "late-context-reconciliations"
+    panel[0]
+    for panel in INSIGHT_PANELS
+    if panel[0] not in {"late-context-reconciliations", "source-session-project-attribution"}
 )
 PANELS = INSIGHT_PANELS
 
@@ -470,6 +576,17 @@ def _verify_dashboard(
             ) > query.index("\nGROUP BY"):
                 issues.append(
                     f"projection panel {panel_id} filters activity version after aggregation"
+                )
+        elif panel_id == "source-session-project-attribution":
+            if SOURCE_SESSION_LATEST_VERSION_PREDICATE not in query:
+                issues.append("source-session panel does not select latest source-session version")
+            elif "\nORDER BY" in query and query.index(
+                SOURCE_SESSION_LATEST_VERSION_PREDICATE
+            ) > query.index("\nORDER BY"):
+                issues.append("source-session panel filters source-session version after ordering")
+            elif SOURCE_SESSION_PROJECT_ATTRIBUTION_PREDICATE not in query:
+                issues.append(
+                    "source-session panel does not restrict to complete attributed projects"
                 )
     return issues
 

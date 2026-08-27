@@ -19,7 +19,6 @@ from agent_introspection.migrations import apply_migrations
 _CANONICAL_PRODUCER_SURFACE_PAIRS = frozenset(
     {
         ("codex-cli", "codex-cli"),
-        ("codex-app-server", "codex-app"),
         ("codex-app-server", "codex-app-server"),
         ("omp", "omp"),
         ("claude-code", "claude-code"),

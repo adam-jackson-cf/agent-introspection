@@ -191,16 +191,16 @@ def launch_agent_payload(
     interval_seconds: int,
     timezone: str,
 ) -> dict[str, object]:
-    """Build the canonical user LaunchAgent configuration."""
-    if interval_seconds != 3_600:
-        raise ValueError("LaunchAgent interval must be exactly 3600 seconds")
+    """Build the canonical five-minute user LaunchAgent configuration."""
+    if interval_seconds != 300:
+        raise ValueError("LaunchAgent interval must be exactly 300 seconds")
     return {
         "Label": LABEL,
         "ProgramArguments": [str(executable), "scan", "--scheduled"],
         "WorkingDirectory": str(working_directory),
         "RunAtLoad": True,
         "KeepAlive": False,
-        "StartCalendarInterval": {"Minute": 0},
+        "StartCalendarInterval": [{"Minute": minute} for minute in range(0, 60, 5)],
         "EnvironmentVariables": {
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
             "DOCKER_HOST": docker_host,
@@ -211,7 +211,7 @@ def launch_agent_payload(
         },
         "StandardOutPath": str(log_directory / "launchd.stdout.log"),
         "StandardErrorPath": str(log_directory / "launchd.stderr.log"),
-        "ProcessType": "Background",
+        "ProcessType": "Standard",
     }
 
 
@@ -245,8 +245,8 @@ def schedule_status(
     interval_seconds: int,
 ) -> dict[str, object]:
     """Return launchd state with the persisted scan freshness and lease evidence."""
-    if interval_seconds != 3_600:
-        raise ValueError("scheduler interval must be exactly 3600 seconds")
+    if interval_seconds != 300:
+        raise ValueError("scheduler interval must be exactly 300 seconds")
     result = subprocess.run(
         ["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"],
         check=False,

@@ -31,6 +31,11 @@ packages = ["src/agent_introspection"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+  "frozen_gate2_replay: replay frozen Gate-2 evidence",
+  "clickhouse_integration: run ClickHouse-backed evidence integration",
+  "gate6_installed: verify Gate-6 installed-surface contracts",
+]
 
 [tool.ruff]
 line-length = 100

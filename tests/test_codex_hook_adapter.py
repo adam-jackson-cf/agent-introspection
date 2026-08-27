@@ -101,7 +101,7 @@ def _events(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
-def test_codex_notify_maps_each_native_notify_to_session_start_without_state(
+def test_codex_notify_maps_each_native_notify_to_repeatable_session_context_without_state(
     tmp_path: Path,
 ) -> None:
     adapter, log = _adapter(tmp_path)
@@ -126,15 +126,15 @@ def test_codex_notify_maps_each_native_notify_to_session_start_without_state(
 
     events = _events(log)
     assert len(events) == 3
-    assert events[0][:3] == ["codex-cli", "thread-42", "session_start"]
+    assert events[0][:3] == ["codex-cli", "thread-42", "session_context"]
     assert started <= datetime.fromisoformat(events[0][3]) <= finished
     assert events[0][4] == str(first_workspace)
-    assert events[1][:3] == ["codex-cli", "thread-42", "session_start"]
+    assert events[1][:3] == ["codex-cli", "thread-42", "session_context"]
     assert events[1][4] == str(first_workspace)
     assert events[2] == [
         "codex-cli",
         "thread-42",
-        "session_start",
+        "session_context",
         "2026-08-03T12:01:00+00:00",
         str(second_workspace),
     ]
@@ -234,7 +234,7 @@ def test_codex_notify_rejects_duplicate_authoritative_fields_without_runtime_inv
         [
             "codex-cli",
             "thread-42",
-            "session_start",
+            "session_context",
             "2026-08-03T12:00:00+00:00",
             str(original_workspace),
         ]

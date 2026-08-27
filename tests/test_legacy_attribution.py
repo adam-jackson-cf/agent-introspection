@@ -4,8 +4,10 @@ import json
 import sqlite3
 import subprocess
 import urllib.error
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +22,7 @@ from agent_introspection.legacy_attribution import (
     recover_legacy_project_attribution,
     run_legacy_project_attribution,
 )
+from agent_introspection.source import ClickHouseClient
 
 
 def test_cli_requires_explicit_legacy_run_arguments() -> None:
@@ -61,15 +64,17 @@ def test_rfc3339_requires_timezone_and_range_is_bounded() -> None:
     config = parse_config(
         {"legacy_project_attribution": {"project_roots": ["/tmp"], "maximum_range_hours": 1}}
     )
+    connection = sqlite3.connect(":memory:")
     with pytest.raises(ValueError, match="Maximum supported"):
         run_legacy_project_attribution(
-            object(),
+            connection,
             config,
-            client=object(),
+            client=ClickHouseClient(docker_context="test"),
             start=datetime(2026, 1, 1, tzinfo=UTC),
             end=datetime(2026, 1, 1, 2, tzinfo=UTC),
             approved_by="operator",
         )
+    connection.close()
 
 
 @pytest.mark.parametrize(
@@ -126,29 +131,29 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
         }
     )
 
-    class Client:
-        def query(self, sql: str, parameters: dict[str, int | str]):
+    class Client(ClickHouseClient):
+        def __init__(self) -> None:
+            pass
+
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
             if "attributes_string['event.id']" in sql:
-                return iter([{"event_id": parameters["event_0"]}])
-            return iter(
-                [
+                yield {"event_id": parameters["event_0"]}
+                return
+            yield {
+                "timestamp": 1_700_000_000_000_000_000,
+                "log_id": "safe-log",
+                "correlation_id": "thread",
+                "call_id": "call",
+                "tool_name": "exec",
+                "arguments": json.dumps(
                     {
-                        "timestamp": 1_700_000_000_000_000_000,
-                        "log_id": "safe-log",
-                        "correlation_id": "thread",
-                        "call_id": "call",
-                        "tool_name": "exec",
-                        "arguments": json.dumps(
-                            {
-                                "cmd": "python tracked.py",
-                                "workdir": str(workspace),
-                                "yield_time_ms": 10_000,
-                                "max_output_chars": 3_414,
-                            }
-                        ),
+                        "cmd": "python tracked.py",
+                        "workdir": str(workspace),
+                        "yield_time_ms": 10_000,
+                        "max_output_chars": 3_414,
                     }
-                ]
-            )
+                ),
+            }
 
     connection = connect_database(config.database.path)
     start = datetime(2023, 11, 14, tzinfo=UTC)
@@ -200,26 +205,23 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
     )
     remote_ready = False
 
-    class Client:
-        def query(self, sql: str, parameters: dict[str, int | str]):
+    class Client(ClickHouseClient):
+        def __init__(self) -> None:
+            pass
+
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
             if "attributes_string['event.id']" in sql:
                 if remote_ready:
-                    return iter([{"event_id": parameters["event_0"]}])
-                return iter(())
-            return iter(
-                [
-                    {
-                        "timestamp": 1_700_000_000_000_000_000,
-                        "log_id": "safe-log",
-                        "correlation_id": "thread",
-                        "call_id": "call",
-                        "tool_name": "exec",
-                        "arguments": json.dumps(
-                            {"cmd": "python tracked.py", "workdir": str(workspace)}
-                        ),
-                    }
-                ]
-            )
+                    yield {"event_id": parameters["event_0"]}
+                return
+            yield {
+                "timestamp": 1_700_000_000_000_000_000,
+                "log_id": "safe-log",
+                "correlation_id": "thread",
+                "call_id": "call",
+                "tool_name": "exec",
+                "arguments": json.dumps({"cmd": "python tracked.py", "workdir": str(workspace)}),
+            }
 
     connection = connect_database(config.database.path)
     start = datetime(2023, 11, 14, tzinfo=UTC)
@@ -313,24 +315,21 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
         }
     )
 
-    class Client:
-        def query(self, sql: str, _parameters: dict[str, int | str]):
+    class Client(ClickHouseClient):
+        def __init__(self) -> None:
+            pass
+
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
             if "attributes_string['event.id']" in sql:
-                return iter(())
-            return iter(
-                [
-                    {
-                        "timestamp": 1_700_000_000_000_000_000,
-                        "log_id": "safe-log",
-                        "correlation_id": "thread",
-                        "call_id": "call",
-                        "tool_name": "exec",
-                        "arguments": json.dumps(
-                            {"cmd": "python tracked.py", "workdir": str(workspace)}
-                        ),
-                    }
-                ]
-            )
+                return
+            yield {
+                "timestamp": 1_700_000_000_000_000_000,
+                "log_id": "safe-log",
+                "correlation_id": "thread",
+                "call_id": "call",
+                "tool_name": "exec",
+                "arguments": json.dumps({"cmd": "python tracked.py", "workdir": str(workspace)}),
+            }
 
     connection = connect_database(config.database.path)
     response = MagicMock(status=200)
@@ -365,10 +364,15 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
             0
         ]
 
-        class RecoveryClient:
-            def query(self, sql: str, parameters: dict[str, int | str]):
+        class RecoveryClient(ClickHouseClient):
+            def __init__(self) -> None:
+                pass
+
+            def query(
+                self, sql: str, parameters: Mapping[str, str | int]
+            ) -> Iterator[dict[str, Any]]:
                 assert "attributes_string['event.id']" in sql
-                return iter([{"event_id": parameters["event_0"]}])
+                yield {"event_id": parameters["event_0"]}
 
         with patch("urllib.request.urlopen", return_value=response):
             recovered = recover_legacy_project_attribution(

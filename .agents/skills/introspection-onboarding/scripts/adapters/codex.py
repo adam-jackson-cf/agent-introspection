@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit canonical Codex CLI lifecycle events from persistent notify callbacks."""
+"""Emit canonical Codex CLI session context from persistent notify callbacks."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ EVENT_TYPE = "agent-turn-complete"
 
 
 class HookInputError(ValueError):
-    """The notify envelope lacks authoritative lifecycle values."""
+    """The notify envelope lacks authoritative session-context values."""
 
 
 def _usage() -> int:
@@ -90,7 +90,7 @@ def main(argv: list[str]) -> int:
     try:
         session_id, workspace, occurred_at = _envelope(argv[1])
         completed = subprocess.run(
-            [str(_runtime()), PRODUCER, session_id, "session_start", occurred_at, workspace],
+            [str(_runtime()), PRODUCER, session_id, "session_context", occurred_at, workspace],
             check=False,
         )
         return completed.returncode

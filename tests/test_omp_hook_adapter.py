@@ -44,7 +44,10 @@ import { pathToFileURL } from "node:url";
 
 const adapter = await import(pathToFileURL(process.argv[2]).href);
 const handlers = new Map();
-adapter.default({ on(event, handler) { handlers.set(event, handler); } });
+adapter.default({
+  on(event, handler) { handlers.set(event, handler); },
+  registerCommand() {},
+});
 try {
   handlers.get(process.argv[3])(
     JSON.parse(process.argv[6]),
@@ -73,7 +76,14 @@ try {
             "OMP_RUNTIME_EXIT_STATUS": str(runtime_status),
         },
     )
-    return json.loads(completed.stdout)
+    decoded = json.loads(completed.stdout)
+    assert isinstance(decoded, dict)
+    outcome: dict[str, str | None] = {}
+    for key, value in decoded.items():
+        assert isinstance(key, str)
+        assert value is None or isinstance(value, str)
+        outcome[key] = value
+    return outcome
 
 
 @pytest.mark.parametrize(

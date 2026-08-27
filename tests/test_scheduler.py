@@ -66,15 +66,18 @@ def test_launch_agent_payload_is_canonical_and_absolute(tmp_path: Path) -> None:
         working_directory=tmp_path,
         docker_host="unix:///Users/adamjackson/.orbstack/run/docker.sock",
         log_directory=tmp_path / "logs",
-        interval_seconds=3_600,
+        interval_seconds=300,
         timezone="Europe/London",
     )
     assert payload["Label"] == LABEL
-    assert payload["StartCalendarInterval"] == {"Minute": 0}
+    assert payload["StartCalendarInterval"] == [{"Minute": minute} for minute in range(0, 60, 5)]
     assert "StartInterval" not in payload
     assert payload["RunAtLoad"] is True
     assert payload["KeepAlive"] is False
-    assert payload["EnvironmentVariables"]["TZ"] == "Europe/London"
+    assert payload["ProcessType"] == "Standard"
+    environment_variables = payload["EnvironmentVariables"]
+    assert isinstance(environment_variables, dict)
+    assert environment_variables["TZ"] == "Europe/London"
 
 
 def test_schedule_status_exposes_loaded_state_freshness_and_current_slot(
@@ -116,11 +119,10 @@ def test_schedule_status_exposes_loaded_state_freshness_and_current_slot(
             [], 0, "state = not running\nlast exit code = 0\n", ""
         ),
     )
-
     status = schedule_status(
         connection,
-        now=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
-        interval_seconds=3_600,
+        now=datetime(2026, 7, 10, 12, 9, tzinfo=UTC),
+        interval_seconds=300,
     )
 
     assert status["installed"] is True
@@ -128,7 +130,7 @@ def test_schedule_status_exposes_loaded_state_freshness_and_current_slot(
     assert status["last_exit_code"] == 0
     assert status["current_slot"] == {
         "status": "satisfied",
-        "slot_start": "2026-07-10T12:00:00+00:00",
+        "slot_start": "2026-07-10T12:05:00+00:00",
         "run_id": "success-current",
         "run_started_at": "2026-07-10T12:05:00+00:00",
     }
@@ -161,8 +163,8 @@ def test_successful_and_no_data_runs_suppress_only_their_utc_slot() -> None:
     )
     completed = completed_in_current_slot(
         connection,
-        now=datetime(2026, 7, 10, 12, 59, 59, tzinfo=UTC),
-        interval_seconds=3_600,
+        now=datetime(2026, 7, 10, 12, 4, 59, tzinfo=UTC),
+        interval_seconds=300,
     )
     assert completed is not None
     assert completed.run_id == "no-data-current"
@@ -170,8 +172,8 @@ def test_successful_and_no_data_runs_suppress_only_their_utc_slot() -> None:
     assert (
         completed_in_current_slot(
             connection,
-            now=datetime(2026, 7, 10, 13, 0, tzinfo=UTC),
-            interval_seconds=3_600,
+            now=datetime(2026, 7, 10, 12, 5, tzinfo=UTC),
+            interval_seconds=300,
         )
         is None
     )
@@ -189,8 +191,8 @@ def test_failed_run_does_not_suppress_retry_and_clock_is_validated() -> None:
     assert (
         completed_in_current_slot(
             connection,
-            now=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
-            interval_seconds=3_600,
+            now=datetime(2026, 7, 10, 12, 19, tzinfo=UTC),
+            interval_seconds=300,
         )
         is None
     )
@@ -198,7 +200,7 @@ def test_failed_run_does_not_suppress_retry_and_clock_is_validated() -> None:
         completed_in_current_slot(
             connection,
             now=datetime(2026, 7, 10, 6, 30),
-            interval_seconds=3_600,
+            interval_seconds=300,
         )
     with pytest.raises(ValueError, match="positive integer"):
         completed_in_current_slot(

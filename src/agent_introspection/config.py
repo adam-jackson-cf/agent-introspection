@@ -45,11 +45,11 @@ class SigNozConfig:
 
 @dataclass(frozen=True, slots=True)
 class SchedulerConfig:
-    """Hourly slot and lease settings."""
+    """Five-minute slot and lease settings."""
 
     timezone: str = "Europe/London"
-    interval_seconds: int = 3_600
-    lease_seconds: int = 3_600
+    interval_seconds: int = 300
+    lease_seconds: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,10 +111,10 @@ def _positive_int(value: object, *, field: str) -> int:
     return value
 
 
-def _hourly_interval(value: object, *, field: str) -> int:
+def _five_minute_interval(value: object, *, field: str) -> int:
     interval = _positive_int(value, field=field)
-    if interval != 3_600:
-        raise ConfigurationError(f"{field} must be exactly 3600 seconds")
+    if interval != 300:
+        raise ConfigurationError(f"{field} must be exactly 300 seconds")
     return interval
 
 
@@ -222,7 +222,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.scheduler.timezone
         ),
         interval_seconds=(
-            _hourly_interval(scheduler["interval_seconds"], field="scheduler.interval_seconds")
+            _five_minute_interval(scheduler["interval_seconds"], field="scheduler.interval_seconds")
             if "interval_seconds" in scheduler
             else defaults.scheduler.interval_seconds
         ),

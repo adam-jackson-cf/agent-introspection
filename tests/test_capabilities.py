@@ -1,6 +1,6 @@
 import copy
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,7 @@ class SourceSchemaClient(ClickHouseClient):
         self.log_diagnostics = [{"event_names": ["codex.tool_result"]}]
         self.trace_diagnostics = [{"event_names": ["session_task.turn"]}]
 
-    def query(self, sql: str, _parameters: object) -> Iterator[dict[str, Any]]:
+    def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
         if "timezone()" in sql:
             return iter([{"timezone": self.timezone}])
         if "system.columns" in sql:
@@ -184,7 +184,8 @@ def test_each_extraction_query_class_participates_in_contract(
         monkeypatch.setattr(capabilities, "TRACE_QUERY", TRACE_QUERY + "\n-- contract mutation")
     else:
         identity = query_class.removeprefix("hydration.")
-        queries: dict[str, str] = dict(HYDRATION_QUERIES)
+        queries = dict(HYDRATION_QUERIES)
+        assert identity in queries
         queries[identity] += "\n-- contract mutation"
         monkeypatch.setattr(capabilities, "HYDRATION_QUERIES", queries)
     assert schema_fingerprint(discover_source_schema(SourceSchemaClient())) != baseline

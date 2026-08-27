@@ -9,7 +9,12 @@ import pytest
 from agent_introspection.attribution import reconcile_activity, resolve_attribution
 from agent_introspection.database import CanonicalActivity, CanonicalSourceMembership
 from agent_introspection.migrations import apply_migrations
-from agent_introspection.session_context import drain_inbox, parse_event, spool_event
+from agent_introspection.session_context import (
+    SessionContextEvent,
+    drain_inbox,
+    parse_event,
+    spool_event,
+)
 
 _PROJECT_ID = "b" * 64
 
@@ -40,7 +45,7 @@ def _activity(moment: datetime, *, event_id: str = "event-1") -> CanonicalActivi
     )
 
 
-def _context_event(root: Path, moment: datetime):
+def _context_event(root: Path, moment: datetime) -> SessionContextEvent:
     return parse_event(
         {
             "event_id": "a" * 64,
@@ -97,6 +102,23 @@ def test_resolution_uses_one_half_open_context_interval_or_fixed_reason(tmp_path
             ).reason_code
             == "missing_workspace"
         )
+        skewed = resolve_attribution(
+            connection,
+            producer="claude-code",
+            correlation_id="session-1",
+            source_at=moment - timedelta(milliseconds=100),
+            clock_skew_seconds=1,
+        )
+        assert skewed.state == "resolved"
+        assert skewed.project_id == _PROJECT_ID
+        with pytest.raises(ValueError, match="clock skew must not be negative"):
+            resolve_attribution(
+                connection,
+                producer="claude-code",
+                correlation_id="session-1",
+                source_at=moment,
+                clock_skew_seconds=-1,
+            )
     finally:
         connection.close()
 

@@ -735,6 +735,410 @@ _LEGACY_ATTRIBUTION_DELIVERY_LEDGER_SCHEMA: Final[tuple[str, ...]] = (
     "CREATE TRIGGER legacy_attribution_delivery_attempts_no_delete BEFORE DELETE ON legacy_attribution_delivery_attempts BEGIN SELECT RAISE(ABORT, 'legacy attribution delivery attempts cannot be deleted'); END",
 )
 
+_CODEX_SESSION_CONTEXT_SCHEMA: Final[tuple[str, ...]] = (
+    "DROP TRIGGER session_context_events_no_update",
+    "DROP TRIGGER session_context_events_no_delete",
+    "DROP TRIGGER session_context_intervals_guard_update",
+    "DROP TRIGGER session_context_intervals_no_delete",
+    "ALTER TABLE session_context_intervals RENAME TO session_context_intervals_legacy",
+    "ALTER TABLE session_context_events RENAME TO session_context_events_legacy",
+    """
+    CREATE TABLE session_context_events (
+        event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
+        producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        session_id TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (
+            event_type IN ('session_start', 'workspace_changed', 'session_end', 'session_context')
+            AND (event_type != 'session_context' OR producer = 'codex-cli')
+        ),
+        occurred_at TEXT NOT NULL,
+        project_id TEXT NOT NULL CHECK (length(project_id) = 64),
+        project_name TEXT NOT NULL,
+        project_root TEXT NOT NULL,
+        project_kind TEXT NOT NULL CHECK (project_kind = 'git')
+    ) STRICT
+    """,
+    """
+    INSERT INTO session_context_events
+    SELECT * FROM session_context_events_legacy
+    """,
+    """
+    CREATE TABLE session_context_intervals (
+        event_id TEXT PRIMARY KEY REFERENCES session_context_events(event_id),
+        producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        session_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        end_event_id TEXT UNIQUE REFERENCES session_context_events(event_id),
+        project_id TEXT NOT NULL CHECK (length(project_id) = 64),
+        project_name TEXT NOT NULL,
+        project_root TEXT NOT NULL,
+        project_kind TEXT NOT NULL CHECK (project_kind = 'git'),
+        CHECK (ended_at IS NULL OR ended_at >= started_at)
+    ) STRICT
+    """,
+    """
+    INSERT INTO session_context_intervals
+    SELECT * FROM session_context_intervals_legacy
+    """,
+    "DROP TABLE session_context_intervals_legacy",
+    "DROP TABLE session_context_events_legacy",
+    "CREATE UNIQUE INDEX session_context_open_interval_idx ON session_context_intervals(producer, session_id) WHERE ended_at IS NULL",
+    "CREATE INDEX session_context_correlation_idx ON session_context_intervals(session_id, started_at, ended_at)",
+    "CREATE TRIGGER session_context_events_no_update BEFORE UPDATE ON session_context_events BEGIN SELECT RAISE(ABORT, 'session_context_events are immutable'); END",
+    "CREATE TRIGGER session_context_events_no_delete BEFORE DELETE ON session_context_events BEGIN SELECT RAISE(ABORT, 'session_context_events cannot be deleted'); END",
+    "CREATE TRIGGER session_context_intervals_guard_update BEFORE UPDATE ON session_context_intervals WHEN NOT EXISTS (SELECT 1 FROM session_context_replay_mutations WHERE producer = OLD.producer AND session_id = OLD.session_id) BEGIN SELECT RAISE(ABORT, 'session context interval history is immutable'); END",
+    "CREATE TRIGGER session_context_intervals_no_delete BEFORE DELETE ON session_context_intervals WHEN NOT EXISTS (SELECT 1 FROM session_context_replay_mutations WHERE producer = OLD.producer AND session_id = OLD.session_id) BEGIN SELECT RAISE(ABORT, 'session context intervals cannot be deleted'); END",
+)
+
+
+_SESSION_CONTEXT_REJECTION_SCHEMA: Final[tuple[str, ...]] = (
+    "DROP TRIGGER canonical_rejections_no_update",
+    "DROP TRIGGER canonical_rejections_no_delete",
+    "ALTER TABLE canonical_rejections RENAME TO canonical_rejections_legacy",
+    """
+    CREATE TABLE canonical_rejections (
+        id TEXT PRIMARY KEY, producer TEXT NOT NULL CHECK (producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')),
+        producer_surface TEXT NOT NULL CHECK (length(producer_surface) > 0), correlation_id TEXT,
+        lifecycle_event TEXT NOT NULL CHECK (lifecycle_event IN ('session_start', 'workspace_changed', 'session_end', 'session_context', 'source_activity')),
+        occurred_at TEXT NOT NULL,
+        reason_code TEXT NOT NULL CHECK (reason_code IN ('missing_correlation_id', 'conflicting_correlation_id', 'missing_workspace', 'invalid_workspace', 'non_git_workspace', 'git_resolution_failed', 'invalid_timestamp', 'invalid_transition', 'duplicate_conflict', 'out_of_order_event')),
+        source_adapter TEXT NOT NULL CHECK (length(source_adapter) > 0),
+        source_provenance TEXT CHECK (source_provenance IS NULL OR json_valid(source_provenance)), created_at TEXT NOT NULL
+    ) STRICT
+    """,
+    "INSERT INTO canonical_rejections SELECT * FROM canonical_rejections_legacy",
+    "DROP TABLE canonical_rejections_legacy",
+    "CREATE UNIQUE INDEX canonical_rejections_identity_idx ON canonical_rejections(producer, producer_surface, COALESCE(correlation_id, ''), lifecycle_event, occurred_at, reason_code, source_adapter, COALESCE(source_provenance, ''))",
+    "CREATE TRIGGER canonical_rejections_no_update BEFORE UPDATE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections are immutable'); END",
+    "CREATE TRIGGER canonical_rejections_no_delete BEFORE DELETE ON canonical_rejections BEGIN SELECT RAISE(ABORT, 'canonical_rejections cannot be deleted'); END",
+)
+
+
+_RAW_SOURCE_SESSION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE source_session_records (
+        scan_run_id TEXT NOT NULL REFERENCES scan_runs(id),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('log', 'trace')),
+        service_name TEXT NOT NULL CHECK (length(service_name) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+        source_timestamp TEXT NOT NULL,
+        session_ids_json TEXT NOT NULL CHECK (json_valid(session_ids_json)),
+        thread_ids_json TEXT NOT NULL CHECK (json_valid(thread_ids_json)),
+        legacy_thread_ids_json TEXT NOT NULL CHECK (json_valid(legacy_thread_ids_json)),
+        gen_ai_conversation_ids_json TEXT NOT NULL CHECK (json_valid(gen_ai_conversation_ids_json)),
+        terminal_outcome TEXT NOT NULL CHECK (
+            terminal_outcome IN ('attributed', 'expected_rejection', 'failed', 'blocked')
+        ),
+        terminal_reason TEXT NOT NULL CHECK (length(terminal_reason) > 0),
+        projection_event_id TEXT NOT NULL CHECK (length(projection_event_id) = 64),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (scan_run_id, source_kind, service_name, source_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE INDEX source_session_records_outcome_idx ON source_session_records(scan_run_id, terminal_outcome)",
+    "CREATE TRIGGER source_session_records_no_update BEFORE UPDATE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records are immutable'); END",
+    "CREATE TRIGGER source_session_records_no_delete BEFORE DELETE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records cannot be deleted'); END",
+)
+
+
+_RAW_SOURCE_SESSION_CONTEXT_SCHEMA: Final[tuple[str, ...]] = (
+    "DROP TRIGGER source_session_records_no_update",
+    "DROP TRIGGER source_session_records_no_delete",
+    "ALTER TABLE source_session_records RENAME TO source_session_records_legacy",
+    """
+    CREATE TABLE source_session_records (
+        scan_run_id TEXT NOT NULL REFERENCES scan_runs(id),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('log', 'trace')),
+        service_name TEXT NOT NULL CHECK (length(service_name) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+        source_timestamp TEXT NOT NULL,
+        session_ids_json TEXT NOT NULL CHECK (json_valid(session_ids_json)),
+        thread_ids_json TEXT NOT NULL CHECK (json_valid(thread_ids_json)),
+        legacy_thread_ids_json TEXT NOT NULL CHECK (json_valid(legacy_thread_ids_json)),
+        gen_ai_conversation_ids_json TEXT NOT NULL CHECK (json_valid(gen_ai_conversation_ids_json)),
+        terminal_outcome TEXT NOT NULL CHECK (
+            terminal_outcome IN ('attributed', 'expected_rejection', 'failed', 'blocked')
+        ),
+        terminal_reason TEXT NOT NULL CHECK (length(terminal_reason) > 0),
+        context_evidence_id TEXT,
+        project_id TEXT,
+        project_name TEXT,
+        project_root TEXT,
+        project_kind TEXT CHECK (project_kind IS NULL OR project_kind = 'git'),
+        projection_event_id TEXT NOT NULL CHECK (length(projection_event_id) = 64),
+        created_at TEXT NOT NULL,
+        CHECK (
+            (project_id IS NULL AND project_name IS NULL AND project_root IS NULL AND project_kind IS NULL)
+            OR (length(project_id) = 64 AND length(project_name) > 0
+                AND length(project_root) > 0 AND project_kind = 'git')
+        ),
+        CHECK (
+            (terminal_outcome = 'attributed' AND context_evidence_id IS NOT NULL AND project_id IS NOT NULL)
+            OR (terminal_outcome != 'attributed' AND project_id IS NULL)
+        ),
+        PRIMARY KEY (scan_run_id, source_kind, service_name, source_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    INSERT INTO source_session_records (
+        scan_run_id, source_kind, service_name, source_id, source_timestamp,
+        session_ids_json, thread_ids_json, legacy_thread_ids_json,
+        gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+        projection_event_id, created_at
+    ) SELECT
+        scan_run_id, source_kind, service_name, source_id, source_timestamp,
+        session_ids_json, thread_ids_json, legacy_thread_ids_json,
+        gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+        projection_event_id, created_at
+    FROM source_session_records_legacy
+    """,
+    "DROP TABLE source_session_records_legacy",
+    "CREATE INDEX source_session_records_outcome_idx ON source_session_records(scan_run_id, terminal_outcome)",
+    "CREATE TRIGGER source_session_records_no_update BEFORE UPDATE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records are immutable'); END",
+    "CREATE TRIGGER source_session_records_no_delete BEFORE DELETE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records cannot be deleted'); END",
+)
+
+
+_RAW_SOURCE_SESSION_CURRENT_PROJECTION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE source_session_current (
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('log', 'trace')),
+        service_name TEXT NOT NULL CHECK (length(service_name) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        terminal_outcome TEXT NOT NULL CHECK (
+            terminal_outcome IN ('attributed', 'expected_rejection', 'failed', 'blocked')
+        ),
+        terminal_reason TEXT NOT NULL CHECK (length(terminal_reason) > 0),
+        context_evidence_id TEXT,
+        project_id TEXT,
+        project_name TEXT,
+        project_root TEXT,
+        project_kind TEXT CHECK (project_kind IS NULL OR project_kind = 'git'),
+        projection_event_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (source_kind, service_name, source_id),
+        CHECK (
+            (project_id IS NULL AND project_name IS NULL AND project_root IS NULL AND project_kind IS NULL)
+            OR (length(project_id) = 64 AND length(project_name) > 0
+                AND length(project_root) > 0 AND project_kind = 'git')
+        ),
+        CHECK (
+            (terminal_outcome = 'attributed' AND context_evidence_id IS NOT NULL AND project_id IS NOT NULL)
+            OR (terminal_outcome != 'attributed' AND project_id IS NULL)
+        )
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE source_session_current_versions (
+        source_kind TEXT NOT NULL,
+        service_name TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        scan_run_id TEXT NOT NULL REFERENCES scan_runs(id),
+        terminal_outcome TEXT NOT NULL,
+        terminal_reason TEXT NOT NULL,
+        context_evidence_id TEXT,
+        project_id TEXT,
+        project_name TEXT,
+        project_root TEXT,
+        project_kind TEXT,
+        projection_event_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (source_kind, service_name, source_id, version)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE INDEX source_session_current_versions_scan_idx ON source_session_current_versions(scan_run_id)",
+    "CREATE TRIGGER source_session_current_versions_no_update BEFORE UPDATE ON source_session_current_versions BEGIN SELECT RAISE(ABORT, 'source session current versions are immutable'); END",
+    "CREATE TRIGGER source_session_current_versions_no_delete BEFORE DELETE ON source_session_current_versions BEGIN SELECT RAISE(ABORT, 'source session current versions cannot be deleted'); END",
+)
+
+_SESSION_CONTEXT_SUPERSESSION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE session_context_event_supersessions (
+        original_event_id TEXT PRIMARY KEY REFERENCES session_context_events(event_id),
+        replacement_event_id TEXT NOT NULL UNIQUE REFERENCES session_context_events(event_id),
+        created_at TEXT NOT NULL,
+        CHECK (original_event_id != replacement_event_id)
+    ) STRICT
+    """,
+    "CREATE INDEX session_context_supersessions_replacement_idx ON session_context_event_supersessions(replacement_event_id)",
+    "CREATE TRIGGER session_context_event_supersessions_no_update BEFORE UPDATE ON session_context_event_supersessions BEGIN SELECT RAISE(ABORT, 'session context supersessions are immutable'); END",
+    "CREATE TRIGGER session_context_event_supersessions_no_delete BEFORE DELETE ON session_context_event_supersessions BEGIN SELECT RAISE(ABORT, 'session context supersessions cannot be deleted'); END",
+)
+
+_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE source_session_reconciliation_pending (
+        producer TEXT NOT NULL CHECK (
+            producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')
+        ),
+        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+        context_event_id TEXT NOT NULL
+            REFERENCES session_context_events(event_id),
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        PRIMARY KEY (producer, session_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE INDEX source_session_reconciliation_pending_open_idx "
+    "ON source_session_reconciliation_pending(producer, session_id) "
+    "WHERE completed_at IS NULL",
+)
+
+_RAW_SOURCE_SESSION_CURRENT_PAYLOAD_SCHEMA: Final[tuple[str, ...]] = (
+    "ALTER TABLE source_session_current ADD COLUMN source_timestamp TEXT",
+    "ALTER TABLE source_session_current ADD COLUMN session_ids_json TEXT",
+    "ALTER TABLE source_session_current ADD COLUMN thread_ids_json TEXT",
+    "ALTER TABLE source_session_current ADD COLUMN legacy_thread_ids_json TEXT",
+    "ALTER TABLE source_session_current ADD COLUMN gen_ai_conversation_ids_json TEXT",
+    """
+    UPDATE source_session_current AS current
+    SET (
+        source_timestamp, session_ids_json, thread_ids_json,
+        legacy_thread_ids_json, gen_ai_conversation_ids_json
+    ) = (
+        SELECT records.source_timestamp, records.session_ids_json, records.thread_ids_json,
+               records.legacy_thread_ids_json, records.gen_ai_conversation_ids_json
+        FROM source_session_records AS records
+        WHERE records.source_kind = current.source_kind
+          AND records.service_name = current.service_name
+          AND records.source_id = current.source_id
+        ORDER BY records.created_at DESC, records.scan_run_id DESC
+        LIMIT 1
+    )
+    WHERE EXISTS (
+        SELECT 1
+        FROM source_session_records AS records
+        WHERE records.source_kind = current.source_kind
+          AND records.service_name = current.service_name
+          AND records.source_id = current.source_id
+    )
+    """,
+)
+
+
+_RAW_SOURCE_WINDOW_CLAIM_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE raw_source_window_claims (
+        source TEXT NOT NULL,
+        start_ns INTEGER NOT NULL CHECK (start_ns >= 0),
+        end_ns INTEGER NOT NULL CHECK (end_ns > start_ns),
+        claimed_at TEXT NOT NULL,
+        PRIMARY KEY (source, start_ns, end_ns)
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE raw_source_window_anchors (
+        source TEXT PRIMARY KEY,
+        start_ns INTEGER NOT NULL CHECK (start_ns >= 0),
+        logs_earliest_ns INTEGER NOT NULL CHECK (logs_earliest_ns >= 0),
+        traces_earliest_ns INTEGER NOT NULL CHECK (traces_earliest_ns >= 0),
+        approved_at TEXT NOT NULL,
+        CHECK (start_ns = MAX(logs_earliest_ns, traces_earliest_ns))
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE raw_source_window_completions (
+        source TEXT NOT NULL,
+        start_ns INTEGER NOT NULL,
+        end_ns INTEGER NOT NULL,
+        completed_at TEXT NOT NULL,
+        PRIMARY KEY (source, start_ns, end_ns),
+        FOREIGN KEY (source, start_ns, end_ns)
+            REFERENCES raw_source_window_claims(source, start_ns, end_ns)
+    ) STRICT, WITHOUT ROWID
+    """,
+    "CREATE TRIGGER raw_source_window_anchors_no_update BEFORE UPDATE ON raw_source_window_anchors BEGIN SELECT RAISE(ABORT, 'raw source window anchors are immutable'); END",
+    "CREATE TRIGGER raw_source_window_anchors_no_delete BEFORE DELETE ON raw_source_window_anchors BEGIN SELECT RAISE(ABORT, 'raw source window anchors cannot be deleted'); END",
+    "CREATE TRIGGER raw_source_window_claims_no_update BEFORE UPDATE ON raw_source_window_claims BEGIN SELECT RAISE(ABORT, 'raw source window claims are immutable'); END",
+    "CREATE TRIGGER raw_source_window_claims_no_delete BEFORE DELETE ON raw_source_window_claims BEGIN SELECT RAISE(ABORT, 'raw source window claims cannot be deleted'); END",
+    "CREATE TRIGGER raw_source_window_completions_no_update BEFORE UPDATE ON raw_source_window_completions BEGIN SELECT RAISE(ABORT, 'raw source window completions are immutable'); END",
+    "CREATE TRIGGER raw_source_window_completions_no_delete BEFORE DELETE ON raw_source_window_completions BEGIN SELECT RAISE(ABORT, 'raw source window completions cannot be deleted'); END",
+)
+
+
+_RAW_SOURCE_SESSION_NATIVE_KEY_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    ALTER TABLE source_session_current
+    ADD COLUMN native_producer TEXT CHECK (
+        native_producer IS NULL
+        OR native_producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')
+    )
+    """,
+    """
+    ALTER TABLE source_session_current
+    ADD COLUMN native_session_id TEXT CHECK (
+        native_session_id IS NULL OR length(native_session_id) > 0
+    )
+    """,
+    """
+    UPDATE source_session_current
+    SET
+        native_producer = CASE
+            WHEN service_name = 'claude-code'
+                 AND json_array_length(session_ids_json) = 1
+                THEN 'claude-code'
+            WHEN service_name IN ('codex-cli', 'codex_exec', 'codex_cli_rs')
+                 AND json_array_length(thread_ids_json) = 1
+                 AND (
+                     json_array_length(legacy_thread_ids_json) = 0
+                     OR json_extract(thread_ids_json, '$[0]')
+                        = json_extract(legacy_thread_ids_json, '$[0]')
+                 )
+                THEN 'codex-cli'
+            WHEN service_name IN ('codex-cli', 'codex_exec', 'codex_cli_rs')
+                 AND json_array_length(thread_ids_json) = 0
+                 AND json_array_length(legacy_thread_ids_json) = 1
+                THEN 'codex-cli'
+            WHEN service_name = 'codex-app-server'
+                 AND json_array_length(thread_ids_json) = 1
+                 AND (
+                     json_array_length(legacy_thread_ids_json) = 0
+                     OR json_extract(thread_ids_json, '$[0]')
+                        = json_extract(legacy_thread_ids_json, '$[0]')
+                 )
+                THEN 'codex-app-server'
+            WHEN service_name = 'codex-app-server'
+                 AND json_array_length(thread_ids_json) = 0
+                 AND json_array_length(legacy_thread_ids_json) = 1
+                THEN 'codex-app-server'
+            WHEN source_kind = 'trace'
+                 AND service_name IN ('omp', 'oh-my-pi')
+                 AND json_array_length(gen_ai_conversation_ids_json) = 1
+                THEN 'omp'
+        END,
+        native_session_id = CASE
+            WHEN service_name = 'claude-code'
+                 AND json_array_length(session_ids_json) = 1
+                THEN json_extract(session_ids_json, '$[0]')
+            WHEN service_name IN ('codex-cli', 'codex_exec', 'codex_cli_rs', 'codex-app-server')
+                 AND json_array_length(thread_ids_json) = 1
+                 AND (
+                     json_array_length(legacy_thread_ids_json) = 0
+                     OR json_extract(thread_ids_json, '$[0]')
+                        = json_extract(legacy_thread_ids_json, '$[0]')
+                 )
+                THEN json_extract(thread_ids_json, '$[0]')
+            WHEN service_name IN ('codex-cli', 'codex_exec', 'codex_cli_rs', 'codex-app-server')
+                 AND json_array_length(thread_ids_json) = 0
+                 AND json_array_length(legacy_thread_ids_json) = 1
+                THEN json_extract(legacy_thread_ids_json, '$[0]')
+            WHEN source_kind = 'trace'
+                 AND service_name IN ('omp', 'oh-my-pi')
+                 AND json_array_length(gen_ai_conversation_ids_json) = 1
+                THEN json_extract(gen_ai_conversation_ids_json, '$[0]')
+        END
+    """,
+    """
+    CREATE INDEX source_session_current_native_session_idx
+    ON source_session_current(native_producer, native_session_id)
+    WHERE native_producer IS NOT NULL AND native_session_id IS NOT NULL
+    """,
+)
+
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
     Migration(
@@ -756,6 +1160,57 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         version=5,
         name="legacy attribution delivery attempt ledger",
         statements=_LEGACY_ATTRIBUTION_DELIVERY_LEDGER_SCHEMA,
+    ),
+    Migration(
+        version=6,
+        name="codex CLI non-temporal session context",
+        statements=_CODEX_SESSION_CONTEXT_SCHEMA,
+        requires_foreign_keys_disabled=True,
+    ),
+    Migration(
+        version=7,
+        name="session context rejection vocabulary",
+        statements=_SESSION_CONTEXT_REJECTION_SCHEMA,
+    ),
+    Migration(
+        version=8,
+        name="raw source session conservation",
+        statements=_RAW_SOURCE_SESSION_SCHEMA,
+    ),
+    Migration(
+        version=9,
+        name="raw source session context evidence",
+        statements=_RAW_SOURCE_SESSION_CONTEXT_SCHEMA,
+    ),
+    Migration(
+        version=10,
+        name="versioned raw source session current projection",
+        statements=_RAW_SOURCE_SESSION_CURRENT_PROJECTION_SCHEMA,
+    ),
+    Migration(
+        version=11,
+        name="durable raw source session reconciliation",
+        statements=_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA,
+    ),
+    Migration(
+        version=12,
+        name="durable current raw source payload",
+        statements=_RAW_SOURCE_SESSION_CURRENT_PAYLOAD_SCHEMA,
+    ),
+    Migration(
+        version=13,
+        name="durable immutable raw source windows",
+        statements=_RAW_SOURCE_WINDOW_CLAIM_SCHEMA,
+    ),
+    Migration(
+        version=14,
+        name="immutable session context supersession",
+        statements=_SESSION_CONTEXT_SUPERSESSION_SCHEMA,
+    ),
+    Migration(
+        version=15,
+        name="indexed native raw source sessions",
+        statements=_RAW_SOURCE_SESSION_NATIVE_KEY_SCHEMA,
     ),
 )
 

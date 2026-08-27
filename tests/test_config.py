@@ -21,7 +21,7 @@ def test_documented_defaults_are_canonical() -> None:
     assert config.database.busy_timeout_ms == 5_000
     assert config.signoz.docker_context == "orbstack"
     assert config.signoz.docker_host == "unix:///Users/adamjackson/.orbstack/run/docker.sock"
-    assert config.scheduler.interval_seconds == 3_600
+    assert config.scheduler.interval_seconds == 300
     assert config.lifecycle.clock_skew_seconds == 300
 
 
@@ -39,8 +39,8 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
             "signoz": {"compose_directory": "$INTROSPECTION_ROOT/signoz"},
             "scheduler": {
                 "timezone": "Europe/London",
-                "interval_seconds": 3_600,
-                "lease_seconds": 900,
+                "interval_seconds": 300,
+                "lease_seconds": 300,
             },
             "lifecycle": {"clock_skew_seconds": 120},
         }
@@ -49,8 +49,8 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
     assert config.database.path == tmp_path / "state.sqlite3"
     assert config.database.busy_timeout_ms == 12_000
     assert config.signoz.compose_directory == tmp_path / "signoz"
-    assert config.scheduler.interval_seconds == 3_600
-    assert config.scheduler.lease_seconds == 900
+    assert config.scheduler.interval_seconds == 300
+    assert config.scheduler.lease_seconds == 300
     assert config.lifecycle.clock_skew_seconds == 120
 
 
@@ -66,7 +66,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
         ({"scheduler": {"interval_seconds": 0}}, "must be a positive integer"),
         ({"scheduler": {"interval_seconds": -1}}, "must be a positive integer"),
         ({"scheduler": {"interval_seconds": True}}, "must be a positive integer"),
-        ({"scheduler": {"interval_seconds": 1_800}}, "must be exactly 3600 seconds"),
+        ({"scheduler": {"interval_seconds": 1_800}}, "must be exactly 300 seconds"),
         ({"scheduler": {"timezone": "Mars/Olympus"}}, "must name an installed timezone"),
         ({"attribution": {}}, "unsupported keys in root"),
         ({"lifecycle": {"clock_skew_seconds": 0}}, "must be a positive integer"),
