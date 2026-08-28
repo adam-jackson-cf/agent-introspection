@@ -264,6 +264,18 @@ ORDER BY timestamp, id
 HydrationIdentityKind = Literal["log_id", "trace_id", "call_id"]
 
 
+@dataclass(frozen=True, slots=True)
+class HydrationRequest:
+    """Describe one bounded allowlisted hydration query."""
+
+    identity_kind: HydrationIdentityKind
+    identifiers: Sequence[str]
+    start_ns: int
+    end_ns: int
+    start_bucket: int
+    end_bucket: int
+
+
 HYDRATION_QUERIES: Mapping[HydrationIdentityKind, str] = {
     "log_id": _HYDRATION_SELECT.replace("{predicate}", "id IN ({identifiers:Array(String)})"),
     "trace_id": _HYDRATION_SELECT.replace(
@@ -499,32 +511,23 @@ def parse_source_activity_correlation(
     )
 
 
-def _parse_source_correlation_status(
-    data: Mapping[str, object], correlation: SourceActivityCorrelation | None
-) -> SourceCorrelationStatus | None:
-    value = data.get("correlation_status")
-    if value is None:
-        return None
-    if value == "valid":
-        if correlation is None:
-            raise SourceError("valid source correlation status requires a correlation")
-        return None
+def _rejected_correlation_state(value: object) -> Literal["missing", "conflicting"]:
     if value == "missing":
-        state: Literal["missing", "conflicting"] = "missing"
-    elif value == "conflicting":
-        state = "conflicting"
-    else:
-        raise SourceError("source correlation status is invalid")
-    if correlation is not None or data.get("correlation_id") is not None:
-        raise SourceError("rejected source correlation must not include a correlation ID")
+        return "missing"
+    if value == "conflicting":
+        return "conflicting"
+    raise SourceError("source correlation status is invalid")
+
+
+def _rejected_correlation_status(
+    data: Mapping[str, object], state: Literal["missing", "conflicting"]
+) -> SourceCorrelationStatus:
     producer = _optional_text(data.get("producer"))
     producer_surface = _optional_text(data.get("producer_surface"))
     source_event_timestamp = _optional_timestamp(data.get("source_event_timestamp"))
-    if (
-        producer is None
-        or producer_surface is None
-        or _PRODUCER_SURFACES.get(producer) != producer_surface
-    ):
+    if producer is None or producer_surface is None:
+        raise SourceError("rejected source correlation producer surface is invalid")
+    if _PRODUCER_SURFACES.get(producer) != producer_surface:
         raise SourceError("rejected source correlation producer surface is invalid")
     if source_event_timestamp is None:
         raise SourceError("rejected source correlation timestamp is required")
@@ -541,6 +544,21 @@ def _parse_source_correlation_status(
         source_event_timestamp=source_event_timestamp,
         source_span_ids=source_span_ids,
     )
+
+
+def _parse_source_correlation_status(
+    data: Mapping[str, object], correlation: SourceActivityCorrelation | None
+) -> SourceCorrelationStatus | None:
+    value = data.get("correlation_status")
+    if value is None:
+        return None
+    if value == "valid":
+        if correlation is None:
+            raise SourceError("valid source correlation status requires a correlation")
+        return None
+    if correlation is not None or data.get("correlation_id") is not None:
+        raise SourceError("rejected source correlation must not include a correlation ID")
+    return _rejected_correlation_status(data, _rejected_correlation_state(value))
 
 
 def _optional_int(value: object) -> int | None:
@@ -904,34 +922,28 @@ class ClickHouseClient:
         if len(rows) != 1 or rows[0].get("retained") not in (1, True):
             raise SourceError("source retention is not proven for the requested retained window")
 
-    def hydrate(
-        self,
-        *,
-        identity_kind: HydrationIdentityKind,
-        identifiers: Sequence[str],
-        start_ns: int,
-        end_ns: int,
-        start_bucket: int,
-        end_bucket: int,
-    ) -> Iterator[HydrationRow]:
+    def hydrate(self, request: HydrationRequest) -> Iterator[HydrationRow]:
         """Fetch allowlisted raw fields only for explicitly shortlisted identities."""
-        if identity_kind not in HYDRATION_QUERIES:
+        if request.identity_kind not in HYDRATION_QUERIES:
             raise ValueError("unsupported hydration identity kind")
-        if not identifiers:
+        if not request.identifiers:
             raise ValueError("hydration identifiers must be non-empty")
-        if any(not isinstance(value, str) or value == "" for value in identifiers):
+        if any(not isinstance(value, str) or value == "" for value in request.identifiers):
             raise ValueError("hydration identifiers must be non-empty strings")
-        unique_identifiers = tuple(dict.fromkeys(identifiers))
-        if not (0 <= start_ns < end_ns and 0 <= start_bucket <= end_bucket):
+        unique_identifiers = tuple(dict.fromkeys(request.identifiers))
+        if not (
+            0 <= request.start_ns < request.end_ns
+            and 0 <= request.start_bucket <= request.end_bucket
+        ):
             raise ValueError("invalid hydration bounds")
         parameters: Mapping[str, str | int] = {
             "identifiers": _clickhouse_string_array(unique_identifiers),
-            "start_ns": start_ns,
-            "end_ns": end_ns,
-            "start_bucket": start_bucket,
-            "end_bucket": end_bucket,
+            "start_ns": request.start_ns,
+            "end_ns": request.end_ns,
+            "start_bucket": request.start_bucket,
+            "end_bucket": request.end_bucket,
         }
-        for row in self.query(HYDRATION_QUERIES[identity_kind], parameters):
+        for row in self.query(HYDRATION_QUERIES[request.identity_kind], parameters):
             yield parse_hydration_row(row)
 
 

@@ -140,26 +140,32 @@ def _normalize_target_token(value: str) -> str:
     return _normalize_path(value)
 
 
+def _normalize_string(value: str, *, rules: VolatileRules) -> str:
+    if _TIMESTAMP.fullmatch(value):
+        return "<timestamp>"
+    if _UUID.fullmatch(value):
+        return "<generated-id>"
+    for root in rules.temporary_roots:
+        normalized_root = root.rstrip("/")
+        if value == normalized_root or value.startswith(f"{normalized_root}/"):
+            return "<temporary-path>"
+    position = _LINE_POSITION.fullmatch(value)
+    return _normalize_path(position.group("path")) if position else value
+
+
+def _normalize_primitive(value: bool | int | float | None) -> bool | int | float | None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise NormalizationError("non-finite numeric argument is not supported")
+    return value
+
+
 def _normalize_scalar(value: object, *, key: str | None, rules: VolatileRules) -> object:
     if key in rules.volatile_keys:
         return f"<{key}>"
     if isinstance(value, str):
-        if _TIMESTAMP.fullmatch(value):
-            return "<timestamp>"
-        if _UUID.fullmatch(value):
-            return "<generated-id>"
-        for root in rules.temporary_roots:
-            normalized_root = root.rstrip("/")
-            if value == normalized_root or value.startswith(f"{normalized_root}/"):
-                return "<temporary-path>"
-        position = _LINE_POSITION.fullmatch(value)
-        if position:
-            return _normalize_path(position.group("path"))
-        return value
+        return _normalize_string(value, rules=rules)
     if value is None or isinstance(value, (bool, int, float)):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise NormalizationError("non-finite numeric argument is not supported")
-        return value
+        return _normalize_primitive(value)
     raise NormalizationError(f"unsupported argument value: {type(value).__name__}")
 
 

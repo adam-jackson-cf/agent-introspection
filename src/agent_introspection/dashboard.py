@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -497,6 +498,125 @@ def build_health_dashboard() -> dict[str, Any]:
     )
 
 
+@dataclass(frozen=True)
+class _DashboardValidation:
+    """Inputs shared by dashboard validation rules."""
+
+    document: dict[str, Any]
+    panels: tuple[Panel, ...]
+    expected_uuid: str | None
+    identity_name: str
+
+
+@dataclass(frozen=True)
+class _PanelValidation:
+    """Expected and rendered state for one dashboard panel."""
+
+    panel_id: str
+    panel: Panel
+    widget: dict[str, Any]
+    layout: dict[str, Any] | None
+
+
+def _verify_dashboard_identity(validation: _DashboardValidation, issues: list[str]) -> None:
+    if validation.expected_uuid is None:
+        if "uuid" in validation.document:
+            issues.append(f"{validation.identity_name} dashboard identity is not bootstrapped")
+    elif validation.document.get("uuid") != validation.expected_uuid:
+        issues.append(f"{validation.identity_name} dashboard identity changed")
+    if validation.document.get("schemaVersion") != DASHBOARD_SCHEMA_VERSION:
+        issues.append(f"{validation.identity_name} dashboard schema version changed")
+
+
+def _dashboard_widgets(
+    validation: _DashboardValidation, issues: list[str]
+) -> dict[str, dict[str, Any]] | None:
+    widgets = validation.document.get("widgets")
+    if not isinstance(widgets, list) or len(widgets) != len(validation.panels):
+        issues.append(f"{validation.identity_name} dashboard panel set is incomplete")
+        return None
+    expected_ids = {panel[0] for panel in validation.panels}
+    widgets_by_id = {
+        widget["id"]: widget
+        for widget in widgets
+        if isinstance(widget, dict) and isinstance(widget.get("id"), str)
+    }
+    if set(widgets_by_id) != expected_ids:
+        issues.append(f"{validation.identity_name} dashboard panel identities changed")
+        return None
+    return widgets_by_id
+
+
+def _dashboard_layouts(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    layouts = document.get("layout")
+    if not isinstance(layouts, list):
+        return {}
+    return {
+        layout["i"]: layout
+        for layout in layouts
+        if isinstance(layout, dict) and isinstance(layout.get("i"), str)
+    }
+
+
+def _verify_layout_identities(
+    layouts_by_id: dict[str, dict[str, Any]],
+    panels: tuple[Panel, ...],
+    identity_name: str,
+    issues: list[str],
+) -> None:
+    if set(layouts_by_id) != {panel[0] for panel in panels}:
+        issues.append(f"{identity_name} dashboard layout identities changed")
+
+
+def _verify_panel_presentation(validation: _PanelValidation, issues: list[str]) -> None:
+    _expected_id, title, panel_type, description, _query_text, expected_layout = validation.panel
+    if (
+        validation.widget.get("title") != title
+        or validation.widget.get("panelTypes") != panel_type
+        or validation.widget.get("description") != description
+    ):
+        issues.append(f"panel {validation.panel_id} presentation changed")
+    if (
+        validation.layout is None
+        or tuple(validation.layout.get(key) for key in ("x", "y", "w", "h")) != expected_layout
+    ):
+        issues.append(f"panel {validation.panel_id} layout changed")
+
+
+def _verify_panel_query(validation: _PanelValidation, issues: list[str]) -> None:
+    queries = validation.widget.get("query", {}).get("clickhouse_sql", [])
+    if len(queries) != 1 or not isinstance(queries[0], dict):
+        issues.append(f"panel {validation.panel_id} has an invalid query definition")
+        return
+    query = queries[0].get("query", "")
+    if not isinstance(query, str) or COMMON_FILTER not in query:
+        issues.append(f"panel {validation.panel_id} does not use the common filter")
+        return
+    _expected_id, _title, panel_type, _description, _query_text, _layout = validation.panel
+    if panel_type == "graph" and (" AS ts" not in query or " AS value" not in query):
+        issues.append(f"visual panel {validation.panel_id} lacks ts and value columns")
+    _verify_panel_version_filter(validation.panel_id, query, issues)
+
+
+def _verify_panel_version_filter(panel_id: str, query: str, issues: list[str]) -> None:
+    if panel_id in PROJECTION_PANEL_IDS:
+        if CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE not in query:
+            issues.append(f"projection panel {panel_id} does not select latest activity version")
+        elif "\nGROUP BY" in query and query.index(
+            CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
+        ) > query.index("\nGROUP BY"):
+            issues.append(f"projection panel {panel_id} filters activity version after aggregation")
+    elif panel_id == "source-session-project-attribution":
+        if SOURCE_SESSION_LATEST_VERSION_PREDICATE not in query:
+            issues.append("source-session panel does not select latest source-session version")
+        elif "\nORDER BY" in query and query.index(
+            SOURCE_SESSION_LATEST_VERSION_PREDICATE
+        ) > query.index("\nORDER BY"):
+            issues.append("source-session panel filters source-session version after ordering")
+        elif SOURCE_SESSION_PROJECT_ATTRIBUTION_PREDICATE not in query:
+            issues.append("source-session panel does not restrict to complete attributed projects")
+
+
 def _verify_dashboard(
     document: dict[str, Any],
     *,
@@ -504,86 +624,29 @@ def _verify_dashboard(
     expected_uuid: str | None,
     identity_name: str,
 ) -> list[str]:
-    issues: list[str] = []
-    if expected_uuid is None:
-        if "uuid" in document:
-            issues.append(f"{identity_name} dashboard identity is not bootstrapped")
-    elif document.get("uuid") != expected_uuid:
-        issues.append(f"{identity_name} dashboard identity changed")
-    if document.get("schemaVersion") != DASHBOARD_SCHEMA_VERSION:
-        issues.append(f"{identity_name} dashboard schema version changed")
-    widgets = document.get("widgets")
-    if not isinstance(widgets, list) or len(widgets) != len(panels):
-        issues.append(f"{identity_name} dashboard panel set is incomplete")
-        return issues
-    expected = {panel[0]: panel for panel in panels}
-    actual = {
-        widget.get("id"): widget
-        for widget in widgets
-        if isinstance(widget, dict) and isinstance(widget.get("id"), str)
-    }
-    if set(actual) != set(expected):
-        issues.append(f"{identity_name} dashboard panel identities changed")
-        return issues
-    layouts = document.get("layout")
-    layout_by_id = (
-        {
-            layout["i"]: layout
-            for layout in layouts
-            if isinstance(layout, dict) and isinstance(layout.get("i"), str)
-        }
-        if isinstance(layouts, list)
-        else {}
+    validation = _DashboardValidation(
+        document=document,
+        panels=panels,
+        expected_uuid=expected_uuid,
+        identity_name=identity_name,
     )
-    if set(layout_by_id) != set(expected):
-        issues.append(f"{identity_name} dashboard layout identities changed")
-    for panel_id, panel in expected.items():
-        _expected_id, title, panel_type, description, _query_text, expected_layout = panel
-        widget = actual[panel_id]
-        if (
-            widget.get("title") != title
-            or widget.get("panelTypes") != panel_type
-            or widget.get("description") != description
-        ):
-            issues.append(f"panel {panel_id} presentation changed")
-        layout = layout_by_id.get(panel_id)
-        if (
-            layout is None
-            or tuple(layout.get(key) for key in ("x", "y", "w", "h")) != expected_layout
-        ):
-            issues.append(f"panel {panel_id} layout changed")
-        queries = widget.get("query", {}).get("clickhouse_sql", [])
-        if len(queries) != 1 or not isinstance(queries[0], dict):
-            issues.append(f"panel {panel_id} has an invalid query definition")
-            continue
-        query = queries[0].get("query", "")
-        if not isinstance(query, str) or COMMON_FILTER not in query:
-            issues.append(f"panel {panel_id} does not use the common filter")
-            continue
-        if panel_type == "graph" and (" AS ts" not in query or " AS value" not in query):
-            issues.append(f"visual panel {panel_id} lacks ts and value columns")
-        if panel_id in PROJECTION_PANEL_IDS:
-            if CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE not in query:
-                issues.append(
-                    f"projection panel {panel_id} does not select latest activity version"
-                )
-            elif "\nGROUP BY" in query and query.index(
-                CANONICAL_ACTIVITY_LATEST_VERSION_PREDICATE
-            ) > query.index("\nGROUP BY"):
-                issues.append(
-                    f"projection panel {panel_id} filters activity version after aggregation"
-                )
-        elif panel_id == "source-session-project-attribution":
-            if SOURCE_SESSION_LATEST_VERSION_PREDICATE not in query:
-                issues.append("source-session panel does not select latest source-session version")
-            elif "\nORDER BY" in query and query.index(
-                SOURCE_SESSION_LATEST_VERSION_PREDICATE
-            ) > query.index("\nORDER BY"):
-                issues.append("source-session panel filters source-session version after ordering")
-            elif SOURCE_SESSION_PROJECT_ATTRIBUTION_PREDICATE not in query:
-                issues.append(
-                    "source-session panel does not restrict to complete attributed projects"
-                )
+    issues: list[str] = []
+    _verify_dashboard_identity(validation, issues)
+    widgets_by_id = _dashboard_widgets(validation, issues)
+    if widgets_by_id is None:
+        return issues
+    layouts_by_id = _dashboard_layouts(document)
+    _verify_layout_identities(layouts_by_id, panels, identity_name, issues)
+    for panel in panels:
+        panel_id = panel[0]
+        panel_validation = _PanelValidation(
+            panel_id=panel_id,
+            panel=panel,
+            widget=widgets_by_id[panel_id],
+            layout=layouts_by_id.get(panel_id),
+        )
+        _verify_panel_presentation(panel_validation, issues)
+        _verify_panel_query(panel_validation, issues)
     return issues
 
 

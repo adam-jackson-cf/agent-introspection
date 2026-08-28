@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 LUNA_MODEL = "gpt-5.6-luna"
 LUNA_EFFORT = "medium"
@@ -212,13 +212,7 @@ def create_review_session(
     return envelope
 
 
-def validate_model_output(
-    connection: sqlite3.Connection,
-    document: dict[str, Any],
-    *,
-    provenance: dict[str, Any],
-) -> tuple[str, list[dict[str, Any]]]:
-    """Validate response envelope and recorded SigNoz model provenance."""
+def _required_output_fields(document: dict[str, Any]) -> None:
     required = {
         "session_id",
         "nonce",
@@ -231,16 +225,23 @@ def validate_model_output(
     missing = required - document.keys()
     if missing:
         raise ValueError(f"missing model output fields: {sorted(missing)}")
+
+
+def _review_session_row(connection: sqlite3.Connection, session_id: object) -> sqlite3.Row:
     row = connection.execute(
         """
         SELECT nonce, schema_version, requested_model, requested_effort,
                ordered_candidate_ids_json, payload_hash, purpose, status, reserved_model_budget
         FROM review_sessions WHERE id = ?
         """,
-        (document["session_id"],),
+        (session_id,),
     ).fetchone()
     if row is None:
         raise ValueError("unknown review session")
+    return cast(sqlite3.Row, row)
+
+
+def _validate_output_identity(document: dict[str, Any], row: sqlite3.Row) -> None:
     expected = {
         "nonce": row[0],
         "schema_version": row[1],
@@ -253,24 +254,46 @@ def validate_model_output(
             raise ValueError(f"model output {key} mismatch")
     if row[7] != "exported":
         raise ValueError("review session has already been imported")
+
+
+def _validate_model_provenance(provenance: dict[str, Any], row: sqlite3.Row) -> None:
     if provenance.get("model") != row[2] or provenance.get("effort") != row[3]:
         raise ValueError("model provenance mismatch")
     if not provenance.get("trace_id") or not provenance.get("token_count"):
         raise ValueError("model provenance is incomplete")
     if int(provenance["token_count"]) > int(row[8]):
         raise ValueError("model token budget exceeded")
+
+
+def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list[dict[str, Any]]:
     results = document["results"]
     if not isinstance(results, list):
         raise ValueError("results must be a list")
-    expected_ids = json.loads(row[4])
+    expected_ids = json.loads(str(row[4]))
     actual_ids = [result.get("candidate_id") for result in results]
     if actual_ids != expected_ids:
         raise ValueError("model output candidate IDs or ordering mismatch")
-    if row[6] not in {"classification", "proposal"}:
+    purpose = row[6]
+    if purpose not in {"classification", "proposal"}:
         raise ValueError("review session purpose cannot import results")
-    limits = LUNA_LIMITS if row[6] == "classification" else PROPOSAL_LIMITS
+    limits = LUNA_LIMITS if purpose == "classification" else PROPOSAL_LIMITS
     if len(_canonical_bytes(document).decode()) > limits.max_output_characters:
         raise ValueError("model output exceeds accepted character limit")
+    return results
+
+
+def validate_model_output(
+    connection: sqlite3.Connection,
+    document: dict[str, Any],
+    *,
+    provenance: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Validate response envelope and recorded SigNoz model provenance."""
+    _required_output_fields(document)
+    row = _review_session_row(connection, document["session_id"])
+    _validate_output_identity(document, row)
+    _validate_model_provenance(provenance, row)
+    results = _validated_model_results(document, row)
     return str(row[6]), results
 
 

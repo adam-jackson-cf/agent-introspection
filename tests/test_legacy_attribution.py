@@ -17,6 +17,7 @@ from agent_introspection.config import ConfigurationError, parse_config
 from agent_introspection.database import connect_database
 from agent_introspection.legacy_attribution import (
     LEGACY_PROJECT_ATTRIBUTION_QUERY,
+    LegacyProjectAttributionRequest,
     _parse_candidate,
     parse_rfc3339,
     recover_legacy_project_attribution,
@@ -68,11 +69,13 @@ def test_rfc3339_requires_timezone_and_range_is_bounded() -> None:
     with pytest.raises(ValueError, match="Maximum supported"):
         run_legacy_project_attribution(
             connection,
-            config,
-            client=ClickHouseClient(docker_context="test"),
-            start=datetime(2026, 1, 1, tzinfo=UTC),
-            end=datetime(2026, 1, 1, 2, tzinfo=UTC),
-            approved_by="operator",
+            ClickHouseClient(docker_context="test"),
+            LegacyProjectAttributionRequest(
+                config=config,
+                start=datetime(2026, 1, 1, tzinfo=UTC),
+                end=datetime(2026, 1, 1, 2, tzinfo=UTC),
+                approved_by="operator",
+            ),
         )
     connection.close()
 
@@ -162,7 +165,11 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
     response.__enter__.return_value = response
     with patch("urllib.request.urlopen", return_value=response):
         result = run_legacy_project_attribution(
-            connection, config, client=Client(), start=start, end=end, approved_by="operator"
+            connection,
+            Client(),
+            LegacyProjectAttributionRequest(
+                config=config, start=start, end=end, approved_by="operator"
+            ),
         )
     assert result["accepted"] == 1
     assert result["rejected"] == result["unresolved"] == 0
@@ -185,7 +192,11 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
         connection.execute("DELETE FROM legacy_attribution_fact_sets")
     with pytest.raises(RuntimeError, match="already applied"):
         run_legacy_project_attribution(
-            connection, config, client=Client(), start=start, end=end, approved_by="operator"
+            connection,
+            Client(),
+            LegacyProjectAttributionRequest(
+                config=config, start=start, end=end, approved_by="operator"
+            ),
         )
     connection.close()
 
@@ -235,11 +246,13 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
         ):
             run_legacy_project_attribution(
                 connection,
-                config,
-                client=Client(),
-                start=start,
-                end=start + timedelta(minutes=1),
-                approved_by="operator",
+                Client(),
+                LegacyProjectAttributionRequest(
+                    config=config,
+                    start=start,
+                    end=start + timedelta(minutes=1),
+                    approved_by="operator",
+                ),
             )
 
         fact_set_id = connection.execute("SELECT id FROM legacy_attribution_fact_sets").fetchone()[
@@ -342,11 +355,13 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
         ):
             run_legacy_project_attribution(
                 connection,
-                config,
-                client=Client(),
-                start=start,
-                end=start + timedelta(minutes=1),
-                approved_by="operator",
+                Client(),
+                LegacyProjectAttributionRequest(
+                    config=config,
+                    start=start,
+                    end=start + timedelta(minutes=1),
+                    approved_by="operator",
+                ),
             )
         fact_count = connection.execute(
             "SELECT count(*) FROM legacy_attribution_fact_sets"

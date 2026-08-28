@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_introspection.identities import canonical_activity_id
+from agent_introspection.identities import CanonicalActivityIdentity, canonical_activity_id
 from agent_introspection.migrations import apply_migrations
 
 _CANONICAL_PRODUCER_SURFACE_PAIRS = frozenset(
@@ -165,13 +165,15 @@ class CanonicalActivity:
     @property
     def id(self) -> str:
         return canonical_activity_id(
-            detector_id=self.detector_id,
-            detector_version=self.detector_version,
-            normalization_version=self.normalization_version,
-            source_ids=self.source_membership.source_ids,
-            operation_kind=self.operation_kind,
-            normalized_target=self.normalized_target,
-            normalized_failure_class=self.normalized_failure_class,
+            CanonicalActivityIdentity(
+                detector_id=self.detector_id,
+                detector_version=self.detector_version,
+                normalization_version=self.normalization_version,
+                source_ids=self.source_membership.source_ids,
+                operation_kind=self.operation_kind,
+                normalized_target=self.normalized_target,
+                normalized_failure_class=self.normalized_failure_class,
+            )
         )
 
     def values(self) -> tuple[object, ...]:
@@ -578,14 +580,12 @@ def manual_vacuum(
     return VacuumResult(free_page_ratio, True, backup_path)
 
 
-def persist_observations_and_watermark(
+def _validate_observation_persistence(
     connection: sqlite3.Connection,
     observations: Sequence[ObservationRecord],
     watermark: SourceWatermark,
-    *,
-    manage_transaction: bool = True,
+    manage_transaction: bool,
 ) -> None:
-    """Persist observations and their source watermark in one atomic transaction."""
     if manage_transaction:
         _require_idle(connection, "observation persistence")
     elif not connection.in_transaction:
@@ -595,51 +595,72 @@ def persist_observations_and_watermark(
     ids = [observation.id for observation in observations]
     if any(not observation_id for observation_id in ids) or len(ids) != len(set(ids)):
         raise ValueError("observation IDs must be non-empty and unique per transaction")
-    values = [(observation, observation.values()) for observation in observations]
+
+
+def _assert_watermark_advances(connection: sqlite3.Connection, watermark: SourceWatermark) -> None:
+    current = connection.execute(
+        "SELECT timestamp_ns, row_id FROM source_watermarks WHERE source = ?",
+        (watermark.source,),
+    ).fetchone()
+    if current is not None and (watermark.timestamp_ns, watermark.row_id) < (
+        int(current[0]),
+        str(current[1]),
+    ):
+        raise DatabaseError("source watermark cannot move backwards")
+
+
+def _persist_observations(
+    connection: sqlite3.Connection, observations: Sequence[ObservationRecord]
+) -> None:
     placeholders = ", ".join("?" for _ in range(18))
+    for observation in observations:
+        row_values = observation.values()
+        cursor = connection.execute(
+            f"INSERT INTO observations ({_OBSERVATION_COLUMNS}) "
+            f"VALUES ({placeholders}) ON CONFLICT(id) DO NOTHING",
+            row_values,
+        )
+        if cursor.rowcount != 0:
+            continue
+        existing = connection.execute(
+            f"SELECT {_OBSERVATION_COLUMNS} FROM observations WHERE id = ?",
+            (observation.id,),
+        ).fetchone()
+        if existing is None or tuple(existing) != row_values:
+            raise DatabaseError(
+                f"observation ID {observation.id!r} conflicts with persisted content"
+            )
+
+
+def _upsert_source_watermark(connection: sqlite3.Connection, watermark: SourceWatermark) -> None:
+    connection.execute(
+        """
+        INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(source) DO UPDATE SET
+            timestamp_ns = excluded.timestamp_ns,
+            row_id = excluded.row_id,
+            updated_at = excluded.updated_at
+        """,
+        (watermark.source, watermark.timestamp_ns, watermark.row_id, watermark.updated_at),
+    )
+
+
+def persist_observations_and_watermark(
+    connection: sqlite3.Connection,
+    observations: Sequence[ObservationRecord],
+    watermark: SourceWatermark,
+    *,
+    manage_transaction: bool = True,
+) -> None:
+    """Persist observations and their source watermark in one atomic transaction."""
+    _validate_observation_persistence(connection, observations, watermark, manage_transaction)
     try:
         if manage_transaction:
             connection.execute("BEGIN IMMEDIATE")
-        current = connection.execute(
-            "SELECT timestamp_ns, row_id FROM source_watermarks WHERE source = ?",
-            (watermark.source,),
-        ).fetchone()
-        if current is not None and (watermark.timestamp_ns, watermark.row_id) < (
-            int(current[0]),
-            str(current[1]),
-        ):
-            raise DatabaseError("source watermark cannot move backwards")
-        for observation, row_values in values:
-            cursor = connection.execute(
-                f"INSERT INTO observations ({_OBSERVATION_COLUMNS}) "
-                f"VALUES ({placeholders}) ON CONFLICT(id) DO NOTHING",
-                row_values,
-            )
-            if cursor.rowcount == 0:
-                existing = connection.execute(
-                    f"SELECT {_OBSERVATION_COLUMNS} FROM observations WHERE id = ?",
-                    (observation.id,),
-                ).fetchone()
-                if existing is None or tuple(existing) != row_values:
-                    raise DatabaseError(
-                        f"observation ID {observation.id!r} conflicts with persisted content"
-                    )
-        connection.execute(
-            """
-            INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(source) DO UPDATE SET
-                timestamp_ns = excluded.timestamp_ns,
-                row_id = excluded.row_id,
-                updated_at = excluded.updated_at
-            """,
-            (
-                watermark.source,
-                watermark.timestamp_ns,
-                watermark.row_id,
-                watermark.updated_at,
-            ),
-        )
+        _assert_watermark_advances(connection, watermark)
+        _persist_observations(connection, observations)
+        _upsert_source_watermark(connection, watermark)
         if manage_transaction:
             connection.commit()
     except BaseException:

@@ -39,40 +39,44 @@ def _optional_identity(value: object, *, name: str) -> str | None:
     return value
 
 
-def canonical_activity_id(
-    *,
-    detector_id: str,
-    detector_version: int,
-    normalization_version: int,
-    source_ids: tuple[str, ...],
-    operation_kind: str,
-    normalized_target: str,
-    normalized_failure_class: str,
-) -> str:
+@dataclass(frozen=True, slots=True)
+class CanonicalActivityIdentity:
+    """Describe the immutable fields that determine one canonical activity."""
+
+    detector_id: str
+    detector_version: int
+    normalization_version: int
+    source_ids: tuple[str, ...]
+    operation_kind: str
+    normalized_target: str
+    normalized_failure_class: str
+
+
+def canonical_activity_id(identity: CanonicalActivityIdentity) -> str:
     """Hash the attribution-independent canonical activity identity."""
     fields: tuple[object, ...] = (
-        detector_id,
-        detector_version,
-        normalization_version,
-        *sorted(source_ids),
-        operation_kind,
-        normalized_target,
-        normalized_failure_class,
+        identity.detector_id,
+        identity.detector_version,
+        identity.normalization_version,
+        *sorted(identity.source_ids),
+        identity.operation_kind,
+        identity.normalized_target,
+        identity.normalized_failure_class,
     )
     if (
-        not isinstance(detector_id, str)
-        or not detector_id
-        or isinstance(detector_version, bool)
-        or not isinstance(detector_version, int)
-        or detector_version <= 0
-        or isinstance(normalization_version, bool)
-        or not isinstance(normalization_version, int)
-        or normalization_version <= 0
-        or not isinstance(operation_kind, str)
-        or not operation_kind
-        or not isinstance(normalized_target, str)
-        or not isinstance(normalized_failure_class, str)
-        or not all(isinstance(source_id, str) and source_id for source_id in source_ids)
+        not isinstance(identity.detector_id, str)
+        or not identity.detector_id
+        or isinstance(identity.detector_version, bool)
+        or not isinstance(identity.detector_version, int)
+        or identity.detector_version <= 0
+        or isinstance(identity.normalization_version, bool)
+        or not isinstance(identity.normalization_version, int)
+        or identity.normalization_version <= 0
+        or not isinstance(identity.operation_kind, str)
+        or not identity.operation_kind
+        or not isinstance(identity.normalized_target, str)
+        or not isinstance(identity.normalized_failure_class, str)
+        or not all(isinstance(source_id, str) and source_id for source_id in identity.source_ids)
     ):
         raise IdentityError("canonical activity identity fields are invalid")
     encoded = json.dumps(fields, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

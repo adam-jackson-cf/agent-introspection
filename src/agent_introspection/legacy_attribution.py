@@ -77,6 +77,41 @@ class _Candidate:
     target: str
 
 
+@dataclass(frozen=True, slots=True)
+class LegacyProjectAttributionRequest:
+    """Inputs defining one explicit bounded legacy attribution run."""
+
+    config: AppConfig
+    start: datetime
+    end: datetime
+    approved_by: str
+    delivery_endpoint: str = "http://localhost:4318/v1/logs"
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateCollection:
+    candidates: tuple[_Candidate, ...]
+    source_ids: tuple[str, ...]
+    denominator: int
+    rejected: int
+    unresolved: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PersistedActivities:
+    activity_ids: tuple[str, ...]
+    outbox_ids: tuple[str, ...]
+    remote_references: tuple[RemoteEventReference, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DeliveryVerificationRequest:
+    client: ClickHouseClient
+    attribution_request: LegacyProjectAttributionRequest
+    fact_set_id: str
+    persisted: _PersistedActivities
+
+
 def _timestamp_ns(value: datetime) -> int:
     utc = value.astimezone(UTC)
     return int(utc.timestamp() * 1_000_000_000)
@@ -97,6 +132,19 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _candidate_arguments(row: Mapping[str, Any]) -> Mapping[str, object] | None:
+    raw_arguments = row.get("arguments")
+    if not isinstance(raw_arguments, str):
+        return None
+    try:
+        arguments = parse_tool_arguments(raw_arguments)
+    except NormalizationError:
+        return None
+    if not isinstance(arguments, Mapping) or set(arguments) - _ALLOWED_ARGUMENT_KEYS:
+        return None
+    return arguments
+
+
 def _parse_candidate(row: Mapping[str, Any]) -> _Candidate | None:
     log_id = _text(row.get("log_id"))
     correlation_id = _text(row.get("correlation_id"))
@@ -107,26 +155,17 @@ def _parse_candidate(row: Mapping[str, Any]) -> _Candidate | None:
         log_id is None
         or correlation_id is None
         or call_id is None
-        or tool_name is None
         or tool_name not in _ALLOWED_TOOL_NAMES
     ):
         return None
     if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0:
         return None
-    raw_arguments = row.get("arguments")
-    if not isinstance(raw_arguments, str):
-        return None
-    try:
-        arguments = parse_tool_arguments(raw_arguments)
-    except NormalizationError:
-        return None
-    if not isinstance(arguments, Mapping) or set(arguments) - _ALLOWED_ARGUMENT_KEYS:
+    arguments = _candidate_arguments(row)
+    if arguments is None:
         return None
     command = arguments.get("cmd")
     workdir = arguments.get("workdir")
-    if not isinstance(command, str) or not command:
-        return None
-    if not isinstance(workdir, str) or not workdir:
+    if not isinstance(command, str) or not command or not isinstance(workdir, str) or not workdir:
         return None
     return _Candidate(
         log_id,
@@ -330,38 +369,36 @@ def recover_legacy_project_attribution(
     return {"status": "verified", "fact_set_id": fact_set_id, "idempotent": False, **result}
 
 
-def run_legacy_project_attribution(
-    connection: sqlite3.Connection,
-    config: AppConfig,
-    *,
-    client: ClickHouseClient,
-    start: datetime,
-    end: datetime,
-    approved_by: str,
-    delivery_endpoint: str = "http://localhost:4318/v1/logs",
-) -> dict[str, Any]:
-    """Apply one explicit bounded legacy fact set, refusing repeat application."""
-    if start.tzinfo is None or end.tzinfo is None or start >= end:
+def _validate_attribution_request(request: LegacyProjectAttributionRequest) -> None:
+    if request.start.tzinfo is None or request.end.tzinfo is None or request.start >= request.end:
         raise ValueError("start and end must be ordered, timezone-aware datetimes")
-    if not approved_by.strip():
+    if not request.approved_by.strip():
         raise ValueError("approved_by must be non-empty")
-    maximum = timedelta(hours=config.legacy_project_attribution.maximum_range_hours)
-    if end - start > maximum:
+    maximum = timedelta(hours=request.config.legacy_project_attribution.maximum_range_hours)
+    if request.end - request.start > maximum:
         raise ValueError(MAXIMUM_RANGE_HELP)
-    roots = config.legacy_project_attribution.project_roots
-    if not roots:
+    if not request.config.legacy_project_attribution.project_roots:
         raise ValueError("legacy_project_attribution.project_roots must be explicitly configured")
 
+
+def _collect_candidates(
+    client: ClickHouseClient, request: LegacyProjectAttributionRequest
+) -> _CandidateCollection:
     candidates: list[_Candidate] = []
     source_ids: list[str] = []
-    denominator = 0
     rejected = 0
     unresolved = 0
-    for row in client.query(
-        LEGACY_PROJECT_ATTRIBUTION_QUERY,
-        {"start_ns": _timestamp_ns(start), "end_ns": _timestamp_ns(end)},
+    roots = request.config.legacy_project_attribution.project_roots
+    for denominator, row in enumerate(
+        client.query(
+            LEGACY_PROJECT_ATTRIBUTION_QUERY,
+            {
+                "start_ns": _timestamp_ns(request.start),
+                "end_ns": _timestamp_ns(request.end),
+            },
+        ),
+        start=1,
     ):
-        denominator += 1
         source_ids.append(_text(row.get("log_id")) or f"missing:{denominator}")
         candidate = _parse_candidate(row)
         if candidate is None:
@@ -387,8 +424,165 @@ def run_legacy_project_attribution(
                 target,
             )
         )
+    return _CandidateCollection(
+        candidates=tuple(candidates),
+        source_ids=tuple(source_ids),
+        denominator=len(source_ids),
+        rejected=rejected,
+        unresolved=unresolved,
+    )
 
-    fact_set_id = _fact_set_identity(start=start, end=end, source_ids=source_ids)
+
+def _record_fact_set(
+    connection: sqlite3.Connection,
+    request: LegacyProjectAttributionRequest,
+    collection: _CandidateCollection,
+    fact_set_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO legacy_attribution_fact_sets(
+            id, start_at, end_at, approved_by, denominator, accepted, rejected,
+            unresolved, source_ids_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            fact_set_id,
+            request.start.astimezone(UTC).isoformat(),
+            request.end.astimezone(UTC).isoformat(),
+            request.approved_by.strip(),
+            collection.denominator,
+            len(collection.candidates),
+            collection.rejected,
+            collection.unresolved,
+            json.dumps(sorted(collection.source_ids), separators=(",", ":")),
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+
+
+def _persist_candidate(
+    connection: sqlite3.Connection, candidate: _Candidate, fact_set_id: str
+) -> tuple[str, str, RemoteEventReference]:
+    project = canonical_git_project(candidate.workspace)
+    _project_identity(connection, project)
+    activity = CanonicalActivity(
+        producer="codex-cli",
+        producer_surface="codex-cli",
+        correlation_id=candidate.correlation_id,
+        source_started_at_ns=candidate.timestamp_ns,
+        source_ended_at_ns=candidate.timestamp_ns,
+        detector_id=_DETECTOR_ID,
+        detector_version=1,
+        normalization_version=1,
+        source_membership=CanonicalSourceMembership(log_ids=(candidate.log_id,)),
+        operation_kind="exec",
+        target_kind="workspace_target",
+        normalized_target=candidate.target,
+        normalized_failure_class="",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    attribution = CanonicalAttribution(
+        state="resolved",
+        project_identity_id=project.identity,
+        method="legacy_structured_exec",
+        evidence_id=hashlib.sha256(
+            f"{candidate.log_id}:{candidate.call_id}:{candidate.tool_name}".encode()
+        ).hexdigest(),
+        reason_code=None,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    write = persist_canonical_activity(connection, activity, attribution)
+    if not write.version_inserted:
+        raise RuntimeError(f"legacy fact set {fact_set_id} was already applied")
+    event_id = enqueue_canonical_activity_version(
+        connection,
+        CanonicalActivityVersionEvent(
+            activity_id=write.activity_id,
+            version=write.version,
+            timestamp_ns=candidate.timestamp_ns,
+            attributes=canonical_activity_event_attributes(connection, activity, attribution),
+        ),
+    )
+    return (
+        write.activity_id,
+        event_id,
+        RemoteEventReference(
+            event_id=event_id,
+            event_name=CANONICAL_ACTIVITY_EVENT_NAME,
+            timestamp_ns=candidate.timestamp_ns,
+        ),
+    )
+
+
+def _persist_candidates(
+    connection: sqlite3.Connection,
+    collection: _CandidateCollection,
+    fact_set_id: str,
+) -> _PersistedActivities:
+    activity_ids: list[str] = []
+    outbox_ids: list[str] = []
+    remote_references: list[RemoteEventReference] = []
+    for candidate in sorted(
+        collection.candidates, key=lambda value: (value.timestamp_ns, value.log_id)
+    ):
+        activity_id, event_id, remote_reference = _persist_candidate(
+            connection, candidate, fact_set_id
+        )
+        activity_ids.append(activity_id)
+        outbox_ids.append(event_id)
+        remote_references.append(remote_reference)
+    return _PersistedActivities(
+        activity_ids=tuple(activity_ids),
+        outbox_ids=tuple(outbox_ids),
+        remote_references=tuple(remote_references),
+    )
+
+
+def _verify_delivery(
+    connection: sqlite3.Connection, request: _DeliveryVerificationRequest
+) -> dict[str, Any]:
+    persisted = request.persisted
+    delivery = (
+        drain_outbox_event_ids(
+            connection,
+            persisted.outbox_ids,
+            endpoint=request.attribution_request.delivery_endpoint,
+        )
+        if persisted.outbox_ids
+        else {"selected": 0, "delivered": 0, "pending": 0}
+    )
+    remote_ids = (
+        remote_event_ids(request.client, persisted.remote_references)
+        if persisted.remote_references
+        else set()
+    )
+    verification = _append_delivery_attempt(
+        connection,
+        fact_set_id=request.fact_set_id,
+        intended_ids=persisted.outbox_ids,
+        delivery=delivery,
+        remote_ids=remote_ids,
+    )
+    if not verification["verified"]:
+        raise RuntimeError(
+            f"legacy fact set {request.fact_set_id} delivery verification failed: "
+            f"{verification['failure_reason']}"
+        )
+    return verification
+
+
+def run_legacy_project_attribution(
+    connection: sqlite3.Connection,
+    client: ClickHouseClient,
+    request: LegacyProjectAttributionRequest,
+) -> dict[str, Any]:
+    """Apply one explicit bounded legacy fact set, refusing repeat application."""
+    _validate_attribution_request(request)
+    collection = _collect_candidates(client, request)
+    fact_set_id = _fact_set_identity(
+        start=request.start, end=request.end, source_ids=collection.source_ids
+    )
     if (
         connection.execute(
             "SELECT 1 FROM legacy_attribution_fact_sets WHERE id = ?", (fact_set_id,)
@@ -396,111 +590,27 @@ def run_legacy_project_attribution(
         is not None
     ):
         raise RuntimeError(f"legacy fact set {fact_set_id} was already applied")
-
-    accepted_ids: list[str] = []
-    outbox_ids: list[str] = []
-    remote_references: list[RemoteEventReference] = []
     with connection:
-        connection.execute(
-            """
-            INSERT INTO legacy_attribution_fact_sets(
-                id, start_at, end_at, approved_by, denominator, accepted, rejected,
-                unresolved, source_ids_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                fact_set_id,
-                start.astimezone(UTC).isoformat(),
-                end.astimezone(UTC).isoformat(),
-                approved_by.strip(),
-                denominator,
-                len(candidates),
-                rejected,
-                unresolved,
-                json.dumps(sorted(source_ids), separators=(",", ":")),
-                datetime.now(UTC).isoformat(),
-            ),
-        )
-        for candidate in sorted(candidates, key=lambda value: (value.timestamp_ns, value.log_id)):
-            project = canonical_git_project(candidate.workspace)
-            _project_identity(connection, project)
-            activity = CanonicalActivity(
-                producer="codex-cli",
-                producer_surface="codex-cli",
-                correlation_id=candidate.correlation_id,
-                source_started_at_ns=candidate.timestamp_ns,
-                source_ended_at_ns=candidate.timestamp_ns,
-                detector_id=_DETECTOR_ID,
-                detector_version=1,
-                normalization_version=1,
-                source_membership=CanonicalSourceMembership(log_ids=(candidate.log_id,)),
-                operation_kind="exec",
-                target_kind="workspace_target",
-                normalized_target=candidate.target,
-                normalized_failure_class="",
-                created_at=datetime.now(UTC).isoformat(),
-            )
-            evidence_id = hashlib.sha256(
-                f"{candidate.log_id}:{candidate.call_id}:{candidate.tool_name}".encode()
-            ).hexdigest()
-            attribution = CanonicalAttribution(
-                state="resolved",
-                project_identity_id=project.identity,
-                method="legacy_structured_exec",
-                evidence_id=evidence_id,
-                reason_code=None,
-                created_at=datetime.now(UTC).isoformat(),
-            )
-            write = persist_canonical_activity(connection, activity, attribution)
-            if not write.version_inserted:
-                raise RuntimeError(f"legacy fact set {fact_set_id} was already applied")
-            event_id = enqueue_canonical_activity_version(
-                connection,
-                CanonicalActivityVersionEvent(
-                    activity_id=write.activity_id,
-                    version=write.version,
-                    timestamp_ns=candidate.timestamp_ns,
-                    attributes=canonical_activity_event_attributes(
-                        connection, activity, attribution
-                    ),
-                ),
-            )
-            accepted_ids.append(write.activity_id)
-            outbox_ids.append(event_id)
-            remote_references.append(
-                RemoteEventReference(
-                    event_id=event_id,
-                    event_name=CANONICAL_ACTIVITY_EVENT_NAME,
-                    timestamp_ns=candidate.timestamp_ns,
-                )
-            )
-    delivery = (
-        drain_outbox_event_ids(connection, outbox_ids, endpoint=delivery_endpoint)
-        if outbox_ids
-        else {"selected": 0, "delivered": 0, "pending": 0}
-    )
-    remote_ids = remote_event_ids(client, remote_references) if remote_references else set()
-    verification = _append_delivery_attempt(
+        _record_fact_set(connection, request, collection, fact_set_id)
+        persisted = _persist_candidates(connection, collection, fact_set_id)
+    verification = _verify_delivery(
         connection,
-        fact_set_id=fact_set_id,
-        intended_ids=outbox_ids,
-        delivery=delivery,
-        remote_ids=remote_ids,
+        _DeliveryVerificationRequest(
+            client=client,
+            attribution_request=request,
+            fact_set_id=fact_set_id,
+            persisted=persisted,
+        ),
     )
-    if not verification["verified"]:
-        raise RuntimeError(
-            f"legacy fact set {fact_set_id} delivery verification failed: "
-            f"{verification['failure_reason']}"
-        )
     return {
         "status": "applied",
-        "approved_by": approved_by,
+        "approved_by": request.approved_by,
         "fact_set_id": fact_set_id,
-        "accepted": len(accepted_ids),
-        "rejected": rejected,
-        "unresolved": unresolved,
-        "denominator": denominator,
-        "activity_ids": accepted_ids,
-        "outbox_event_ids": outbox_ids,
+        "accepted": len(persisted.activity_ids),
+        "rejected": collection.rejected,
+        "unresolved": collection.unresolved,
+        "denominator": collection.denominator,
+        "activity_ids": list(persisted.activity_ids),
+        "outbox_event_ids": list(persisted.outbox_ids),
         **verification,
     }

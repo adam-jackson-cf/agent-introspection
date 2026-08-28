@@ -21,11 +21,7 @@ class AgentProjectSchema:
     prohibited_attribution_sources: frozenset[str]
 
 
-def _load_schema() -> AgentProjectSchema:
-    schema_file = files("agent_introspection.schemas.otel").joinpath("agent-project.schema.json")
-    raw = schema_file.read_text()
-    data = json.loads(raw)
-    attributes = data.get("attributes")
+def _required_attribute_keys(attributes: object) -> tuple[dict[str, object], dict[str, str]]:
     if not isinstance(attributes, dict):
         raise ProjectSchemaError("attributes must be an object")
     attribute_keys: dict[str, str] = {}
@@ -37,13 +33,18 @@ def _load_schema() -> AgentProjectSchema:
         if not isinstance(key, str) or not key:
             raise ProjectSchemaError(f"{name} key must be non-empty text")
         attribute_keys[name] = key
-    states = data.get("metadata_states")
-    if not isinstance(states, list) or set(states) != {"absent", "complete", "invalid"}:
-        raise ProjectSchemaError("metadata states must be absent, complete, and invalid")
-    kind = attributes["kind"].get("enum")
-    if not isinstance(kind, list) or set(kind) != {"git"}:
-        raise ProjectSchemaError("project kind must be git")
-    dashboard = data.get("dashboard_attributes")
+    return attributes, attribute_keys
+
+
+def _exact_schema_values(value: object, expected: set[str], message: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ProjectSchemaError(message)
+    if set(value) != expected:
+        raise ProjectSchemaError(message)
+    return value
+
+
+def _validate_dashboard_attributes(dashboard: object, attribute_keys: dict[str, str]) -> None:
     if (
         not isinstance(dashboard, dict)
         or dashboard.get("paired") is not True
@@ -51,16 +52,9 @@ def _load_schema() -> AgentProjectSchema:
         or dashboard.get("name") != attribute_keys["name"]
     ):
         raise ProjectSchemaError("dashboard attributes must pair the project ID and name")
-    derived = data.get("derived_attribution")
-    if not isinstance(derived, dict):
-        raise ProjectSchemaError("derived attribution must be an object")
-    allowed_sources = derived.get("allowed_sources")
-    if not isinstance(allowed_sources, list) or set(allowed_sources) != {
-        "complete_span_tuple",
-        "immutable_session_context",
-        "git_validated_tool_workspace",
-    }:
-        raise ProjectSchemaError("derived attribution sources are invalid")
+
+
+def _validate_workspace_source(derived: dict[str, object]) -> None:
     workspace_source = derived.get("git_validated_tool_workspace")
     if (
         not isinstance(workspace_source, dict)
@@ -74,15 +68,48 @@ def _load_schema() -> AgentProjectSchema:
         }
     ):
         raise ProjectSchemaError("Git-validated tool workspace requirements are invalid")
-    prohibited_sources = data.get("prohibited_attribution_sources")
-    if not isinstance(prohibited_sources, list) or set(prohibited_sources) != {
-        "process_cwd",
-        "project_alias",
-        "unvalidated_path",
-        "prompt_content",
-        "thread_inference",
-    }:
-        raise ProjectSchemaError("prohibited attribution sources are invalid")
+
+
+def _load_schema() -> AgentProjectSchema:
+    schema_file = files("agent_introspection.schemas.otel").joinpath("agent-project.schema.json")
+    data = json.loads(schema_file.read_text())
+    attributes, attribute_keys = _required_attribute_keys(data.get("attributes"))
+    states = _exact_schema_values(
+        data.get("metadata_states"),
+        {"absent", "complete", "invalid"},
+        "metadata states must be absent, complete, and invalid",
+    )
+    kind_attribute = attributes["kind"]
+    kind = _exact_schema_values(
+        kind_attribute.get("enum") if isinstance(kind_attribute, dict) else None,
+        {"git"},
+        "project kind must be git",
+    )
+    _validate_dashboard_attributes(data.get("dashboard_attributes"), attribute_keys)
+    derived = data.get("derived_attribution")
+    if not isinstance(derived, dict):
+        raise ProjectSchemaError("derived attribution must be an object")
+    allowed_sources = _exact_schema_values(
+        derived.get("allowed_sources"),
+        {
+            "complete_span_tuple",
+            "immutable_session_context",
+            "git_validated_tool_workspace",
+        },
+        "derived attribution sources are invalid",
+    )
+    _validate_workspace_source(derived)
+    prohibited_sources = _exact_schema_values(
+        data.get("prohibited_attribution_sources"),
+        {
+            "process_cwd",
+            "project_alias",
+            "unvalidated_path",
+            "prompt_content",
+            "thread_inference",
+        },
+        "prohibited attribution sources are invalid",
+    )
     return AgentProjectSchema(
         attribute_keys=attribute_keys,
         metadata_states=frozenset(states),

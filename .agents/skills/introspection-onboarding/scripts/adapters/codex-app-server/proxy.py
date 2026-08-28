@@ -411,41 +411,49 @@ class LifecycleWorker:
         try:
             with os.fdopen(descriptor, "r+") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
-                state = self._read_state(state_path, event.thread_id)
-                if event.kind == "start":
-                    if state is not None:
-                        if state == event.workspace:
-                            return
-                        _diagnostic("conflicting repeated thread start was rejected")
-                        return
-                    if event.workspace is None:
-                        return
-                    state_count = sum(path.suffix == ".json" for path in self.state_dir.iterdir())
-                    if state_count >= _MAX_STATE:
-                        _diagnostic("managed thread state capacity was exceeded")
-                        return
-                    if not self._invoke(event, "session_start"):
-                        return
-                    self._write_state(state_path, event.thread_id, event.workspace)
-                    return
-                if state is None:
-                    _diagnostic("lifecycle metadata without an observed thread start was rejected")
-                    return
-                if event.kind == "observe":
-                    if event.workspace is None or state == event.workspace:
-                        return
-                    if self._invoke(event, "workspace_changed"):
-                        self._write_state(state_path, event.thread_id, event.workspace)
-                    return
-                if event.kind == "end" and self._invoke(
-                    LifecycleEvent(event.kind, event.thread_id, state, event.occurred_at),
-                    "session_end",
-                ):
-                    state_path.unlink(missing_ok=True)
+                self._apply_locked(event, state_path)
         finally:
             if not getattr(descriptor, "closed", False):
                 with suppress(OSError):
                     os.close(descriptor)
+
+    def _apply_locked(self, event: LifecycleEvent, state_path: Path) -> None:
+        state = self._read_state(state_path, event.thread_id)
+        if event.kind == "start":
+            self._apply_start(event, state, state_path)
+            return
+        if state is None:
+            _diagnostic("lifecycle metadata without an observed thread start was rejected")
+            return
+        if event.kind == "observe":
+            self._apply_observe(event, state, state_path)
+        elif event.kind == "end":
+            self._apply_end(event, state, state_path)
+
+    def _apply_start(self, event: LifecycleEvent, state: str | None, state_path: Path) -> None:
+        if state is not None:
+            if state != event.workspace:
+                _diagnostic("conflicting repeated thread start was rejected")
+            return
+        if event.workspace is None:
+            return
+        state_count = sum(path.suffix == ".json" for path in self.state_dir.iterdir())
+        if state_count >= _MAX_STATE:
+            _diagnostic("managed thread state capacity was exceeded")
+            return
+        if self._invoke(event, "session_start"):
+            self._write_state(state_path, event.thread_id, event.workspace)
+
+    def _apply_observe(self, event: LifecycleEvent, state: str, state_path: Path) -> None:
+        if event.workspace is None or state == event.workspace:
+            return
+        if self._invoke(event, "workspace_changed"):
+            self._write_state(state_path, event.thread_id, event.workspace)
+
+    def _apply_end(self, event: LifecycleEvent, state: str, state_path: Path) -> None:
+        end_event = LifecycleEvent(event.kind, event.thread_id, state, event.occurred_at)
+        if self._invoke(end_event, "session_end"):
+            state_path.unlink(missing_ok=True)
 
     def _invoke(self, event: LifecycleEvent, event_type: str) -> bool:
         workspace = event.workspace

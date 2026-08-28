@@ -16,6 +16,7 @@ from agent_introspection.source import (
     RAW_SOURCE_WINDOW_ANCHOR_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
+    HydrationRequest,
     SourceError,
     parse_duration_ms,
     parse_log_row,
@@ -491,12 +492,14 @@ def test_hydration_is_allowlisted_bounded_and_parameterized(
     client = ClickHouseClient(docker_context="orbstack")
     rows = list(
         client.hydrate(
-            identity_kind="call_id",
-            identifiers=("call-a",),
-            start_ns=1,
-            end_ns=2,
-            start_bucket=1,
-            end_bucket=2,
+            HydrationRequest(
+                identity_kind="call_id",
+                identifiers=("call-a",),
+                start_ns=1,
+                end_ns=2,
+                start_bucket=1,
+                end_bucket=2,
+            )
         )
     )
     assert rows[0].arguments == "{}"
@@ -520,12 +523,14 @@ def test_hydration_deduplicates_identifiers_without_embedding_them_in_sql(
     client = ClickHouseClient(docker_context="orbstack")
     list(
         client.hydrate(
-            identity_kind="log_id",
-            identifiers=("log-a", "log-a", "log' OR 1=1"),
-            start_ns=1,
-            end_ns=2,
-            start_bucket=1,
-            end_bucket=2,
+            HydrationRequest(
+                identity_kind="log_id",
+                identifiers=("log-a", "log-a", "log' OR 1=1"),
+                start_ns=1,
+                end_ns=2,
+                start_bucket=1,
+                end_bucket=2,
+            )
         )
     )
     argv = calls[0]
@@ -536,11 +541,13 @@ def test_hydration_deduplicates_identifiers_without_embedding_them_in_sql(
     with pytest.raises(ValueError, match="non-empty strings"):
         list(
             client.hydrate(
-                identity_kind="trace_id",
-                identifiers=("",),
-                start_ns=1,
-                end_ns=2,
-                start_bucket=1,
-                end_bucket=2,
+                HydrationRequest(
+                    identity_kind="trace_id",
+                    identifiers=("",),
+                    start_ns=1,
+                    end_ns=2,
+                    start_bucket=1,
+                    end_bucket=2,
+                )
             )
         )

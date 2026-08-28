@@ -77,6 +77,15 @@ class ProposalInput:
             raise ValueError("a proposal can select only one deterministic enforcement tier")
 
 
+@dataclass(frozen=True)
+class TransitionProposalRequest:
+    proposal_id: str
+    target_state: ProposalState
+    actor: str
+    evidence: dict[str, Any]
+    explicit_application_request: bool = False
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -131,35 +140,32 @@ def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> 
     return proposal_id
 
 
-def transition_proposal(
-    connection: sqlite3.Connection,
-    proposal_id: str,
-    target_state: ProposalState,
-    *,
-    actor: str,
-    evidence: dict[str, Any],
-    explicit_application_request: bool = False,
-) -> None:
+def transition_proposal(connection: sqlite3.Connection, request: TransitionProposalRequest) -> None:
     """Apply a valid transition while retaining an immutable event history."""
     row = connection.execute(
         """
         SELECT p.state, p.entity_version, p.finding_id, p.payload_json, f.detector_id
         FROM proposals p JOIN findings f ON f.id = p.finding_id WHERE p.id = ?
         """,
-        (proposal_id,),
+        (request.proposal_id,),
     ).fetchone()
     if row is None:
-        raise KeyError(proposal_id)
+        raise KeyError(request.proposal_id)
     source_state = ProposalState(row[0])
-    if target_state not in ALLOWED_TRANSITIONS[source_state]:
-        raise ValueError(f"invalid proposal transition: {source_state} -> {target_state}")
-    if target_state is ProposalState.APPLYING and not explicit_application_request:
+    if request.target_state not in ALLOWED_TRANSITIONS[source_state]:
+        raise ValueError(f"invalid proposal transition: {source_state} -> {request.target_state}")
+    if request.target_state is ProposalState.APPLYING and not request.explicit_application_request:
         raise PermissionError("entering applying requires a separate explicit user request")
-    if target_state is ProposalState.APPLIED and not evidence.get("validation"):
+    if request.target_state is ProposalState.APPLIED and not request.evidence.get("validation"):
         raise ValueError("validation evidence is required before marking applied")
     version = int(row[1]) + 1
     event_payload = json.dumps(
-        {"actor": actor, "evidence": evidence, "from": source_state, "to": target_state},
+        {
+            "actor": request.actor,
+            "evidence": request.evidence,
+            "from": source_state,
+            "to": request.target_state,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -167,11 +173,11 @@ def transition_proposal(
     with connection:
         sequence = connection.execute(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM proposal_events WHERE proposal_id = ?",
-            (proposal_id,),
+            (request.proposal_id,),
         ).fetchone()[0]
         connection.execute(
             "UPDATE proposals SET state = ?, updated_at = ?, entity_version = ? WHERE id = ?",
-            (target_state, now, version, proposal_id),
+            (request.target_state, now, version, request.proposal_id),
         )
         connection.execute(
             """
@@ -179,19 +185,26 @@ def transition_proposal(
                 id, proposal_id, sequence, event_type, payload_json, created_at
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (str(uuid.uuid4()), proposal_id, sequence, target_state, event_payload, now),
+            (
+                str(uuid.uuid4()),
+                request.proposal_id,
+                sequence,
+                request.target_state,
+                event_payload,
+                now,
+            ),
         )
     proposal_payload = json.loads(row[3])
     enqueue_event(
         connection,
         DerivedEvent(
             scope=REVIEW_SCOPE,
-            entity_id=proposal_id,
+            entity_id=request.proposal_id,
             entity_version=version,
             event_sequence=version,
             event_name="introspection.proposal.state_changed",
             attributes={
-                "proposal.state": str(target_state),
+                "proposal.state": str(request.target_state),
                 "proposal.scope": str(proposal_payload["scope"]),
                 "intervention.type": str(proposal_payload["intervention_type"]),
                 "finding.id": str(row[2]),

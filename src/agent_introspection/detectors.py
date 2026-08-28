@@ -249,6 +249,13 @@ def _loop_indexes(task_events: Sequence[DetectorEvent]) -> tuple[int, ...]:
     return tuple(operation_indexes[best_start : best_start + best_total])
 
 
+@dataclass(frozen=True, slots=True)
+class DetectorEvaluation:
+    ordered_events: tuple[DetectorEvent, ...]
+    project_or_metric_baselines: Mapping[str, Sequence[int]]
+    task_baselines: Mapping[str, Sequence[int]]
+
+
 class DetectorEngine:
     """Run all deterministic detectors with stable ordering and membership evidence."""
 
@@ -259,12 +266,25 @@ class DetectorEngine:
         token_baselines: Mapping[str, Sequence[int]] | None = None,
         task_baselines: Mapping[str, Sequence[int]] | None = None,
     ) -> tuple[Observation, ...]:
-        ordered = sorted(events, key=lambda event: (event.timestamp, event.event_id))
-        observations: list[Observation] = []
-        project_or_metric_baselines = token_baselines or {}
-        scoped_task_baselines = task_baselines or {}
+        evaluation = DetectorEvaluation(
+            ordered_events=tuple(
+                sorted(events, key=lambda event: (event.timestamp, event.event_id))
+            ),
+            project_or_metric_baselines=token_baselines or {},
+            task_baselines=task_baselines or {},
+        )
+        observations = [
+            *self._event_observations(evaluation),
+            *self._task_observations(evaluation),
+            *self._scope_observations(evaluation),
+            *self._outlier_observations(evaluation),
+        ]
+        return self._unique_observations(observations)
 
-        for event in ordered:
+    @staticmethod
+    def _event_observations(evaluation: DetectorEvaluation) -> list[Observation]:
+        observations: list[Observation] = []
+        for event in evaluation.ordered_events:
             failure = _tool_failure_class(event)
             if failure is not None:
                 observations.append(
@@ -329,99 +349,135 @@ class DetectorEngine:
                         ),
                     )
                 )
+        return observations
 
+    @staticmethod
+    def _task_observations(evaluation: DetectorEvaluation) -> list[Observation]:
         by_task: dict[tuple[str, str], list[DetectorEvent]] = defaultdict(list)
-        for event in ordered:
+        for event in evaluation.ordered_events:
             by_task[(event.project_id, event.task_id)].append(event)
 
+        observations: list[Observation] = []
         for task_events in by_task.values():
-            operation_groups: dict[tuple[object, ...], list[DetectorEvent]] = defaultdict(list)
-            for event in task_events:
-                if event.operation is not None:
-                    operation_groups[event.operation.membership_key].append(event)
-            for members in operation_groups.values():
-                if len(members) >= 2:
-                    observations.append(
-                        _observation(
-                            "repeated_attempt",
-                            members,
-                            failure_class="same_normalized_operation",
-                            explanation=(
-                                "the same normalized operation occurred "
-                                f"{len(members)} times in one task"
-                            ),
-                        )
-                    )
+            observations.extend(DetectorEngine._repeated_attempt_observations(task_events))
+            observations.extend(DetectorEngine._command_churn_observations(task_events))
+            observations.extend(DetectorEngine._tool_loop_observations(task_events))
+            observations.extend(DetectorEngine._quality_gate_observations(task_events))
+        return observations
 
-            shell_by_target: dict[str, list[DetectorEvent]] = defaultdict(list)
-            for event in task_events:
-                operation = event.operation
-                if operation is not None and operation.kind == "shell" and operation.target:
-                    shell_by_target[operation.target].append(event)
-            for members in shell_by_target.values():
-                distinct = {event.operation.membership_key for event in members if event.operation}
-                if len(distinct) >= 3:
-                    observations.append(
-                        _observation(
-                            "command_churn",
-                            members,
-                            failure_class="three_distinct_commands_same_target",
-                            explanation=(
-                                f"{len(distinct)} distinct normalized shell commands targeted "
-                                "the same path"
-                            ),
-                        )
-                    )
+    @staticmethod
+    def _repeated_attempt_observations(
+        task_events: Sequence[DetectorEvent],
+    ) -> list[Observation]:
+        operation_groups: dict[tuple[object, ...], list[DetectorEvent]] = defaultdict(list)
+        for event in task_events:
+            if event.operation is not None:
+                operation_groups[event.operation.membership_key].append(event)
 
-            loop_indexes = set(_loop_indexes(task_events))
-            if loop_indexes:
-                members = [task_events[index] for index in sorted(loop_indexes)]
+        return [
+            _observation(
+                "repeated_attempt",
+                members,
+                failure_class="same_normalized_operation",
+                explanation=(
+                    f"the same normalized operation occurred {len(members)} times in one task"
+                ),
+            )
+            for members in operation_groups.values()
+            if len(members) >= 2
+        ]
+
+    @staticmethod
+    def _command_churn_observations(
+        task_events: Sequence[DetectorEvent],
+    ) -> list[Observation]:
+        shell_by_target: dict[str, list[DetectorEvent]] = defaultdict(list)
+        for event in task_events:
+            operation = event.operation
+            if operation is not None and operation.kind == "shell" and operation.target:
+                shell_by_target[operation.target].append(event)
+
+        observations: list[Observation] = []
+        for members in shell_by_target.values():
+            distinct = {event.operation.membership_key for event in members if event.operation}
+            if len(distinct) >= 3:
                 observations.append(
                     _observation(
-                        "tool_loop",
+                        "command_churn",
                         members,
-                        failure_class="repeating_contiguous_operation_cycle",
-                        explanation="contiguous normalized operations form a repeated cycle",
+                        failure_class="three_distinct_commands_same_target",
+                        explanation=(
+                            f"{len(distinct)} distinct normalized shell commands targeted "
+                            "the same path"
+                        ),
                     )
                 )
+        return observations
 
-            failed: dict[tuple[object, ...], DetectorEvent] = {}
-            mutations: dict[tuple[object, ...], list[DetectorEvent]] = defaultdict(list)
-            for event in task_events:
-                quality_key = _quality_key(event)
-                if (
-                    quality_key is not None
-                    and event.operation is not None
-                    and event.operation.exit_code is not None
-                ):
-                    if event.operation.exit_code != 0:
-                        failed[quality_key] = event
-                        mutations[quality_key] = []
-                    elif quality_key in failed:
-                        if mutations[quality_key]:
-                            members = [failed[quality_key], *mutations[quality_key], event]
-                            observations.append(
-                                _observation(
-                                    "quality_gate_bypass",
-                                    members,
-                                    failure_class="mutation_between_failed_and_passing_gate",
-                                    explanation=(
-                                        "a failed quality command was followed by mutation before "
-                                        "same normalized command passed"
-                                    ),
-                                )
+    @staticmethod
+    def _tool_loop_observations(
+        task_events: Sequence[DetectorEvent],
+    ) -> list[Observation]:
+        loop_indexes = _loop_indexes(task_events)
+        if not loop_indexes:
+            return []
+        members = [task_events[index] for index in loop_indexes]
+        return [
+            _observation(
+                "tool_loop",
+                members,
+                failure_class="repeating_contiguous_operation_cycle",
+                explanation="contiguous normalized operations form a repeated cycle",
+            )
+        ]
+
+    @staticmethod
+    def _quality_gate_observations(
+        task_events: Sequence[DetectorEvent],
+    ) -> list[Observation]:
+        observations: list[Observation] = []
+        failed: dict[tuple[object, ...], DetectorEvent] = {}
+        mutations: dict[tuple[object, ...], list[DetectorEvent]] = defaultdict(list)
+        for event in task_events:
+            quality_key = _quality_key(event)
+            if (
+                quality_key is not None
+                and event.operation is not None
+                and event.operation.exit_code is not None
+            ):
+                if event.operation.exit_code != 0:
+                    failed[quality_key] = event
+                    mutations[quality_key] = []
+                elif quality_key in failed:
+                    if mutations[quality_key]:
+                        members = [failed[quality_key], *mutations[quality_key], event]
+                        observations.append(
+                            _observation(
+                                "quality_gate_bypass",
+                                members,
+                                failure_class="mutation_between_failed_and_passing_gate",
+                                explanation=(
+                                    "a failed quality command was followed by mutation before "
+                                    "same normalized command passed"
+                                ),
                             )
-                        failed.pop(quality_key)
-                        mutations.pop(quality_key)
-                    continue
-                if event.is_mutation:
-                    for key in failed:
-                        mutations[key].append(event)
+                        )
+                    failed.pop(quality_key)
+                    mutations.pop(quality_key)
+                continue
+            if event.is_mutation:
+                for key in failed:
+                    mutations[key].append(event)
+        return observations
 
+    @staticmethod
+    def _scope_observations(evaluation: DetectorEvaluation) -> list[Observation]:
         scope_groups: dict[tuple[str, str], list[DetectorEvent]] = defaultdict(list)
-        for event in ordered:
+        for event in evaluation.ordered_events:
             if event.operation is not None and event.operation.target:
                 scope_groups[(event.project_id, event.operation.target)].append(event)
+
+        observations: list[Observation] = []
         for members in scope_groups.values():
             tasks = {event.task_id for event in members if event.counts_as_distinct_task}
             if len(tasks) >= 2:
@@ -435,8 +491,12 @@ class DetectorEngine:
                         ),
                     )
                 )
+        return observations
 
-        for event in ordered:
+    @staticmethod
+    def _outlier_observations(evaluation: DetectorEvaluation) -> list[Observation]:
+        observations: list[Observation] = []
+        for event in evaluation.ordered_events:
             metrics = (("token", event.token_count), ("tool_call", event.tool_call_count))
             for metric, value in metrics:
                 if value is None:
@@ -444,8 +504,8 @@ class DetectorEngine:
                 baseline = _baseline_for(
                     metric,
                     event,
-                    project_or_metric_baselines=project_or_metric_baselines,
-                    task_baselines=scoped_task_baselines,
+                    project_or_metric_baselines=evaluation.project_or_metric_baselines,
+                    task_baselines=evaluation.task_baselines,
                 )
                 if baseline is None or len(baseline) < 20:
                     continue
@@ -463,7 +523,12 @@ class DetectorEngine:
                         ),
                     )
                 )
+        return observations
 
+    @staticmethod
+    def _unique_observations(
+        observations: Sequence[Observation],
+    ) -> tuple[Observation, ...]:
         unique: dict[tuple[str, str, tuple[str, ...]], Observation] = {}
         for observation in observations:
             key = (observation.detector_id, observation.fingerprint, observation.event_ids)

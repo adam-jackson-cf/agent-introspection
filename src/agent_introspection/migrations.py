@@ -40,6 +40,15 @@ class AppliedMigration:
     backup_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _MigrationApplication:
+    """Inputs required to apply one migration."""
+
+    connection: sqlite3.Connection
+    database_path: Path
+    migration: Migration
+
+
 _INITIAL_SCHEMA: Final[tuple[str, ...]] = (
     """
     CREATE TABLE migrations (
@@ -1268,19 +1277,15 @@ def _applied_history(connection: sqlite3.Connection) -> dict[int, tuple[str, str
     return {int(row[0]): (str(row[1]), str(row[2])) for row in rows}
 
 
-def apply_migrations(
-    connection: sqlite3.Connection,
-    database_path: Path,
-    migrations: tuple[Migration, ...] = MIGRATIONS,
-) -> tuple[AppliedMigration, ...]:
-    """Validate migration history and apply every pending migration safely."""
-    if connection.in_transaction:
-        raise MigrationError("migrations require a connection with no active transaction")
+def _validate_declared_migrations(migrations: tuple[Migration, ...]) -> None:
     versions = [migration.version for migration in migrations]
     if versions != list(range(1, len(migrations) + 1)):
         raise MigrationError("migration versions must be contiguous and begin at one")
 
-    history = _applied_history(connection)
+
+def _validate_history_matches_migrations(
+    history: dict[int, tuple[str, str]], migrations: tuple[Migration, ...]
+) -> None:
     known = {migration.version: migration for migration in migrations}
     unknown_versions = sorted(set(history) - set(known))
     if unknown_versions:
@@ -1289,6 +1294,13 @@ def apply_migrations(
         migration = known[version]
         if name != migration.name or checksum != migration.checksum:
             raise MigrationError(f"migration {version} does not match canonical history")
+
+
+def _validate_applied_history(
+    connection: sqlite3.Connection, migrations: tuple[Migration, ...]
+) -> dict[int, tuple[str, str]]:
+    history = _applied_history(connection)
+    _validate_history_matches_migrations(history, migrations)
     if sorted(history) != list(range(1, max(history, default=0) + 1)):
         raise MigrationError("migration history must be a contiguous applied prefix")
     user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -1298,78 +1310,139 @@ def apply_migrations(
             f"database user_version {user_version} does not match migration history "
             f"{expected_user_version}"
         )
+    return history
 
-    applied: list[AppliedMigration] = []
-    for migration in migrations:
-        if migration.version in history:
-            continue
-        backup_path = _backup_before_migration(connection, database_path, migration.version)
-        foreign_keys_were_enabled = int(connection.execute("PRAGMA foreign_keys").fetchone()[0])
-        if migration.requires_foreign_keys_disabled:
-            if foreign_keys_were_enabled != 1:
-                raise MigrationError(
-                    f"migration {migration.version} requires foreign-key enforcement before rebuild"
-                )
-            connection.execute("PRAGMA foreign_keys = OFF")
-            if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 0:
-                raise MigrationError(
-                    f"migration {migration.version} could not disable foreign-key enforcement"
-                )
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            for statement in migration.statements:
-                connection.execute(statement)
-            connection.execute(
-                "INSERT INTO migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
-                (migration.version, migration.name, migration.checksum, _utc_now()),
-            )
-            connection.execute(f"PRAGMA user_version = {migration.version}")
-            foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
-            if foreign_key_violations:
-                raise MigrationError(
-                    f"migration {migration.version} violates foreign keys: "
-                    f"{foreign_key_violations!r}"
-                )
-            quick_check = connection.execute("PRAGMA quick_check").fetchall()
-            if quick_check != [("ok",)]:
-                raise MigrationError(
-                    f"migration {migration.version} failed quick_check: {quick_check!r}"
-                )
-            connection.commit()
-        except BaseException as exc:
-            if connection.in_transaction:
-                connection.rollback()
-            if isinstance(exc, MigrationError):
-                raise
-            if isinstance(exc, sqlite3.Error):
-                raise MigrationError(f"migration {migration.version} failed") from exc
-            raise
-        finally:
-            if migration.requires_foreign_keys_disabled:
-                connection.execute("PRAGMA foreign_keys = ON")
-        if migration.requires_foreign_keys_disabled:
-            if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
-                raise MigrationError(
-                    f"migration {migration.version} could not restore foreign-key enforcement"
-                )
-            foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
-            if foreign_key_violations:
-                raise MigrationError(
-                    f"migration {migration.version} violates foreign keys after rebuild: "
-                    f"{foreign_key_violations!r}"
-                )
-            quick_check = connection.execute("PRAGMA quick_check").fetchall()
-            if quick_check != [("ok",)]:
-                raise MigrationError(
-                    f"migration {migration.version} failed quick_check after rebuild: "
-                    f"{quick_check!r}"
-                )
-        applied.append(
-            AppliedMigration(
-                version=migration.version,
-                name=migration.name,
-                checksum=migration.checksum,
-                backup_path=backup_path,
-            )
+
+def _validate_migration_request(
+    connection: sqlite3.Connection, migrations: tuple[Migration, ...]
+) -> dict[int, tuple[str, str]]:
+    if connection.in_transaction:
+        raise MigrationError("migrations require a connection with no active transaction")
+    _validate_declared_migrations(migrations)
+    return _validate_applied_history(connection, migrations)
+
+
+def _select_pending_migrations(
+    migrations: tuple[Migration, ...], history: dict[int, tuple[str, str]]
+) -> tuple[Migration, ...]:
+    return tuple(migration for migration in migrations if migration.version not in history)
+
+
+def _disable_foreign_key_enforcement(application: _MigrationApplication) -> None:
+    migration = application.migration
+    foreign_keys_enabled = int(application.connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled != 1:
+        raise MigrationError(
+            f"migration {migration.version} requires foreign-key enforcement before rebuild"
         )
-    return tuple(applied)
+    application.connection.execute("PRAGMA foreign_keys = OFF")
+    foreign_keys_disabled = int(application.connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_disabled != 0:
+        raise MigrationError(
+            f"migration {migration.version} could not disable foreign-key enforcement"
+        )
+
+
+def _record_migration(application: _MigrationApplication) -> None:
+    migration = application.migration
+    application.connection.execute(
+        "INSERT INTO migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
+        (migration.version, migration.name, migration.checksum, _utc_now()),
+    )
+    application.connection.execute(f"PRAGMA user_version = {migration.version}")
+
+
+def _validate_migration_result(application: _MigrationApplication, suffix: str = "") -> None:
+    migration = application.migration
+    foreign_key_violations = application.connection.execute("PRAGMA foreign_key_check").fetchall()
+    if foreign_key_violations:
+        raise MigrationError(
+            f"migration {migration.version} violates foreign keys{suffix}: "
+            f"{foreign_key_violations!r}"
+        )
+    quick_check = application.connection.execute("PRAGMA quick_check").fetchall()
+    if quick_check != [("ok",)]:
+        raise MigrationError(
+            f"migration {migration.version} failed quick_check{suffix}: {quick_check!r}"
+        )
+
+
+def _execute_migration_transaction(application: _MigrationApplication) -> None:
+    connection = application.connection
+    migration = application.migration
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in migration.statements:
+            connection.execute(statement)
+        _record_migration(application)
+        _validate_migration_result(application)
+        connection.commit()
+    except BaseException as exc:
+        if connection.in_transaction:
+            connection.rollback()
+        if isinstance(exc, MigrationError):
+            raise
+        if isinstance(exc, sqlite3.Error):
+            raise MigrationError(f"migration {migration.version} failed") from exc
+        raise
+
+
+def _enable_foreign_key_enforcement(application: _MigrationApplication) -> None:
+    application.connection.execute("PRAGMA foreign_keys = ON")
+
+
+def _validate_restored_foreign_key_enforcement(
+    application: _MigrationApplication,
+) -> None:
+    migration = application.migration
+    foreign_keys_enabled = int(application.connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled != 1:
+        raise MigrationError(
+            f"migration {migration.version} could not restore foreign-key enforcement"
+        )
+    _validate_migration_result(application, " after rebuild")
+
+
+def _apply_selected_migration(application: _MigrationApplication) -> Path:
+    migration = application.migration
+    backup_path = _backup_before_migration(
+        application.connection, application.database_path, migration.version
+    )
+    if migration.requires_foreign_keys_disabled:
+        _disable_foreign_key_enforcement(application)
+    try:
+        _execute_migration_transaction(application)
+    finally:
+        if migration.requires_foreign_keys_disabled:
+            _enable_foreign_key_enforcement(application)
+    if migration.requires_foreign_keys_disabled:
+        _validate_restored_foreign_key_enforcement(application)
+    return backup_path
+
+
+def _record_applied_migration(migration: Migration, backup_path: Path) -> AppliedMigration:
+    return AppliedMigration(
+        version=migration.version,
+        name=migration.name,
+        checksum=migration.checksum,
+        backup_path=backup_path,
+    )
+
+
+def apply_migrations(
+    connection: sqlite3.Connection,
+    database_path: Path,
+    migrations: tuple[Migration, ...] = MIGRATIONS,
+) -> tuple[AppliedMigration, ...]:
+    """Validate migration history and apply every pending migration safely."""
+    history = _validate_migration_request(connection, migrations)
+    pending_migrations = _select_pending_migrations(migrations, history)
+    applications = tuple(
+        _MigrationApplication(connection, database_path, migration)
+        for migration in pending_migrations
+    )
+    backups = tuple(_apply_selected_migration(application) for application in applications)
+    return tuple(
+        _record_applied_migration(application.migration, backup_path)
+        for application, backup_path in zip(applications, backups, strict=True)
+    )

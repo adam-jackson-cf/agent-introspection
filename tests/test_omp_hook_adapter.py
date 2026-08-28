@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = (
     REPOSITORY_ROOT / ".agents/skills/introspection-onboarding/scripts/adapters/omp/adapter.ts"
 )
+
+
+@dataclass(frozen=True)
+class AdapterInvocation:
+    tmp_path: Path
+    adapter: Path
+    runtime_log: Path
+    event: str
+    session_id: str
+    workspace: str
+    native_event: dict[str, object]
+    runtime_status: int = 0
+
+
+@dataclass(frozen=True)
+class MalformedNativeInput:
+    session_id: str
+    workspace: str
+    native_event: dict[str, object]
+    message: str
 
 
 @pytest.fixture
@@ -29,17 +50,8 @@ def omp_adapter_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     return adapter, tmp_path / "runtime-argv.txt"
 
 
-def _invoke_adapter(
-    tmp_path: Path,
-    adapter: Path,
-    runtime_log: Path,
-    event: str,
-    session_id: str,
-    workspace: str,
-    native_event: dict[str, object],
-    runtime_status: int = 0,
-) -> dict[str, str | None]:
-    driver = tmp_path / "invoke.ts"
+def _invoke_adapter(invocation: AdapterInvocation) -> dict[str, str | None]:
+    driver = invocation.tmp_path / "invoke.ts"
     driver.write_text(
         """
 import { pathToFileURL } from "node:url";
@@ -68,14 +80,23 @@ try {
     bun = shutil.which("bun")
     assert bun is not None, "Bun is required to execute the OMP TypeScript extension adapter"
     completed = subprocess.run(
-        [bun, "run", driver, adapter, event, session_id, workspace, json.dumps(native_event)],
+        [
+            bun,
+            "run",
+            driver,
+            invocation.adapter,
+            invocation.event,
+            invocation.session_id,
+            invocation.workspace,
+            json.dumps(invocation.native_event),
+        ],
         check=True,
         capture_output=True,
         text=True,
         env={
             **os.environ,
-            "OMP_RUNTIME_LOG": str(runtime_log),
-            "OMP_RUNTIME_EXIT_STATUS": str(runtime_status),
+            "OMP_RUNTIME_LOG": str(invocation.runtime_log),
+            "OMP_RUNTIME_EXIT_STATUS": str(invocation.runtime_status),
         },
     )
     decoded = json.loads(completed.stdout)
@@ -101,13 +122,15 @@ def test_omp_lifecycle_events_invoke_canonical_runtime(
     adapter, runtime_log = omp_adapter_sandbox
 
     outcome = _invoke_adapter(
-        tmp_path,
-        adapter,
-        runtime_log,
-        native_event,
-        "omp-session-42",
-        "/workspaces/authoritative",
-        {"timestamp": "2026-08-05T12:34:56.789Z"},
+        AdapterInvocation(
+            tmp_path,
+            adapter,
+            runtime_log,
+            native_event,
+            "omp-session-42",
+            "/workspaces/authoritative",
+            {"timestamp": "2026-08-05T12:34:56.789Z"},
+        )
     )
 
     assert outcome == {"error": None}
@@ -138,14 +161,16 @@ def test_omp_adapter_distinguishes_bounded_rejection_from_runtime_failure(
     adapter, runtime_log = omp_adapter_sandbox
 
     outcome = _invoke_adapter(
-        tmp_path,
-        adapter,
-        runtime_log,
-        "session_start",
-        "omp-session-42",
-        "/workspaces/authoritative",
-        {"timestamp": "2026-08-05T12:34:56.789Z"},
-        runtime_status,
+        AdapterInvocation(
+            tmp_path,
+            adapter,
+            runtime_log,
+            "session_start",
+            "omp-session-42",
+            "/workspaces/authoritative",
+            {"timestamp": "2026-08-05T12:34:56.789Z"},
+            runtime_status,
+        )
     )
 
     assert outcome == {"error": expected_error}
@@ -158,13 +183,15 @@ def test_omp_uses_synchronous_time_when_native_timestamp_is_absent(
     adapter, runtime_log = omp_adapter_sandbox
 
     outcome = _invoke_adapter(
-        tmp_path,
-        adapter,
-        runtime_log,
-        "session_start",
-        "omp-session-42",
-        "/workspaces/authoritative",
-        {},
+        AdapterInvocation(
+            tmp_path,
+            adapter,
+            runtime_log,
+            "session_start",
+            "omp-session-42",
+            "/workspaces/authoritative",
+            {},
+        )
     )
 
     assert outcome == {"error": None}
@@ -190,13 +217,15 @@ def test_omp_adapter_rejects_missing_authoritative_values(
     adapter, runtime_log = omp_adapter_sandbox
 
     outcome = _invoke_adapter(
-        tmp_path,
-        adapter,
-        runtime_log,
-        "session_start",
-        session_id,
-        workspace,
-        {},
+        AdapterInvocation(
+            tmp_path,
+            adapter,
+            runtime_log,
+            "session_start",
+            session_id,
+            workspace,
+            {},
+        )
     )
 
     assert outcome == {
@@ -206,22 +235,27 @@ def test_omp_adapter_rejects_missing_authoritative_values(
 
 
 @pytest.mark.parametrize(
-    ("session_id", "workspace", "native_event", "message"),
+    "malformed_input",
     [
-        (
+        MalformedNativeInput(
             "id\nother",
             "/workspaces/authoritative",
             {},
             "OMP session id is required and must not contain control characters",
         ),
-        ("omp-session-42", "workspace", {}, "OMP workspace must be an absolute path"),
-        (
+        MalformedNativeInput(
+            "omp-session-42",
+            "workspace",
+            {},
+            "OMP workspace must be an absolute path",
+        ),
+        MalformedNativeInput(
             "omp-session-42",
             "/workspaces/authoritative",
             {"timestamp": "arbitrary"},
             "OMP timestamp must be RFC 3339",
         ),
-        (
+        MalformedNativeInput(
             "omp-session-42",
             "/workspaces/authoritative",
             {"timestamp": None},
@@ -232,22 +266,21 @@ def test_omp_adapter_rejects_missing_authoritative_values(
 def test_omp_adapter_rejects_malformed_native_values_without_runtime_invocation(
     tmp_path: Path,
     omp_adapter_sandbox: tuple[Path, Path],
-    session_id: str,
-    workspace: str,
-    native_event: dict[str, object],
-    message: str,
+    malformed_input: MalformedNativeInput,
 ) -> None:
     adapter, runtime_log = omp_adapter_sandbox
 
     outcome = _invoke_adapter(
-        tmp_path,
-        adapter,
-        runtime_log,
-        "session_start",
-        session_id,
-        workspace,
-        native_event,
+        AdapterInvocation(
+            tmp_path,
+            adapter,
+            runtime_log,
+            "session_start",
+            malformed_input.session_id,
+            malformed_input.workspace,
+            malformed_input.native_event,
+        )
     )
 
-    assert outcome == {"error": message}
+    assert outcome == {"error": malformed_input.message}
     assert not runtime_log.exists()

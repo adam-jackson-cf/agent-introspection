@@ -181,36 +181,40 @@ def _current_slot_start(*, now: datetime, interval_seconds: int) -> str:
     return datetime.fromtimestamp(slot_epoch, UTC).isoformat()
 
 
-def launch_agent_payload(
-    *,
-    executable: Path,
-    config_path: Path,
-    working_directory: Path,
-    docker_host: str,
-    log_directory: Path,
-    interval_seconds: int,
-    timezone: str,
-) -> dict[str, object]:
+@dataclass(frozen=True, slots=True)
+class LaunchAgentSpecification:
+    """Describe the runtime and files for the scheduled scan LaunchAgent."""
+
+    executable: Path
+    config_path: Path
+    working_directory: Path
+    docker_host: str
+    log_directory: Path
+    interval_seconds: int
+    timezone: str
+
+
+def launch_agent_payload(specification: LaunchAgentSpecification) -> dict[str, object]:
     """Build the canonical five-minute user LaunchAgent configuration."""
-    if interval_seconds != 300:
+    if specification.interval_seconds != 300:
         raise ValueError("LaunchAgent interval must be exactly 300 seconds")
     return {
         "Label": LABEL,
-        "ProgramArguments": [str(executable), "scan", "--scheduled"],
-        "WorkingDirectory": str(working_directory),
+        "ProgramArguments": [str(specification.executable), "scan", "--scheduled"],
+        "WorkingDirectory": str(specification.working_directory),
         "RunAtLoad": True,
         "KeepAlive": False,
         "StartCalendarInterval": [{"Minute": minute} for minute in range(0, 60, 5)],
         "EnvironmentVariables": {
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-            "DOCKER_HOST": docker_host,
-            "AGENT_INTROSPECTION_CONFIG": str(config_path),
+            "DOCKER_HOST": specification.docker_host,
+            "AGENT_INTROSPECTION_CONFIG": str(specification.config_path),
             "LC_ALL": "en_GB.UTF-8",
             "LANG": "en_GB.UTF-8",
-            "TZ": timezone,
+            "TZ": specification.timezone,
         },
-        "StandardOutPath": str(log_directory / "launchd.stdout.log"),
-        "StandardErrorPath": str(log_directory / "launchd.stderr.log"),
+        "StandardOutPath": str(specification.log_directory / "launchd.stdout.log"),
+        "StandardErrorPath": str(specification.log_directory / "launchd.stderr.log"),
         "ProcessType": "Standard",
     }
 

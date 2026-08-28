@@ -8,6 +8,7 @@ import pytest
 
 from agent_introspection.scheduler import (
     LABEL,
+    LaunchAgentSpecification,
     acquire_lease,
     completed_in_current_slot,
     launch_agent_payload,
@@ -61,13 +62,15 @@ def test_absent_pid_is_reclaimed_before_its_lease_expires_and_owner_can_release(
 
 def test_launch_agent_payload_is_canonical_and_absolute(tmp_path: Path) -> None:
     payload = launch_agent_payload(
-        executable=tmp_path / "bin" / "agent-introspection",
-        config_path=tmp_path / "config.toml",
-        working_directory=tmp_path,
-        docker_host="unix:///Users/adamjackson/.orbstack/run/docker.sock",
-        log_directory=tmp_path / "logs",
-        interval_seconds=300,
-        timezone="Europe/London",
+        LaunchAgentSpecification(
+            executable=tmp_path / "bin" / "agent-introspection",
+            config_path=tmp_path / "config.toml",
+            working_directory=tmp_path,
+            docker_host="unix:///Users/adamjackson/.orbstack/run/docker.sock",
+            log_directory=tmp_path / "logs",
+            interval_seconds=300,
+            timezone="Europe/London",
+        )
     )
     assert payload["Label"] == LABEL
     assert payload["StartCalendarInterval"] == [{"Minute": minute} for minute in range(0, 60, 5)]

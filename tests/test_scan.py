@@ -1,6 +1,6 @@
 import json
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,7 @@ from agent_introspection.session_context import (
 )
 from agent_introspection.source import (
     ClickHouseClient,
-    HydrationIdentityKind,
+    HydrationRequest,
     HydrationRow,
     LogRow,
     SourceActivityCorrelation,
@@ -135,19 +135,9 @@ class FakeSource(ClickHouseClient):
     def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
         del start, start_ns, start_bucket
 
-    def hydrate(
-        self,
-        *,
-        identity_kind: HydrationIdentityKind,
-        identifiers: Sequence[str],
-        start_ns: int,
-        end_ns: int,
-        start_bucket: int,
-        end_bucket: int,
-    ) -> Iterator[HydrationRow]:
-        del identity_kind, start_ns, end_ns, start_bucket, end_bucket
-        self.hydration_batch_sizes.append(len(identifiers))
-        selected = set(identifiers)
+    def hydrate(self, request: HydrationRequest) -> Iterator[HydrationRow]:
+        self.hydration_batch_sizes.append(len(request.identifiers))
+        selected = set(request.identifiers)
         yield from (
             HydrationRow(
                 timestamp_ns=row.timestamp_ns,
@@ -196,24 +186,26 @@ def approve(connection: Any, source: FakeSource) -> str:
     )
 
 
-def log_row(
-    identifier: str,
-    timestamp_ns: int,
-    *,
-    trace_id: str | None = None,
-    conversation_id: str | None = None,
-    producer: str | None = None,
-    thread_id: str | None = None,
-    service_name: str | None = None,
-) -> LogRow:
+@dataclass(frozen=True)
+class _LogRowInput:
+    identifier: str
+    timestamp_ns: int
+    trace_id: str | None = None
+    conversation_id: str | None = None
+    producer: str | None = None
+    thread_id: str | None = None
+    service_name: str | None = None
+
+
+def log_row(input_row: _LogRowInput) -> LogRow:
     return LogRow(
-        timestamp_ns=timestamp_ns,
-        log_id=identifier,
-        trace_id=trace_id,
+        timestamp_ns=input_row.timestamp_ns,
+        log_id=input_row.identifier,
+        trace_id=input_row.trace_id,
         span_id=None,
         event_name="codex.tool_result",
-        conversation_id=conversation_id,
-        call_id=identifier,
+        conversation_id=input_row.conversation_id,
+        call_id=input_row.identifier,
         tool_name="exec_command",
         success_string="false",
         success_bool=None,
@@ -225,32 +217,34 @@ def log_row(
         output_tokens=None,
         reasoning_tokens=None,
         prompt_length=None,
-        producer=producer,
-        service_name=service_name,
-        thread_id=thread_id,
+        producer=input_row.producer,
+        service_name=input_row.service_name,
+        thread_id=input_row.thread_id,
     )
 
 
-def _context_event(
-    *,
-    event_id: str,
-    event_type: str,
-    root: Path,
-    project_id: str,
-    occurred_at: datetime,
-) -> SessionContextEvent:
+@dataclass(frozen=True)
+class _ContextEventInput:
+    event_id: str
+    event_type: str
+    root: Path
+    project_id: str
+    occurred_at: datetime
+
+
+def _context_event(input_event: _ContextEventInput) -> SessionContextEvent:
     return parse_event(
         {
-            "event_id": event_id,
+            "event_id": input_event.event_id,
             "producer": "codex-cli",
             "session_id": "session-1",
-            "event_type": event_type,
-            "occurred_at": occurred_at.isoformat(),
+            "event_type": input_event.event_type,
+            "occurred_at": input_event.occurred_at.isoformat(),
             "agent": {
                 "project": {
-                    "id": project_id,
-                    "name": root.name,
-                    "root": root.as_posix(),
+                    "id": input_event.project_id,
+                    "name": input_event.root.name,
+                    "root": input_event.root.as_posix(),
                     "kind": "git",
                 }
             },
@@ -307,33 +301,41 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
     root.mkdir()
     spool_event(
         _context_event(
-            event_id="a" * 64,
-            event_type="session_start",
-            root=root,
-            project_id="1" * 64,
-            occurred_at=occurred_at - timedelta(minutes=1),
+            _ContextEventInput(
+                event_id="a" * 64,
+                event_type="session_start",
+                root=root,
+                project_id="1" * 64,
+                occurred_at=occurred_at - timedelta(minutes=1),
+            )
         ),
         directory=config.database.path.parent / "session-context-inbox",
     )
     source = FakeSource(
         logs=[
             log_row(
-                "log-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="trace-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="log-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    trace_id="trace-1",
+                    producer="codex-cli",
+                )
             ),
             log_row(
-                "missing-correlation-log",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="missing-correlation-trace",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="missing-correlation-log",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    trace_id="missing-correlation-trace",
+                    producer="codex-cli",
+                )
             ),
             log_row(
-                "conflicting-correlation-log",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="conflicting-correlation-trace",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="conflicting-correlation-log",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    trace_id="conflicting-correlation-trace",
+                    producer="codex-cli",
+                )
             ),
         ],
         traces=[
@@ -438,10 +440,12 @@ def test_late_context_bumps_one_canonical_activity_once(
     source = FakeSource(
         logs=[
             log_row(
-                "log-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="trace-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="log-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    trace_id="trace-1",
+                    producer="codex-cli",
+                )
             )
         ],
         traces=[_trace("trace-1", occurred_at)],
@@ -453,11 +457,13 @@ def test_late_context_bumps_one_canonical_activity_once(
     assert (state, version, project_id) == ("unresolved", 1, None)
 
     context = _context_event(
-        event_id="b" * 64,
-        event_type="session_start",
-        root=root,
-        project_id="2" * 64,
-        occurred_at=occurred_at - timedelta(minutes=1),
+        _ContextEventInput(
+            event_id="b" * 64,
+            event_type="session_start",
+            root=root,
+            project_id="2" * 64,
+            occurred_at=occurred_at - timedelta(minutes=1),
+        )
     )
     spool_event(
         context,
@@ -507,10 +513,12 @@ def test_codex_session_context_resolves_and_conflicts_fail_closed(
     source = FakeSource(
         logs=[
             log_row(
-                "log-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                trace_id="trace-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="log-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    trace_id="trace-1",
+                    producer="codex-cli",
+                )
             )
         ],
         traces=[_trace("trace-1", occurred_at)],
@@ -522,11 +530,13 @@ def test_codex_session_context_resolves_and_conflicts_fail_closed(
     assert (state, version, project_id) == ("unresolved", 1, None)
 
     context = _context_event(
-        event_id="e" * 64,
-        event_type="session_context",
-        root=root,
-        project_id="5" * 64,
-        occurred_at=occurred_at + timedelta(seconds=1),
+        _ContextEventInput(
+            event_id="e" * 64,
+            event_type="session_context",
+            root=root,
+            project_id="5" * 64,
+            occurred_at=occurred_at + timedelta(seconds=1),
+        )
     )
     inbox = config.database.path.parent / "session-context-inbox"
     spool_event(context, directory=inbox)
@@ -557,11 +567,13 @@ def test_codex_session_context_resolves_and_conflicts_fail_closed(
     conflicting_root.mkdir()
     spool_event(
         _context_event(
-            event_id="f" * 64,
-            event_type="session_context",
-            root=conflicting_root,
-            project_id="6" * 64,
-            occurred_at=occurred_at + timedelta(seconds=3),
+            _ContextEventInput(
+                event_id="f" * 64,
+                event_type="session_context",
+                root=conflicting_root,
+                project_id="6" * 64,
+                occurred_at=occurred_at + timedelta(seconds=3),
+            )
         ),
         directory=inbox,
     )
@@ -583,28 +595,44 @@ def test_workspace_transition_splits_canonical_activities(
     inbox = config.database.path.parent / "session-context-inbox"
     spool_event(
         _context_event(
-            event_id="c" * 64,
-            event_type="session_start",
-            root=first_root,
-            project_id="3" * 64,
-            occurred_at=before - timedelta(minutes=1),
+            _ContextEventInput(
+                event_id="c" * 64,
+                event_type="session_start",
+                root=first_root,
+                project_id="3" * 64,
+                occurred_at=before - timedelta(minutes=1),
+            )
         ),
         directory=inbox,
     )
     spool_event(
         _context_event(
-            event_id="d" * 64,
-            event_type="workspace_changed",
-            root=second_root,
-            project_id="4" * 64,
-            occurred_at=after - timedelta(seconds=1),
+            _ContextEventInput(
+                event_id="d" * 64,
+                event_type="workspace_changed",
+                root=second_root,
+                project_id="4" * 64,
+                occurred_at=after - timedelta(seconds=1),
+            )
         ),
         directory=inbox,
     )
     source = FakeSource(
         logs=[
-            log_row("log-1", int(before.timestamp() * 1_000_000_000), trace_id="trace-1"),
-            log_row("log-2", int(after.timestamp() * 1_000_000_000), trace_id="trace-1"),
+            log_row(
+                _LogRowInput(
+                    identifier="log-1",
+                    timestamp_ns=int(before.timestamp() * 1_000_000_000),
+                    trace_id="trace-1",
+                )
+            ),
+            log_row(
+                _LogRowInput(
+                    identifier="log-2",
+                    timestamp_ns=int(after.timestamp() * 1_000_000_000),
+                    trace_id="trace-1",
+                )
+            ),
         ],
         traces=[_trace("trace-1", after)],
     )
@@ -662,21 +690,25 @@ def test_run_scan_closes_context_obligation_after_persisting_first_raw(
     source = FakeSource(
         logs=[
             log_row(
-                "raw-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                thread_id="session-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="raw-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    thread_id="session-1",
+                    producer="codex-cli",
+                )
             )
         ]
     )
     approve(connection, source)
     spool_event(
         _context_event(
-            event_id="a" * 64,
-            event_type="session_context",
-            root=root,
-            project_id="1" * 64,
-            occurred_at=occurred_at,
+            _ContextEventInput(
+                event_id="a" * 64,
+                event_type="session_context",
+                root=root,
+                project_id="1" * 64,
+                occurred_at=occurred_at,
+            )
         ),
         directory=config.database.path.parent / "session-context-inbox",
     )
@@ -704,11 +736,13 @@ def test_run_scan_keeps_accepted_context_pending_without_raw_population(
     approve(connection, source)
     spool_event(
         _context_event(
-            event_id="c" * 64,
-            event_type="session_context",
-            root=root,
-            project_id="1" * 64,
-            occurred_at=occurred_at,
+            _ContextEventInput(
+                event_id="c" * 64,
+                event_type="session_context",
+                root=root,
+                project_id="1" * 64,
+                occurred_at=occurred_at,
+            )
         ),
         directory=config.database.path.parent / "session-context-inbox",
     )
@@ -731,10 +765,12 @@ def test_run_scan_recloses_later_context_for_attributed_raw(
     source = FakeSource(
         logs=[
             log_row(
-                "raw-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                thread_id="session-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="raw-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    thread_id="session-1",
+                    producer="codex-cli",
+                )
             )
         ]
     )
@@ -743,11 +779,13 @@ def test_run_scan_recloses_later_context_for_attributed_raw(
     for event_id, at in (("a" * 64, occurred_at), ("b" * 64, occurred_at + timedelta(seconds=1))):
         spool_event(
             _context_event(
-                event_id=event_id,
-                event_type="session_context",
-                root=root,
-                project_id="1" * 64,
-                occurred_at=at,
+                _ContextEventInput(
+                    event_id=event_id,
+                    event_type="session_context",
+                    root=root,
+                    project_id="1" * 64,
+                    occurred_at=at,
+                )
             ),
             directory=inbox,
         )
@@ -769,23 +807,29 @@ def test_run_scan_rolls_back_reconciliation_and_recovers_durable_raw(
     source = FakeSource(
         logs=[
             log_row(
-                "raw-1",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                thread_id="session-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="raw-1",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    thread_id="session-1",
+                    producer="codex-cli",
+                )
             ),
             log_row(
-                "raw-2",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                thread_id="session-1",
-                producer="codex-cli",
+                _LogRowInput(
+                    identifier="raw-2",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    thread_id="session-1",
+                    producer="codex-cli",
+                )
             ),
             log_row(
-                "claude-raw",
-                int(occurred_at.timestamp() * 1_000_000_000),
-                conversation_id="session-1",
-                service_name="claude-code",
-                producer="claude-code",
+                _LogRowInput(
+                    identifier="claude-raw",
+                    timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
+                    conversation_id="session-1",
+                    service_name="claude-code",
+                    producer="claude-code",
+                )
             ),
         ]
     )
@@ -793,11 +837,13 @@ def test_run_scan_rolls_back_reconciliation_and_recovers_durable_raw(
     run_scan(connection, config, client=source, end_time=occurred_at)
     spool_event(
         _context_event(
-            event_id="a" * 64,
-            event_type="session_context",
-            root=root,
-            project_id="1" * 64,
-            occurred_at=occurred_at + timedelta(seconds=1),
+            _ContextEventInput(
+                event_id="a" * 64,
+                event_type="session_context",
+                root=root,
+                project_id="1" * 64,
+                occurred_at=occurred_at + timedelta(seconds=1),
+            )
         ),
         directory=config.database.path.parent / "session-context-inbox",
     )

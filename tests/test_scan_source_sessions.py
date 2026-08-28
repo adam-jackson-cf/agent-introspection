@@ -9,6 +9,8 @@ from agent_introspection.scan import (
     _persist_source_sessions,
     _reconcile_late_source_sessions,
     _source_session_terminal,
+    _SourceSessionPersistenceRequest,
+    _SourceSessionResolutionRequest,
 )
 from agent_introspection.session_context import drain_inbox, parse_event, spool_event
 from agent_introspection.source import CANONICAL_SERVICE_PRODUCERS, SourceSessionRow
@@ -40,7 +42,11 @@ def test_source_session_resolution_uses_canonical_service_mapping(
     connection = connect_database(tmp_path / "introspection.sqlite3")
     canonical = _row("canonical", ())
     assert CANONICAL_SERVICE_PRODUCERS[canonical.service_name] == ("codex-cli", "codex-cli")
-    assert _source_session_terminal(connection, canonical)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, canonical, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "missing_native_session_id",
     )
@@ -55,7 +61,11 @@ def test_source_session_resolution_uses_canonical_service_mapping(
         legacy_thread_ids=canonical.legacy_thread_ids,
         gen_ai_conversation_ids=canonical.gen_ai_conversation_ids,
     )
-    assert _source_session_terminal(connection, unrelated)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, unrelated, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "unmapped_service_name",
     )
@@ -124,7 +134,11 @@ def test_native_ids_follow_exact_signal_and_service_contract(
     connection = connect_database(tmp_path / "introspection.sqlite3")
     assert row.native_session_ids == native_ids
     assert row.session_status == "exact"
-    assert _source_session_terminal(connection, row)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, row, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "no_authoritative_context",
     )
@@ -175,11 +189,19 @@ def test_wrong_native_field_is_rejected_without_projection(
     )
     assert row.native_session_ids == ()
     assert row.session_status == "wrong_field"
-    assert _source_session_terminal(connection, row)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, row, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "wrong_native_session_field",
     )
-    _persist_source_sessions(connection, scan_run_id="scan", rows=[row])
+    _persist_source_sessions(
+        _SourceSessionPersistenceRequest(
+            connection, "scan", [row], persist_records=True, clock_skew_seconds=120
+        )
+    )
     import json
 
     (payload_json,) = connection.execute("SELECT payload_json FROM otlp_outbox").fetchone()
@@ -191,7 +213,11 @@ def test_wrong_native_field_is_rejected_without_projection(
 def test_observed_exact_unresolved_context_is_failed_not_blocked(tmp_path: Path) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
     observed = _row("no-context", ("native-session",))
-    assert _source_session_terminal(connection, observed)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, observed, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "no_authoritative_context",
     )
@@ -214,7 +240,11 @@ def test_observed_exact_unresolved_context_is_failed_not_blocked(tmp_path: Path)
         )
 
     ambiguous = _row("ambiguous", ("ambiguous-session",))
-    assert _source_session_terminal(connection, ambiguous)[:2] == (
+    assert _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            connection, ambiguous, clock_skew_seconds=120, resolved_intervals=None
+        )
+    )[:2] == (
         "failed",
         "conflicting_correlation_id",
     )
@@ -268,15 +298,19 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
     )
 
     outcomes = _persist_source_sessions(
-        connection,
-        scan_run_id="scan",
-        rows=[
-            _row("attributed", ("accepted",)),
-            _row("missing", ()),
-            _row("conflicting", ("one", "two")),
-            _row("unresolved", ("unknown",)),
-            _row("non-git", ("non-git",)),
-        ],
+        _SourceSessionPersistenceRequest(
+            connection,
+            "scan",
+            [
+                _row("attributed", ("accepted",)),
+                _row("missing", ()),
+                _row("conflicting", ("one", "two")),
+                _row("unresolved", ("unknown",)),
+                _row("non-git", ("non-git",)),
+            ],
+            persist_records=True,
+            clock_skew_seconds=120,
+        )
     )
 
     assert outcomes == {
@@ -320,15 +354,21 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
     resolved_intervals = {}
     connection.set_trace_callback(statements.append)
     cached = _source_session_terminal(
-        connection,
-        _row("cached-one", ("accepted",)),
-        resolved_intervals=resolved_intervals,
+        _SourceSessionResolutionRequest(
+            connection,
+            _row("cached-one", ("accepted",)),
+            clock_skew_seconds=120,
+            resolved_intervals=resolved_intervals,
+        )
     )
     assert (
         _source_session_terminal(
-            connection,
-            _row("cached-two", ("accepted",)),
-            resolved_intervals=resolved_intervals,
+            _SourceSessionResolutionRequest(
+                connection,
+                _row("cached-two", ("accepted",)),
+                clock_skew_seconds=120,
+                resolved_intervals=resolved_intervals,
+            )
         )
         == cached
     )
@@ -362,7 +402,11 @@ def test_source_session_events_use_the_gate_six_attribute_contract(tmp_path: Pat
             gen_ai_conversation_ids=(),
         ),
     ]
-    _persist_source_sessions(connection, scan_run_id="scan", rows=rows)
+    _persist_source_sessions(
+        _SourceSessionPersistenceRequest(
+            connection, "scan", rows, persist_records=True, clock_skew_seconds=120
+        )
+    )
 
     events = {
         payload["source.record.id"]: payload
@@ -446,7 +490,11 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
         )
 
     with connection:
-        first = _persist_source_sessions(connection, scan_run_id="first", rows=[codex, claude])
+        first = _persist_source_sessions(
+            _SourceSessionPersistenceRequest(
+                connection, "first", [codex, claude], persist_records=True, clock_skew_seconds=120
+            )
+        )
         _advance_raw_source_watermark(connection, end_ns=100)
     assert first == {
         "included": 2,
@@ -475,7 +523,11 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
         (evidence_id, occurred_at, project_id),
     )
     with connection:
-        second = _persist_source_sessions(connection, scan_run_id="second", rows=[codex, claude])
+        second = _persist_source_sessions(
+            _SourceSessionPersistenceRequest(
+                connection, "second", [codex, claude], persist_records=True, clock_skew_seconds=120
+            )
+        )
         _advance_raw_source_watermark(connection, end_ns=200)
     assert second == {
         "included": 2,
@@ -489,7 +541,11 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
         ("replay", occurred_at),
     )
     with connection:
-        replay = _persist_source_sessions(connection, scan_run_id="replay", rows=[codex, claude])
+        replay = _persist_source_sessions(
+            _SourceSessionPersistenceRequest(
+                connection, "replay", [codex, claude], persist_records=True, clock_skew_seconds=120
+            )
+        )
     assert replay == second
     assert connection.execute(
         """SELECT service_name, version FROM source_session_current
@@ -571,7 +627,11 @@ def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(
             (scan_run_id, occurred_at.isoformat()),
         )
     with connection:
-        _persist_source_sessions(connection, scan_run_id="first", rows=[codex, claude])
+        _persist_source_sessions(
+            _SourceSessionPersistenceRequest(
+                connection, "first", [codex, claude], persist_records=True, clock_skew_seconds=120
+            )
+        )
         _advance_raw_source_watermark(connection, end_ns=100)
 
     project_id = "6" * 64

@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -38,6 +39,7 @@ from agent_introspection.database import (
     weekly_maintenance,
 )
 from agent_introspection.legacy_attribution import (
+    LegacyProjectAttributionRequest,
     parse_rfc3339,
     recover_legacy_project_attribution,
     run_legacy_project_attribution,
@@ -45,6 +47,7 @@ from agent_introspection.legacy_attribution import (
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
+    TransitionProposalRequest,
     create_proposal,
     transition_proposal,
 )
@@ -55,6 +58,7 @@ from agent_introspection.review import (
 )
 from agent_introspection.scan import run_scan
 from agent_introspection.scheduler import (
+    LaunchAgentSpecification,
     completed_in_current_slot,
     install_schedule,
     launch_agent_payload,
@@ -329,10 +333,12 @@ def _proposal_decide(args: argparse.Namespace) -> dict[str, Any]:
     try:
         transition_proposal(
             connection,
-            args.proposal_id,
-            target,
-            actor=args.actor,
-            evidence={"decision": args.decision, "reason": args.reason},
+            TransitionProposalRequest(
+                proposal_id=args.proposal_id,
+                target_state=target,
+                actor=args.actor,
+                evidence={"decision": args.decision, "reason": args.reason},
+            ),
         )
         return {"status": target, "proposal_id": args.proposal_id}
     finally:
@@ -353,18 +359,22 @@ def _proposal_mark_applied(args: argparse.Namespace) -> dict[str, Any]:
         if state[0] == ProposalState.APPROVED:
             transition_proposal(
                 connection,
-                args.proposal_id,
-                ProposalState.APPLYING,
-                actor=args.actor,
-                evidence={"request": "mark-applied"},
-                explicit_application_request=True,
+                TransitionProposalRequest(
+                    proposal_id=args.proposal_id,
+                    target_state=ProposalState.APPLYING,
+                    actor=args.actor,
+                    evidence={"request": "mark-applied"},
+                    explicit_application_request=True,
+                ),
             )
         transition_proposal(
             connection,
-            args.proposal_id,
-            ProposalState.APPLIED,
-            actor=args.actor,
-            evidence=evidence,
+            TransitionProposalRequest(
+                proposal_id=args.proposal_id,
+                target_state=ProposalState.APPLIED,
+                actor=args.actor,
+                evidence=evidence,
+            ),
         )
         return {"status": "applied", "proposal_id": args.proposal_id}
     finally:
@@ -538,13 +548,15 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
         with os.fdopen(descriptor, "w") as handle:
             handle.write(document)
     payload = launch_agent_payload(
-        executable=executable,
-        config_path=config_path,
-        working_directory=Path.cwd(),
-        docker_host=config.signoz.docker_host,
-        log_directory=Path("~/.local/state/agent-introspection").expanduser(),
-        interval_seconds=config.scheduler.interval_seconds,
-        timezone=config.scheduler.timezone,
+        LaunchAgentSpecification(
+            executable=executable,
+            config_path=config_path,
+            working_directory=Path.cwd(),
+            docker_host=config.signoz.docker_host,
+            log_directory=Path("~/.local/state/agent-introspection").expanduser(),
+            interval_seconds=config.scheduler.interval_seconds,
+            timezone=config.scheduler.timezone,
+        )
     )
     destination = install_schedule(payload)
     connection = connect_database(config.database.path)
@@ -579,12 +591,14 @@ def _legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
     try:
         return run_legacy_project_attribution(
             connection,
-            config,
-            client=_client(config),
-            start=parse_rfc3339(args.start),
-            end=parse_rfc3339(args.end),
-            approved_by=args.approved_by,
-            delivery_endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+            _client(config),
+            LegacyProjectAttributionRequest(
+                config=config,
+                start=parse_rfc3339(args.start),
+                end=parse_rfc3339(args.end),
+                approved_by=args.approved_by,
+                delivery_endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+            ),
         )
     finally:
         connection.close()
@@ -603,15 +617,9 @@ def _legacy_project_attribution_recover(args: argparse.Namespace) -> dict[str, A
         connection.close()
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-introspection")
-    parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
-    commands = parser.add_subparsers(dest="command", required=True)
-
-    doctor = commands.add_parser("doctor")
-    doctor.add_argument("--approve-schema", action="store_true")
-    commands.add_parser("health")
-    scan = commands.add_parser("scan")
+def _add_session_context_command(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     session_context = commands.add_parser("session-context").add_subparsers(
         dest="session_context_command", required=True
     )
@@ -620,8 +628,11 @@ def _parser() -> argparse.ArgumentParser:
         "--producer", choices=("claude-code", "codex-cli", "codex-app-server", "omp"), required=True
     )
     hook.add_argument("--stdin", action="store_true")
-    scan.add_argument("--scheduled", action="store_true")
 
+
+def _add_legacy_project_attribution_command(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     legacy_project_attribution = commands.add_parser(
         "legacy-project-attribution",
         help="Run explicit bounded legacy Codex project attribution.",
@@ -636,6 +647,9 @@ def _parser() -> argparse.ArgumentParser:
     legacy_run.add_argument("--approved-by", required=True)
     legacy_recover = legacy_project_attribution.add_parser("recover")
     legacy_recover.add_argument("--fact-set-id", required=True)
+
+
+def _add_candidates_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     candidates = commands.add_parser("candidates").add_subparsers(
         dest="candidates_command", required=True
     )
@@ -644,12 +658,18 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--batch-id")
     export.add_argument("--reserved-model-budget", type=int, required=True)
 
+
+def _add_classification_command(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     classification = commands.add_parser("classification").add_subparsers(
         dest="classification_command", required=True
     )
     classification_import = classification.add_parser("import")
     classification_import.add_argument("--input-json", required=True)
 
+
+def _add_proposal_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     proposal = commands.add_parser("proposal").add_subparsers(
         dest="proposal_command", required=True
     )
@@ -668,6 +688,8 @@ def _parser() -> argparse.ArgumentParser:
     applied.add_argument("--actor", required=True)
     applied.add_argument("--input-json", required=True)
 
+
+def _add_telemetry_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     telemetry = commands.add_parser("telemetry").add_subparsers(
         dest="telemetry_command", required=True
     )
@@ -676,11 +698,15 @@ def _parser() -> argparse.ArgumentParser:
     reconcile = telemetry.add_parser("reconcile-observations")
     reconcile.add_argument("--scan-run-id", action="append", required=True)
 
+
+def _add_dashboard_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     dashboard = commands.add_parser("dashboard").add_subparsers(
         dest="dashboard_command", required=True
     )
     dashboard.add_parser("verify")
 
+
+def _add_database_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     db = commands.add_parser("db").add_subparsers(dest="db_command", required=True)
     db.add_parser("check")
     backup = db.add_parser("backup")
@@ -690,49 +716,95 @@ def _parser() -> argparse.ArgumentParser:
     restore = db.add_parser("restore")
     restore.add_argument("backup_path")
 
+
+def _add_schedule_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     schedule = commands.add_parser("schedule").add_subparsers(
         dest="schedule_command", required=True
     )
     schedule.add_parser("install")
     schedule.add_parser("status")
     schedule.add_parser("remove")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="agent-introspection")
+    parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
+    commands = parser.add_subparsers(dest="command", required=True)
+    doctor = commands.add_parser("doctor")
+    doctor.add_argument("--approve-schema", action="store_true")
+    commands.add_parser("health")
+    scan = commands.add_parser("scan")
+    scan.add_argument("--scheduled", action="store_true")
+    _add_session_context_command(commands)
+    _add_legacy_project_attribution_command(commands)
+    _add_candidates_command(commands)
+    _add_classification_command(commands)
+    _add_proposal_command(commands)
+    _add_telemetry_command(commands)
+    _add_dashboard_command(commands)
+    _add_database_command(commands)
+    _add_schedule_command(commands)
     return parser
 
 
+def _legacy_project_attribution_handler(
+    args: argparse.Namespace,
+) -> Callable[[argparse.Namespace], dict[str, Any]]:
+    handlers = {
+        "run": _legacy_project_attribution,
+        "recover": _legacy_project_attribution_recover,
+    }
+    try:
+        return handlers[args.legacy_project_attribution_command]
+    except KeyError as exc:
+        raise AssertionError(args.legacy_project_attribution_command) from exc
+
+
+def _dispatch_legacy_project_attribution(args: argparse.Namespace) -> dict[str, Any]:
+    return _legacy_project_attribution_handler(args)(args)
+
+
+def _proposal_handler(args: argparse.Namespace) -> Callable[[argparse.Namespace], dict[str, Any]]:
+    handlers = {
+        "create": _proposal_create,
+        "list": _proposal_list,
+        "show": _proposal_show,
+        "decide": _proposal_decide,
+        "mark-applied": _proposal_mark_applied,
+    }
+    try:
+        return handlers[args.proposal_command]
+    except KeyError as exc:
+        raise AssertionError(args.proposal_command) from exc
+
+
+def _dispatch_proposal(args: argparse.Namespace) -> dict[str, Any]:
+    return _proposal_handler(args)(args)
+
+
+def _command_handler(args: argparse.Namespace) -> Callable[[argparse.Namespace], dict[str, Any]]:
+    handlers = {
+        "doctor": _doctor,
+        "health": _health,
+        "scan": _scan,
+        "session-context": _session_context_hook,
+        "legacy-project-attribution": _dispatch_legacy_project_attribution,
+        "candidates": _candidates_export,
+        "classification": _classification_import,
+        "proposal": _dispatch_proposal,
+        "telemetry": _telemetry_command,
+        "dashboard": _dashboard_verify,
+        "db": _db_command,
+        "schedule": _schedule_command,
+    }
+    try:
+        return handlers[args.command]
+    except KeyError as exc:
+        raise AssertionError(args.command) from exc
+
+
 def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
-    if args.command == "doctor":
-        return _doctor(args)
-    if args.command == "health":
-        return _health(args)
-    if args.command == "scan":
-        return _scan(args)
-    if args.command == "session-context":
-        return _session_context_hook(args)
-    if args.command == "legacy-project-attribution":
-        if args.legacy_project_attribution_command == "run":
-            return _legacy_project_attribution(args)
-        return _legacy_project_attribution_recover(args)
-    if args.command == "candidates":
-        return _candidates_export(args)
-    if args.command == "classification":
-        return _classification_import(args)
-    if args.command == "proposal":
-        return {
-            "create": _proposal_create,
-            "list": _proposal_list,
-            "show": _proposal_show,
-            "decide": _proposal_decide,
-            "mark-applied": _proposal_mark_applied,
-        }[args.proposal_command](args)
-    if args.command == "telemetry":
-        return _telemetry_command(args)
-    if args.command == "dashboard":
-        return _dashboard_verify(args)
-    if args.command == "db":
-        return _db_command(args)
-    if args.command == "schedule":
-        return _schedule_command(args)
-    raise AssertionError(args.command)
+    return _command_handler(args)(args)
 
 
 def _fail(code: int, exc: BaseException) -> NoReturn:

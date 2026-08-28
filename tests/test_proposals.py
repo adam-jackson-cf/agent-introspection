@@ -6,6 +6,7 @@ import pytest
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
+    TransitionProposalRequest,
     create_proposal,
     transition_proposal,
 )
@@ -96,10 +97,12 @@ def test_approval_is_a_decision_and_application_requires_separate_explicit_reque
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
-        proposal_id,
-        ProposalState.APPROVED,
-        actor="user",
-        evidence={"decision": "approved"},
+        TransitionProposalRequest(
+            proposal_id=proposal_id,
+            target_state=ProposalState.APPROVED,
+            actor="user",
+            evidence={"decision": "approved"},
+        ),
     )
     assert (
         connection.execute("SELECT state FROM proposals WHERE id = ?", (proposal_id,)).fetchone()[0]
@@ -108,33 +111,41 @@ def test_approval_is_a_decision_and_application_requires_separate_explicit_reque
     with pytest.raises(PermissionError, match="separate explicit"):
         transition_proposal(
             connection,
-            proposal_id,
-            ProposalState.APPLYING,
-            actor="executor",
-            evidence={},
+            TransitionProposalRequest(
+                proposal_id=proposal_id,
+                target_state=ProposalState.APPLYING,
+                actor="executor",
+                evidence={},
+            ),
         )
     transition_proposal(
         connection,
-        proposal_id,
-        ProposalState.APPLYING,
-        actor="user",
-        evidence={"request": "apply"},
-        explicit_application_request=True,
+        TransitionProposalRequest(
+            proposal_id=proposal_id,
+            target_state=ProposalState.APPLYING,
+            actor="user",
+            evidence={"request": "apply"},
+            explicit_application_request=True,
+        ),
     )
     with pytest.raises(ValueError, match="validation evidence"):
         transition_proposal(
             connection,
-            proposal_id,
-            ProposalState.APPLIED,
-            actor="executor",
-            evidence={},
+            TransitionProposalRequest(
+                proposal_id=proposal_id,
+                target_state=ProposalState.APPLIED,
+                actor="executor",
+                evidence={},
+            ),
         )
     transition_proposal(
         connection,
-        proposal_id,
-        ProposalState.APPLIED,
-        actor="executor",
-        evidence={"validation": ["quality command passed"]},
+        TransitionProposalRequest(
+            proposal_id=proposal_id,
+            target_state=ProposalState.APPLIED,
+            actor="executor",
+            evidence={"validation": ["quality command passed"]},
+        ),
     )
     assert connection.execute(
         "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)

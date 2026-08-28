@@ -42,6 +42,7 @@ from agent_introspection.session_context import drain_inbox, inbox_path
 from agent_introspection.source import (
     CANONICAL_SERVICE_PRODUCERS,
     ClickHouseClient,
+    HydrationRequest,
     HydrationRow,
     LogRow,
     SourceSessionRow,
@@ -116,6 +117,63 @@ class PipelineStream:
     latest_timestamp_ns: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _PipelineSnapshotRequest:
+    scan_run_id: str
+    end_ns: int
+    terminal_status: str
+    error_class: str | None
+    logs: PipelineStream
+    traces: PipelineStream
+    hydration: PipelineStream
+    finished_ns: int
+    duration_ms: float
+    rows_processed: int
+    pending_after_drain: int
+
+
+def _snapshot_attributes(
+    request: _PipelineSnapshotRequest,
+    *,
+    freshness: str,
+    logs_lag: tuple[str, int | None],
+    traces_lag: tuple[str, int | None],
+) -> dict[str, str | int | float | bool]:
+    logs_lag_state, logs_lag_ms = logs_lag
+    traces_lag_state, traces_lag_ms = traces_lag
+    attributes: dict[str, str | int | float | bool] = {
+        "pipeline.state": _pipeline_state(
+            terminal_status=request.terminal_status,
+            freshness=freshness,
+            logs=request.logs,
+            traces=request.traces,
+            hydration=request.hydration,
+        ),
+        "scan.terminal_status": request.terminal_status,
+        "pipeline.freshness": freshness,
+        "logs.query_status": request.logs.query_status,
+        "logs.data_state": request.logs.data_state,
+        "traces.query_status": request.traces.query_status,
+        "traces.data_state": request.traces.data_state,
+        "hydration.query_status": request.hydration.query_status,
+        "hydration.data_state": request.hydration.data_state,
+        "logs.lag_state": logs_lag_state,
+        "traces.lag_state": traces_lag_state,
+        "scan.duration_ms": request.duration_ms,
+        "rows.processed": request.rows_processed,
+        "outbox.pending_after_drain_excluding_terminal_event": request.pending_after_drain,
+    }
+    optional = (
+        ("pipeline.error_class", request.error_class),
+        ("logs.latest_timestamp_ns", request.logs.latest_timestamp_ns),
+        ("traces.latest_timestamp_ns", request.traces.latest_timestamp_ns),
+        ("logs.lag_ms", logs_lag_ms),
+        ("traces.lag_ms", traces_lag_ms),
+    )
+    attributes.update({key: value for key, value in optional if value is not None})
+    return attributes
+
+
 def _stream_lag(stream: PipelineStream, *, finished_ns: int) -> tuple[str, int | None]:
     if stream.latest_timestamp_ns is None:
         return "not_applicable", None
@@ -170,68 +228,28 @@ def _pipeline_state(
     return "unhealthy"
 
 
-def _pipeline_snapshot_event(
-    *,
-    scan_run_id: str,
-    end_ns: int,
-    terminal_status: str,
-    error_class: str | None,
-    logs: PipelineStream,
-    traces: PipelineStream,
-    hydration: PipelineStream,
-    finished_ns: int,
-    duration_ms: float,
-    rows_processed: int,
-    pending_after_drain: int,
-) -> DerivedEvent:
-    logs_lag_state, logs_lag_ms = _stream_lag(logs, finished_ns=finished_ns)
-    traces_lag_state, traces_lag_ms = _stream_lag(traces, finished_ns=finished_ns)
+def _pipeline_snapshot_event(request: _PipelineSnapshotRequest) -> DerivedEvent:
+    logs_lag = _stream_lag(request.logs, finished_ns=request.finished_ns)
+    traces_lag = _stream_lag(request.traces, finished_ns=request.finished_ns)
     freshness = _freshness(
-        terminal_status=terminal_status,
-        logs=logs,
-        traces=traces,
-        finished_ns=finished_ns,
+        terminal_status=request.terminal_status,
+        logs=request.logs,
+        traces=request.traces,
+        finished_ns=request.finished_ns,
     )
-    attributes: dict[str, str | int | float | bool] = {
-        "pipeline.state": _pipeline_state(
-            terminal_status=terminal_status,
-            freshness=freshness,
-            logs=logs,
-            traces=traces,
-            hydration=hydration,
-        ),
-        "scan.terminal_status": terminal_status,
-        "pipeline.freshness": freshness,
-        "logs.query_status": logs.query_status,
-        "logs.data_state": logs.data_state,
-        "traces.query_status": traces.query_status,
-        "traces.data_state": traces.data_state,
-        "hydration.query_status": hydration.query_status,
-        "hydration.data_state": hydration.data_state,
-        "logs.lag_state": logs_lag_state,
-        "traces.lag_state": traces_lag_state,
-        "scan.duration_ms": duration_ms,
-        "rows.processed": rows_processed,
-        "outbox.pending_after_drain_excluding_terminal_event": pending_after_drain,
-    }
-    if error_class is not None:
-        attributes["pipeline.error_class"] = error_class
-    if logs.latest_timestamp_ns is not None:
-        attributes["logs.latest_timestamp_ns"] = logs.latest_timestamp_ns
-    if traces.latest_timestamp_ns is not None:
-        attributes["traces.latest_timestamp_ns"] = traces.latest_timestamp_ns
-    if logs_lag_ms is not None:
-        attributes["logs.lag_ms"] = logs_lag_ms
-    if traces_lag_ms is not None:
-        attributes["traces.lag_ms"] = traces_lag_ms
     return DerivedEvent(
         scope=OPERATIONAL_SCOPE,
-        entity_id=scan_run_id,
+        entity_id=request.scan_run_id,
         entity_version=1,
         event_sequence=1,
         event_name="introspection.pipeline.snapshot",
-        attributes=attributes,
-        timestamp_ns=end_ns,
+        attributes=_snapshot_attributes(
+            request,
+            freshness=freshness,
+            logs_lag=logs_lag,
+            traces_lag=traces_lag,
+        ),
+        timestamp_ns=request.end_ns,
     )
 
 
@@ -570,112 +588,171 @@ _SourceSessionTerminal = tuple[str, str, str | None, tuple[str, str, str, str] |
 _ResolvedSourceSessionInterval = tuple[datetime, datetime | None, _SourceSessionTerminal]
 
 
-def _source_session_terminal(
-    connection: sqlite3.Connection,
-    row: SourceSessionRow,
-    *,
-    clock_skew_seconds: int = 0,
-    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]] | None = None,
+@dataclass(frozen=True, slots=True)
+class _SourceSessionResolutionRequest:
+    connection: sqlite3.Connection
+    row: SourceSessionRow
+    clock_skew_seconds: int
+    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]] | None
+
+
+def _source_session_input_terminal(row: SourceSessionRow) -> _SourceSessionTerminal | None:
+    reasons = {
+        "missing": "missing_native_session_id",
+        "wrong_field": "wrong_native_session_field",
+        "conflicting": "conflicting_native_session_id",
+    }
+    reason = reasons.get(row.session_status)
+    return ("failed", reason, None, None) if reason is not None else None
+
+
+def _cached_source_session_terminal(
+    request: _SourceSessionResolutionRequest, cache_key: tuple[str, str]
+) -> _SourceSessionTerminal | None:
+    if request.resolved_intervals is None:
+        return None
+    source_at = request.row.source_timestamp.astimezone(UTC)
+    for started_at, ended_at, terminal in request.resolved_intervals.get(cache_key, []):
+        if started_at <= source_at and (ended_at is None or source_at < ended_at):
+            return terminal
+    return None
+
+
+def _resolved_source_session_terminal(
+    request: _SourceSessionResolutionRequest,
+    producer: tuple[str, str],
+    cache_key: tuple[str, str],
+    evidence_id: str,
 ) -> _SourceSessionTerminal:
-    """Resolve a raw record through its canonical producer and one native session."""
-    producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
-    if producer is None:
-        return "failed", "unmapped_service_name", None, None
-    if row.session_status == "missing":
-        return "failed", "missing_native_session_id", None, None
-    if row.session_status == "wrong_field":
-        return "failed", "wrong_native_session_field", None, None
-    if row.session_status == "conflicting":
-        return "failed", "conflicting_native_session_id", None, None
-    cache_key = (producer[0], row.native_session_ids[0])
-    source_at = row.source_timestamp.astimezone(UTC)
-    if resolved_intervals is not None:
-        for started_at, ended_at, terminal in resolved_intervals.get(cache_key, []):
-            if started_at <= source_at and (ended_at is None or source_at < ended_at):
-                return terminal
-    attribution = resolve_attribution(
-        connection,
-        producer=producer[0],
-        correlation_id=row.native_session_ids[0],
-        source_at=source_at,
-        clock_skew_seconds=clock_skew_seconds,
-    )
-    if attribution.state == "resolved":
-        project = connection.execute(
-            """
-            SELECT project_id, project_name, project_root, project_kind
-            FROM session_context_intervals WHERE event_id = ?
-            UNION
-            SELECT project_id, project_name, project_root, project_kind
-            FROM session_context_events WHERE event_id = ?
-            """,
-            (attribution.evidence_id, attribution.evidence_id),
-        ).fetchone()
-        if project is None:
-            raise ScanError("resolved source session attribution lacks context evidence")
-        terminal = ("attributed", "accepted_git_context", attribution.evidence_id, tuple(project))
-        if resolved_intervals is not None:
-            interval = connection.execute(
-                """
-                SELECT started_at, ended_at
-                FROM session_context_intervals
-                WHERE event_id = ? AND producer = ? AND session_id = ?
-                  AND NOT EXISTS (
-                      SELECT 1 FROM session_context_event_supersessions AS supersession
-                      WHERE supersession.original_event_id = session_context_intervals.event_id
-                         OR supersession.original_event_id = session_context_intervals.end_event_id
-                  )
-                """,
-                (attribution.evidence_id, producer[0], row.native_session_ids[0]),
-            ).fetchone()
-            if interval is not None:
-                started_at = datetime.fromisoformat(str(interval[0])).astimezone(UTC)
-                ended_at = (
-                    datetime.fromisoformat(str(interval[1])).astimezone(UTC)
-                    if interval[1] is not None
-                    else None
-                )
-                resolved_intervals.setdefault(cache_key, []).append(
-                    (started_at, ended_at, terminal)
-                )
-        return terminal
-    rejection = connection.execute(
+    project = request.connection.execute(
+        """
+        SELECT project_id, project_name, project_root, project_kind
+        FROM session_context_intervals WHERE event_id = ?
+        UNION
+        SELECT project_id, project_name, project_root, project_kind
+        FROM session_context_events WHERE event_id = ?
+        """,
+        (evidence_id, evidence_id),
+    ).fetchone()
+    if project is None:
+        raise ScanError("resolved source session attribution lacks context evidence")
+    terminal = ("attributed", "accepted_git_context", evidence_id, tuple(project))
+    _cache_resolved_source_session(request, producer, cache_key, evidence_id, terminal)
+    return terminal
+
+
+def _cache_resolved_source_session(
+    request: _SourceSessionResolutionRequest,
+    producer: tuple[str, str],
+    cache_key: tuple[str, str],
+    evidence_id: str,
+    terminal: _SourceSessionTerminal,
+) -> None:
+    if request.resolved_intervals is None:
+        return
+    interval = request.connection.execute(
+        """
+        SELECT started_at, ended_at
+        FROM session_context_intervals
+        WHERE event_id = ? AND producer = ? AND session_id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM session_context_event_supersessions AS supersession
+              WHERE supersession.original_event_id = session_context_intervals.event_id
+                 OR supersession.original_event_id = session_context_intervals.end_event_id
+          )
+        """,
+        (evidence_id, producer[0], request.row.native_session_ids[0]),
+    ).fetchone()
+    if interval is not None:
+        started_at = datetime.fromisoformat(str(interval[0])).astimezone(UTC)
+        ended_at = datetime.fromisoformat(str(interval[1])).astimezone(UTC) if interval[1] else None
+        request.resolved_intervals.setdefault(cache_key, []).append(
+            (started_at, ended_at, terminal)
+        )
+
+
+def _source_session_failure_terminal(
+    request: _SourceSessionResolutionRequest, producer: tuple[str, str], reason_code: str | None
+) -> _SourceSessionTerminal:
+    rejection = request.connection.execute(
         """
         SELECT id FROM canonical_rejections
         WHERE producer = ? AND producer_surface = ? AND correlation_id = ?
           AND reason_code = 'non_git_workspace'
         ORDER BY occurred_at, id LIMIT 1
         """,
-        (producer[0], producer[1], row.native_session_ids[0]),
+        (producer[0], producer[1], request.row.native_session_ids[0]),
     ).fetchone()
     if rejection is not None:
         return "expected_rejection", "approved_non_git_workspace", str(rejection[0]), None
-    return (
-        "failed",
+    reason = (
         "conflicting_correlation_id"
-        if attribution.reason_code == "conflicting_correlation_id"
-        else "no_authoritative_context",
-        None,
-        None,
+        if reason_code == "conflicting_correlation_id"
+        else "no_authoritative_context"
     )
+    return "failed", reason, None, None
 
 
-def _persist_source_sessions(
-    connection: sqlite3.Connection,
-    *,
-    scan_run_id: str,
-    rows: list[SourceSessionRow],
-    persist_records: bool = True,
-    clock_skew_seconds: int = 0,
-) -> dict[str, int]:
-    """Append raw history and version the canonical current projection only when it changes."""
-    outcomes = {
-        "included": 0,
-        "attributed": 0,
-        "expected_rejection": 0,
-        "failed": 0,
-        "blocked": 0,
-    }
+def _source_session_terminal(request: _SourceSessionResolutionRequest) -> _SourceSessionTerminal:
+    """Resolve a raw record through its canonical producer and one native session."""
+    producer = CANONICAL_SERVICE_PRODUCERS.get(request.row.service_name)
+    if producer is None:
+        return "failed", "unmapped_service_name", None, None
+    input_terminal = _source_session_input_terminal(request.row)
+    if input_terminal is not None:
+        return input_terminal
+    cache_key = producer[0], request.row.native_session_ids[0]
+    cached = _cached_source_session_terminal(request, cache_key)
+    if cached is not None:
+        return cached
+    attribution = resolve_attribution(
+        request.connection,
+        producer=producer[0],
+        correlation_id=request.row.native_session_ids[0],
+        source_at=request.row.source_timestamp.astimezone(UTC),
+        clock_skew_seconds=request.clock_skew_seconds,
+    )
+    if attribution.state == "resolved":
+        return _resolved_source_session_terminal(
+            request, producer, cache_key, cast(str, attribution.evidence_id)
+        )
+    return _source_session_failure_terminal(request, producer, attribution.reason_code)
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceSessionPersistenceRequest:
+    connection: sqlite3.Connection
+    scan_run_id: str
+    rows: list[SourceSessionRow]
+    persist_records: bool
+    clock_skew_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceSessionPersistenceState:
+    current_by_key: dict[tuple[str, str, str], tuple[object, ...]]
+    events: list[DerivedEvent]
+    current_versions: list[tuple[object, ...]]
+    current_rows: list[tuple[object, ...]]
+    records: list[tuple[object, ...]]
+    outcomes: dict[str, int]
+    persisted_at: str
+    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]]
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceSessionChangeRequest:
+    persistence: _SourceSessionPersistenceRequest
+    state: _SourceSessionPersistenceState
+    row: SourceSessionRow
+    key: tuple[str, str, str]
+    projection: tuple[object, ...]
+    current: tuple[object, ...] | None
+
+
+def _source_session_current(
+    connection: sqlite3.Connection, rows: list[SourceSessionRow]
+) -> dict[tuple[str, str, str], tuple[object, ...]]:
     keys = tuple(sorted({(row.source_kind, row.service_name, row.source_id) for row in rows}))
     current_by_key: dict[tuple[str, str, str], tuple[object, ...]] = {}
     for offset in range(0, len(keys), 300):
@@ -683,181 +760,203 @@ def _persist_source_sessions(
         placeholders = ",".join("(?, ?, ?)" for _ in batch)
         parameters = tuple(value for key in batch for value in key)
         for current in connection.execute(
-            f"""
-            SELECT source_kind, service_name, source_id, version, terminal_outcome,
-                   terminal_reason, context_evidence_id, project_id, project_name,
-                   project_root, project_kind, projection_event_id
-            FROM source_session_current
-            WHERE (source_kind, service_name, source_id) IN ({placeholders})
-            """,
+            f"""SELECT source_kind, service_name, source_id, version, terminal_outcome,
+            terminal_reason, context_evidence_id, project_id, project_name,
+            project_root, project_kind, projection_event_id FROM source_session_current
+            WHERE (source_kind, service_name, source_id) IN ({placeholders})""",
             parameters,
         ):
             current_by_key[(str(current[0]), str(current[1]), str(current[2]))] = tuple(current[3:])
+    return current_by_key
 
-    events: list[DerivedEvent] = []
-    current_versions: list[tuple[object, ...]] = []
-    current_rows: list[tuple[object, ...]] = []
-    records: list[tuple[object, ...]] = []
-    persisted_at = _iso_now()
-    resolved_intervals: dict[tuple[str, str], list[_ResolvedSourceSessionInterval]] = {}
-    for row in rows:
-        terminal_outcome, terminal_reason, evidence_id, project = _source_session_terminal(
-            connection,
-            row,
-            clock_skew_seconds=clock_skew_seconds,
-            resolved_intervals=resolved_intervals,
-        )
-        if terminal_outcome == "blocked":
-            raise ScanError("observed raw source session cannot be blocked")
-        key = (row.source_kind, row.service_name, row.source_id)
-        current = current_by_key.get(key)
-        projection = (
-            terminal_outcome,
-            terminal_reason,
-            evidence_id,
-            *(project if project is not None else (None, None, None, None)),
-        )
-        current_projection = tuple(current[1:8]) if current is not None else None
-        if current_projection == projection:
-            assert current is not None
-            version = int(cast(int, current[0]))
-            projection_event_id = str(current[8])
-        else:
-            version = 1 if current is None else int(cast(int, current[0])) + 1
-            source_timestamp_ns = int(row.source_timestamp.timestamp() * 1_000_000_000)
-            attributes: dict[str, str | int | float | bool] = {
-                "source.signal": row.source_kind,
-                "source.service": row.service_name,
-                "source.record.id": row.source_id,
-                "source.timestamp_ns": source_timestamp_ns,
-                "source.native_key.status": row.session_status,
-                "source.session_group.id": _source_session_group_id(row),
-                "source.inclusion.status": "included",
-                "source.inclusion.reason": "mapped_to_frozen_source_contract",
-                "source.terminal.outcome": terminal_outcome,
-                "source.terminal.reason": terminal_reason,
+
+def _source_session_projection(terminal: _SourceSessionTerminal) -> tuple[object, ...]:
+    outcome, reason, evidence_id, project = terminal
+    return outcome, reason, evidence_id, *(project if project is not None else (None,) * 4)
+
+
+def _source_session_attributes(
+    row: SourceSessionRow, projection: tuple[object, ...]
+) -> dict[str, str | int | float | bool]:
+    outcome, reason, evidence_id, project_id, project_name, project_root, project_kind = projection
+    attributes: dict[str, str | int | float | bool] = {
+        "source.signal": row.source_kind,
+        "source.service": row.service_name,
+        "source.record.id": row.source_id,
+        "source.timestamp_ns": int(row.source_timestamp.timestamp() * 1_000_000_000),
+        "source.native_key.status": row.session_status,
+        "source.session_group.id": _source_session_group_id(row),
+        "source.inclusion.status": "included",
+        "source.inclusion.reason": "mapped_to_frozen_source_contract",
+        "source.terminal.outcome": cast(str, outcome),
+        "source.terminal.reason": cast(str, reason),
+    }
+    producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
+    if row.session_status == "exact" and producer is not None:
+        attributes.update(
+            {
+                "source.producer": producer[0],
+                "source.producer_surface": producer[1],
+                "source.session.id": row.native_session_ids[0],
             }
-            producer = CANONICAL_SERVICE_PRODUCERS.get(row.service_name)
-            if row.session_status == "exact" and producer is not None:
-                attributes.update(
-                    {
-                        "source.producer": producer[0],
-                        "source.producer_surface": producer[1],
-                        "source.session.id": row.native_session_ids[0],
-                    }
-                )
-            if evidence_id is not None:
-                attributes["source.context.evidence_id"] = evidence_id
-            if project is not None:
-                attributes.update(
-                    {
-                        "agent.project.id": project[0],
-                        "agent.project.name": project[1],
-                        "agent.project.root": project[2],
-                        "agent.project.kind": project[3],
-                    }
-                )
-            events.append(
-                DerivedEvent(
-                    scope="source-session",
-                    event_name="introspection.source_session.recorded",
-                    entity_id=_source_session_identity(row),
-                    entity_version=version,
-                    event_sequence=1,
-                    timestamp_ns=source_timestamp_ns,
-                    attributes=attributes,
-                )
-            )
-            projection_event_id = hashlib.sha256(
-                f"{_source_session_identity(row)}\x1f{version}".encode()
-            ).hexdigest()
-            current_versions.append(
-                (
-                    row.source_kind,
-                    row.service_name,
-                    row.source_id,
-                    version,
-                    scan_run_id,
-                    *projection,
-                    projection_event_id,
-                    persisted_at,
-                )
-            )
-            session_identifiers = (
-                json.dumps(row.session_ids, separators=(",", ":")),
-                json.dumps(row.thread_ids, separators=(",", ":")),
-                json.dumps(row.legacy_thread_ids, separators=(",", ":")),
-                json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
-            )
-            native_key = _source_native_key(row)
-            current_rows.append(
-                (
-                    row.source_kind,
-                    row.service_name,
-                    row.source_id,
-                    version,
-                    *projection,
-                    projection_event_id,
-                    row.source_timestamp.isoformat(),
-                    *session_identifiers,
-                    *(native_key if native_key is not None else (None, None)),
-                    persisted_at,
-                )
-            )
-            current_by_key[key] = (version, *projection, projection_event_id)
-        if persist_records:
-            records.append(
-                (
-                    scan_run_id,
-                    row.source_kind,
-                    row.service_name,
-                    row.source_id,
-                    row.source_timestamp.isoformat(),
-                    json.dumps(row.session_ids, separators=(",", ":")),
-                    json.dumps(row.thread_ids, separators=(",", ":")),
-                    json.dumps(row.legacy_thread_ids, separators=(",", ":")),
-                    json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
-                    *projection,
-                    projection_event_id,
-                    persisted_at,
-                )
-            )
-        outcomes["included"] += 1
-        outcomes[terminal_outcome] += 1
+        )
+    optional = (
+        ("source.context.evidence_id", evidence_id),
+        ("agent.project.id", project_id),
+        ("agent.project.name", project_name),
+        ("agent.project.root", project_root),
+        ("agent.project.kind", project_kind),
+    )
+    for key, value in optional:
+        if value is not None:
+            attributes[key] = cast(str | int | float | bool, value)
+    return attributes
 
-    if events:
-        enqueue_events(connection, events)
-    if current_versions:
+
+def _source_session_identifiers(row: SourceSessionRow) -> tuple[str, str, str, str]:
+    return (
+        json.dumps(row.session_ids, separators=(",", ":")),
+        json.dumps(row.thread_ids, separators=(",", ":")),
+        json.dumps(row.legacy_thread_ids, separators=(",", ":")),
+        json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
+    )
+
+
+def _append_source_session_change(request: _SourceSessionChangeRequest) -> tuple[int, str]:
+    row = request.row
+    version = 1 if request.current is None else int(cast(int, request.current[0])) + 1
+    projection_event_id = hashlib.sha256(
+        f"{_source_session_identity(row)}\x1f{version}".encode()
+    ).hexdigest()
+    source_timestamp_ns = int(row.source_timestamp.timestamp() * 1_000_000_000)
+    request.state.events.append(
+        DerivedEvent(
+            scope="source-session",
+            event_name="introspection.source_session.recorded",
+            entity_id=_source_session_identity(row),
+            entity_version=version,
+            event_sequence=1,
+            timestamp_ns=source_timestamp_ns,
+            attributes=_source_session_attributes(row, request.projection),
+        )
+    )
+    request.state.current_versions.append(
+        (
+            row.source_kind,
+            row.service_name,
+            row.source_id,
+            version,
+            request.persistence.scan_run_id,
+            *request.projection,
+            projection_event_id,
+            request.state.persisted_at,
+        )
+    )
+    native_key = _source_native_key(row)
+    request.state.current_rows.append(
+        (
+            row.source_kind,
+            row.service_name,
+            row.source_id,
+            version,
+            *request.projection,
+            projection_event_id,
+            row.source_timestamp.isoformat(),
+            *_source_session_identifiers(row),
+            *(native_key if native_key is not None else (None, None)),
+            request.state.persisted_at,
+        )
+    )
+    request.state.current_by_key[request.key] = (
+        version,
+        *request.projection,
+        projection_event_id,
+    )
+    return version, projection_event_id
+
+
+def _append_source_session_record(
+    request: _SourceSessionPersistenceRequest,
+    state: _SourceSessionPersistenceState,
+    row: SourceSessionRow,
+    projection: tuple[object, ...],
+    projection_event_id: str,
+) -> None:
+    if request.persist_records:
+        state.records.append(
+            (
+                request.scan_run_id,
+                row.source_kind,
+                row.service_name,
+                row.source_id,
+                row.source_timestamp.isoformat(),
+                *_source_session_identifiers(row),
+                *projection,
+                projection_event_id,
+                state.persisted_at,
+            )
+        )
+
+
+def _persist_source_session_row(
+    request: _SourceSessionPersistenceRequest,
+    state: _SourceSessionPersistenceState,
+    row: SourceSessionRow,
+) -> None:
+    terminal = _source_session_terminal(
+        _SourceSessionResolutionRequest(
+            request.connection, row, request.clock_skew_seconds, state.resolved_intervals
+        )
+    )
+    outcome = terminal[0]
+    if outcome == "blocked":
+        raise ScanError("observed raw source session cannot be blocked")
+    key = row.source_kind, row.service_name, row.source_id
+    projection = _source_session_projection(terminal)
+    current = state.current_by_key.get(key)
+    if current is not None and tuple(current[1:8]) == projection:
+        version, projection_event_id = int(cast(int, current[0])), str(current[8])
+    else:
+        version, projection_event_id = _append_source_session_change(
+            _SourceSessionChangeRequest(request, state, row, key, projection, current)
+        )
+    del version
+    _append_source_session_record(request, state, row, projection, projection_event_id)
+    state.outcomes["included"] += 1
+    state.outcomes[outcome] += 1
+
+
+def _flush_source_session_persistence(
+    connection: sqlite3.Connection, state: _SourceSessionPersistenceState
+) -> None:
+    if state.events:
+        enqueue_events(connection, state.events)
+    if state.current_versions:
         connection.executemany(
             """
             INSERT INTO source_session_current_versions (
-                source_kind, service_name, source_id, version, scan_run_id,
-                terminal_outcome, terminal_reason, context_evidence_id,
-                project_id, project_name, project_root, project_kind,
-                projection_event_id, created_at
+                source_kind, service_name, source_id, version, scan_run_id, terminal_outcome,
+                terminal_reason, context_evidence_id, project_id, project_name, project_root,
+                project_kind, projection_event_id, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            current_versions,
+            state.current_versions,
         )
         connection.executemany(
             """
             INSERT INTO source_session_current (
-                source_kind, service_name, source_id, version,
-                terminal_outcome, terminal_reason, context_evidence_id,
-                project_id, project_name, project_root, project_kind,
-                projection_event_id, source_timestamp, session_ids_json,
-                thread_ids_json, legacy_thread_ids_json,
-                gen_ai_conversation_ids_json, native_producer, native_session_id, updated_at
+                source_kind, service_name, source_id, version, terminal_outcome, terminal_reason,
+                context_evidence_id, project_id, project_name, project_root, project_kind,
+                projection_event_id, source_timestamp, session_ids_json, thread_ids_json,
+                legacy_thread_ids_json, gen_ai_conversation_ids_json, native_producer,
+                native_session_id, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_kind, service_name, source_id) DO UPDATE SET
-                version = excluded.version,
-                terminal_outcome = excluded.terminal_outcome,
+                version = excluded.version, terminal_outcome = excluded.terminal_outcome,
                 terminal_reason = excluded.terminal_reason,
                 context_evidence_id = excluded.context_evidence_id,
-                project_id = excluded.project_id,
-                project_name = excluded.project_name,
-                project_root = excluded.project_root,
-                project_kind = excluded.project_kind,
+                project_id = excluded.project_id, project_name = excluded.project_name,
+                project_root = excluded.project_root, project_kind = excluded.project_kind,
                 projection_event_id = excluded.projection_event_id,
                 source_timestamp = excluded.source_timestamp,
                 session_ids_json = excluded.session_ids_json,
@@ -868,9 +967,9 @@ def _persist_source_sessions(
                 native_session_id = excluded.native_session_id,
                 updated_at = excluded.updated_at
             """,
-            current_rows,
+            state.current_rows,
         )
-    if records:
+    if state.records:
         connection.executemany(
             """
             INSERT INTO source_session_records (
@@ -881,8 +980,26 @@ def _persist_source_sessions(
                 projection_event_id, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            records,
+            state.records,
         )
+
+
+def _persist_source_sessions(request: _SourceSessionPersistenceRequest) -> dict[str, int]:
+    """Append raw history and version the canonical current projection only when it changes."""
+    outcomes = {"included": 0, "attributed": 0, "expected_rejection": 0, "failed": 0, "blocked": 0}
+    state = _SourceSessionPersistenceState(
+        _source_session_current(request.connection, request.rows),
+        [],
+        [],
+        [],
+        [],
+        outcomes,
+        _iso_now(),
+        {},
+    )
+    for row in request.rows:
+        _persist_source_session_row(request, state, row)
+    _flush_source_session_persistence(request.connection, state)
     if outcomes["blocked"] != 0:
         raise ScanError("observed raw source sessions cannot be blocked")
     if outcomes["included"] != sum(
@@ -1253,11 +1370,13 @@ def _reconcile_late_source_sessions(
                 seen.add(identity)
                 rows_to_reconcile.append(row)
     outcomes = _persist_source_sessions(
-        connection,
-        scan_run_id=scan_run_id,
-        rows=rows_to_reconcile,
-        persist_records=False,
-        clock_skew_seconds=clock_skew_seconds,
+        _SourceSessionPersistenceRequest(
+            connection,
+            scan_run_id,
+            rows_to_reconcile,
+            persist_records=False,
+            clock_skew_seconds=clock_skew_seconds,
+        )
     )
     completed_at = _iso_now()
     for pending_identity, source_identities in row_identities.items():
@@ -1359,6 +1478,243 @@ def _persist_projects(connection: sqlite3.Connection, projects: dict[str, Projec
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _ScanWindow:
+    start_ns: int
+    end_ns: int
+    start_bucket: int
+    end_bucket: int
+    raw_source_window: tuple[int, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceAcquisition:
+    logs: list[LogRow]
+    traces: list[TraceRow]
+    hydration: list[HydrationRow]
+    source_sessions: list[SourceSessionRow]
+    logs_stream: PipelineStream
+    traces_stream: PipelineStream
+    hydration_stream: PipelineStream
+
+
+@dataclass(frozen=True, slots=True)
+class _DetectorPersistence:
+    activities: list[CanonicalActivity]
+    trend_evaluations: list[TrendEvaluation]
+    source_conservation: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _DetectorPersistenceRequest:
+    connection: sqlite3.Connection
+    config: AppConfig
+    scan_run_id: str
+    now: datetime
+    window: _ScanWindow
+    sources: _SourceAcquisition
+
+
+@dataclass(frozen=True, slots=True)
+class _LeasedScanRequest:
+    connection: sqlite3.Connection
+    config: AppConfig
+    source: ClickHouseClient
+    now: datetime
+    scan_run_id: str
+    started: float
+    deadline: tuple[Any, tuple[float, float]]
+
+
+def _prepare_scan_window(
+    connection: sqlite3.Connection,
+    *,
+    config: AppConfig,
+    source: ClickHouseClient,
+    end_ns: int,
+) -> _ScanWindow:
+    verify_network_perimeter(docker_context=config.signoz.docker_context)
+    enforce_approved_schema(connection, discover_source_schema(source))
+    try:
+        initial_start_ns = _raw_source_anchor(connection)
+    except ScanError:
+        logs_earliest_ns, traces_earliest_ns = source.raw_source_window_anchor()
+        _approve_raw_source_anchor(
+            connection,
+            logs_earliest_ns=logs_earliest_ns,
+            traces_earliest_ns=traces_earliest_ns,
+        )
+        initial_start_ns = _raw_source_anchor(connection)
+    start_ns, bounded_end_ns, start_bucket, end_bucket = _bounds(
+        connection,
+        end_ns,
+        initial_start_ns=initial_start_ns,
+        replay_overlap_seconds=config.lifecycle.clock_skew_seconds,
+    )
+    return _ScanWindow(
+        start_ns=start_ns,
+        end_ns=bounded_end_ns,
+        start_bucket=start_bucket,
+        end_bucket=end_bucket,
+        raw_source_window=_claim_raw_source_window(connection, end_ns=bounded_end_ns),
+    )
+
+
+def _acquire_scan_sources(source: ClickHouseClient, window: _ScanWindow) -> _SourceAcquisition:
+    logs = list(source.logs(start_ns=window.start_ns, end_ns=window.end_ns))
+    logs_stream = PipelineStream(
+        query_status="available",
+        data_state="records" if logs else "no_data",
+        latest_timestamp_ns=max((log.timestamp_ns for log in logs), default=None),
+    )
+    source_sessions: list[SourceSessionRow] = []
+    if window.raw_source_window is not None:
+        raw_start_ns, raw_end_ns = window.raw_source_window
+        source_sessions = list(
+            source.source_sessions(
+                start=datetime.fromtimestamp(raw_start_ns / 1_000_000_000, tz=UTC),
+                end=datetime.fromtimestamp(raw_end_ns / 1_000_000_000, tz=UTC),
+                start_ns=raw_start_ns,
+                end_ns=raw_end_ns,
+            )
+        )
+    traces = list(
+        source.traces(
+            start=datetime.fromtimestamp(window.start_ns / 1_000_000_000, tz=UTC),
+            end=datetime.fromtimestamp(window.end_ns / 1_000_000_000, tz=UTC),
+        )
+    )
+    traces_stream = PipelineStream(
+        query_status="available",
+        data_state="records" if traces else "no_data",
+        latest_timestamp_ns=max(
+            (int(trace.ended_at.timestamp() * 1_000_000_000) for trace in traces),
+            default=None,
+        ),
+    )
+    hydration: list[HydrationRow] = []
+    shortlisted = _shortlisted_log_ids(logs, {trace.trace_id: trace for trace in traces})
+    for offset in range(0, len(shortlisted), 250):
+        hydration.extend(
+            source.hydrate(
+                HydrationRequest(
+                    identity_kind="log_id",
+                    identifiers=shortlisted[offset : offset + 250],
+                    start_ns=window.start_ns,
+                    end_ns=window.end_ns,
+                    start_bucket=window.start_bucket,
+                    end_bucket=window.end_bucket,
+                )
+            )
+        )
+    return _SourceAcquisition(
+        logs=logs,
+        traces=traces,
+        hydration=hydration,
+        source_sessions=source_sessions,
+        logs_stream=logs_stream,
+        traces_stream=traces_stream,
+        hydration_stream=PipelineStream(
+            query_status="available", data_state="records" if hydration else "no_data"
+        ),
+    )
+
+
+def _detect_and_persist(request: _DetectorPersistenceRequest) -> _DetectorPersistence:
+    connection = request.connection
+    config = request.config
+    scan_run_id = request.scan_run_id
+    now = request.now
+    window = request.window
+    sources = request.sources
+    events = _detector_events(sources.logs, sources.traces, sources.hydration)
+    token_baselines: dict[str, list[int]] = defaultdict(list)
+    for event in events:
+        if event.token_count is not None:
+            token_baselines[event.project_id].append(event.token_count)
+    event_index = {event.event_id: event for event in events}
+    logs_by_id = {log.log_id: log for log in sources.logs}
+    traces_by_id = {trace.trace_id: trace for trace in sources.traces}
+    observations = _partition_observations_by_context(
+        connection,
+        DetectorEngine().detect(events, token_baselines=token_baselines),
+        event_index,
+        traces_by_id,
+        logs_by_id,
+    )
+    activities = [
+        _canonical_activity(observation, event_index, logs_by_id, traces_by_id)
+        for observation in observations
+    ]
+    connection.execute("BEGIN IMMEDIATE")
+    _persist_source_rejections(connection, sources.traces)
+    _, trend_evaluations = _persist_canonical_activities(connection, activities, now=now)
+    source_conservation = _persist_source_sessions(
+        _SourceSessionPersistenceRequest(
+            connection,
+            scan_run_id,
+            sources.source_sessions,
+            persist_records=True,
+            clock_skew_seconds=config.lifecycle.clock_skew_seconds,
+        )
+    )
+    _reconcile_late_source_sessions(
+        connection,
+        scan_run_id=scan_run_id,
+        clock_skew_seconds=config.lifecycle.clock_skew_seconds,
+    )
+    if window.raw_source_window is not None:
+        _complete_raw_source_window(
+            connection,
+            start_ns=window.raw_source_window[0],
+            end_ns=window.raw_source_window[1],
+        )
+    _advance_activity_source_watermark(connection, end_ns=window.end_ns)
+    _ensure_current_activity_outbox(connection)
+    connection.commit()
+    return _DetectorPersistence(activities, trend_evaluations, source_conservation)
+
+
+def _drain_scan_telemetry(connection: sqlite3.Connection, config: AppConfig) -> tuple[int, int]:
+    delivered = 0
+    for _ in range(20):
+        drain = drain_outbox(
+            connection,
+            endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+            limit=500,
+        )
+        delivered += drain["delivered"]
+        if drain["selected"] == 0 or drain["delivered"] == 0:
+            break
+    pending = int(
+        connection.execute("SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'").fetchone()[
+            0
+        ]
+    )
+    return delivered, pending
+
+
+def _scan_details(
+    sources: _SourceAcquisition,
+    persistence: _DetectorPersistence,
+    context_events: tuple[DerivedEvent, ...],
+) -> str:
+    return json.dumps(
+        {
+            "hydrated": len(sources.hydration),
+            "logs": len(sources.logs),
+            "canonical_activities": len(persistence.activities),
+            "traces": len(sources.traces),
+            "trends": len(persistence.trend_evaluations),
+            "session_context_events": len(context_events),
+            "source_sessions": len(sources.source_sessions),
+            "source_conservation": persistence.source_conservation,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def run_scan(
     connection: sqlite3.Connection,
     config: AppConfig,
@@ -1371,37 +1727,12 @@ def run_scan(
     now = end_time or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("scan end_time must be timezone-aware")
-    end_ns = int(now.astimezone(UTC).timestamp() * 1_000_000_000)
-    scan_run_id = str(uuid.uuid4())
     source = client or ClickHouseClient(
         docker_context=config.signoz.docker_context,
         container=config.signoz.clickhouse_container,
     )
     quick_check(connection)
-    logs_stream = PipelineStream()
-    traces_stream = PipelineStream()
-    hydration_stream = PipelineStream()
-    logs: list[LogRow] = []
-    traces: list[TraceRow] = []
-    hydration: list[HydrationRow] = []
-    source_sessions: list[SourceSessionRow] = []
-    source_conservation = {
-        "included": 0,
-        "attributed": 0,
-        "expected_rejection": 0,
-        "failed": 0,
-        "blocked": 0,
-    }
-    activities: list[CanonicalActivity] = []
-    trend_evaluations: list[TrendEvaluation] = []
-    context_events: tuple[DerivedEvent, ...] = ()
-    terminal_status = "failed"
-    error_class: str | None = None
-    failure: BaseException | None = None
-    scan_run_persisted = False
-    recovered_interrupted_scan_runs: tuple[str, ...] = ()
-    telemetry_delivered = 0
-    pending_after_drain = 0
+    scan_run_id = str(uuid.uuid4())
     deadline = _arm_scan_deadline()
     try:
         lease = scheduler.acquire_lease(
@@ -1410,251 +1741,187 @@ def run_scan(
     except BaseException:
         _disarm_scan_deadline(deadline)
         raise
-    deadline_armed = True
     try:
-        raw_source_window: tuple[int, int] | None = None
+        return _run_leased_scan(
+            _LeasedScanRequest(connection, config, source, now, scan_run_id, started, deadline)
+        )
+    finally:
+        scheduler.release_lease(connection, lease)
+
+
+def _begin_scan_run(request: _LeasedScanRequest, snapshot_end_ns: int) -> _ScanWindow:
+    window = _prepare_scan_window(
+        request.connection,
+        config=request.config,
+        source=request.source,
+        end_ns=snapshot_end_ns,
+    )
+    with request.connection:
+        request.connection.execute(
+            """
+            INSERT INTO scan_runs (
+                id, status, started_at, source_start_ns, source_end_ns, details_json
+            ) VALUES (?, 'running', ?, ?, ?, '{}')
+            """,
+            (request.scan_run_id, _iso_now(), window.start_ns, window.end_ns),
+        )
+    return window
+
+
+def _process_context_phase(
+    request: _LeasedScanRequest, persistence: _DetectorPersistence
+) -> tuple[tuple[DerivedEvent, ...], _DetectorPersistence]:
+    connection = request.connection
+    context_events = drain_inbox(connection, directory=inbox_path(request.config.database.path))
+    with connection:
+        enqueue_events(connection, list(context_events))
+        _persist_context_projects(connection, context_events)
+    late_activity_ids = _reconcile_late_context(connection, context_events)
+    if not late_activity_ids:
+        return context_events, persistence
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        persistence = replace(
+            persistence,
+            trend_evaluations=recompute_canonical_findings(
+                connection, late_activity_ids, now=request.now
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE canonical_recomputation_schedule
+            SET completed_at = ?
+            WHERE activity_id IN ({}) AND completed_at IS NULL
+            """.format(",".join("?" for _ in late_activity_ids)),
+            (_iso_now(), *late_activity_ids),
+        )
+    return context_events, persistence
+
+
+def _process_source_phase(
+    request: _LeasedScanRequest,
+    window: _ScanWindow,
+    persistence: _DetectorPersistence,
+) -> tuple[_SourceAcquisition, _DetectorPersistence, str]:
+    sources = _acquire_scan_sources(request.source, window)
+    current_persistence = _detect_and_persist(
+        _DetectorPersistenceRequest(
+            request.connection,
+            request.config,
+            request.scan_run_id,
+            request.now,
+            window,
+            sources,
+        )
+    )
+    persistence = replace(
+        current_persistence,
+        trend_evaluations=(persistence.trend_evaluations + current_persistence.trend_evaluations),
+    )
+    terminal_status = "no_data" if not sources.logs and not sources.traces else "succeeded"
+    return sources, persistence, terminal_status
+
+
+def _run_leased_scan(request: _LeasedScanRequest) -> dict[str, Any]:
+    connection = request.connection
+    sources = _SourceAcquisition(
+        [], [], [], [], PipelineStream(), PipelineStream(), PipelineStream()
+    )
+    persistence = _DetectorPersistence(
+        [],
+        [],
+        {
+            "included": 0,
+            "attributed": 0,
+            "expected_rejection": 0,
+            "failed": 0,
+            "blocked": 0,
+        },
+    )
+    context_events: tuple[DerivedEvent, ...] = ()
+    terminal_status, error_class, failure = "failed", None, None
+    scan_run_persisted = False
+    telemetry_delivered = pending_after_drain = 0
+    snapshot_end_ns = int(request.now.astimezone(UTC).timestamp() * 1_000_000_000)
+    window: _ScanWindow | None = None
+    try:
         try:
-            verify_network_perimeter(docker_context=config.signoz.docker_context)
-            enforce_approved_schema(connection, discover_source_schema(source))
-            try:
-                initial_start_ns = _raw_source_anchor(connection)
-            except ScanError:
-                logs_earliest_ns, traces_earliest_ns = source.raw_source_window_anchor()
-                _approve_raw_source_anchor(
-                    connection,
-                    logs_earliest_ns=logs_earliest_ns,
-                    traces_earliest_ns=traces_earliest_ns,
-                )
-                initial_start_ns = _raw_source_anchor(connection)
-            start_ns, end_ns, start_bucket, end_bucket = _bounds(
-                connection,
-                end_ns,
-                initial_start_ns=initial_start_ns,
-                replay_overlap_seconds=config.lifecycle.clock_skew_seconds,
-            )
-            started_at = _iso_now()
-            raw_source_window = _claim_raw_source_window(connection, end_ns=end_ns)
-            with connection:
-                connection.execute(
-                    """
-                    INSERT INTO scan_runs (
-                        id, status, started_at, source_start_ns, source_end_ns, details_json
-                    ) VALUES (?, 'running', ?, ?, ?, '{}')
-                    """,
-                    (scan_run_id, started_at, start_ns, end_ns),
-                )
+            window = _begin_scan_run(request, snapshot_end_ns)
             scan_run_persisted = True
-            context_events = drain_inbox(connection, directory=inbox_path(config.database.path))
-            with connection:
-                enqueue_events(connection, list(context_events))
-                _persist_context_projects(connection, context_events)
-            late_activity_ids = _reconcile_late_context(connection, context_events)
-            if late_activity_ids:
-                with connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    trend_evaluations.extend(
-                        recompute_canonical_findings(connection, late_activity_ids, now=now)
-                    )
-                    connection.execute(
-                        """
-                        UPDATE canonical_recomputation_schedule
-                        SET completed_at = ?
-                        WHERE activity_id IN ({}) AND completed_at IS NULL
-                        """.format(",".join("?" for _ in late_activity_ids)),
-                        (_iso_now(), *late_activity_ids),
-                    )
-            logs = list(source.logs(start_ns=start_ns, end_ns=end_ns))
-            logs_stream = PipelineStream(
-                query_status="available",
-                data_state="records" if logs else "no_data",
-                latest_timestamp_ns=max((log.timestamp_ns for log in logs), default=None),
+            context_events, persistence = _process_context_phase(request, persistence)
+            sources, persistence, terminal_status = _process_source_phase(
+                request, window, persistence
             )
-            start_dt = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=UTC)
-            end_dt = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=UTC)
-            if raw_source_window is not None:
-                raw_source_start_ns, raw_source_end_ns = raw_source_window
-                raw_source_start_dt = datetime.fromtimestamp(
-                    raw_source_start_ns / 1_000_000_000, tz=UTC
-                )
-                raw_source_end_dt = datetime.fromtimestamp(
-                    raw_source_end_ns / 1_000_000_000, tz=UTC
-                )
-                source_sessions = list(
-                    source.source_sessions(
-                        start=raw_source_start_dt,
-                        end=raw_source_end_dt,
-                        start_ns=raw_source_start_ns,
-                        end_ns=raw_source_end_ns,
-                    )
-                )
-            traces = list(source.traces(start=start_dt, end=end_dt))
-            traces_stream = PipelineStream(
-                query_status="available",
-                data_state="records" if traces else "no_data",
-                latest_timestamp_ns=max(
-                    (int(trace.ended_at.timestamp() * 1_000_000_000) for trace in traces),
-                    default=None,
-                ),
-            )
-            trace_index = {trace.trace_id: trace for trace in traces}
-            shortlisted = _shortlisted_log_ids(logs, trace_index)
-            for offset in range(0, len(shortlisted), 250):
-                hydration.extend(
-                    source.hydrate(
-                        identity_kind="log_id",
-                        identifiers=shortlisted[offset : offset + 250],
-                        start_ns=start_ns,
-                        end_ns=end_ns,
-                        start_bucket=start_bucket,
-                        end_bucket=end_bucket,
-                    )
-                )
-            hydration_stream = PipelineStream(
-                query_status="available", data_state="records" if hydration else "no_data"
-            )
-            events = _detector_events(logs, traces, hydration)
-            token_baselines: dict[str, list[int]] = defaultdict(list)
-            for event in events:
-                if event.token_count is not None:
-                    token_baselines[event.project_id].append(event.token_count)
-            observations = DetectorEngine().detect(events, token_baselines=token_baselines)
-            event_index = {event.event_id: event for event in events}
-            logs_by_id = {log.log_id: log for log in logs}
-            traces_by_id = {trace.trace_id: trace for trace in traces}
-            observations = _partition_observations_by_context(
-                connection, observations, event_index, traces_by_id, logs_by_id
-            )
-            activities = [
-                _canonical_activity(observation, event_index, logs_by_id, traces_by_id)
-                for observation in observations
-            ]
-            connection.execute("BEGIN IMMEDIATE")
-            _persist_source_rejections(connection, traces)
-            _, current_evaluations = _persist_canonical_activities(connection, activities, now=now)
-            trend_evaluations.extend(current_evaluations)
-            source_conservation = _persist_source_sessions(
-                connection,
-                scan_run_id=scan_run_id,
-                rows=source_sessions,
-                clock_skew_seconds=config.lifecycle.clock_skew_seconds,
-            )
-            _reconcile_late_source_sessions(
-                connection,
-                scan_run_id=scan_run_id,
-                clock_skew_seconds=config.lifecycle.clock_skew_seconds,
-            )
-            if raw_source_window is not None:
-                _complete_raw_source_window(
-                    connection,
-                    start_ns=raw_source_window[0],
-                    end_ns=raw_source_window[1],
-                )
-            _advance_activity_source_watermark(connection, end_ns=end_ns)
-            _ensure_current_activity_outbox(connection)
-            terminal_status = "no_data" if not logs and not traces else "succeeded"
-            connection.commit()
         except BaseException as exc:
             failure = exc
             if connection.in_transaction:
                 connection.rollback()
-            terminal_status = "failed"
-            if isinstance(exc, ScanDeadlineError):
-                error_class = "scan_timeout"
-            elif isinstance(exc, CapabilityError):
-                error_class = "capability"
-            else:
-                error_class = "processing"
+            error_class = (
+                "scan_timeout"
+                if isinstance(exc, ScanDeadlineError)
+                else ("capability" if isinstance(exc, CapabilityError) else "processing")
+            )
         try:
-            for _ in range(20):
-                drain = drain_outbox(
-                    connection,
-                    endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
-                    limit=500,
-                )
-                telemetry_delivered += drain["delivered"]
-                if drain["selected"] == 0 or drain["delivered"] == 0:
-                    break
-            pending_after_drain = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
-                ).fetchone()[0]
+            telemetry_delivered, pending_after_drain = _drain_scan_telemetry(
+                connection, request.config
             )
         except BaseException as exc:
-            failure = exc
-            terminal_status = "failed"
+            failure, terminal_status = exc, "failed"
             error_class = "scan_timeout" if isinstance(exc, ScanDeadlineError) else "telemetry"
-        finally:
-            _disarm_scan_deadline(deadline)
-            deadline_armed = False
-        finished_ns = time.time_ns()
-        snapshot = _pipeline_snapshot_event(
-            scan_run_id=scan_run_id,
-            end_ns=end_ns,
+    finally:
+        _disarm_scan_deadline(request.deadline)
+    snapshot = _pipeline_snapshot_event(
+        _PipelineSnapshotRequest(
+            scan_run_id=request.scan_run_id,
+            end_ns=window.end_ns if window is not None else snapshot_end_ns,
             terminal_status=terminal_status,
             error_class=error_class,
-            logs=logs_stream,
-            traces=traces_stream,
-            hydration=hydration_stream,
-            finished_ns=finished_ns,
-            duration_ms=(time.monotonic() - started) * 1000,
-            rows_processed=len(logs) + len(traces),
+            logs=sources.logs_stream,
+            traces=sources.traces_stream,
+            hydration=sources.hydration_stream,
+            finished_ns=time.time_ns(),
+            duration_ms=(time.monotonic() - request.started) * 1000,
+            rows_processed=len(sources.logs) + len(sources.traces),
             pending_after_drain=pending_after_drain,
         )
-        details_json = json.dumps(
-            {
-                "hydrated": len(hydration),
-                "logs": len(logs),
-                "canonical_activities": len(activities),
-                "traces": len(traces),
-                "trends": len(trend_evaluations),
-                "session_context_events": len(context_events),
-                "source_sessions": len(source_sessions),
-                "source_conservation": source_conservation,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        with connection:
-            if scan_run_persisted:
-                connection.execute(
-                    """
-                    UPDATE scan_runs
-                    SET status = ?, completed_at = ?, rows_processed = ?, error_code = ?,
-                        details_json = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        terminal_status,
-                        datetime.now(UTC).isoformat(),
-                        len(logs) + len(traces),
-                        type(failure).__name__ if failure is not None else error_class,
-                        details_json,
-                        scan_run_id,
-                    ),
-                )
-            enqueue_events(connection, [snapshot])
-        pending = int(
+    )
+    with connection:
+        if scan_run_persisted:
             connection.execute(
-                "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
-            ).fetchone()[0]
-        )
-        if failure is not None:
-            raise failure
-        return {
-            "scan_run_id": scan_run_id,
-            "status": terminal_status,
-            "logs": len(logs),
-            "traces": len(traces),
-            "observations": len(activities),
-            "trend_evaluations": len(trend_evaluations),
-            "session_context_events": len(context_events),
-            "recovered_interrupted_scan_runs": len(recovered_interrupted_scan_runs),
-            "telemetry_delivered": telemetry_delivered,
-            "source_sessions": len(source_sessions),
-            "conservation": source_conservation,
-            "telemetry_pending": pending,
-        }
-    finally:
-        if deadline_armed:
-            _disarm_scan_deadline(deadline)
-        scheduler.release_lease(connection, lease)
+                """
+                UPDATE scan_runs
+                SET status = ?, completed_at = ?, rows_processed = ?, error_code = ?,
+                    details_json = ?
+                WHERE id = ?
+                """,
+                (
+                    terminal_status,
+                    datetime.now(UTC).isoformat(),
+                    len(sources.logs) + len(sources.traces),
+                    type(failure).__name__ if failure is not None else error_class,
+                    _scan_details(sources, persistence, context_events),
+                    request.scan_run_id,
+                ),
+            )
+        enqueue_events(connection, [snapshot])
+    pending = int(
+        connection.execute("SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'").fetchone()[
+            0
+        ]
+    )
+    if failure is not None:
+        raise failure
+    return {
+        "scan_run_id": request.scan_run_id,
+        "status": terminal_status,
+        "logs": len(sources.logs),
+        "traces": len(sources.traces),
+        "observations": len(persistence.activities),
+        "trend_evaluations": len(persistence.trend_evaluations),
+        "session_context_events": len(context_events),
+        "recovered_interrupted_scan_runs": 0,
+        "telemetry_delivered": telemetry_delivered,
+        "source_sessions": len(sources.source_sessions),
+        "conservation": persistence.source_conservation,
+        "telemetry_pending": pending,
+    }

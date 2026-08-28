@@ -128,18 +128,19 @@ def _latest_canonical_occurrences(
     ]
 
 
-def recompute_canonical_findings(
-    connection: sqlite3.Connection,
-    activity_ids: Iterable[str],
-    *,
-    now: datetime,
-) -> list[TrendEvaluation]:
-    """Converge canonical memberships, findings, and trends in the caller transaction."""
-    if now.tzinfo is None:
-        raise ValueError("trend evaluation clock must be timezone-aware")
-    if not connection.in_transaction:
-        raise ValueError("canonical finding recomputation requires an active transaction")
+@dataclass(frozen=True, slots=True)
+class _FindingMembership:
+    """Canonical members and metadata for one finding convergence."""
 
+    fingerprint: str
+    members: tuple[CanonicalActivityOccurrence, ...]
+    updated_at: str
+
+
+def _requested_canonical_occurrences(
+    connection: sqlite3.Connection, activity_ids: Iterable[str]
+) -> list[CanonicalActivityOccurrence]:
+    """Load requested activities, requiring an attribution version for each."""
     requested_ids = tuple(sorted(set(activity_ids)))
     if not requested_ids:
         return []
@@ -150,75 +151,101 @@ def recompute_canonical_findings(
             "canonical activities have no attribution version: "
             + ", ".join(sorted(set(requested_ids) - known))
         )
+    return impacted
 
-    all_occurrences = _latest_canonical_occurrences(connection)
+
+def _canonical_occurrences_by_fingerprint(
+    connection: sqlite3.Connection,
+) -> dict[str, list[CanonicalActivityOccurrence]]:
+    """Group the latest canonical activity versions by finding fingerprint."""
     by_fingerprint: dict[str, list[CanonicalActivityOccurrence]] = {}
-    for occurrence in all_occurrences:
+    for occurrence in _latest_canonical_occurrences(connection):
         by_fingerprint.setdefault(occurrence.fingerprint, []).append(occurrence)
+    return by_fingerprint
 
-    stamp = now.astimezone(UTC).isoformat()
-    for fingerprint in sorted({occurrence.fingerprint for occurrence in impacted}):
-        members = by_fingerprint[fingerprint]
-        first = members[0]
-        finding_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"agent-introspection:{fingerprint}"))
-        existing = connection.execute(
-            "SELECT id FROM findings WHERE fingerprint = ?", (fingerprint,)
+
+def _finding_id_for_membership(
+    connection: sqlite3.Connection, membership: _FindingMembership
+) -> str:
+    """Return the persisted finding ID, creating its initial row when absent."""
+    first = membership.members[0]
+    finding_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"agent-introspection:{membership.fingerprint}")
+    )
+    existing = connection.execute(
+        "SELECT id FROM findings WHERE fingerprint = ?", (membership.fingerprint,)
+    ).fetchone()
+    if existing is not None:
+        return str(existing[0])
+    connection.execute(
+        """
+        INSERT INTO findings (
+            id, fingerprint, category, project_identity_id, trend_state,
+            detector_id, detector_version, first_seen_ns, last_seen_ns,
+            occurrence_count, canonical_task_count, local_day_count,
+            entity_version, is_active, replaced_by_finding_id, updated_at
+        ) VALUES (?, ?, ?, ?, 'isolated', ?, ?, ?, ?, 0, 0, 0, 1, 1, NULL, ?)
+        """,
+        (
+            finding_id,
+            membership.fingerprint,
+            first.detector_id,
+            first.project_identity_id,
+            first.detector_id,
+            first.detector_version,
+            min(member.occurred_at_ns for member in membership.members),
+            max(member.occurred_at_ns for member in membership.members),
+            membership.updated_at,
+        ),
+    )
+    return finding_id
+
+
+def _converge_finding_membership(
+    connection: sqlite3.Connection, membership: _FindingMembership
+) -> None:
+    """Assign members to their finding and retire superseded active findings."""
+    finding_id = _finding_id_for_membership(connection, membership)
+    for member in membership.members:
+        prior = connection.execute(
+            """
+            SELECT cfm.finding_id
+            FROM canonical_finding_membership cfm
+            JOIN findings f ON f.id = cfm.finding_id
+            WHERE cfm.activity_id = ? AND f.is_active = 1
+            """,
+            (member.activity_id,),
         ).fetchone()
-        if existing is None:
+        if prior is not None and str(prior[0]) != finding_id:
             connection.execute(
                 """
-                INSERT INTO findings (
-                    id, fingerprint, category, project_identity_id, trend_state,
-                    detector_id, detector_version, first_seen_ns, last_seen_ns,
-                    occurrence_count, canonical_task_count, local_day_count,
-                    entity_version, is_active, replaced_by_finding_id, updated_at
-                ) VALUES (?, ?, ?, ?, 'isolated', ?, ?, ?, ?, 0, 0, 0, 1, 1, NULL, ?)
+                UPDATE findings
+                SET is_active = 0, replaced_by_finding_id = ?,
+                    entity_version = entity_version + 1, updated_at = ?
+                WHERE id = ? AND is_active = 1
                 """,
-                (
-                    finding_id,
-                    fingerprint,
-                    first.detector_id,
-                    first.project_identity_id,
-                    first.detector_id,
-                    first.detector_version,
-                    min(member.occurred_at_ns for member in members),
-                    max(member.occurred_at_ns for member in members),
-                    stamp,
-                ),
+                (finding_id, membership.updated_at, str(prior[0])),
             )
-        else:
-            finding_id = str(existing[0])
+        connection.execute(
+            """
+            INSERT INTO canonical_finding_membership (
+                finding_id, activity_id, rationale, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(finding_id, activity_id) DO NOTHING
+            """,
+            (
+                finding_id,
+                member.activity_id,
+                "canonical activity membership",
+                membership.updated_at,
+            ),
+        )
 
-        for member in members:
-            prior = connection.execute(
-                """
-                SELECT cfm.finding_id
-                FROM canonical_finding_membership cfm
-                JOIN findings f ON f.id = cfm.finding_id
-                WHERE cfm.activity_id = ? AND f.is_active = 1
-                """,
-                (member.activity_id,),
-            ).fetchone()
-            if prior is not None and str(prior[0]) != finding_id:
-                connection.execute(
-                    """
-                    UPDATE findings
-                    SET is_active = 0, replaced_by_finding_id = ?,
-                        entity_version = entity_version + 1, updated_at = ?
-                    WHERE id = ? AND is_active = 1
-                    """,
-                    (finding_id, stamp, str(prior[0])),
-                )
-            connection.execute(
-                """
-                INSERT INTO canonical_finding_membership (
-                    finding_id, activity_id, rationale, created_at
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(finding_id, activity_id) DO NOTHING
-                """,
-                (finding_id, member.activity_id, "canonical activity membership", stamp),
-            )
 
+def _update_finding_trends(
+    connection: sqlite3.Connection, *, now: datetime, updated_at: str
+) -> list[TrendEvaluation]:
+    """Evaluate all active findings and persist only changed trend metrics."""
     rows = connection.execute(
         """
         SELECT f.id, f.trend_state, cfm.activity_id, a.source_started_at_ns, a.correlation_id
@@ -263,12 +290,41 @@ def recompute_canonical_findings(
                 evaluation.occurrence_count,
                 evaluation.canonical_task_count,
                 evaluation.local_day_count,
-                stamp,
+                updated_at,
                 evaluation.finding_id,
             ),
         )
         changed.append(evaluation)
     return changed
+
+
+def recompute_canonical_findings(
+    connection: sqlite3.Connection,
+    activity_ids: Iterable[str],
+    *,
+    now: datetime,
+) -> list[TrendEvaluation]:
+    """Converge canonical memberships, findings, and trends in the caller transaction."""
+    if now.tzinfo is None:
+        raise ValueError("trend evaluation clock must be timezone-aware")
+    if not connection.in_transaction:
+        raise ValueError("canonical finding recomputation requires an active transaction")
+
+    impacted = _requested_canonical_occurrences(connection, activity_ids)
+    if not impacted:
+        return []
+    by_fingerprint = _canonical_occurrences_by_fingerprint(connection)
+    updated_at = now.astimezone(UTC).isoformat()
+    for fingerprint in sorted({occurrence.fingerprint for occurrence in impacted}):
+        _converge_finding_membership(
+            connection,
+            _FindingMembership(
+                fingerprint=fingerprint,
+                members=tuple(by_fingerprint[fingerprint]),
+                updated_at=updated_at,
+            ),
+        )
+    return _update_finding_trends(connection, now=now, updated_at=updated_at)
 
 
 def evaluate_findings(
