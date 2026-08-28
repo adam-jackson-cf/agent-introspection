@@ -44,11 +44,22 @@ interface OmpExtensionAPI {
   ): void;
 }
 
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function requireValue(value: unknown, name: string): string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
-    /[\u0000-\u001f\u007f]/.test(value)
+    hasControlCharacter(value)
   ) {
     throw new Error(`OMP ${name} is required and must not contain control characters`);
   }
