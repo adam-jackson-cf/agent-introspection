@@ -2,7 +2,7 @@
 
 ## Objective
 
-Create deterministic session-context records from normalized native lifecycle values and a Git workspace identity.
+Create deterministic session-context records from normalized native session-context or lifecycle values and a Git workspace identity.
 
 ## Guidance
 

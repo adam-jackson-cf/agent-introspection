@@ -12,14 +12,16 @@ import pytest
 
 INSTALLER_SOURCE = (
     Path(__file__).parents[1]
-    / ".agents/skills/introspection-onboarding/scripts/install-codex-app-server.py"
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/install.py"
 )
-SCRIPT_SOURCE = INSTALLER_SOURCE.parent
+ADAPTER_SOURCE = INSTALLER_SOURCE.parent
+SCRIPTS_SOURCE = ADAPTER_SOURCE.parent.parent
 
 
 def _load_installer() -> ModuleType:
     spec = importlib.util.spec_from_file_location("install_codex_app_server", INSTALLER_SOURCE)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -77,16 +79,17 @@ def test_installer_atomically_manages_proxy_runtime_adapter_and_launch_environme
     installer.install(home=home, real_codex=real_codex, launchctl=launchctl)
 
     managed = home / ".local/lib/agent-introspection/session-context-runtime-v1"
-    assert proxy.read_bytes() == (SCRIPT_SOURCE / "codex-app-server-proxy.py").read_bytes()
+    managed_adapter = managed / "adapters/codex-app-server"
+    assert proxy.read_bytes() == (ADAPTER_SOURCE / "proxy.py").read_bytes()
     assert (managed / "session-context-runtime.sh").read_bytes() == (
-        SCRIPT_SOURCE / "session-context-runtime.sh"
+        SCRIPTS_SOURCE / "session-context-runtime.sh"
     ).read_bytes()
-    assert (managed / "adapters/codex-app-server.sh").read_bytes() == (
-        SCRIPT_SOURCE / "adapters/codex-app-server.sh"
+    assert (managed_adapter / "adapter.sh").read_bytes() == (
+        ADAPTER_SOURCE / "adapter.sh"
     ).read_bytes()
     assert stat.S_IMODE(proxy.stat().st_mode) == 0o755
-    assert stat.S_IMODE((managed / "codex-app-server-real-cli").stat().st_mode) == 0o444
-    assert (managed / "codex-app-server-real-cli").read_text(encoding="utf-8") == (
+    assert stat.S_IMODE((managed_adapter / "codex-app-server-real-cli").stat().st_mode) == 0o444
+    assert (managed_adapter / "codex-app-server-real-cli").read_text(encoding="utf-8") == (
         f"{real_codex.resolve()}\n"
     )
 

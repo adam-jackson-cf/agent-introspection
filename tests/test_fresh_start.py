@@ -121,7 +121,7 @@ def test_rehearsal_is_fail_closed_for_changed_source_or_manifest(tmp_path: Path)
         )
 
 
-@pytest.mark.parametrize("name, marker", [("target.sqlite", "marker"), ("marked.sqlite", "")])
+@pytest.mark.parametrize(("name", "marker"), [("target.sqlite", "marker"), ("marked.sqlite", "")])
 def test_rehearsal_requires_marked_new_nonlive_target(
     tmp_path: Path, name: str, marker: str
 ) -> None:

@@ -8,14 +8,16 @@ from pathlib import Path
 import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-ADAPTER = REPOSITORY_ROOT / ".agents/skills/introspection-onboarding/scripts/adapters/omp.ts"
+ADAPTER = (
+    REPOSITORY_ROOT / ".agents/skills/introspection-onboarding/scripts/adapters/omp/adapter.ts"
+)
 
 
 @pytest.fixture
 def omp_adapter_sandbox(tmp_path: Path) -> tuple[Path, Path]:
-    adapter_dir = tmp_path / "scripts" / "adapters"
+    adapter_dir = tmp_path / "scripts" / "adapters" / "omp"
     adapter_dir.mkdir(parents=True)
-    adapter = adapter_dir / "omp.ts"
+    adapter = adapter_dir / "adapter.ts"
     shutil.copyfile(ADAPTER, adapter)
 
     runtime = tmp_path / "scripts" / "session-context-runtime.sh"
@@ -88,7 +90,7 @@ try {
 
 @pytest.mark.parametrize(
     ("native_event", "expected_event"),
-    (("session_start", "session_start"), ("session_shutdown", "session_end")),
+    [("session_start", "session_start"), ("session_shutdown", "session_end")],
 )
 def test_omp_lifecycle_events_invoke_canonical_runtime(
     tmp_path: Path,
@@ -121,11 +123,11 @@ def test_omp_lifecycle_events_invoke_canonical_runtime(
 
 @pytest.mark.parametrize(
     ("runtime_status", "expected_error"),
-    (
+    [
         (65, None),
         (64, "OMP session-context runtime exited with status 64"),
         (70, "OMP session-context runtime exited with status 70"),
-    ),
+    ],
 )
 def test_omp_adapter_distinguishes_bounded_rejection_from_runtime_failure(
     tmp_path: Path,
@@ -176,7 +178,7 @@ def test_omp_uses_synchronous_time_when_native_timestamp_is_absent(
 
 @pytest.mark.parametrize(
     ("session_id", "workspace", "required_value"),
-    (("", "/workspaces/authoritative", "session id"), ("omp-session-42", "", "workspace")),
+    [("", "/workspaces/authoritative", "session id"), ("omp-session-42", "", "workspace")],
 )
 def test_omp_adapter_rejects_missing_authoritative_values(
     tmp_path: Path,
@@ -205,7 +207,7 @@ def test_omp_adapter_rejects_missing_authoritative_values(
 
 @pytest.mark.parametrize(
     ("session_id", "workspace", "native_event", "message"),
-    (
+    [
         (
             "id\nother",
             "/workspaces/authoritative",
@@ -225,7 +227,7 @@ def test_omp_adapter_rejects_missing_authoritative_values(
             {"timestamp": None},
             "OMP timestamp is required and must not contain control characters",
         ),
-    ),
+    ],
 )
 def test_omp_adapter_rejects_malformed_native_values_without_runtime_invocation(
     tmp_path: Path,

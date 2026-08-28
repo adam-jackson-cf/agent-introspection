@@ -12,19 +12,20 @@ from pathlib import Path
 import pytest
 
 ADAPTER_SOURCE = (
-    Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts/adapters/codex.py"
+    Path(__file__).parents[1]
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-cli/adapter.py"
 )
 APP_SERVER_SOURCE = (
     Path(__file__).parents[1]
-    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server.sh"
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/adapter.sh"
 )
 
 
 def _adapter(tmp_path: Path) -> tuple[Path, Path]:
     scripts = tmp_path / "scripts"
-    adapters = scripts / "adapters"
-    adapters.mkdir(parents=True)
-    adapter = adapters / "codex.py"
+    adapter_dir = scripts / "adapters" / "codex-cli"
+    adapter_dir.mkdir(parents=True)
+    adapter = adapter_dir / "adapter.py"
     shutil.copy2(ADAPTER_SOURCE, adapter)
     log = tmp_path / "runtime-arguments.jsonl"
     runtime = scripts / "session-context-runtime.sh"
@@ -44,9 +45,9 @@ def _adapter(tmp_path: Path) -> tuple[Path, Path]:
 
 def _app_server_adapter(tmp_path: Path) -> tuple[Path, Path]:
     scripts = tmp_path / "scripts"
-    adapters = scripts / "adapters"
-    adapters.mkdir(parents=True)
-    adapter = adapters / "codex-app-server.sh"
+    adapter_dir = scripts / "adapters" / "codex-app-server"
+    adapter_dir.mkdir(parents=True)
+    adapter = adapter_dir / "adapter.sh"
     shutil.copy2(APP_SERVER_SOURCE, adapter)
     adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "runtime-arguments.jsonl"

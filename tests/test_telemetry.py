@@ -162,9 +162,13 @@ def test_canonical_activity_enqueue_rolls_back_outbox_and_evidence(tmp_path: Pat
     connection = canonical_activity_database(tmp_path)
     try:
         connection.execute("BEGIN")
-        with pytest.raises(RuntimeError, match="rollback"):
+
+        def force_rollback() -> None:
             enqueue_canonical_activity_version(connection, canonical_activity_event())
             raise RuntimeError("rollback")
+
+        with pytest.raises(RuntimeError, match="rollback"), connection:
+            force_rollback()
         connection.rollback()
         assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 0
         assert (

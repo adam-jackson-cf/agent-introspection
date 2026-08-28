@@ -65,7 +65,7 @@ class ScanError(RuntimeError):
     """A scan cannot safely commit its extraction window."""
 
 
-class ScanDeadlineExceeded(ScanError):
+class ScanDeadlineError(ScanError):
     """A scan exceeded its bounded execution window."""
 
 
@@ -75,14 +75,13 @@ _ACTIVITY_FORWARD_WINDOW_SECONDS = 900
 
 def _arm_scan_deadline() -> tuple[Any, tuple[float, float]]:
     """Arm the process-wide deadline that bounds all scan work."""
-
     previous_timer = signal.getitimer(signal.ITIMER_REAL)
     if previous_timer != (0.0, 0.0):
         raise ScanError("scan deadline timer is already active")
     previous_handler = signal.getsignal(signal.SIGALRM)
 
     def expire(_signum: int, _frame: object) -> None:
-        raise ScanDeadlineExceeded(f"scan exceeded {_SCAN_TIMEOUT_SECONDS:.0f} second deadline")
+        raise ScanDeadlineError(f"scan exceeded {_SCAN_TIMEOUT_SECONDS:.0f} second deadline")
 
     signal.signal(signal.SIGALRM, expire)
     signal.setitimer(signal.ITIMER_REAL, _SCAN_TIMEOUT_SECONDS)
@@ -91,7 +90,6 @@ def _arm_scan_deadline() -> tuple[Any, tuple[float, float]]:
 
 def _disarm_scan_deadline(state: tuple[Any, tuple[float, float]]) -> None:
     """Restore the process signal state after a terminal scan outcome."""
-
     previous_handler, previous_timer = state
     signal.setitimer(signal.ITIMER_REAL, 0)
     signal.signal(signal.SIGALRM, previous_handler)
@@ -249,7 +247,6 @@ def _bounds(
     replay_overlap_seconds: int,
 ) -> tuple[int, int, int, int]:
     """Bound detector queries to a jointly committed cursor and forward window."""
-
     rows = connection.execute(
         """
         SELECT timestamp_ns FROM source_watermarks
@@ -274,7 +271,6 @@ def _claim_raw_source_window(
     connection: sqlite3.Connection, *, end_ns: int
 ) -> tuple[int, int] | None:
     """Durably claim one exact raw-source window before querying ClickHouse."""
-
     pending = connection.execute(
         """
         SELECT claims.start_ns, claims.end_ns
@@ -900,7 +896,6 @@ def _complete_raw_source_window(
     connection: sqlite3.Connection, *, start_ns: int, end_ns: int
 ) -> None:
     """Record completion and advance the raw watermark in the caller's transaction."""
-
     connection.execute(
         """
         INSERT INTO raw_source_window_completions (source, start_ns, end_ns, completed_at)
@@ -913,7 +908,6 @@ def _complete_raw_source_window(
 
 def _advance_raw_source_watermark(connection: sqlite3.Connection, *, end_ns: int) -> None:
     """Advance the half-open raw-source boundary only inside a successful scan."""
-
     connection.execute(
         """
         INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
@@ -931,7 +925,6 @@ def _advance_raw_source_watermark(connection: sqlite3.Connection, *, end_ns: int
 
 def _advance_activity_source_watermark(connection: sqlite3.Connection, *, end_ns: int) -> None:
     """Advance the detector source cursor only with a successful extraction commit."""
-
     connection.execute(
         """
         INSERT INTO source_watermarks (source, timestamp_ns, row_id, updated_at)
@@ -1565,7 +1558,7 @@ def run_scan(
             if connection.in_transaction:
                 connection.rollback()
             terminal_status = "failed"
-            if isinstance(exc, ScanDeadlineExceeded):
+            if isinstance(exc, ScanDeadlineError):
                 error_class = "scan_timeout"
             elif isinstance(exc, CapabilityError):
                 error_class = "capability"
@@ -1589,7 +1582,7 @@ def run_scan(
         except BaseException as exc:
             failure = exc
             terminal_status = "failed"
-            error_class = "scan_timeout" if isinstance(exc, ScanDeadlineExceeded) else "telemetry"
+            error_class = "scan_timeout" if isinstance(exc, ScanDeadlineError) else "telemetry"
         finally:
             _disarm_scan_deadline(deadline)
             deadline_armed = False

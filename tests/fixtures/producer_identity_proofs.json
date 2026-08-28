@@ -45,7 +45,7 @@
     {
       "producer": "codex-cli",
       "version": "0.146.0-alpha.9.2",
-      "command_argv_without_prompt": ["/Applications/ChatGPT.app/Contents/Resources/codex", "-c", "notify=[\"/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex.py\"]", "exec", "--sandbox", "read-only", "--json"],
+      "command_argv_without_prompt": ["/Applications/ChatGPT.app/Contents/Resources/codex", "-c", "notify=[\"/Users/adamjackson/.local/lib/agent-introspection/session-context-runtime-v1/adapters/codex-cli/adapter.py\"]", "exec", "--sandbox", "read-only", "--json"],
       "native_lifecycle_field": "notify thread-id",
       "local_artifact_field": "session_meta.payload.id",
       "otel_service": "codex_exec",

@@ -11,16 +11,16 @@ import pytest
 
 ADAPTER = (
     Path(__file__).parents[1]
-    / ".agents/skills/introspection-onboarding/scripts/adapters/claude-code.py"
+    / ".agents/skills/introspection-onboarding/scripts/adapters/claude-code/adapter.py"
 )
 RFC3339_UTC = re.compile(rb"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 
 
 def _adapter_with_fake_runtime(tmp_path: Path) -> tuple[Path, Path]:
     scripts = tmp_path / "scripts"
-    adapters = scripts / "adapters"
-    adapters.mkdir(parents=True)
-    adapter = adapters / "claude-code.py"
+    adapter_dir = scripts / "adapters" / "claude-code"
+    adapter_dir.mkdir(parents=True)
+    adapter = adapter_dir / "adapter.py"
     shutil.copyfile(ADAPTER, adapter)
     adapter.chmod(0o755)
 
@@ -44,11 +44,11 @@ def _run(adapter: Path, captured: Path, payload: str) -> subprocess.CompletedPro
 
 @pytest.mark.parametrize(
     ("hook_event_name", "event_type"),
-    (
+    [
         ("SessionStart", "session_start"),
         ("CwdChanged", "workspace_changed"),
         ("SessionEnd", "session_end"),
-    ),
+    ],
 )
 def test_claude_lifecycle_hooks_normalize_to_runtime_argv(
     tmp_path: Path, hook_event_name: str, event_type: str
@@ -98,7 +98,7 @@ def test_claude_uses_synchronous_time_when_native_timestamp_is_absent(
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         "[]",
         '{"hook_event_name":"Unknown","session_id":"id","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","cwd":"/workspace"}',
@@ -111,7 +111,7 @@ def test_claude_uses_synchronous_time_when_native_timestamp_is_absent(
         '{"hook_event_name":"SessionEnd","session_id":"id\\nother","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","hook_event_name":"SessionEnd","session_id":"id","cwd":"/workspace"}',
         '{"hook_event_name":"SessionStart","session_id":"id","cwd":"/workspace"} trailing',
-    ),
+    ],
 )
 def test_claude_malformed_hooks_fail_closed_without_runtime_invocation(
     tmp_path: Path, payload: str

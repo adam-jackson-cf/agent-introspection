@@ -171,7 +171,7 @@ def test_source_session_attribution_and_context_diagnostics_use_exact_source_eve
         ("codex", "session-1", "project-1", "Project", "/repo", "git"),
         ("codex", "session-1", "project-1", "Project", "/repo", "git"),
     )
-    assert len({row for row in projected_rows}) == 1
+    assert len(set(projected_rows)) == 1
     source_select, _ = source_attribution.split("\nFROM ", maxsplit=1)
     assert source_select.startswith("SELECT DISTINCT\n")
     assert (

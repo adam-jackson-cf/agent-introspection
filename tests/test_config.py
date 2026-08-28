@@ -55,7 +55,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
 
 
 @pytest.mark.parametrize(
-    "document, message",
+    ("document", "message"),
     [
         ({"unexpected": {}}, "unsupported keys in root"),
         ({"database": []}, "database must be a TOML table"),

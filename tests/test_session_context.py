@@ -56,7 +56,7 @@ def _event(
     )
 
 
-@pytest.mark.parametrize("producer", ("claude-code", "codex-cli", "codex-app-server", "omp"))
+@pytest.mark.parametrize("producer", ["claude-code", "codex-cli", "codex-app-server", "omp"])
 def test_context_parser_accepts_only_canonical_producers(tmp_path: Path, producer: str) -> None:
     event = _event(tmp_path / "project", "session_start", datetime(2026, 1, 1, tzinfo=UTC))
     payload = event_payload(event)
@@ -65,7 +65,7 @@ def test_context_parser_accepts_only_canonical_producers(tmp_path: Path, produce
     assert parse_event(payload).producer == producer
 
 
-@pytest.mark.parametrize("event_type", ("session_start", "workspace_changed", "session_end"))
+@pytest.mark.parametrize("event_type", ["session_start", "workspace_changed", "session_end"])
 def test_context_parser_accepts_exact_canonical_event_types(
     tmp_path: Path, event_type: str
 ) -> None:
@@ -136,8 +136,10 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
             started_at=changed_at,
             ended_at=changed_at + timedelta(seconds=1),
         )
-        assert before is not None and before.identity == start.project.identity
-        assert after is not None and after.identity == changed.project.identity
+        assert before is not None
+        assert before.identity == start.project.identity
+        assert after is not None
+        assert after.identity == changed.project.identity
         assert (
             correlated_project(
                 connection,
@@ -271,7 +273,7 @@ def test_superseded_context_is_immutable_excluded_and_replaced(tmp_path: Path) -
         connection.close()
 
 
-@pytest.mark.parametrize("producer", ("claude-code", "codex-app-server", "omp"))
+@pytest.mark.parametrize("producer", ["claude-code", "codex-app-server", "omp"])
 def test_session_context_rejects_non_codex_cli_producers(tmp_path: Path, producer: str) -> None:
     event = _event(tmp_path / "project", "session_start", datetime(2026, 1, 1, tzinfo=UTC))
     payload = event_payload(event)

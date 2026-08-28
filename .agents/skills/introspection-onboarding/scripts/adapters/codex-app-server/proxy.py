@@ -25,7 +25,7 @@ from types import FrameType
 from typing import Any, BinaryIO, Final, cast
 
 _REAL_CLI_CONFIG: Final = "codex-app-server-real-cli"
-_ADAPTER: Final = "adapters/codex-app-server.sh"
+_ADAPTER: Final = "adapter.sh"
 _RELEVANT_METHODS: Final = frozenset(
     {
         "thread/start",
@@ -584,7 +584,8 @@ class ProtocolObserver:
             _diagnostic("resume response thread identity mismatch was rejected")
             return
         kind = "start" if pending.method == "thread/start" else "observe"
-        assert thread_id is not None and workspace is not None
+        assert thread_id is not None
+        assert workspace is not None
         self.worker.submit(LifecycleEvent(kind, thread_id, workspace, _now()))
 
     def _notification(self, message: SelectedMessage) -> None:
@@ -662,7 +663,8 @@ def _proxy(real_cli: Path, argv: list[str], script_dir: Path) -> int:
         stderr=None,
         env=_child_environment(),
     )
-    assert child.stdin is not None and child.stdout is not None
+    assert child.stdin is not None
+    assert child.stdout is not None
     worker = LifecycleWorker(script_dir)
     observer = ProtocolObserver(worker)
     worker.start()

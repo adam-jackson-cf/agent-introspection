@@ -59,5 +59,5 @@ case $workspace in
 esac
 [ -d "$workspace" ] || usage
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 exec "$script_dir/session-context-runtime.sh" codex-app-server "$thread_id" "$event_type" "$occurred_at" "$workspace"

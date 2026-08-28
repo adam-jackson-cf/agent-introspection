@@ -50,7 +50,6 @@ def canonical_activity_id(
     normalized_failure_class: str,
 ) -> str:
     """Hash the attribution-independent canonical activity identity."""
-
     fields: tuple[object, ...] = (
         detector_id,
         detector_version,
@@ -88,7 +87,6 @@ def canonical_task(
     conversation_to_thread: Mapping[str, str],
 ) -> TaskIdentity:
     """Resolve task precedence without promoting an episode to a canonical task."""
-
     resolved_thread = _optional_identity(thread_id, name="thread_id")
     resolved_conversation = _optional_identity(conversation_id, name="conversation_id")
     if resolved_thread is not None:
@@ -111,7 +109,6 @@ def build_conversation_thread_map(
     rows: list[tuple[str, str | None, str | None]],
 ) -> dict[str, str]:
     """Map conversation to thread only when shared-trace evidence is unambiguous."""
-
     by_conversation: dict[str, set[str]] = {}
     for trace_id, conversation_id, thread_id in rows:
         if _optional_identity(trace_id, name="trace_id") is None:
@@ -151,7 +148,6 @@ class ProjectIdentity:
 
 def canonical_git_project(root: str | Path) -> ProjectIdentity:
     """Construct the canonical Git project identity for an existing repository root."""
-
     try:
         normalized = Path(root).resolve(strict=True)
     except OSError as exc:
@@ -164,7 +160,6 @@ def canonical_git_project(root: str | Path) -> ProjectIdentity:
 
 def normalize_target(target: str | Path, *, project_root: str | Path) -> str:
     """Return a real, project-relative POSIX target and reject scope escapes."""
-
     root = Path(project_root).resolve(strict=True)
     raw_target = os.fspath(target)
     if not isinstance(raw_target, str):

@@ -208,7 +208,7 @@ def _candidates_export(args: argparse.Namespace) -> dict[str, Any]:
             ).fetchall()
         if not rows:
             return {"status": "no_candidates", "kind": args.kind}
-        candidates = [{"id": str(row[0]), "fields": [value for value in row[1:]]} for row in rows]
+        candidates = [{"id": str(row[0]), "fields": list(row[1:])} for row in rows]
         envelope = create_review_session(
             connection,
             kind=args.kind,

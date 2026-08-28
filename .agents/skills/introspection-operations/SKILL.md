@@ -17,10 +17,10 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 
 ### Step 2: Run deterministic scans
 
-- **Purpose**: Convert bounded source telemetry and accepted lifecycle context into deterministic canonical activities, activity versions, findings, and trends.
+- **Purpose**: Convert bounded source telemetry and accepted session context into deterministic canonical activities, activity versions, findings, and trends.
 - Run the health workflow before scanning.
 - Use scheduler leases, source watermarks, bounded ClickHouse reads, ordered context replay, and idempotent canonical persistence.
-- Resolve each source activity through exactly one accepted producer/correlation/project interval or retain an explicit unresolved attribution.
+- Resolve each source activity through exactly one accepted producer/correlation/project interval, except Codex CLI `session_context`, which requires exactly one accepted context record, or retain an explicit unresolved attribution.
 - Drain deterministic canonical activity-version events and report scan, activity, version, finding, trend, and delivery evidence.
 - Workflow: [Scan workflow](references/scan-workflow.md)
 

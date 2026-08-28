@@ -109,7 +109,7 @@ def _canonical_activity(
 
 @pytest.mark.parametrize(
     ("producer", "producer_surface", "valid"),
-    (
+    [
         ("codex-cli", "codex-cli", True),
         ("codex-app-server", "codex-app", False),
         ("codex-app-server", "codex-app-server", True),
@@ -121,7 +121,7 @@ def _canonical_activity(
         ("codex-app-server", "codex-cli", False),
         ("omp", "claude-code", False),
         ("claude-code", "omp", False),
-    ),
+    ],
 )
 def test_canonical_activity_accepts_only_exact_producer_surface_pairs(
     producer: str, producer_surface: str, valid: bool

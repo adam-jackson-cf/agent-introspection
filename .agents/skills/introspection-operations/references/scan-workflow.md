@@ -2,7 +2,7 @@
 
 ## Objective
 
-Run one bounded scan that reconciles lifecycle context into canonical activity versions and delivers their deterministic telemetry.
+Run one bounded scan that reconciles accepted session context into canonical activity versions and delivers their deterministic telemetry.
 
 ## Required actions
 
@@ -15,5 +15,5 @@ Run one bounded scan that reconciles lifecycle context into canonical activity v
 ## Done when
 
 - The scan records succeeded or no_data without overlapping another scan or duplicating a successful slot.
-- Every resolved activity is contained by exactly one accepted producer/correlation/project interval at source time.
+- Every resolved activity is contained by exactly one accepted producer/correlation/project interval, except Codex CLI `session_context`, which requires exactly one accepted context record at the matching producer and correlation ID.
 - Persisted latest-version populations, deterministic outbox identities, and remote delivery are verified.

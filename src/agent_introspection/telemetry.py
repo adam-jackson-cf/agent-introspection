@@ -271,7 +271,6 @@ def enqueue_canonical_activity_version(
 
 def _local_observation_event_ids(connection: sqlite3.Connection) -> set[str]:
     """Return observation entities already represented by the immutable local outbox."""
-
     existing_observation_ids: set[str] = set()
     for row in connection.execute("SELECT payload_json FROM otlp_outbox"):
         payload = json.loads(str(row[0]))
@@ -312,7 +311,6 @@ def plan_observation_reconciliation(
     connection: sqlite3.Connection, *, scan_run_ids: Sequence[str]
 ) -> ObservationReconciliationPlan:
     """Reconstruct original observation event identities for explicit failed scans."""
-
     selected_scan_run_ids = _validate_failed_scan_ids(connection, scan_run_ids)
     existing_local_observation_ids = _local_observation_event_ids(connection)
     events: list[DerivedEvent] = []
@@ -400,7 +398,6 @@ def remote_event_ids(
     client: EventQueryClient, events: Sequence[DerivedEvent | RemoteEventReference]
 ) -> set[str]:
     """Check SigNoz for exact immutable event IDs before a control-plane transition."""
-
     references = tuple(
         RemoteEventReference(event.event_id, event.event_name, event.timestamp_ns)
         if isinstance(event, DerivedEvent)
@@ -453,7 +450,6 @@ def remote_observation_event_ids(
     client: EventQueryClient, events: Sequence[DerivedEvent]
 ) -> set[str]:
     """Check SigNoz for exact observation event IDs before local replay."""
-
     if any(event.event_name != OBSERVATION_EVENT_NAME for event in events):
         raise ValueError("observation reconciliation requires observation events")
     return remote_event_ids(client, events)
@@ -466,7 +462,6 @@ def enqueue_observation_reconciliation(
     remote_event_ids: set[str],
 ) -> dict[str, int]:
     """Persist only the planned observation events absent from both idempotency ledgers."""
-
     planned_event_ids = {event.event_id for event in plan.events}
     unexpected_remote_ids = remote_event_ids - planned_event_ids
     if unexpected_remote_ids:

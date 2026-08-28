@@ -16,7 +16,7 @@ from typing import Final
 _LABEL: Final = "com.adamjackson.agent-introspection-codex-app-server"
 _MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/session-context-runtime-v1")
 _REAL_CODEX: Final = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
-_PROXY: Final = "codex-app-server-proxy.py"
+_PROXY: Final = "proxy.py"
 _REAL_CLI_CONFIG: Final = "codex-app-server-real-cli"
 
 
@@ -116,24 +116,26 @@ def install(
     activate: bool = True,
 ) -> tuple[Path, Path]:
     source_dir = Path(__file__).resolve().parent
+    scripts_dir = source_dir.parent.parent
     managed_dir = home / _MANAGED_RUNTIME
-    proxy = managed_dir / _PROXY
+    managed_adapter_dir = managed_dir / "adapters/codex-app-server"
+    proxy = managed_adapter_dir / _PROXY
     real_cli = _require_executable(real_codex)
     if real_cli == Path(__file__).resolve() or real_cli == proxy.resolve():
         raise InstallError("the real Codex executable cannot resolve to the proxy")
 
     _atomic_install(
-        source_dir / "session-context-runtime.sh",
+        scripts_dir / "session-context-runtime.sh",
         managed_dir / "session-context-runtime.sh",
         0o755,
     )
     _atomic_install(
-        source_dir / "adapters/codex-app-server.sh",
-        managed_dir / "adapters/codex-app-server.sh",
+        source_dir / "adapter.sh",
+        managed_adapter_dir / "adapter.sh",
         0o755,
     )
     _atomic_install(source_dir / _PROXY, proxy, 0o755)
-    _atomic_write(managed_dir / _REAL_CLI_CONFIG, f"{real_cli}\n".encode(), 0o444)
+    _atomic_write(managed_adapter_dir / _REAL_CLI_CONFIG, f"{real_cli}\n".encode(), 0o444)
 
     launch_agent = home / "Library/LaunchAgents" / f"{_LABEL}.plist"
     payload = plistlib.dumps(_launch_agent_payload(proxy), sort_keys=True)

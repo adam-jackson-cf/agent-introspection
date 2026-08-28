@@ -195,7 +195,10 @@ def test_trace_query_retains_raw_identity_candidates_without_producer_detection(
         assert field in TRACE_QUERY
 
 
-@pytest.mark.parametrize("value, expected", [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, None), ("", None), ("0", 0.0), ("12.5", 12.5)],
+)
 def test_duration_parser_accepts_only_installed_decimal_string_shape(
     value: object, expected: float | None
 ) -> None:
@@ -340,7 +343,7 @@ def test_trace_parser_exposes_rejected_correlation_status(state: str, correlatio
 
 
 @pytest.mark.parametrize(
-    "change, error",
+    ("change", "error"),
     [
         ({"correlation_id": None}, "fields must be present together"),
         ({"correlation_id": ["thread-a", "thread-b"]}, "optional text value"),
@@ -470,7 +473,7 @@ def test_selected_id_hydration_uses_parameters_for_every_identifier() -> None:
     predicate, parameters = query_selected_ids(("log-a", "log-b"))
     assert predicate == "id IN ({id_0:String}, {id_1:String})"
     assert parameters == {"id_0": "log-a", "id_1": "log-b"}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="at least one id is required"):
         query_selected_ids(())
 
 

@@ -165,7 +165,6 @@ def _normalize_scalar(value: object, *, key: str | None, rules: VolatileRules) -
 
 def normalize_structure(value: object, *, rules: VolatileRules = DEFAULT_VOLATILE_RULES) -> object:
     """Normalize only declared volatility while preserving semantic structure."""
-
     if isinstance(value, Mapping):
         normalized: dict[str, object] = {}
         keys = list(value)

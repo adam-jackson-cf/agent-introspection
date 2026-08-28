@@ -464,7 +464,6 @@ def parse_source_activity_correlation(
     data: Mapping[str, object],
 ) -> SourceActivityCorrelation | None:
     """Parse the sole canonical source-correlation representation."""
-
     fields = ("producer", "producer_surface", "correlation_id", "source_event_timestamp")
     present = tuple(data.get(field) is not None for field in fields)
     if not any(present):
@@ -575,7 +574,6 @@ def _single_raw_identity(*values: tuple[str, ...]) -> str | None:
 
 def parse_duration_ms(value: object) -> float | None:
     """Parse the installed string attribute without accepting ambiguous values."""
-
     if value is None or value == "":
         return None
     if not isinstance(value, str) or _DURATION_MS.fullmatch(value) is None:
@@ -605,7 +603,6 @@ def parse_source_session_row(
     data: Mapping[str, object], *, source_kind: Literal["log", "trace"]
 ) -> SourceSessionRow:
     """Parse a raw source record without deriving detector eligibility."""
-
     source_id = _optional_text(data.get("source_id"))
     service_name = _optional_text(data.get("service_name"))
     if source_id is None or service_name is None:
@@ -814,7 +811,6 @@ class ClickHouseClient:
         self, *, start: datetime, end: datetime, start_ns: int, end_ns: int
     ) -> Iterator[SourceSessionRow]:
         """Yield the full detector-independent source population in one window."""
-
         if start.tzinfo is None or end.tzinfo is None or start >= end or not 0 <= start_ns < end_ns:
             raise ValueError("invalid raw source extraction bounds")
         start_bucket, end_bucket = _window_buckets(start_ns=start_ns, end_ns=end_ns)
@@ -871,7 +867,6 @@ class ClickHouseClient:
 
     def raw_source_window_anchor(self) -> tuple[int, int]:
         """Return earliest timestamps for both raw source streams."""
-
         rows = list(self.query(RAW_SOURCE_WINDOW_ANCHOR_QUERY, {}))
         if len(rows) != 1:
             raise SourceError("raw source window anchor is unavailable")
@@ -896,7 +891,6 @@ class ClickHouseClient:
 
     def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
         """Fail closed unless both source streams retain data at the requested start."""
-
         rows = list(
             self.query(
                 RETENTION_PROOF_QUERY,
@@ -921,7 +915,6 @@ class ClickHouseClient:
         end_bucket: int,
     ) -> Iterator[HydrationRow]:
         """Fetch allowlisted raw fields only for explicitly shortlisted identities."""
-
         if identity_kind not in HYDRATION_QUERIES:
             raise ValueError("unsupported hydration identity kind")
         if not identifiers:
@@ -944,7 +937,6 @@ class ClickHouseClient:
 
 def query_selected_ids(ids: Sequence[str]) -> tuple[str, Mapping[str, str]]:
     """Build an allowlisted hydration predicate without embedding identifier values."""
-
     if not ids:
         raise ValueError("at least one id is required")
     if any(not isinstance(value, str) or value == "" for value in ids):

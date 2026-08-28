@@ -67,7 +67,6 @@ class CanonicalActivityOccurrence:
     @property
     def fingerprint(self) -> str:
         """Return the canonical membership/project grouping key."""
-
         project_key = f"{self.attribution_state}:{self.project_identity_id or ''}"
         return FingerprintComponents(
             detector_version=self.detector_version,
@@ -84,7 +83,6 @@ def _latest_canonical_occurrences(
     connection: sqlite3.Connection, activity_ids: Iterable[str] | None = None
 ) -> list[CanonicalActivityOccurrence]:
     """Load canonical activities with exactly their latest attribution versions."""
-
     identifiers = tuple(sorted(set(activity_ids or ())))
     where = ""
     parameters: tuple[object, ...] = ()
@@ -137,7 +135,6 @@ def recompute_canonical_findings(
     now: datetime,
 ) -> list[TrendEvaluation]:
     """Converge canonical memberships, findings, and trends in the caller transaction."""
-
     if now.tzinfo is None:
         raise ValueError("trend evaluation clock must be timezone-aware")
     if not connection.in_transaction:

@@ -16,13 +16,14 @@ import pytest
 
 PROXY_SOURCE = (
     Path(__file__).parents[1]
-    / ".agents/skills/introspection-onboarding/scripts/codex-app-server-proxy.py"
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/proxy.py"
 )
 
 
 def _load_proxy() -> ModuleType:
     spec = importlib.util.spec_from_file_location("codex_app_server_proxy", PROXY_SOURCE)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -60,9 +61,9 @@ def _error_response(request_id: int) -> bytes:
 
 def _runtime_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Path]:
     scripts = tmp_path / "scripts"
-    adapters = scripts / "adapters"
-    adapters.mkdir(parents=True)
-    adapter = adapters / "codex-app-server.sh"
+    adapter_dir = scripts / "adapters" / "codex-app-server"
+    adapter_dir.mkdir(parents=True)
+    adapter = adapter_dir / "adapter.sh"
     adapter.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
@@ -77,7 +78,7 @@ def _runtime_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[An
     event_log = tmp_path / "events.jsonl"
     monkeypatch.setenv("EVENT_LOG", str(event_log))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    worker = proxy.LifecycleWorker(scripts)
+    worker = proxy.LifecycleWorker(adapter_dir)
     observer = proxy.ProtocolObserver(worker)
     worker.start()
     return worker, observer, event_log
@@ -232,12 +233,12 @@ def test_pending_and_managed_state_are_bounded(
 
 def _proxy_layout(tmp_path: Path) -> tuple[Path, Path]:
     scripts = tmp_path / "scripts"
-    adapters = scripts / "adapters"
-    adapters.mkdir(parents=True)
-    installed_proxy = scripts / "codex-app-server-proxy.py"
+    adapter_dir = scripts / "adapters" / "codex-app-server"
+    adapter_dir.mkdir(parents=True)
+    installed_proxy = adapter_dir / "proxy.py"
     shutil.copy2(PROXY_SOURCE, installed_proxy)
     installed_proxy.chmod(installed_proxy.stat().st_mode | stat.S_IXUSR)
-    adapter = adapters / "codex-app-server.sh"
+    adapter = adapter_dir / "adapter.sh"
     adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     adapter.chmod(0o755)
     real_cli = tmp_path / "real-codex"
@@ -263,7 +264,7 @@ def _proxy_layout(tmp_path: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     real_cli.chmod(0o755)
-    (scripts / "codex-app-server-real-cli").write_text(f"{real_cli}\n", encoding="utf-8")
+    (adapter_dir / "codex-app-server-real-cli").write_text(f"{real_cli}\n", encoding="utf-8")
     return installed_proxy, real_cli
 
 

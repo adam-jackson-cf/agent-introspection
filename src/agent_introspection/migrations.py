@@ -1274,7 +1274,6 @@ def apply_migrations(
     migrations: tuple[Migration, ...] = MIGRATIONS,
 ) -> tuple[AppliedMigration, ...]:
     """Validate migration history and apply every pending migration safely."""
-
     if connection.in_transaction:
         raise MigrationError("migrations require a connection with no active transaction")
     versions = [migration.version for migration in migrations]

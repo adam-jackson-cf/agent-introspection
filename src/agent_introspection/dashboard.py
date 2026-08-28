@@ -108,7 +108,6 @@ STATUS_LABELS = {
 
 def _label_sql(value: str, labels: dict[str, str]) -> str:
     """Return a deterministic label expression while retaining unknown values."""
-
     clauses = ",\n    ".join(f"{value} = '{raw}', '{label}'" for raw, label in labels.items())
     return f"multiIf(\n    {clauses},\n    {value}\n  )"
 
@@ -127,7 +126,6 @@ Panel = tuple[str, str, str, str, str, tuple[int, int, int, int]]
 
 def _context_coverage_query(select: str, query_tail: str = "") -> str:
     """Query source activities in the selected range against accepted context."""
-
     return f"""WITH latest_activities AS (
   SELECT *
   FROM signoz_logs.distributed_logs_v2
@@ -481,7 +479,6 @@ def _build_dashboard(
 
 def build_dashboard() -> dict[str, Any]:
     """Build the stable existing insight dashboard."""
-
     return _build_dashboard(
         title="Agent Introspection",
         description="Observed agent behaviours in the selected display range.",
@@ -492,7 +489,6 @@ def build_dashboard() -> dict[str, Any]:
 
 def build_health_dashboard() -> dict[str, Any]:
     """Build the bootstrap-safe Health dashboard without inventing its identity."""
-
     return _build_dashboard(
         title="Agent Introspection Health",
         description="Hourly Agent Introspection pipeline health in the selected display range.",
@@ -593,7 +589,6 @@ def _verify_dashboard(
 
 def verify_dashboard(document: dict[str, Any]) -> list[str]:
     """Report insight-dashboard identity, presentation, layout, and query drift."""
-
     return _verify_dashboard(
         document, panels=INSIGHT_PANELS, expected_uuid=DASHBOARD_UUID, identity_name="insight"
     )
@@ -601,7 +596,6 @@ def verify_dashboard(document: dict[str, Any]) -> list[str]:
 
 def verify_health_dashboard(document: dict[str, Any]) -> list[str]:
     """Report Health-dashboard bootstrap, presentation, layout, and query drift."""
-
     return _verify_dashboard(
         document, panels=HEALTH_PANELS, expected_uuid=HEALTH_DASHBOARD_UUID, identity_name="health"
     )

@@ -148,7 +148,6 @@ def _reject_unknown(actual: set[str], allowed: frozenset[str], *, location: str)
 
 def parse_config(data: dict[str, Any]) -> AppConfig:
     """Validate parsed TOML and construct the typed configuration."""
-
     _reject_unknown(set(data), _ROOT_KEYS, location="root")
     database = _table(data, "database")
     signoz = _table(data, "signoz")
@@ -280,7 +279,6 @@ def load_config(path: Path | None = None) -> AppConfig:
     An absent canonical configuration file means the documented defaults are used. An
     explicitly supplied path must exist.
     """
-
     config_path = (
         path.expanduser().resolve(strict=False) if path is not None else DEFAULT_CONFIG_PATH
     )

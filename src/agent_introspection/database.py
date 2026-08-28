@@ -295,7 +295,6 @@ def persist_canonical_activity(
     attribution: CanonicalAttribution,
 ) -> CanonicalActivityWrite:
     """Persist one canonical activity and its changed attribution without committing."""
-
     activity_values = activity.values()
     membership = connection.execute(
         """
@@ -390,7 +389,6 @@ def connect_database(
     busy_timeout_ms: int = 5_000,
 ) -> sqlite3.Connection:
     """Open the canonical on-disk database with all required SQLite protections."""
-
     if isinstance(busy_timeout_ms, bool) or busy_timeout_ms <= 0:
         raise ValueError("busy_timeout_ms must be a positive integer")
     database_path = path.expanduser().resolve(strict=False)
@@ -429,13 +427,11 @@ def _pragma_check(connection: sqlite3.Connection, pragma: str) -> tuple[str, ...
 
 def quick_check(connection: sqlite3.Connection) -> tuple[str, ...]:
     """Run the mandatory pre-scan structural check and fail on any diagnostic."""
-
     return _pragma_check(connection, "quick_check")
 
 
 def integrity_check(connection: sqlite3.Connection) -> tuple[str, ...]:
     """Run SQLite's complete integrity check and fail on any diagnostic."""
-
     return _pragma_check(connection, "integrity_check")
 
 
@@ -447,7 +443,6 @@ def _read_only_connection(path: Path) -> sqlite3.Connection:
 
 def verify_database_file(path: Path) -> tuple[str, ...]:
     """Verify a closed database file without allowing SQLite to create it."""
-
     connection = _read_only_connection(path)
     try:
         result = integrity_check(connection)
@@ -463,7 +458,6 @@ def verify_database_file(path: Path) -> tuple[str, ...]:
 
 def backup_database(connection: sqlite3.Connection, destination: Path) -> Path:
     """Create and verify one SQLite online backup without overwriting evidence."""
-
     _require_idle(connection, "online backup")
     integrity_check(connection)
     backup_path = destination.expanduser().resolve(strict=False)
@@ -499,7 +493,6 @@ def restore_database(
     busy_timeout_ms: int = 5_000,
 ) -> RestoreResult:
     """Restore a verified backup atomically after preserving the current database."""
-
     if isinstance(busy_timeout_ms, bool) or busy_timeout_ms <= 0:
         raise ValueError("busy_timeout_ms must be a positive integer")
     target = database_path.expanduser().resolve(strict=False)
@@ -549,7 +542,6 @@ def weekly_maintenance(
     backup_directory: Path | None = None,
 ) -> MaintenanceResult:
     """Run the weekly integrity check, ANALYZE, and verified online backup."""
-
     result = integrity_check(connection)
     with connection:
         connection.execute("ANALYZE")
@@ -569,7 +561,6 @@ def manual_vacuum(
     backup_directory: Path | None = None,
 ) -> VacuumResult:
     """VACUUM only above 25 percent free pages and after a verified backup."""
-
     _require_idle(connection, "VACUUM")
     page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
     free_pages = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
@@ -595,7 +586,6 @@ def persist_observations_and_watermark(
     manage_transaction: bool = True,
 ) -> None:
     """Persist observations and their source watermark in one atomic transaction."""
-
     if manage_transaction:
         _require_idle(connection, "observation persistence")
     elif not connection.in_transaction:

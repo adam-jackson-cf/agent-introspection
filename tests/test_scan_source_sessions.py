@@ -538,9 +538,12 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
         "WHERE source = 'signoz_raw_source_sessions'"
     ).fetchone() == (200, "")
 
-    with pytest.raises(RuntimeError), connection:
+    def force_rollback() -> None:
         _advance_raw_source_watermark(connection, end_ns=300)
         raise RuntimeError("force rollback")
+
+    with pytest.raises(RuntimeError), connection:
+        force_rollback()
     assert connection.execute(
         "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_raw_source_sessions'"
     ).fetchone() == (200,)

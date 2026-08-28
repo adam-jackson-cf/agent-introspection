@@ -81,7 +81,7 @@ def _envelope(argument: str) -> tuple[str, str, str]:
 
 
 def _runtime() -> Path:
-    return Path(__file__).resolve().parent.parent / "session-context-runtime.sh"
+    return Path(__file__).resolve().parent.parent.parent / "session-context-runtime.sh"
 
 
 def main(argv: list[str]) -> int:

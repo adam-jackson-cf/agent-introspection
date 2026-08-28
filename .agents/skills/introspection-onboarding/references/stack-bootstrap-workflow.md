@@ -6,7 +6,8 @@ Prove the local SigNoz stack can receive and retain OTLP before configuring sess
 
 ## Guidance
 
-- Check loopback-only UI, collector health, OTLP listeners, and disabled LAN exposure.
+- Start the project stack only with `ops/signoz/docker-compose.override.yaml`, the existing SigNoz Compose project, `docker --context orbstack`, and the connected Infisical development environment; never use the generic un-overridden Compose command.
+- Check loopback-only UI, collector health, OTLP listeners, and disabled OrbStack LAN exposure.
 - Inspect effective collector pipelines without exposing secrets.
 - Run synthetic trace, metric, and log probes.
 - Verify that new backend records arrived after each probe rather than relying on historical totals.

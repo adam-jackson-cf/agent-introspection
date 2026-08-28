@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const runtimePath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
+  "..",
   "session-context-runtime.sh",
 );
 

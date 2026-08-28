@@ -1,6 +1,6 @@
 ---
 name: "introspection-onboarding"
-description: "Configure and validate canonical Agent Introspection project attribution; USE WHEN onboarding producers, validating managed lifecycle capture, or verifying project attribution."
+description: "Configure and validate canonical Agent Introspection project attribution; USE WHEN onboarding producers, validating managed session-context capture, or verifying project attribution."
 ---
 
 # Task
@@ -20,9 +20,9 @@ description: "Configure and validate canonical Agent Introspection project attri
 
 ### Producer capture
 
-- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle capabilities.
-- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks.
-- [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned hook runtime used by supported producers.
+- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle or approved proxy capabilities.
+- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks or the managed Codex app-server process proxy.
+- [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned managed runtime used by supported producers.
 - [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
 
 ### Fresh-start cutover

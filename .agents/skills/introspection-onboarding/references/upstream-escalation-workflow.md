@@ -6,7 +6,7 @@ Record the missing native lifecycle or attribution capability without adding an 
 
 ## Guidance
 
-- Identify whether authoritative session ID, conversation key, absolute workspace, lifecycle timestamp, trace correlation, or bounded project evidence is unavailable.
+- Identify whether authoritative session ID, canonical source-correlation key, absolute workspace, lifecycle timestamp, trace correlation, or bounded project evidence is unavailable.
 - State which producer remains unresolved and name the exact missing native surface.
 - Specify the required normalized input and correlation contract for a future producer integration.
 - Preserve unmatched telemetry as unresolved rather than assigning a static or inferred project.

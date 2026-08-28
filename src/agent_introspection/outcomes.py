@@ -11,7 +11,6 @@ def derive_outcome(
     hydrated_outcome: str | None,
 ) -> tuple[str, str | None]:
     """Return the detector event name and outcome from allowlisted source facts."""
-
     if event_name == "codex.tool_decision" and decision_source == "user":
         return "turn/steer", decision
     return event_name, hydrated_outcome

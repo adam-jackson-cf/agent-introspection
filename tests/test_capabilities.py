@@ -127,7 +127,7 @@ def test_diagnostics_and_unrelated_structure_do_not_change_approved_contract(
 
 
 @pytest.mark.parametrize(
-    "contract_path,replacement",
+    ("contract_path", "replacement"),
     [
         (("timezone",), "Europe/London"),
         (("tables", 0, "table"), "renamed_logs"),
