@@ -201,6 +201,28 @@ GROUP BY service_name, source_id
 ORDER BY source_timestamp, service_name, source_id
 """.strip()
 
+RAW_SOURCE_SESSION_METRIC_QUERY = r"""
+SELECT
+    attrs['service.name'] AS service_name,
+    toString(fingerprint) AS source_id,
+    min(inserted_at_unix_milli) AS source_timestamp_ms,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attrs['session.id'])
+    )) AS session_ids,
+    CAST([], 'Array(String)') AS thread_ids,
+    CAST([], 'Array(String)') AS legacy_thread_ids,
+    CAST([], 'Array(String)') AS gen_ai_conversation_ids
+FROM signoz_metrics.distributed_time_series_v4
+WHERE inserted_at_unix_milli >= {start_ms:Int64}
+  AND inserted_at_unix_milli < {end_ms:Int64}
+  AND metric_name = 'claude_code.session.count'
+  AND attrs['service.name'] = 'claude-code'
+  AND mapContains(attrs, 'session.id')
+GROUP BY service_name, source_id
+ORDER BY source_timestamp_ms, service_name, source_id
+""".strip()
+
 
 RAW_SOURCE_WINDOW_ANCHOR_QUERY = r"""
 SELECT
@@ -391,7 +413,7 @@ class HydrationRow:
 class SourceSessionRow:
     """One deduplicated, detector-independent bounded source record."""
 
-    source_kind: Literal["log", "trace"]
+    source_kind: Literal["log", "trace", "metric"]
     source_id: str
     source_timestamp: datetime
     service_name: str
@@ -618,7 +640,7 @@ def _clickhouse_datetime64(value: datetime) -> str:
 
 
 def parse_source_session_row(
-    data: Mapping[str, object], *, source_kind: Literal["log", "trace"]
+    data: Mapping[str, object], *, source_kind: Literal["log", "trace", "metric"]
 ) -> SourceSessionRow:
     """Parse a raw source record without deriving detector eligibility."""
     source_id = _optional_text(data.get("source_id"))
@@ -630,6 +652,11 @@ def parse_source_session_row(
         if timestamp_ns is None or timestamp_ns < 0:
             raise SourceError("raw log source timestamp must be an unsigned integer")
         source_timestamp = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC)
+    elif source_kind == "metric":
+        timestamp_ms = _optional_int(data.get("source_timestamp_ms"))
+        if timestamp_ms is None or timestamp_ms < 0:
+            raise SourceError("raw metric source timestamp must be an unsigned integer")
+        source_timestamp = datetime.fromtimestamp(timestamp_ms / 1_000, tz=UTC)
     else:
         parsed_timestamp = _optional_timestamp(data.get("source_timestamp"))
         if parsed_timestamp is None:
@@ -852,6 +879,13 @@ class ClickHouseClient:
             },
         ):
             yield parse_source_session_row(row, source_kind="trace")
+        start_ms = (start_ns + 999_999) // 1_000_000
+        end_ms = (end_ns + 999_999) // 1_000_000
+        for row in self.query(
+            RAW_SOURCE_SESSION_METRIC_QUERY,
+            {"start_ms": start_ms, "end_ms": end_ms},
+        ):
+            yield parse_source_session_row(row, source_kind="metric")
 
     def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
         if not 0 <= start_ns < end_ns:

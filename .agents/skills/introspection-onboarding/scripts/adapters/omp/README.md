@@ -8,7 +8,7 @@ The extension reads only `context.sessionManager.getSessionId()`, `context.cwd`,
 
 ## Normalization
 
-The extension launches [`../../session-context-runtime.sh`](../../session-context-runtime.sh) with the shared five-field contract. It also exposes the narrow `extension-health-agent-introspection` command solely to verify extension registration.
+The extension launches [`../../session-context-runtime.sh`](../../session-context-runtime.sh) with the shared five-field contract. Registration is verified by the private adapter test suite rather than a public slash command.
 
 ## Attribution boundary
 

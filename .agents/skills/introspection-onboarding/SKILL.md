@@ -10,6 +10,7 @@ description: "Configure and validate canonical Agent Introspection project attri
 - Select only the workflows required by the request; do not execute this index from top to bottom.
 - Load a linked workflow only when its stated operation applies.
 - Preserve explicit capability boundaries and leave unsupported attribution unresolved.
+- For Codex global configuration, use `$CODEX_HOME` when it is set to a non-empty absolute path; otherwise use `~/.codex`. Global hooks are at `<codex-root>/hooks.json`, and trust state is at `<codex-root>/config.toml`.
 
 ## Workflow index
 
@@ -20,8 +21,8 @@ description: "Configure and validate canonical Agent Introspection project attri
 
 ### Producer capture
 
-- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle or approved proxy capabilities.
-- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks or the managed Codex app-server process proxy.
+- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle capabilities and documented trusted global hook surfaces.
+- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks, including trusted global SessionStart/SessionEnd hooks for Codex app-server.
 - [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned managed runtime used by supported producers.
 - [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
 

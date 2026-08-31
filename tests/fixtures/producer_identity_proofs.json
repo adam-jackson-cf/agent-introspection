@@ -1,5 +1,5 @@
 {
-  "observed_on": "2026-08-06",
+  "observed_on": "2026-08-29",
   "evidence_policy": {
     "prompts_recorded": false,
     "responses_recorded": false,
@@ -117,6 +117,40 @@
         "non_git": "passed",
         "workspace_change": "not_exposed_by_installed_notify"
       }
+    },
+    {
+      "producer": "codex-app-server",
+      "version": "0.149.0-alpha.4.3",
+      "command_argv_without_prompt": ["/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", "--remote-debugging-port=9229"],
+      "native_lifecycle_field": "SessionStart/SessionEnd hook session_id",
+      "local_artifact_field": "logs_2.sqlite logs.thread_id",
+      "otel_service": "codex-app-server",
+      "otel_field": "thread.id",
+      "correlation_id": "01a04f2e-fa8f-7c31-9c8e-3693acb033f3",
+      "local_artifact_ids": [
+        "f5424cd459ea5f727087b0a3df5ddddd1c8a985a97d17c8ef7a369a856296086",
+        "2f4f8d358ea837aa03b18ca5c064e9cca896a87807618cd5d4452573b439f5df"
+      ],
+      "first_context_at": "2026-08-29T20:21:17.749977Z",
+      "last_context_at": "2026-08-29T20:23:51.499384Z",
+      "first_otel_at": "2026-08-29T20:21:15.036831Z",
+      "last_otel_at": "2026-08-29T20:23:00.838575Z",
+      "otel_trace_count": 4,
+      "otel_span_count": 4,
+      "project": {
+        "id": "38687ee1ae39a54b5ea891d3d1a472146f153983c5f53a41de62c2970354837a",
+        "name": "codex-hooks-proof.PvgotB",
+        "root": "/private/tmp/codex-hooks-proof.PvgotB",
+        "kind": "git"
+      },
+      "scenarios": {
+        "fresh": "passed",
+        "resume": "not_exercised",
+        "end": "passed",
+        "concurrent_projects": "not_exercised",
+        "non_git": "not_exercised",
+        "workspace_change": "unsupported_by_design"
+      }
     }
   ],
   "unsupported": [
@@ -132,13 +166,6 @@
     {
       "producer": "codex-app",
       "missing_equality_boundary": "app workspace lifecycle ID = protocol local metadata ID",
-      "source_ingestion_enabled": false
-    },
-    {
-      "producer": "codex-app-server",
-      "version": "0.147.0",
-      "command_argv_without_prompt": ["codex", "app-server", "generate-json-schema", "--experimental"],
-      "missing_equality_boundary": "installed protocol exposes only the client notification `initialized`; no persistent callback can invoke the managed adapter with protocol thread.id",
       "source_ingestion_enabled": false
     }
   ]

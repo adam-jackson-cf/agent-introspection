@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection.attribution import reconcile_activity, resolve_attribution
+from agent_introspection.attribution import (
+    reconcile_activity,
+    resolve_attribution,
+    resolve_metric_attribution,
+)
 from agent_introspection.database import CanonicalActivity, CanonicalSourceMembership
 from agent_introspection.migrations import apply_migrations
 from agent_introspection.session_context import (
@@ -118,6 +122,69 @@ def test_resolution_uses_one_half_open_context_interval_or_fixed_reason(tmp_path
                 correlation_id="session-1",
                 source_at=moment,
                 clock_skew_seconds=-1,
+            )
+    finally:
+        connection.close()
+
+
+def test_metric_resolution_allows_only_bounded_post_end_delivery_delay(tmp_path: Path) -> None:
+    connection = _connection(tmp_path / "ledger.sqlite3")
+    try:
+        moment = datetime(2026, 7, 20, tzinfo=UTC)
+        root = tmp_path / "project"
+        root.mkdir()
+        inbox = tmp_path / "inbox"
+        spool_event(_context_event(root, moment), directory=inbox)
+        assert len(drain_inbox(connection, directory=inbox)) == 1
+        spool_event(
+            parse_event(
+                {
+                    "event_id": "c" * 64,
+                    "producer": "claude-code",
+                    "session_id": "session-1",
+                    "event_type": "session_end",
+                    "occurred_at": (moment + timedelta(seconds=1)).isoformat(),
+                    "agent": {
+                        "project": {
+                            "id": _PROJECT_ID,
+                            "name": root.name,
+                            "root": root.as_posix(),
+                            "kind": "git",
+                        }
+                    },
+                }
+            ),
+            directory=inbox,
+        )
+        assert len(drain_inbox(connection, directory=inbox)) == 1
+
+        source_at = moment + timedelta(seconds=6)
+        assert (
+            resolve_metric_attribution(
+                connection,
+                producer="claude-code",
+                correlation_id="session-1",
+                source_at=source_at,
+                delivery_grace_seconds=4,
+            ).reason_code
+            == "missing_workspace"
+        )
+        resolved = resolve_metric_attribution(
+            connection,
+            producer="claude-code",
+            correlation_id="session-1",
+            source_at=source_at,
+            delivery_grace_seconds=5,
+        )
+        assert resolved.state == "resolved"
+        assert resolved.method == "session_context_delivery_grace"
+        with pytest.raises(ValueError, match="metric delivery grace must not be negative"):
+            resolve_metric_attribution(
+                connection,
+                producer="claude-code",
+                correlation_id="session-1",
+                source_at=source_at,
+                delivery_grace_seconds=-1,
             )
     finally:
         connection.close()

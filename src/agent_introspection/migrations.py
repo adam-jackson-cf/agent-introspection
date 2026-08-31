@@ -1148,6 +1148,169 @@ _RAW_SOURCE_SESSION_NATIVE_KEY_SCHEMA: Final[tuple[str, ...]] = (
 )
 
 
+_RAW_SOURCE_SESSION_METRIC_SCHEMA: Final[tuple[str, ...]] = (
+    "DROP TRIGGER source_session_records_no_update",
+    "DROP TRIGGER source_session_records_no_delete",
+    "ALTER TABLE source_session_records RENAME TO source_session_records_legacy",
+    """
+    CREATE TABLE source_session_records (
+        scan_run_id TEXT NOT NULL REFERENCES scan_runs(id),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('log', 'trace', 'metric')),
+        service_name TEXT NOT NULL CHECK (length(service_name) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+        source_timestamp TEXT NOT NULL,
+        session_ids_json TEXT NOT NULL CHECK (json_valid(session_ids_json)),
+        thread_ids_json TEXT NOT NULL CHECK (json_valid(thread_ids_json)),
+        legacy_thread_ids_json TEXT NOT NULL CHECK (json_valid(legacy_thread_ids_json)),
+        gen_ai_conversation_ids_json TEXT NOT NULL CHECK (json_valid(gen_ai_conversation_ids_json)),
+        terminal_outcome TEXT NOT NULL CHECK (
+            terminal_outcome IN ('attributed', 'expected_rejection', 'failed', 'blocked')
+        ),
+        terminal_reason TEXT NOT NULL CHECK (length(terminal_reason) > 0),
+        context_evidence_id TEXT,
+        project_id TEXT,
+        project_name TEXT,
+        project_root TEXT,
+        project_kind TEXT CHECK (project_kind IS NULL OR project_kind = 'git'),
+        projection_event_id TEXT NOT NULL CHECK (length(projection_event_id) = 64),
+        created_at TEXT NOT NULL,
+        CHECK (
+            (project_id IS NULL AND project_name IS NULL AND project_root IS NULL AND project_kind IS NULL)
+            OR (length(project_id) = 64 AND length(project_name) > 0
+                AND length(project_root) > 0 AND project_kind = 'git')
+        ),
+        CHECK (
+            (terminal_outcome = 'attributed' AND context_evidence_id IS NOT NULL AND project_id IS NOT NULL)
+            OR (terminal_outcome != 'attributed' AND project_id IS NULL)
+        ),
+        PRIMARY KEY (scan_run_id, source_kind, service_name, source_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    INSERT INTO source_session_records (
+        scan_run_id, source_kind, service_name, source_id, source_timestamp,
+        session_ids_json, thread_ids_json, legacy_thread_ids_json,
+        gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+        context_evidence_id, project_id, project_name, project_root, project_kind,
+        projection_event_id, created_at
+    ) SELECT
+        scan_run_id, source_kind, service_name, source_id, source_timestamp,
+        session_ids_json, thread_ids_json, legacy_thread_ids_json,
+        gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+        context_evidence_id, project_id, project_name, project_root, project_kind,
+        projection_event_id, created_at
+    FROM source_session_records_legacy
+    """,
+    "DROP TABLE source_session_records_legacy",
+    "CREATE INDEX source_session_records_outcome_idx ON source_session_records(scan_run_id, terminal_outcome)",
+    "CREATE TRIGGER source_session_records_no_update BEFORE UPDATE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records are immutable'); END",
+    "CREATE TRIGGER source_session_records_no_delete BEFORE DELETE ON source_session_records BEGIN SELECT RAISE(ABORT, 'source session records cannot be deleted'); END",
+    "DROP INDEX source_session_current_native_session_idx",
+    "ALTER TABLE source_session_current RENAME TO source_session_current_legacy",
+    """
+    CREATE TABLE source_session_current (
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('log', 'trace', 'metric')),
+        service_name TEXT NOT NULL CHECK (length(service_name) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        terminal_outcome TEXT NOT NULL CHECK (
+            terminal_outcome IN ('attributed', 'expected_rejection', 'failed', 'blocked')
+        ),
+        terminal_reason TEXT NOT NULL CHECK (length(terminal_reason) > 0),
+        context_evidence_id TEXT,
+        project_id TEXT,
+        project_name TEXT,
+        project_root TEXT,
+        project_kind TEXT CHECK (project_kind IS NULL OR project_kind = 'git'),
+        projection_event_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        source_timestamp TEXT,
+        session_ids_json TEXT,
+        thread_ids_json TEXT,
+        legacy_thread_ids_json TEXT,
+        gen_ai_conversation_ids_json TEXT,
+        native_producer TEXT CHECK (
+            native_producer IS NULL
+            OR native_producer IN ('claude-code', 'codex-cli', 'codex-app-server', 'omp')
+        ),
+        native_session_id TEXT CHECK (
+            native_session_id IS NULL OR length(native_session_id) > 0
+        ),
+        PRIMARY KEY (source_kind, service_name, source_id),
+        CHECK (
+            (project_id IS NULL AND project_name IS NULL AND project_root IS NULL AND project_kind IS NULL)
+            OR (length(project_id) = 64 AND length(project_name) > 0
+                AND length(project_root) > 0 AND project_kind = 'git')
+        ),
+        CHECK (
+            (terminal_outcome = 'attributed' AND context_evidence_id IS NOT NULL AND project_id IS NOT NULL)
+            OR (terminal_outcome != 'attributed' AND project_id IS NULL)
+        )
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    INSERT INTO source_session_current (
+        source_kind, service_name, source_id, version,
+        terminal_outcome, terminal_reason, context_evidence_id,
+        project_id, project_name, project_root, project_kind,
+        projection_event_id, updated_at, source_timestamp, session_ids_json,
+        thread_ids_json, legacy_thread_ids_json, gen_ai_conversation_ids_json,
+        native_producer, native_session_id
+    ) SELECT
+        source_kind, service_name, source_id, version,
+        terminal_outcome, terminal_reason, context_evidence_id,
+        project_id, project_name, project_root, project_kind,
+        projection_event_id, updated_at, source_timestamp, session_ids_json,
+        thread_ids_json, legacy_thread_ids_json, gen_ai_conversation_ids_json,
+        native_producer, native_session_id
+    FROM source_session_current_legacy
+    """,
+    "DROP TABLE source_session_current_legacy",
+    """
+    CREATE INDEX source_session_current_native_session_idx
+    ON source_session_current(native_producer, native_session_id)
+    WHERE native_producer IS NOT NULL AND native_session_id IS NOT NULL
+    """,
+)
+
+
+_METRIC_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    INSERT INTO source_session_reconciliation_pending (
+        producer, session_id, context_event_id, created_at, completed_at
+    )
+    SELECT
+        current.native_producer,
+        current.native_session_id,
+        (
+            SELECT event.event_id
+            FROM session_context_events AS event
+            WHERE event.producer = current.native_producer
+              AND event.session_id = current.native_session_id
+            ORDER BY event.occurred_at DESC, event.event_id DESC
+            LIMIT 1
+        ),
+        strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'),
+        NULL
+    FROM source_session_current AS current
+    WHERE current.source_kind = 'metric'
+      AND current.terminal_outcome = 'failed'
+      AND current.native_producer IS NOT NULL
+      AND current.native_session_id IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM session_context_events AS event
+          WHERE event.producer = current.native_producer
+            AND event.session_id = current.native_session_id
+      )
+    ON CONFLICT(producer, session_id) DO UPDATE SET
+        context_event_id = excluded.context_event_id,
+        created_at = excluded.created_at,
+        completed_at = NULL
+    """,
+)
+
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
     Migration(
@@ -1220,6 +1383,16 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         version=15,
         name="indexed native raw source sessions",
         statements=_RAW_SOURCE_SESSION_NATIVE_KEY_SCHEMA,
+    ),
+    Migration(
+        version=16,
+        name="metric-backed raw source sessions",
+        statements=_RAW_SOURCE_SESSION_METRIC_SCHEMA,
+    ),
+    Migration(
+        version=17,
+        name="reconcile metric source delivery delay",
+        statements=_METRIC_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA,
     ),
 )
 

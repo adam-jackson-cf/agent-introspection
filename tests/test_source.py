@@ -12,6 +12,7 @@ import pytest
 from agent_introspection.source import (
     LOG_QUERY,
     RAW_SOURCE_SESSION_LOG_QUERY,
+    RAW_SOURCE_SESSION_METRIC_QUERY,
     RAW_SOURCE_SESSION_TRACE_QUERY,
     RAW_SOURCE_WINDOW_ANCHOR_QUERY,
     TRACE_QUERY,
@@ -21,6 +22,7 @@ from agent_introspection.source import (
     parse_duration_ms,
     parse_log_row,
     parse_source_activity_correlation,
+    parse_source_session_row,
     parse_trace_row,
     query_selected_ids,
 )
@@ -101,6 +103,32 @@ def test_raw_source_session_queries_scope_canonical_services_in_a_half_open_wind
 
         assert "ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}" in query
 
+    assert "inserted_at_unix_milli >= {start_ms:Int64}" in RAW_SOURCE_SESSION_METRIC_QUERY
+    assert "inserted_at_unix_milli < {end_ms:Int64}" in RAW_SOURCE_SESSION_METRIC_QUERY
+    assert "metric_name = 'claude_code.session.count'" in RAW_SOURCE_SESSION_METRIC_QUERY
+    assert "attrs['service.name'] = 'claude-code'" in RAW_SOURCE_SESSION_METRIC_QUERY
+    assert "mapContains(attrs, 'session.id')" in RAW_SOURCE_SESSION_METRIC_QUERY
+    assert "GROUP BY service_name, source_id" in RAW_SOURCE_SESSION_METRIC_QUERY
+
+
+def test_metric_source_session_uses_arrival_timestamp_and_claude_session_id() -> None:
+    row = parse_source_session_row(
+        {
+            "source_id": "fingerprint",
+            "source_timestamp_ms": 1_767_225_600_123,
+            "service_name": "claude-code",
+            "session_ids": ["claude-session"],
+            "thread_ids": [],
+            "legacy_thread_ids": [],
+            "gen_ai_conversation_ids": [],
+        },
+        source_kind="metric",
+    )
+
+    assert row.source_kind == "metric"
+    assert row.source_timestamp == datetime.fromtimestamp(1_767_225_600.123, tz=UTC)
+    assert row.native_session_ids == ("claude-session",)
+
 
 def test_raw_source_window_anchor_converts_normal_datetime64_output() -> None:
     class AnchorClient(ClickHouseClient):
@@ -120,14 +148,14 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
     fixture_path = Path(__file__).with_name("fixtures") / "producer_identity_proofs.json"
     evidence = json.loads(fixture_path.read_text())
 
-    assert evidence["observed_on"] == "2026-08-06"
+    assert evidence["observed_on"] == "2026-08-29"
     assert evidence["evidence_policy"] == {
         "prompts_recorded": False,
         "responses_recorded": False,
         "identifiers_and_counts_only": True,
     }
     supported = {proof["producer"]: proof for proof in evidence["supported"]}
-    assert set(supported) == {"omp", "codex-cli"}
+    assert set(supported) == {"omp", "codex-cli", "codex-app-server"}
     required_fields = {
         "version",
         "command_argv_without_prompt",
@@ -169,13 +197,20 @@ def test_retained_producer_identity_proofs_are_bounded_and_support_only_proven_s
         "non_git": "passed",
         "workspace_change": "not_exposed_by_installed_notify",
     }
+    assert supported["codex-app-server"]["correlation_id"] == (
+        "01a04f2e-fa8f-7c31-9c8e-3693acb033f3"
+    )
+    assert supported["codex-app-server"]["scenarios"] == {
+        "fresh": "passed",
+        "resume": "not_exercised",
+        "end": "passed",
+        "concurrent_projects": "not_exercised",
+        "non_git": "not_exercised",
+        "workspace_change": "unsupported_by_design",
+    }
 
     unsupported = {proof["producer"]: proof for proof in evidence["unsupported"]}
-    assert set(unsupported) == {"claude-code", "codex-app-server", "codex-app"}
-    assert unsupported["codex-app-server"]["missing_equality_boundary"] == (
-        "installed protocol exposes only the client notification `initialized`; "
-        "no persistent callback can invoke the managed adapter with protocol thread.id"
-    )
+    assert set(unsupported) == {"claude-code", "codex-app"}
     assert all(proof["source_ingestion_enabled"] is False for proof in unsupported.values())
     serialized = json.dumps(evidence, sort_keys=True).lower()
     for forbidden in ("prompt_text", "response_text", "command_output", "environment_values"):
@@ -395,8 +430,10 @@ def test_client_fails_closed_when_a_query_exceeds_its_bounded_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def timeout(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert kwargs["timeout"] == 600.0
-        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        timeout_seconds = kwargs["timeout"]
+        assert isinstance(timeout_seconds, float)
+        assert timeout_seconds == 600.0
+        raise subprocess.TimeoutExpired(argv, timeout_seconds)
 
     monkeypatch.setattr(subprocess, "run", timeout)
     client = ClickHouseClient(docker_context="orbstack")
@@ -445,11 +482,12 @@ def test_client_bounds_every_source_window_to_safe_partitions(
     assert (
         list(client.source_sessions(start=start, end=end, start_ns=start_ns, end_ns=end_ns)) == []
     )
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert all(
         parameters["start_bucket"] == 200 and parameters["end_bucket"] == 2_120
-        for parameters in calls
+        for parameters in calls[:4]
     )
+    assert calls[-1] == {"start_ms": 2_000_000, "end_ms": 2_120_000}
 
 
 def test_trace_bounds_must_be_timezone_aware() -> None:

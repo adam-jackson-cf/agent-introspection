@@ -254,6 +254,7 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
     connection = connect_database(tmp_path / "introspection.sqlite3")
     project_id = "1" * 64
     evidence_id = "2" * 64
+    claude_evidence_id = "4" * 64
     non_git_evidence_id = "3" * 64
     occurred_at = "2025-12-31T00:00:00+00:00"
     connection.execute(
@@ -287,6 +288,26 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
         (evidence_id, occurred_at, project_id),
     )
     connection.execute(
+        """INSERT INTO session_context_events (
+            event_id, producer, session_id, event_type, occurred_at,
+            project_id, project_name, project_root, project_kind
+        ) VALUES (
+            ?, 'claude-code', 'claude-accepted', 'session_start', ?,
+            ?, 'repo', '/repo', 'git'
+        )""",
+        (claude_evidence_id, occurred_at, project_id),
+    )
+    connection.execute(
+        """INSERT INTO session_context_intervals (
+            event_id, producer, session_id, started_at,
+            project_id, project_name, project_root, project_kind
+        ) VALUES (
+            ?, 'claude-code', 'claude-accepted', ?,
+            ?, 'repo', '/repo', 'git'
+        )""",
+        (claude_evidence_id, occurred_at, project_id),
+    )
+    connection.execute(
         """INSERT INTO canonical_rejections (
             id, producer, producer_surface, correlation_id, lifecycle_event,
             occurred_at, reason_code, source_adapter, created_at
@@ -303,6 +324,16 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
             "scan",
             [
                 _row("attributed", ("accepted",)),
+                SourceSessionRow(
+                    "metric",
+                    "metric-attributed",
+                    datetime(2025, 12, 31, tzinfo=UTC),
+                    "claude-code",
+                    ("claude-accepted",),
+                    (),
+                    (),
+                    (),
+                ),
                 _row("missing", ()),
                 _row("conflicting", ("one", "two")),
                 _row("unresolved", ("unknown",)),
@@ -314,8 +345,8 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
     )
 
     assert outcomes == {
-        "included": 5,
-        "attributed": 1,
+        "included": 6,
+        "attributed": 2,
         "expected_rejection": 1,
         "failed": 3,
         "blocked": 0,
@@ -337,6 +368,16 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
             "git",
         ),
         ("conflicting", "failed", "conflicting_native_session_id", None, None, None, None, None),
+        (
+            "metric-attributed",
+            "attributed",
+            "accepted_git_context",
+            claude_evidence_id,
+            project_id,
+            "repo",
+            "/repo",
+            "git",
+        ),
         ("missing", "failed", "missing_native_session_id", None, None, None, None, None),
         (
             "non-git",
@@ -603,6 +644,109 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
     assert connection.execute(
         "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_raw_source_sessions'"
     ).fetchone() == (200,)
+
+
+def test_late_context_reconciles_metric_source_sessions(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "introspection.sqlite3")
+    occurred_at = "2026-01-01T00:00:00+00:00"
+    project_id = "a" * 64
+    evidence_id = "b" * 64
+    metric = SourceSessionRow(
+        source_kind="metric",
+        source_id="fingerprint",
+        source_timestamp=datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC),
+        service_name="claude-code",
+        session_ids=("claude-session",),
+        thread_ids=(),
+        legacy_thread_ids=(),
+        gen_ai_conversation_ids=(),
+    )
+    for scan_run_id in ("first", "reconcile"):
+        connection.execute(
+            "INSERT INTO scan_runs (id, status, started_at) VALUES (?, 'running', ?)",
+            (scan_run_id, occurred_at),
+        )
+
+    with connection:
+        first = _persist_source_sessions(
+            _SourceSessionPersistenceRequest(
+                connection, "first", [metric], persist_records=True, clock_skew_seconds=120
+            )
+        )
+    assert first == {
+        "included": 1,
+        "attributed": 0,
+        "expected_rejection": 0,
+        "failed": 1,
+        "blocked": 0,
+    }
+
+    connection.execute(
+        """INSERT INTO project_identities
+        (id, identity_kind, canonical_path, canonical_name, created_at)
+        VALUES (?, 'git', '/repo', 'repo', ?)""",
+        (project_id, occurred_at),
+    )
+    inbox = tmp_path / "inbox"
+    spool_event(
+        parse_event(
+            {
+                "event_id": evidence_id,
+                "producer": "claude-code",
+                "session_id": "claude-session",
+                "event_type": "session_start",
+                "occurred_at": occurred_at,
+                "agent": {
+                    "project": {
+                        "id": project_id,
+                        "name": "repo",
+                        "root": "/repo",
+                        "kind": "git",
+                    }
+                },
+            }
+        ),
+        directory=inbox,
+    )
+    assert len(drain_inbox(connection, directory=inbox)) == 1
+    spool_event(
+        parse_event(
+            {
+                "event_id": "c" * 64,
+                "producer": "claude-code",
+                "session_id": "claude-session",
+                "event_type": "session_end",
+                "occurred_at": "2026-01-01T00:00:01+00:00",
+                "agent": {
+                    "project": {
+                        "id": project_id,
+                        "name": "repo",
+                        "root": "/repo",
+                        "kind": "git",
+                    }
+                },
+            }
+        ),
+        directory=inbox,
+    )
+    assert len(drain_inbox(connection, directory=inbox)) == 1
+
+    with connection:
+        reconciled = _reconcile_late_source_sessions(
+            connection, scan_run_id="reconcile", clock_skew_seconds=120
+        )
+    assert reconciled == {
+        "included": 1,
+        "attributed": 1,
+        "expected_rejection": 0,
+        "failed": 0,
+        "blocked": 0,
+    }
+    assert connection.execute(
+        """SELECT source_kind, terminal_outcome, version
+        FROM source_session_current
+        WHERE service_name = 'claude-code' AND source_id = 'fingerprint'"""
+    ).fetchone() == ("metric", "attributed", 2)
 
 
 def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(

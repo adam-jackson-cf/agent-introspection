@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify that one fresh supported producer session-context event or lifecycle boundary remains correlated and correctly attributed from the managed adapter or proxy through the canonical dashboard query.
+Verify that one fresh supported producer session-context event or lifecycle boundary remains correlated and correctly attributed from the managed adapter through the canonical dashboard query.
 
 ## Guidance
 
@@ -14,4 +14,4 @@ Verify that one fresh supported producer session-context event or lifecycle boun
 - Reject missing, duplicate, partial, conflicting, inferred, static, or uncorrelated results. An open interval is valid only when its source time precedes any recorded end.
 - Verify the dashboard source-time query selects the same latest canonical activity version and paired project ID and project name.
 - Record the producer, session-context or lifecycle boundary, correlation key, queried fields, activity ID, activity version, outbox event ID, project tuple, and dashboard result.
-- Complete this workflow only when the managed adapter or proxy, ledger, source telemetry, canonical activity version, remote event, and dashboard query satisfy one contract end to end.
+- Complete this workflow only when the managed adapter, shared session-context runtime, ledger, source telemetry, canonical activity version, remote event, and dashboard query satisfy one contract end to end.

@@ -59,6 +59,22 @@ Normal scans persist canonical activities and monotonic attribution versions, re
 session context at source-event time, and deliver deterministic activity events to SigNoz.
 The insight dashboard selects the latest activity version within its source-time range.
 
+## Codex Desktop Attribution
+
+Codex Desktop attribution uses documented global `SessionStart` and `SessionEnd`
+hooks. The hook emits only the native session ID, absolute workspace, lifecycle
+event, and timestamp to the local session-context runtime. The shared runtime
+resolves the canonical Git workspace; the hook never inspects or forwards
+prompts, responses, or transcripts. User hooks require interactive
+review/trust and are never automatically approved.
+Codex's active configuration root is `$CODEX_HOME` when it is set to a non-empty absolute path; otherwise it is `~/.codex`. Global hooks live at `<codex-root>/hooks.json`, and trust state lives at `<codex-root>/config.toml`.
+
+Changing projects within a live Codex Desktop thread is unsupported by design.
+Attribution uses the workspace supplied at the thread's lifecycle boundary.
+Supporting mid-thread project changes would require complex inspection or
+interposition of app-server protocol traffic. This is considered rare, so the
+additional complexity is not justified.
+
 ## Local SigNoz
 
 The canonical Compose override is `ops/signoz/docker-compose.override.yaml`. It binds the UI and OTLP listeners to loopback, disables tokenizer and API-key authentication, and enables impersonation for this single-user workstation. Root-user values are injected from the connected Infisical project at runtime:

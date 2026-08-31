@@ -11,7 +11,7 @@ scripts/
 └── adapters/
     ├── claude-code/                   # Claude Code hook adapter
     ├── codex-cli/                     # Codex CLI notify adapter
-    ├── codex-app-server/              # Desktop installer, proxy, and adapter
+    ├── codex-app-server/              # Desktop global hook installer and adapter
     └── omp/                           # OMP extension adapter
 ```
 
@@ -58,3 +58,11 @@ type SessionContextEvent = {
 ```
 
 `session_context` records are non-temporal Codex CLI project evidence. The other event types produce project intervals. Every adapter must pass exactly `PRODUCER SESSION_ID EVENT_TYPE OCCURRED_AT WORKSPACE`; only the shared runtime resolves the Git root, derives IDs, and writes the schema.
+
+## Codex app-server hook integration
+
+Codex Desktop uses the canonical `codex-app-server` producer. Its installer, `adapters/codex-app-server/install.py`, installs the managed `adapter.py` beside the shared runtime and merges documented global hooks into `<codex-root>/hooks.json`, where `<codex-root>` is `$CODEX_HOME` when it is set to a non-empty absolute path and otherwise `~/.codex`; trust state is at `<codex-root>/config.toml`. The merge preserves unrelated hooks. Installation requires interactive trust; trust state is never written programmatically.
+
+The installer-owned hooks are `SessionStart` with matcher `^(startup|resume|clear|compact)$` and `SessionEnd` with matcher `^other$`. The adapter accepts one hook JSON object on standard input and reads only documented `hook_event_name`, `session_id`, and absolute `cwd`, plus `source` for `SessionStart` or `reason` for `SessionEnd`. It never reads `transcript_path`, prompts, responses, or arbitrary payload fields.
+
+`SessionStart` maps only to `session_start`; `SessionEnd` maps only to `session_end`. Because this envelope has no timestamp, the adapter captures synchronous UTC RFC3339 invocation time and execs the shared runtime with `codex-app-server SESSION_ID EVENT_TYPE OCCURRED_AT WORKSPACE`. The native session ID and cwd remain exact. Codex app-server does not support mid-thread project changes.

@@ -220,8 +220,12 @@ def discover_source_schema(client: ClickHouseClient) -> dict[str, Any]:
     required_columns = []
     observed_columns: set[tuple[object, object, object]] = set()
     for row in columns:
-        identity = (row.get("database"), row.get("table"))
+        database = row.get("database")
+        table = row.get("table")
         name = row.get("name")
+        if not isinstance(database, str) or not isinstance(table, str) or not isinstance(name, str):
+            continue
+        identity = (database, table)
         if identity in _REQUIRED_SOURCE_COLUMNS and name in _REQUIRED_SOURCE_COLUMNS[identity]:
             observed_columns.add((*identity, name))
             required_columns.append(

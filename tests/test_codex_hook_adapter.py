@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -17,7 +18,7 @@ ADAPTER_SOURCE = (
 )
 APP_SERVER_SOURCE = (
     Path(__file__).parents[1]
-    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/adapter.sh"
+    / ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/adapter.py"
 )
 
 
@@ -47,9 +48,8 @@ def _app_server_adapter(tmp_path: Path) -> tuple[Path, Path]:
     scripts = tmp_path / "scripts"
     adapter_dir = scripts / "adapters" / "codex-app-server"
     adapter_dir.mkdir(parents=True)
-    adapter = adapter_dir / "adapter.sh"
+    adapter = adapter_dir / "adapter.py"
     shutil.copy2(APP_SERVER_SOURCE, adapter)
-    adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "runtime-arguments.jsonl"
     runtime = scripts / "session-context-runtime.sh"
     runtime.write_text(
@@ -59,7 +59,8 @@ def _app_server_adapter(tmp_path: Path) -> tuple[Path, Path]:
         "import sys\n"
         "with open(os.environ['FAKE_RUNTIME_LOG'], 'a', encoding='utf-8') as output:\n"
         "    json.dump(sys.argv[1:], output)\n"
-        "    output.write('\\n')\n",
+        "    output.write('\\n')\n"
+        "raise SystemExit(int(os.environ.get('FAKE_RUNTIME_EXIT', '0')))\n",
         encoding="utf-8",
     )
     runtime.chmod(runtime.stat().st_mode | stat.S_IXUSR)
@@ -85,13 +86,24 @@ def _invoke_json(
 
 
 def _invoke_app_server(
-    adapter: Path, home: Path, log: Path, *arguments: str
+    adapter: Path,
+    home: Path,
+    log: Path,
+    payload: str,
+    *,
+    runtime_exit: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(adapter), *arguments],
+        [sys.executable, str(adapter)],
+        input=payload,
         capture_output=True,
         check=False,
-        env={**os.environ, "HOME": str(home), "FAKE_RUNTIME_LOG": str(log)},
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "FAKE_RUNTIME_LOG": str(log),
+            "FAKE_RUNTIME_EXIT": str(runtime_exit),
+        },
         text=True,
     )
 
@@ -242,9 +254,320 @@ def test_codex_notify_rejects_duplicate_authoritative_fields_without_runtime_inv
     ]
 
 
-def test_codex_app_server_forwards_protocol_values_as_canonical_runtime_argv(
+def test_codex_app_server_runs_with_deployed_system_python(tmp_path: Path) -> None:
+    system_python = Path("/usr/bin/python3")
+    assert system_python.is_file()
+    adapter, log = _app_server_adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    payload = json.dumps(
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "thread-42",
+            "cwd": str(workspace),
+            "source": "startup",
+        }
+    )
+
+    result = subprocess.run(
+        [str(system_python), str(adapter)],
+        input=payload,
+        capture_output=True,
+        check=False,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "FAKE_RUNTIME_LOG": str(log),
+            "FAKE_RUNTIME_EXIT": "0",
+        },
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert _events(log)[0][:3] == ["codex-app-server", "thread-42", "session_start"]
+
+
+@pytest.mark.parametrize("source", ["startup", "resume", "clear", "compact"])
+def test_codex_app_server_normalizes_session_start_hook_envelopes(
+    tmp_path: Path, source: str
+) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    payload = {
+        "hook_event_name": "SessionStart",
+        "session_id": "thread-42",
+        "cwd": str(workspace),
+        "source": source,
+    }
+
+    started = datetime.now(UTC)
+    result = _invoke_app_server(adapter, tmp_path / "home", log, json.dumps(payload))
+    finished = datetime.now(UTC)
+
+    assert result.returncode == 0
+    event = _events(log)
+    assert len(event) == 1
+    assert event[0][:3] == ["codex-app-server", "thread-42", "session_start"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)", event[0][3])
+    occurred_at = datetime.fromisoformat(event[0][3])
+    assert occurred_at.tzinfo == UTC
+    assert started <= occurred_at <= finished
+    assert event[0][4] == str(workspace)
+
+
+def test_codex_app_server_normalizes_session_end_hook_envelope(tmp_path: Path) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    started = datetime.now(UTC)
+    result = _invoke_app_server(
+        adapter,
+        tmp_path / "home",
+        log,
+        json.dumps(
+            {
+                "hook_event_name": "SessionEnd",
+                "session_id": "thread-42",
+                "cwd": str(workspace),
+                "reason": "other",
+            }
+        ),
+    )
+    finished = datetime.now(UTC)
+
+    assert result.returncode == 0
+    event = _events(log)
+    assert len(event) == 1
+    assert event[0][:3] == ["codex-app-server", "thread-42", "session_end"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)", event[0][3])
+    occurred_at = datetime.fromisoformat(event[0][3])
+    assert occurred_at.tzinfo == UTC
+    assert started <= occurred_at <= finished
+    assert event[0][4] == str(workspace)
+
+
+def test_codex_app_server_ignores_unrelated_sensitive_hook_fields_without_accessing_them(
     tmp_path: Path,
 ) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    unreadable_transcript = tmp_path / "transcript-path-is-a-directory"
+    unreadable_transcript.mkdir()
+
+    result = _invoke_app_server(
+        adapter,
+        tmp_path / "home",
+        log,
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": str(workspace),
+                "source": "startup",
+                "transcript_path": str(unreadable_transcript),
+                "prompt": "must not be read",
+                "response": "must not be read",
+                "arbitrary": {"payload": "must not be read"},
+            }
+        ),
+    )
+
+    assert result.returncode == 0
+    event = _events(log)
+    assert len(event) == 1
+    assert event[0][:3] == ["codex-app-server", "thread-42", "session_start"]
+    assert event[0][4] == str(workspace)
+    assert all("must not be read" not in argument for argument in event[0])
+
+
+@pytest.mark.parametrize(
+    ("payload", "duplicate_field", "duplicate_value"),
+    [
+        (
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+            },
+            "hook_event_name",
+            "SessionEnd",
+        ),
+        (
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+            },
+            "session_id",
+            "other-thread",
+        ),
+        (
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+            },
+            "cwd",
+            "/other",
+        ),
+        (
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+            },
+            "source",
+            "resume",
+        ),
+        (
+            {
+                "hook_event_name": "SessionEnd",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "reason": "other",
+            },
+            "reason",
+            "other",
+        ),
+    ],
+)
+def test_codex_app_server_rejects_duplicate_authoritative_hook_keys(
+    tmp_path: Path, payload: dict[str, str], duplicate_field: str, duplicate_value: str
+) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+    duplicate_payload = (
+        json.dumps(payload)[:-1] + f",{json.dumps(duplicate_field)}:{json.dumps(duplicate_value)}}}"
+    )
+
+    result = _invoke_app_server(adapter, tmp_path / "home", log, duplicate_payload)
+
+    assert result.returncode == 64
+    assert _events(log) == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",
+        "{",
+        '{"hook_event_name":"SessionStart","session_id":"thread-42","cwd":"/tmp","source":NaN}',
+        '{"hook_event_name":"SessionStart","session_id":"thread-42","cwd":"/tmp","source":Infinity}',
+        json.dumps([]),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": 42,
+                "cwd": "/tmp",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": 42,
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "relative",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/definitely-absent-workspace",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {"hook_event_name": "SessionStart", "session_id": "thread-42", "source": "startup"}
+        ),
+        json.dumps({"hook_event_name": "SessionEnd", "session_id": "thread-42", "cwd": "/tmp"}),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread\x01",
+                "cwd": "/tmp",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp\x01",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "other",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionEnd",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "reason": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+                "reason": "other",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "SessionEnd",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "reason": "other",
+                "source": "startup",
+            }
+        ),
+        json.dumps(
+            {
+                "hook_event_name": "other",
+                "session_id": "thread-42",
+                "cwd": "/tmp",
+                "source": "startup",
+            }
+        ),
+    ],
+)
+def test_codex_app_server_rejects_malformed_or_mismatched_hook_envelopes(
+    tmp_path: Path, payload: str
+) -> None:
+    adapter, log = _app_server_adapter(tmp_path)
+
+    result = _invoke_app_server(adapter, tmp_path / "home", log, payload)
+
+    assert result.returncode == 64
+    assert _events(log) == []
+
+
+def test_codex_app_server_propagates_runtime_rejection(tmp_path: Path) -> None:
     adapter, log = _app_server_adapter(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -253,40 +576,16 @@ def test_codex_app_server_forwards_protocol_values_as_canonical_runtime_argv(
         adapter,
         tmp_path / "home",
         log,
-        "thread-42",
-        str(workspace),
-        "workspace_changed",
-        "2026-08-03T12:01:00Z",
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "thread-42",
+                "cwd": str(workspace),
+                "source": "startup",
+            }
+        ),
+        runtime_exit=23,
     )
 
-    assert result.returncode == 0
-    assert _events(log) == [
-        [
-            "codex-app-server",
-            "thread-42",
-            "workspace_changed",
-            "2026-08-03T12:01:00Z",
-            str(workspace),
-        ]
-    ]
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        (),
-        ("thread-42", "/tmp", "other", "2026-08-03T12:01:00Z"),
-        ("thread-42", "relative", "session_start", "2026-08-03T12:01:00Z"),
-        ("thread-42", "/tmp", "session_start", "2026-08-03T12:01:00"),
-        ("", "/tmp", "session_start", "2026-08-03T12:01:00Z"),
-    ],
-)
-def test_codex_app_server_rejects_malformed_protocol_without_runtime_invocation(
-    tmp_path: Path, arguments: tuple[str, ...]
-) -> None:
-    adapter, log = _app_server_adapter(tmp_path)
-
-    result = _invoke_app_server(adapter, tmp_path / "home", log, *arguments)
-
-    assert result.returncode == 64
-    assert _events(log) == []
+    assert result.returncode == 23
+    assert _events(log)[0][:3] == ["codex-app-server", "thread-42", "session_start"]

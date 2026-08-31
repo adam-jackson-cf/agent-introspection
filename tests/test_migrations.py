@@ -33,7 +33,7 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
     finally:
         connection.close()
 
-    assert len(MIGRATIONS) == len(applied) == 15
+    assert len(MIGRATIONS) == len(applied) == 17
     assert all(migration.backup_path.is_file() for migration in applied)
     assert tables == {
         "canonical_activities",
@@ -110,6 +110,56 @@ def test_native_source_session_index_backfills_exact_canonical_keys(tmp_path: Pa
             WHERE native_producer = 'codex-cli' AND native_session_id = 'thread'
             """
         ).fetchone() == ("codex-cli", "thread")
+    finally:
+        connection.close()
+
+
+def test_metric_delivery_delay_migration_enrolls_existing_context(tmp_path: Path) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = _connection(path)
+    project_id = "a" * 64
+    context_event_id = "b" * 64
+    try:
+        apply_migrations(connection, path, MIGRATIONS[:16])
+        connection.execute(
+            """INSERT INTO project_identities
+            (id, identity_kind, canonical_path, canonical_name, created_at)
+            VALUES (?, 'git', '/repo', 'repo', '2026-01-01T00:00:00+00:00')""",
+            (project_id,),
+        )
+        connection.execute(
+            """INSERT INTO session_context_events (
+                event_id, producer, session_id, event_type, occurred_at,
+                project_id, project_name, project_root, project_kind
+            ) VALUES (
+                ?, 'claude-code', 'claude-session', 'session_start',
+                '2026-01-01T00:00:00+00:00', ?, 'repo', '/repo', 'git'
+            )""",
+            (context_event_id, project_id),
+        )
+        connection.execute(
+            """INSERT INTO source_session_current (
+                source_kind, service_name, source_id, version,
+                terminal_outcome, terminal_reason, context_evidence_id,
+                project_id, project_name, project_root, project_kind,
+                projection_event_id, updated_at, source_timestamp, session_ids_json,
+                thread_ids_json, legacy_thread_ids_json, gen_ai_conversation_ids_json,
+                native_producer, native_session_id
+            ) VALUES (
+                'metric', 'claude-code', 'fingerprint', 1,
+                'failed', 'no_authoritative_context', NULL,
+                NULL, NULL, NULL, NULL,
+                'event', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:10+00:00',
+                '["claude-session"]', '[]', '[]', '[]',
+                'claude-code', 'claude-session'
+            )"""
+        )
+        connection.commit()
+        apply_migrations(connection, path)
+        assert connection.execute(
+            """SELECT producer, session_id, context_event_id, completed_at
+            FROM source_session_reconciliation_pending"""
+        ).fetchall() == [("claude-code", "claude-session", context_event_id, None)]
     finally:
         connection.close()
 

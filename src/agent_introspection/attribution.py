@@ -127,6 +127,61 @@ def resolve_attribution(
     return Attribution("resolved", str(project_id), method, str(event_id), None)
 
 
+def resolve_metric_attribution(
+    connection: sqlite3.Connection,
+    *,
+    producer: str | None,
+    correlation_id: str | None,
+    source_at: datetime,
+    delivery_grace_seconds: int,
+) -> Attribution:
+    """Resolve an exact metric session ID, allowing bounded exporter arrival delay."""
+    if delivery_grace_seconds < 0:
+        raise ValueError("metric delivery grace must not be negative")
+    attribution = resolve_attribution(
+        connection,
+        producer=producer,
+        correlation_id=correlation_id,
+        source_at=source_at,
+        clock_skew_seconds=delivery_grace_seconds,
+    )
+    if attribution.reason_code != _NO_CONTEXT_INTERVAL:
+        return attribution
+    source_at_utc = source_at.astimezone(UTC)
+    grace_start = source_at_utc - timedelta(seconds=delivery_grace_seconds)
+    rows = connection.execute(
+        """
+        SELECT event_id, project_id
+        FROM session_context_intervals AS interval
+        WHERE producer = ? AND session_id = ? AND ended_at IS NOT NULL
+          AND ended_at <= ? AND ended_at >= ?
+          AND NOT EXISTS (
+              SELECT 1 FROM session_context_event_supersessions AS supersession
+              WHERE supersession.original_event_id = interval.event_id
+                 OR supersession.original_event_id = interval.end_event_id
+          )
+        """,
+        (
+            producer,
+            correlation_id,
+            source_at_utc.isoformat(),
+            grace_start.isoformat(),
+        ),
+    ).fetchall()
+    if not rows:
+        return attribution
+    if len(rows) != 1:
+        return Attribution("unresolved", None, "session_context", None, _AMBIGUOUS_CONTEXT_INTERVAL)
+    event_id, project_id = rows[0]
+    return Attribution(
+        "resolved",
+        str(project_id),
+        "session_context_delivery_grace",
+        str(event_id),
+        None,
+    )
+
+
 def canonical_activity_event_attributes(
     connection: sqlite3.Connection,
     activity: CanonicalActivity,

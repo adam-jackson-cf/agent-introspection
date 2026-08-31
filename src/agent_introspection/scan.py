@@ -19,6 +19,7 @@ from agent_introspection.attribution import (
     canonical_activity_event_attributes,
     reconcile_activity,
     resolve_attribution,
+    resolve_metric_attribution,
 )
 from agent_introspection.capabilities import (
     CapabilityError,
@@ -705,13 +706,22 @@ def _source_session_terminal(request: _SourceSessionResolutionRequest) -> _Sourc
     cached = _cached_source_session_terminal(request, cache_key)
     if cached is not None:
         return cached
-    attribution = resolve_attribution(
-        request.connection,
-        producer=producer[0],
-        correlation_id=request.row.native_session_ids[0],
-        source_at=request.row.source_timestamp.astimezone(UTC),
-        clock_skew_seconds=request.clock_skew_seconds,
-    )
+    if request.row.source_kind == "metric":
+        attribution = resolve_metric_attribution(
+            request.connection,
+            producer=producer[0],
+            correlation_id=request.row.native_session_ids[0],
+            source_at=request.row.source_timestamp.astimezone(UTC),
+            delivery_grace_seconds=request.clock_skew_seconds,
+        )
+    else:
+        attribution = resolve_attribution(
+            request.connection,
+            producer=producer[0],
+            correlation_id=request.row.native_session_ids[0],
+            source_at=request.row.source_timestamp.astimezone(UTC),
+            clock_skew_seconds=request.clock_skew_seconds,
+        )
     if attribution.state == "resolved":
         return _resolved_source_session_terminal(
             request, producer, cache_key, cast(str, attribution.evidence_id)
@@ -1348,12 +1358,12 @@ def _reconcile_late_source_sessions(
         ).fetchall()
         for raw in rows:
             source_kind = str(raw[0])
-            if source_kind not in ("log", "trace"):
+            if source_kind not in ("log", "trace", "metric"):
                 raise ScanError("current raw source session has invalid source kind")
             if any(value is None for value in raw[2:]):
                 raise ScanError("current raw source session lacks durable native-key payload")
             row = SourceSessionRow(
-                source_kind=cast(Literal["log", "trace"], source_kind),
+                source_kind=cast(Literal["log", "trace", "metric"], source_kind),
                 source_id=str(raw[1]),
                 source_timestamp=datetime.fromisoformat(str(raw[2])).astimezone(UTC),
                 service_name=str(raw[3]),
