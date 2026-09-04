@@ -1,0 +1,357 @@
+{
+  "applied": true,
+  "cleanup_incident": {
+    "approved_cleanup": false,
+    "corrected_remote_namespace_rule": "exact stored namespace required",
+    "initial_remote_namespace_omitted_count": 1105,
+    "mutation_outcome": "unmatched namespace-omitted rows were deleted by the initial predicate",
+    "restoration_possible_from_retained_evidence": false
+  },
+  "cleanup_policy": "exact namespace + exact run_id + exact event family + exact event_ids only",
+  "initial_reconciliation_provenance": {
+    "kind": "retained_harness_tool_result",
+    "recorded_at": "2026-09-02T02:43:37.084Z",
+    "source_line": 14642,
+    "source_sha256": "6dd1841ba18c39dbd6a33969b9a44d67ba9c7185393845dc9afee8e6821712c9",
+    "tool_call_id": "call_qZyH6PUZGbUkvDAB2ZEFTHPL|fc_0185bb5b74e99448016a978d567a0887d2b0fca4fa0693d03d"
+  },
+  "initial_reconciliation_summary": {
+    "expected_event_count": 1298,
+    "local_delivered_count": 1298,
+    "remote_duplicate_row_count": 38,
+    "remote_missing_event_count": 17,
+    "remote_namespace_omitted_count": 1105,
+    "remote_present_event_count": 1281
+  },
+  "manifest_paths": [
+    "experiments/dashboard_prototype/evidence/attribution-cleanup-manifest-20260901.json",
+    "experiments/dashboard_prototype/evidence/pipeline-cleanup-manifest-20260901.json",
+    "experiments/dashboard_prototype/evidence/recurrence-cleanup-manifest-20260902.json",
+    "experiments/dashboard_prototype/evidence/request-cleanup-manifest-20260901.json",
+    "experiments/dashboard_prototype/evidence/task-cleanup-manifest-20260902.json"
+  ],
+  "namespace": "agent-introspection.dashboard-prototype.v1",
+  "post_cleanup": {
+    "local_retained_event_count": 1298,
+    "local_retention_policy": "immutable otlp_outbox no-delete guard",
+    "remote_event_count": 0
+  },
+  "pre_cleanup": [
+    {
+      "event_name": "dashboard_prototype.attribution_snapshot.v1",
+      "expected_event_count": 35,
+      "local_delivered_count": 35,
+      "manifest_names": [
+        "attribution-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 35,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "attribution-20260901-phase2-1",
+      "selector_hash": "97bf16e11070bcf0da31abab032a969f025762e42cff4430ae54ec1f055c7a58"
+    },
+    {
+      "event_name": "dashboard_prototype.attribution_snapshot.v1",
+      "expected_event_count": 40,
+      "local_delivered_count": 40,
+      "manifest_names": [
+        "attribution-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 40,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "attribution-20260901-phase2-2",
+      "selector_hash": "8c2c78dca88d9e58039b627ce388d64210fa913ec5547a4e47afd9a96e3581cd"
+    },
+    {
+      "event_name": "dashboard_prototype.pipeline_snapshot.v1",
+      "expected_event_count": 46,
+      "local_delivered_count": 46,
+      "manifest_names": [
+        "pipeline-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 46,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "pipeline-20260901T211325Z",
+      "selector_hash": "16933c21f566e28a2172cc96c99aa0e9114289556a63fc0e9c0c3ac44cb28585"
+    },
+    {
+      "event_name": "dashboard_prototype.pipeline_snapshot.v1",
+      "expected_event_count": 46,
+      "local_delivered_count": 46,
+      "manifest_names": [
+        "pipeline-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 46,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "pipeline-20260901T211612Z",
+      "selector_hash": "16b9f599611a1a0367fb81d13834f213c1392a05d809c1697a2919c5cfb1744a"
+    },
+    {
+      "event_name": "dashboard_prototype.pipeline_snapshot.v1",
+      "expected_event_count": 46,
+      "local_delivered_count": 46,
+      "manifest_names": [
+        "pipeline-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 46,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "pipeline-20260901T211705Z",
+      "selector_hash": "b31154f1a12e2b49ed0fa2ebf88aa1b9620e2c0472cd9ee1f74be61645facdc2"
+    },
+    {
+      "event_name": "dashboard_prototype.pipeline_snapshot.v1",
+      "expected_event_count": 52,
+      "local_delivered_count": 52,
+      "manifest_names": [
+        "pipeline-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 52,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "pipeline-20260901T211850Z",
+      "selector_hash": "59ff4c1f565efef83c71b12e4d4a2e7800658985cafa7793afe18d56261778aa"
+    },
+    {
+      "event_name": "dashboard_prototype.pipeline_snapshot.v1",
+      "expected_event_count": 52,
+      "local_delivered_count": 52,
+      "manifest_names": [
+        "pipeline-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 52,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "pipeline-20260901T213721Z",
+      "selector_hash": "3eb1574f8bcdb87ec5327a0f3ffbb6aae2613937887e144208417ea85bd45a87"
+    },
+    {
+      "event_name": "dashboard_prototype.recurrence_snapshot.v1",
+      "expected_event_count": 43,
+      "local_delivered_count": 43,
+      "manifest_names": [
+        "recurrence-cleanup-manifest-20260902.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 43,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "recurrence-20260902-phase5-1",
+      "selector_hash": "308c110d43de11834cf46009db948b7cb4d89934d6e92ae670ec2a7931fa46e9"
+    },
+    {
+      "event_name": "dashboard_prototype.recurrence_snapshot.v1",
+      "expected_event_count": 59,
+      "local_delivered_count": 59,
+      "manifest_names": [
+        "recurrence-cleanup-manifest-20260902.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 59,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "recurrence-20260902-phase5-2",
+      "selector_hash": "dd01fcd1055eef4c98c54c1d5bc41d408560b4881dc2b4c4c3620112ef50a503"
+    },
+    {
+      "event_name": "dashboard_prototype.recurrence_snapshot.v1",
+      "expected_event_count": 47,
+      "local_delivered_count": 47,
+      "manifest_names": [
+        "recurrence-cleanup-manifest-20260902.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 47,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "recurrence-20260902-phase5-3",
+      "selector_hash": "6df8d3ebab1239cdcb317974e9d3742dc7c1ff659cf3719dac798210e4f9d39c"
+    },
+    {
+      "event_name": "dashboard_prototype.recurrence_snapshot.v1",
+      "expected_event_count": 44,
+      "local_delivered_count": 44,
+      "manifest_names": [
+        "recurrence-cleanup-manifest-20260902.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 44,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "recurrence-20260902-phase5-4",
+      "selector_hash": "9bd6c33c475972a623d697366818dacaed9e5fc1d9b91a0faccaa3fbc176524b"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 96,
+      "local_delivered_count": 96,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 96,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-1",
+      "selector_hash": "7579b5f27a78a1025528f17e5fa1378dafd7de3d04712ce33c37766d5108c8bc"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-2",
+      "selector_hash": "32ddaa06c248d1d68d5dd31f689005bd2f90e004895233b4383b9f6e47c32366"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-3",
+      "selector_hash": "7017ef8dfbf4c51fc94d27044944beb8205458c732d46eccd16721b651a84819"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-4",
+      "selector_hash": "a1ab17186a29bf67742f02f110dba7c7c4e6e893d6785186ac482886ca621823"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-5",
+      "selector_hash": "3c7145d424f49e4055578516c93246e367fdbb92cff496030f2d246d38aec166"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-6",
+      "selector_hash": "4dc4853dcd1cc9a5a1a7b3c50be77dda27e14e5acbc09ac7fb1706d7023dc20a"
+    },
+    {
+      "event_name": "dashboard_prototype.request_snapshot.v1",
+      "expected_event_count": 99,
+      "local_delivered_count": 99,
+      "manifest_names": [
+        "request-cleanup-manifest-20260901.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 99,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "request-20260901-phase3-7",
+      "selector_hash": "933238670e223d72cbe056fb49cfbe036af4a59c2cd1d8904f01a372543dff9d"
+    },
+    {
+      "event_name": "dashboard_prototype.task_operation.v1",
+      "expected_event_count": 98,
+      "local_delivered_count": 98,
+      "manifest_names": [
+        "task-cleanup-manifest-20260902.json"
+      ],
+      "namespace": "agent-introspection.dashboard-prototype.v1",
+      "remote_duplicate_row_count": 0,
+      "remote_missing_event_count": 98,
+      "remote_namespace_omitted_count": 0,
+      "remote_present_event_count": 0,
+      "run_id": "task-20260902-phase4-1",
+      "selector_hash": "7bdedea28947558e336ddcdb85986be26a145310bfa568301156190d41b0c197"
+    }
+  ],
+  "query_templates": {
+    "reconciliation": "SELECT attributes_string['event.id'] AS event_id,\n       any(attributes_string['dashboard.namespace']) AS remote_namespace,\n       uniqExact(tuple(attributes_string['dashboard.namespace'],\n                       attributes_string['event.name'],\n                       attributes_string['dashboard.run_id_hash'])) AS immutable_tuple_count,\n       count() AS row_count\nFROM signoz_logs.distributed_logs_v2\nWHERE attributes_string['event.name'] = {event_name:String}\n  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}\n  AND attributes_string['event.id'] IN {event_ids:Array(String)}\nGROUP BY event_id\nORDER BY event_id",
+    "remote_delete": "ALTER TABLE signoz_logs.logs_v2 ON CLUSTER cluster DELETE WHERE\n  attributes_string['dashboard.namespace'] = {namespace:String}\n  AND attributes_string['event.name'] = {event_name:String}\n  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}\n  AND attributes_string['event.id'] IN {event_ids:Array(String)}\nSETTINGS mutations_sync = 2"
+  },
+  "resume_state": {
+    "prior_reconciliation_reused": false,
+    "remote_present_before_this_invocation": 0
+  },
+  "selector_count": 19,
+  "selector_hashes": [
+    "97bf16e11070bcf0da31abab032a969f025762e42cff4430ae54ec1f055c7a58",
+    "8c2c78dca88d9e58039b627ce388d64210fa913ec5547a4e47afd9a96e3581cd",
+    "16933c21f566e28a2172cc96c99aa0e9114289556a63fc0e9c0c3ac44cb28585",
+    "16b9f599611a1a0367fb81d13834f213c1392a05d809c1697a2919c5cfb1744a",
+    "b31154f1a12e2b49ed0fa2ebf88aa1b9620e2c0472cd9ee1f74be61645facdc2",
+    "59ff4c1f565efef83c71b12e4d4a2e7800658985cafa7793afe18d56261778aa",
+    "3eb1574f8bcdb87ec5327a0f3ffbb6aae2613937887e144208417ea85bd45a87",
+    "308c110d43de11834cf46009db948b7cb4d89934d6e92ae670ec2a7931fa46e9",
+    "dd01fcd1055eef4c98c54c1d5bc41d408560b4881dc2b4c4c3620112ef50a503",
+    "6df8d3ebab1239cdcb317974e9d3742dc7c1ff659cf3719dac798210e4f9d39c",
+    "9bd6c33c475972a623d697366818dacaed9e5fc1d9b91a0faccaa3fbc176524b",
+    "7579b5f27a78a1025528f17e5fa1378dafd7de3d04712ce33c37766d5108c8bc",
+    "32ddaa06c248d1d68d5dd31f689005bd2f90e004895233b4383b9f6e47c32366",
+    "7017ef8dfbf4c51fc94d27044944beb8205458c732d46eccd16721b651a84819",
+    "a1ab17186a29bf67742f02f110dba7c7c4e6e893d6785186ac482886ca621823",
+    "3c7145d424f49e4055578516c93246e367fdbb92cff496030f2d246d38aec166",
+    "4dc4853dcd1cc9a5a1a7b3c50be77dda27e14e5acbc09ac7fb1706d7023dc20a",
+    "933238670e223d72cbe056fb49cfbe036af4a59c2cd1d8904f01a372543dff9d",
+    "7bdedea28947558e336ddcdb85986be26a145310bfa568301156190d41b0c197"
+  ],
+  "unique_event_count": 1298
+}
