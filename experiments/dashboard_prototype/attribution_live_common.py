@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from experiments.dashboard_prototype.attribution_common import (
     AttributionExperimentId,
     AttributionExperimentProof,
@@ -17,8 +19,11 @@ from experiments.dashboard_prototype.experiment_live_common import (
 __all__ = ("AttributionCalculationPrimitive", "AttributionLiveEvidence", "LiveProofRequest")
 
 
+@dataclass(frozen=True, slots=True)
 class AttributionCalculationPrimitive(GenericRemoteCalculationPrimitive[AttributionExperimentId]):
     """Attribution scalar input row."""
+
+    source_time_ns: int | None = None
 
 
 class AttributionLiveEvidence(GenericLiveExperimentEvidence[AttributionExperimentId]):

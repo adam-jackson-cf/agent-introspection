@@ -91,6 +91,13 @@ def test_proves_exact_reconciliation_with_rows_only_workload_normalization() -> 
     assert proof.metrics["latest_failed_during_drain_attempt_events"] == 3
 
 
+def test_reducer_preserves_native_float_duration() -> None:
+    proof = _proof(snapshots=(replace(_snapshot(), duration_ms=250.5),))
+
+    assert proof.result is ExperimentResult.PROVEN
+    assert proof.metrics["latest_duration_ms"] == 250.5
+
+
 def test_blocks_missing_required_boundaries_and_nonfresh_provenance() -> None:
     snapshot = replace(_snapshot(), payload_schema_version=None)
     oracle = replace(_oracle(), counts=replace(_counts(), rows=None))

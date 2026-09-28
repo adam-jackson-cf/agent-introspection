@@ -98,6 +98,13 @@ if ((${#markdown_files[@]})); then
   fi
 fi
 
+bun install --cwd dashboard --frozen-lockfile
+bun run --cwd dashboard check
+bun run --cwd dashboard test
+bun run --cwd dashboard lint
+bun run --cwd dashboard format:check
+bun run --cwd dashboard build
+
 if "$stage"; then
   for index in "${!lint_files[@]}"; do
     file="${lint_files[$index]}"

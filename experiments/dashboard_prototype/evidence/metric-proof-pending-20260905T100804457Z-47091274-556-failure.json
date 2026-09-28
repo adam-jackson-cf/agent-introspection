@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "recorded_at": "2026-09-05T10:08:04.840627+00:00",
+  "run_id": "metric-proof-pending-20260905T100804457Z-47091274-556",
+  "error_type": "PipelineCaptureError",
+  "capture": "metric-proof-pending-20260905T100804457Z-47091274-556.sqlite3",
+  "frozen_inputs": "metric-proof-pending-20260905T100804457Z-47091274-556-inputs.json",
+  "pre_fix_result": "metric-proof-pending-20260905T100804457Z-47091274-556-pre-fix-result.json"
+}

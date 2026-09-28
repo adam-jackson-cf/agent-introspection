@@ -39,35 +39,31 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> LiveEx
     scan_rows = tuple(
         connection.execute(
             """
-            SELECT id, started_at, completed_at, source_end_ns
+            SELECT id, started_at, completed_at, source_start_ns, source_end_ns
             FROM scan_runs
             WHERE status = 'succeeded'
               AND completed_at > ? AND completed_at <= ?
+              AND source_start_ns IS NOT NULL
               AND source_end_ns IS NOT NULL
             ORDER BY completed_at, id
             """,
             (request.start.isoformat(), request.end.isoformat()),
         )
     )
-    record_columns = {
-        str(row[1]) for row in connection.execute("PRAGMA table_info(source_session_records)")
-    }
-    context_evidence_id = (
-        "context_evidence_id" if "context_evidence_id" in record_columns else "NULL"
-    )
     record_rows = tuple(
         connection.execute(
-            f"""
-            SELECT scan_run_id, source_kind, service_name, source_id, source_timestamp,
-                   {context_evidence_id}
+            """
+            SELECT scan_run_id, source_kind, service_name, source_id, source_timestamp_ns,
+                   context_evidence_id
             FROM source_session_records
             WHERE scan_run_id IN (
                 SELECT id FROM scan_runs
                 WHERE status = 'succeeded'
                   AND completed_at > ? AND completed_at <= ?
+                  AND source_start_ns IS NOT NULL
                   AND source_end_ns IS NOT NULL
             )
-            ORDER BY scan_run_id, source_kind, service_name, source_timestamp, source_id
+            ORDER BY scan_run_id, source_kind, service_name, source_id
             """,
             (request.start.isoformat(), request.end.isoformat()),
         )
@@ -97,7 +93,7 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> LiveEx
             population_end=request.end,
             started_at=metadata[0],
             completed_at=metadata[1],
-            extraction_bound=metadata[2],
+            extraction_bound_ns=metadata[3],
             capability_available=True,
         )
         for scan_id, metadata in scan_metadata.items()
@@ -113,7 +109,7 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> LiveEx
         connection,
         record_rows,
         scan_metadata,
-        "context_evidence_id" in record_columns,
+        True,
     )
     if conflicting_lifecycle:
         return _failed_evidence(request)
@@ -140,27 +136,31 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> LiveEx
                 "scan_ordinal": ordinal,
             },
             measures={
-                "lag_seconds": _lag_seconds(selection)
-                if selection.disposition.value == "accepted"
-                else 0.0,
-                "negative_skew": int(
-                    selection.disposition.value == "accepted" and selection.negative_skew
-                ),
+                key: value
+                for key, value in {
+                    "lag_seconds": selection.lag_seconds,
+                    "negative_skew": int(selection.negative_skew),
+                }.items()
+                if value is not None
             },
         )
         for ordinal, (selection, scan) in enumerate(_selected_scans(reduction, scans), start=1)
     )
     oracle = {
         _hash(("cohort", metric.cohort.boundary)): {
-            "population": metric.population,
-            "accepted": metric.accepted,
-            "missing_capability": metric.missing_capability,
-            "rejected": metric.rejected,
-            "duplicate": metric.duplicate,
-            "n": metric.n,
-            "p50_lag_seconds": metric.p50_lag_seconds or 0.0,
-            "p95_lag_seconds": metric.p95_lag_seconds or 0.0,
-            "negative_skew_count": metric.negative_skew_count,
+            key: value
+            for key, value in {
+                "population": metric.population,
+                "accepted": metric.accepted,
+                "missing_capability": metric.missing_capability,
+                "rejected": metric.rejected,
+                "duplicate": metric.duplicate,
+                "n": metric.n,
+                "p50_lag_seconds": metric.p50_lag_seconds,
+                "p95_lag_seconds": metric.p95_lag_seconds,
+                "negative_skew_count": metric.negative_skew_count,
+            }.items()
+            if value is not None
         }
         for metric in reduction.cohorts
     }
@@ -171,30 +171,38 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> LiveEx
 
 def _scan_metadata(
     rows: tuple[tuple[object, ...], ...],
-) -> tuple[dict[str, tuple[datetime, datetime, datetime]], set[str], bool]:
+) -> tuple[dict[str, tuple[datetime, datetime, int, int]], set[str], bool]:
     blocked: set[str] = set()
-    metadata: dict[str, tuple[datetime, datetime, datetime]] = {}
+    metadata: dict[str, tuple[datetime, datetime, int, int]] = {}
     for row in rows:
         try:
             started = _instant(row[1])
             completed = _instant(row[2])
-            extraction_bound = datetime.fromtimestamp(int(str(row[3])) / 1_000_000_000, UTC)
+            source_start_ns = _nanoseconds(row[3])
+            extraction_bound_ns = _nanoseconds(row[4])
         except (TypeError, ValueError, OverflowError, OSError):
             blocked.add(f"source-lag.timestamp:{_hash(('scan', row[0]))}")
             continue
-        if extraction_bound > completed:
+        if source_start_ns >= extraction_bound_ns or extraction_bound_ns > _canonical_datetime_ns(
+            completed
+        ):
             return metadata, blocked, True
-        metadata[_hash(("scan", row[0]))] = (started, completed, extraction_bound)
+        metadata[_hash(("scan", row[0]))] = (
+            started,
+            completed,
+            source_start_ns,
+            extraction_bound_ns,
+        )
     return metadata, blocked, False
 
 
 def _observations(
     rows: tuple[tuple[object, ...], ...],
-    scan_metadata: dict[str, tuple[datetime, datetime, datetime]],
+    scan_metadata: dict[str, tuple[datetime, datetime, int, int]],
 ) -> tuple[list[AuthoritativeSourceObservation], set[str], bool]:
     blocked: set[str] = set()
     observations: list[AuthoritativeSourceObservation] = []
-    observed_times: dict[tuple[str, SourceLagCohort, str], datetime] = {}
+    observed_times: dict[tuple[str, SourceLagCohort, str], int] = {}
     for row in rows:
         service = str(row[2])
         mapped = CANONICAL_SERVICE_PRODUCERS.get(service)
@@ -202,9 +210,9 @@ def _observations(
         if mapped is None or mapped[0] not in _SUPPORTED_PRODUCERS or signal is None:
             continue
         try:
-            source_time = _instant(row[4])
+            source_time_ns = _nanoseconds(row[4])
         except (TypeError, ValueError, OverflowError, OSError):
-            blocked.add(f"source-lag.timestamp:{_hash((row[0], row[1], service))}")
+            blocked.add(f"source-lag.raw-authority:{_hash((row[0], row[1], service))}")
             continue
         scan_id = _hash(("scan", row[0]))
         metadata = scan_metadata.get(scan_id)
@@ -214,16 +222,16 @@ def _observations(
         cohort = SourceLagCohort(mapped[0], mapped[1], signal)
         source_identity = _hash(("source", row[1], service, row[3]))
         source_key = (scan_id, cohort, source_identity)
-        if observed_times.setdefault(source_key, source_time) != source_time:
+        if observed_times.setdefault(source_key, source_time_ns) != source_time_ns:
             return observations, blocked, True
         observations.append(
             AuthoritativeSourceObservation(
                 observation_id=source_identity,
                 scan_id=scan_id,
                 cohort=cohort,
-                source_time=source_time,
+                source_time_ns=source_time_ns,
                 current_identity=_hash(("current", row[1], service, row[3])),
-                extraction_bound=metadata[2],
+                extraction_bound_ns=metadata[3],
             )
         )
     return observations, blocked, False
@@ -232,7 +240,7 @@ def _observations(
 def _lifecycle_observations(
     connection: sqlite3.Connection,
     record_rows: tuple[tuple[object, ...], ...],
-    scan_metadata: dict[str, tuple[datetime, datetime, datetime]],
+    scan_metadata: dict[str, tuple[datetime, datetime, int, int]],
     has_context_evidence_id: bool,
 ) -> tuple[list[AuthoritativeSourceObservation], set[str], bool]:
     columns = {
@@ -257,13 +265,14 @@ def _lifecycle_observations(
     )
     blocked: set[str] = set()
     observations: list[AuthoritativeSourceObservation] = []
-    observed_times: dict[tuple[str, SourceLagCohort, str], datetime] = {}
+    observed_times: dict[tuple[str, SourceLagCohort, str], int] = {}
     for event_id, producer, occurred_at in rows:
         mapped = CANONICAL_SERVICE_PRODUCERS.get(str(producer))
         if mapped is None or mapped[0] not in _SUPPORTED_PRODUCERS:
             continue
         try:
             source_time = _instant(occurred_at)
+            source_time_ns = _canonical_datetime_ns(source_time)
         except (TypeError, ValueError, OverflowError, OSError):
             blocked.add(f"source-lag.timestamp:{_hash(('lifecycle', producer, event_id))}")
             continue
@@ -277,16 +286,16 @@ def _lifecycle_observations(
                 blocked.add(f"source-lag.scan-metadata:{scan_id}")
                 continue
             source_key = (scan_id, cohort, source_identity)
-            if observed_times.setdefault(source_key, source_time) != source_time:
+            if observed_times.setdefault(source_key, source_time_ns) != source_time_ns:
                 return observations, blocked, True
             observations.append(
                 AuthoritativeSourceObservation(
                     observation_id=source_identity,
                     scan_id=scan_id,
                     cohort=cohort,
-                    source_time=source_time,
+                    source_time_ns=source_time_ns,
                     current_identity=_hash(("lifecycle-current", producer, event_id)),
-                    extraction_bound=metadata[2],
+                    extraction_bound_ns=metadata[3],
                 )
             )
     return observations, blocked, False
@@ -301,12 +310,6 @@ def _selected_scans(
         for selection in reduction.selections
         if (selection.scan_id, selection.cohort) in scans
     )
-
-
-def _lag_seconds(selection: SourceLagSelection) -> float:
-    if selection.lag_seconds is None:
-        raise ValueError("source-lag primitive requires an observed lag")
-    return selection.lag_seconds
 
 
 def _failed_evidence(request: LiveProofRequest) -> LiveExperimentEvidence:
@@ -334,7 +337,32 @@ def _missing_tables(connection: sqlite3.Connection) -> tuple[str, ...]:
         str(row[0])
         for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    return tuple(sorted({"scan_runs", "source_session_records"} - tables))
+    missing = {"scan_runs", "source_session_records"} - tables
+    if "source_session_records" in tables:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(source_session_records)")
+        }
+        if not {"context_evidence_id", "source_timestamp_ns"} <= columns:
+            missing.update(
+                {
+                    "source_session_records.context_evidence_id",
+                    "source_session_records.source_timestamp_ns",
+                }
+                - columns
+            )
+    return tuple(sorted(missing))
+
+
+def _nanoseconds(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("nanoseconds must be an integer")
+    return int(str(value))
+
+
+def _canonical_datetime_ns(value: datetime) -> int:
+    instant = value.astimezone(UTC)
+    delta = instant - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _instant(value: object) -> datetime:

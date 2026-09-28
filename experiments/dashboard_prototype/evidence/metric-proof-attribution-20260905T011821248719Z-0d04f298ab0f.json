@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "observed_at": "2026-09-05T01:18:59.943802+00:00",
+  "run_id": "metric-proof-attribution-20260905T011821248719Z-0d04f298ab0f",
+  "error_class": "ModuleNotFoundError",
+  "error": "No module named experiments; execution did not start."
+}

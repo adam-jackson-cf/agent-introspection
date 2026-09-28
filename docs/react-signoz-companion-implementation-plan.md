@@ -8,15 +8,19 @@ plane. The implementation must reproduce the approved visual hierarchy,
 controls, calculations, states, and evidence paths without treating the visual
 mock's illustrative values as data.
 
-This plan is the route to full implementation. It depends on:
+This active plan is the route to full implementation. It depends on:
 
 - the canonical measurement, calculation, control, and visual contract in
   [Dashboard Measure v2](dashboard-measure-v2.md);
-- the proof gates and experiment results in the
-  [Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md).
+- current metric/proof status and remaining actions in the
+  [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md);
+- machine-readable Appendix row outcomes in the
+  [prototype proof matrix](dashboard-prototype-proof-matrix.json); and
+- retained experiment evidence in the retired
+  [Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md).
 
-The measurement document remains authoritative when this plan, an experiment,
-or the ephemeral visual mock disagrees with it.
+The measurement document remains authoritative when this plan, a retained
+experiment, or the local visual mock disagrees with it.
 
 ## Target outcome
 
@@ -28,10 +32,13 @@ Deliver five separate routes, not tabs:
 4. `03b · Model usage · Tool execution` — M5–M11;
 5. `03c · Model usage · Recurrence & interventions` — M12–M18.
 
-Every visible result must come from a complete canonical remote population in
-SigNoz. `Requires projection`, `Local only`, and `Deferred` measures remain
-absent until the corresponding experiment and production projection gates are
-complete.
+Every designed widget and supporting evidence table is rendered on its assigned
+one of the five routes. Until its complete canonical remote population,
+calculation, and row-level proof gate are open, it displays the repository-owned
+missing-data image and `Missing data` message in that designed place. This
+companion presentation neither fabricates a metric nor promotes a gate:
+`Requires projection`, `Local only`, and `Deferred` calculations remain blocked
+until their corresponding experiment and production projection gates complete.
 
 ## Architectural decisions
 
@@ -116,8 +123,9 @@ assets:
 - visible focus, keyboard-reachable controls and rows, units, deterministic
   sorting, and 200% zoom support.
 
-The visual mock at `/tmp/show-me-signoz-dashboard-mocks.html` is a design
-reference only. No implementation may depend on that ephemeral file.
+The approved local [visual mock](mock/show-me-signoz-dashboard-mocks.html) and
+[architecture reference](mock/show-me-signoz-dashboard-architecture.html) are
+design references only. No implementation may depend on an ephemeral file.
 
 ## Delivery sequence
 
@@ -128,20 +136,21 @@ reference only. No implementation may depend on that ephemeral file.
 1. Convert Appendix A of
    [Dashboard Measure v2](dashboard-measure-v2.md#appendix-a-dashboard-mock-control-data-readiness)
    into a checked implementation coverage manifest keyed by measure or control.
-2. Record the current proof state from the
-   [Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md)
-   and the [proof matrix](dashboard-prototype-proof-matrix.json): only
-   E-Attribution-1 is experiment-level `Proven`; all other experiments are
-   `Blocked`. The Appendix A matrix has 129 complete rows: 127 `Blocked` and
-   two static `Not applicable`, with `evidence_bundle: null` on every
-   `Blocked` or `Not applicable` row. E-Attribution-1 remains row-level
-   `Blocked` because its retained aggregate proof has no per-row
-   EvidenceBundle/event-id inputs.
+2. Record current proof status and remaining actions from the
+   [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md),
+   using the [proof matrix](dashboard-prototype-proof-matrix.json) for
+   machine-readable Appendix row outcomes. The retired
+   [Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md)
+   is historical evidence, not a current status authority. Read current
+   experiment outcomes, producer-specific blockers, and row-bound proof
+   requirements from the register rather than maintaining another status copy.
 3. Record a producer-by-measure row for `omp`, `codex-cli`, and
    `codex-app-server`, including normative capability reason, canonical remote
    event family, schema, forward boundary, exact query, and oracle.
 4. Freeze the five routes, navigation order, exact titles, shared control
-   semantics, seven result states, and omission rules.
+   semantics, seven result states, and missing-data presentation rule: every
+   blocked measurement/control retains its designed place with the
+   repository-owned image and `Missing data`, without a value or proof claim.
 5. Prove the server-side SigNoz query transport with one bounded read-only query
    that returns no sensitive content.
 6. Define fixture-free contract tests from bounded immutable event identities;
@@ -181,12 +190,13 @@ run ID, event family, and event IDs and fails closed on namespace omission.
 The 1,298 local outbox identities remain under the production immutable
 no-delete guard.
 
-### Authoritative proof follow-on
+### Current proof status
 
-The
-[Authoritative Proof Closure Plan](authoritative-proof-closure-plan.md)
-owns the work required to open individual row-level gates. It does not authorize
-implementation of a blocked route, panel, projection, or production cutover.
+The [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md)
+owns the current human-readable status and remaining actions. The
+[proof matrix](dashboard-prototype-proof-matrix.json) owns machine-readable
+Appendix row outcomes. Neither authorizes implementation of a blocked route,
+panel, projection, or production cutover.
 
 ## Phase 1: shared site foundation and Pipeline health
 
@@ -199,8 +209,10 @@ route.
 
 1. Scaffold the React and TypeScript application in `dashboard/` using the
    repository's Bun toolchain.
-2. Implement five URL-addressable route definitions but expose only routes with
-   at least one complete remotely available measure.
+2. Implement all five URL-addressable route shells with shared navigation and
+   filter semantics. Render every designed measurement, control, and evidence
+   place with the missing-data image and `Missing data` while its authority is
+   blocked; route presence does not make a calculation available.
 3. Build the shared desktop sidebar, mobile navigation, top bar, page heading,
    filter bar, scope readout, section labels, panel grid, and evidence layout.
 4. Add error containment at route and panel boundaries without translating
@@ -259,10 +271,11 @@ Controls and calculations covered by Appendix A:
 - Attribution coverage;
 - Attribution diagnostics.
 
-Before a projection gate opens, its panel is absent and the dashboard
-description names the omitted measure and required projection. After a
-recorded availability boundary, an incomplete or unqueryable deployed contract
-renders `Unavailable`; it is never reclassified as `Not applicable`.
+Before a projection gate opens, its designed panel remains visible with the
+repository-owned missing-data image and `Missing data`; it must not show a
+metric, zero, empty result, or proof promotion. After a recorded availability
+boundary, an incomplete or unqueryable deployed contract renders `Unavailable`;
+it is never reclassified as `Not applicable`.
 
 ### Phase 1 exit gate
 
@@ -290,19 +303,20 @@ renders `Unavailable`; it is never reclassified as `Not applicable`.
 
 ### Phase 1E: Canonical-now Model usage availability wave
 
-Phase 6 classification holds this availability wave: its prerequisite rows are
-`Blocked` in the [proof matrix](dashboard-prototype-proof-matrix.json), so no
-Model usage route or panel is schedulable. E-Attribution-1 is only an
-experiment-level `Proven` baseline and does not open a row-level dashboard
-measure without its per-row EvidenceBundle/event-id inputs. Keep every
-otherwise described panel absent rather than treating activity counts or the
-baseline as production authority.
+Phase 6 classification keeps every Model usage calculation gated: its
+prerequisite rows are `Blocked` in the
+[proof matrix](dashboard-prototype-proof-matrix.json). The corresponding route
+shells and designed widgets render the missing-data image and `Missing data`;
+E-Attribution-1 is only an experiment-level `Proven` baseline and does not
+open a row-level dashboard measure or permit activity counts or the baseline
+to be presented as production authority.
 
 ## Phase 2: Provider health
 
-Phase 6 classification holds Provider health: the request/attempt prerequisites
-from `request-20260901-phase3-7` are `Blocked` in the
-[proof matrix](dashboard-prototype-proof-matrix.json). Start only after the
+Phase 6 classification keeps Provider health calculations gated: the
+request/attempt prerequisites from `request-20260901-phase3-7` are `Blocked` in
+the [proof matrix](dashboard-prototype-proof-matrix.json). Its route shell and
+designed widgets render the missing-data image and `Missing data` until the
 immutable request/attempt projection is remotely available from its recorded
 forward boundary and a producer-by-measure matrix covers `omp`, `codex-cli`,
 and `codex-app-server`.
@@ -312,10 +326,10 @@ and `codex-app-server`.
 1. For every R1–R8 dependency and supported producer/surface, record exactly one
    state: `Proven`; static `Not applicable` with its normative capability
    reason; or `Blocked` with the missing authoritative field/boundary.
-2. Keep a panel absent while any applicable supported-producer dependency is
-   `Blocked`. After a deployed availability boundary, render `Unavailable` with
-   the missing producer/field/boundary instead of silently narrowing the
-   denominator.
+2. Keep a designed panel in its missing-data presentation while any applicable
+   supported-producer dependency is `Blocked`; do not silently narrow the
+   denominator. After a deployed availability boundary, render `Unavailable`
+   with the missing producer/field/boundary instead.
 3. Add exact `Provider`, `Model role`, and `Model` controls after global time.
 4. Implement the canonical dependent-option behavior and its documented
    independent requested/response control form only if installed-version
@@ -359,11 +373,13 @@ and `codex-app-server`.
 
 ## Phase 3: Model usage · Usage & interaction
 
-Phase 6 classification holds this route: the request and task prerequisites
-from `request-20260901-phase3-7` and `task-20260902-phase4-1` are `Blocked` in
-the [proof matrix](dashboard-prototype-proof-matrix.json). Enrich the Phase 1E
-route measure by measure only after its row-level authority opens; do not wait
-for unrelated request-accounting or task-outcome contracts to expose an already
+Phase 6 classification keeps this route's calculations gated: the request and
+task prerequisites from `request-20260901-phase3-7` and
+`task-20260902-phase4-1` are `Blocked` in the
+[proof matrix](dashboard-prototype-proof-matrix.json). Its route shell and
+designed widgets render the missing-data image and `Missing data`. Enrich
+measure by measure only after its row-level authority opens; do not wait for
+unrelated request-accounting or task-outcome contracts to expose an already
 complete owned calculation.
 
 ### Usage and interaction work
@@ -404,11 +420,12 @@ complete owned calculation.
 
 ## Phase 4: Model usage · Tool execution
 
-Phase 6 classification holds this route: the ordered-task prerequisites from
-`task-20260902-phase4-1` are `Blocked` in the
-[proof matrix](dashboard-prototype-proof-matrix.json). Enrich the Phase 1E
-count-only route only when each ordered-operation, denominator, recovery,
-cycle, sequence, or terminal-outcome dependency is remotely proven.
+Phase 6 classification keeps this route's calculations gated: the ordered-task
+prerequisites from `task-20260902-phase4-1` are `Blocked` in the
+[proof matrix](dashboard-prototype-proof-matrix.json). Its route shell and
+designed widgets render the missing-data image and `Missing data`. Enrich a
+widget only when each ordered-operation, denominator, recovery, cycle,
+sequence, or terminal-outcome dependency is remotely proven.
 
 ### Tool execution work
 
@@ -452,11 +469,12 @@ cycle, sequence, or terminal-outcome dependency is remotely proven.
 
 ## Phase 5: Model usage · Recurrence & interventions
 
-Phase 6 classification keeps this route absent: every M13/M16 row in the
-[proof matrix](dashboard-prototype-proof-matrix.json) is `Blocked`. The
-M13/M16 exit gate below is unchanged and unmet. Do not create, schedule,
-enrich, or deploy a Phase 1E M13/M16 route or manifest until the row-level
-gate opens with its required immutable evidence.
+Phase 6 classification keeps this route's calculations gated: every M13/M16
+row in the [proof matrix](dashboard-prototype-proof-matrix.json) is `Blocked`.
+Its route shell and designed widgets render the missing-data image and
+`Missing data`. The M13/M16 exit gate below is unchanged and unmet; do not
+enrich or deploy a calculation or manifest as data until its row-level gate
+opens with its required immutable evidence.
 
 ### Recurrence and interventions work
 
@@ -531,40 +549,52 @@ gate opens with its required immutable evidence.
    record above; do not promote retained local outbox identities or
    cleanup-reconciled remote rows into production evidence.
 
-### Release gate
+### Release gates
 
-- Every visible applicable producer/measure row is `Proven`, remotely projected,
-  and independently reconciled; static `Not applicable` rows retain their
-  normative capability reasons.
+- **Companion presentation and software quality:** all five route shells, their
+  designed measurement/control/evidence places, shared controls, and safe
+  missing-data image/message rendering are implemented and pass the applicable
+  software-quality checks. This gate authorizes presentation only.
+- **Production metric calculation:** every visible applicable
+  producer/measure row is `Proven`, remotely projected, and independently
+  reconciled; static `Not applicable` rows retain their normative capability
+  reasons.
 - Every Appendix A row is implemented, statically `Not applicable`, or
-  intentionally gated with its unmet projection and affected producer named.
-- All five routes satisfy each deployed availability-wave manifest and shared
-  control contract.
+  intentionally presented as missing data with its unmet projection and
+  affected producer named.
+- All five routes satisfy their shared control contract; calculated widgets
+  additionally satisfy their deployed availability-wave manifest.
 - SigNoz and the companion application remain loopback-only.
 - No illustrative mock value, local-only join, inferred identity, or missing
   outcome is presented as production evidence.
 
-The current release gate is unmet: 127 Appendix A rows are `Blocked`, two are
-static `Not applicable`, and E-Attribution-1 is only experiment-level
-`Proven`. No production cutover or later recurrence projection is authorized
-until each applicable row has authoritative remote evidence and its required
-EvidenceBundle.
+The companion presentation may be complete while the production metric
+calculation gate remains unmet. Consult the
+[Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md) for
+current evidence and blockers. No production calculation cutover or later
+recurrence projection is authorized until each applicable row has authoritative
+remote evidence and its required EvidenceBundle.
 
 ## Coverage and dependency matrix
 
-| Route | Measures | Controls | Required experiment gate |
+| Route | Measures | Controls | Reducer and proof dependencies |
 | --- | --- | --- | --- |
-| `01 · Pipeline health` | P1–P12 | Time range | `experiment_pipeline_reducer`; `pipeline-20260901T213721Z` is `Blocked` |
-| `02 · Provider health` | R1–R8 | Time range, Provider, Model role, Model | `experiment_request_attempt_reducer`; `request-20260901-phase3-7` is `Blocked` |
-| `03a · Model usage · Usage & interaction` | M1–M4 | Time range, Project | `experiment_attribution_reducer`, `experiment_request_attempt_reducer`, and `experiment_ordered_task_reducer`; only E-Attribution-1 is experiment-level `Proven`, with no row-level proof |
-| `03b · Model usage · Tool execution` | M5–M11 | Time range, Project | `experiment_ordered_task_reducer`; `task-20260902-phase4-1` is `Blocked` |
-| `03c · Model usage · Recurrence & interventions` | M12–M18 | Time range, Project | `experiment_recurrence_reducer`; `recurrence-20260902-phase5-4` is `Blocked` and the M13/M16 gate remains unmet |
+| `01 · Pipeline health` | P1–P12 | Time range | `experiment_pipeline_reducer`; [Pipeline health gates](dashboard-metric-proof-register.md#pipeline-health) |
+| `02 · Provider health` | R1–R8 | Time range, Provider, Model role, Model | `experiment_request_attempt_reducer`; [Provider health gates](dashboard-metric-proof-register.md#provider-health) |
+| `03a · Model usage · Usage & interaction` | M1–M4 | Time range, Project | `experiment_attribution_reducer`, `experiment_request_attempt_reducer`, and `experiment_ordered_task_reducer`; [Model usage gates](dashboard-metric-proof-register.md#model-usage) |
+| `03b · Model usage · Tool execution` | M5–M11 | Time range, Project | `experiment_ordered_task_reducer`; [Model usage gates](dashboard-metric-proof-register.md#model-usage) |
+| `03c · Model usage · Recurrence & interventions` | M12–M18 | Time range, Project | `experiment_recurrence_reducer`; [Model usage gates](dashboard-metric-proof-register.md#model-usage), including the independent M13/M16 gates |
 
 ## Definition of complete implementation
 
-The implementation is complete only when the companion application can execute
-and render every applicable calculation and control in Appendix A across all
-supported producers, using canonical immutable remote evidence, while applying
-the exact route, visual, state, accessibility, identity, time, capability,
-integrity, privacy, and omission contracts in
+The companion presentation is complete when it renders all five route shells,
+their designed measurement/control/evidence places, and the honest missing-data
+image/message wherever authority is absent. That completion and green software
+quality do not prove a calculation.
+
+Production metric calculation implementation is complete only when the
+companion can execute and render every applicable calculation and control in
+Appendix A across all supported producers, using canonical immutable remote
+evidence, while applying the exact route, visual, state, accessibility,
+identity, time, capability, integrity, privacy, and presentation contracts in
 [Dashboard Measure v2](dashboard-measure-v2.md).

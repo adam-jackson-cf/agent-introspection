@@ -4,14 +4,19 @@
 
 Define the measures needed to distinguish pipeline/process health, model-provider health, and model usage. The dashboard must make failures attributable to the correct layer and expose repeated user, agent, and tooling behavior without treating missing evidence as success or failure.
 
-## Delivery plans
+## Delivery and proof references
 
 - [React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md)
-  defines the multi-phase route from the approved measurements and mock design
-  to the five production React routes.
-- [Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md)
-  defines the bounded experiments that must prove Appendix A closure viability
-  across all supported producers before full implementation.
+  is the active, gated route from the approved measurements and mock design to
+  the five production React routes.
+- [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md) is
+  the current human-readable status and remaining-actions authority for every
+  metric, widget, and Appendix control.
+- [`dashboard-prototype-proof-matrix.json`](dashboard-prototype-proof-matrix.json)
+  owns machine-readable Appendix row outcomes.
+- [Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md)
+  is retired as an active plan and retained only for historical experiment
+  evidence.
 
 This design carries forward useful questions from the original dashboard introduced in commit `93e6dff` and the Health/Insight split in `497d89d`. Its canonical attribution, cohort, identity, and source-time contracts are self-contained below.
 
@@ -709,15 +714,32 @@ This order avoids blaming a model or agent for missing OTEL, treating provider o
 
 ## Initial delivery boundary
 
-The dashboard should be delivered incrementally without mixed-contract panels:
+The companion presentation is delivered as five route shells from the start.
+Every designed measurement, control, and supporting evidence-table place retains
+its target layout and renders the repository-owned missing-data image with
+`Missing data` while authoritative measurement/control data is blocked. This
+presentation is not a calculation result, does not fabricate a value, and does
+not promote a proof or projection gate. Static producer-specific capability
+exclusions still render `Not applicable`.
 
-1. Implement **Canonical now** Pipeline health and Model usage measures using the existing canonical activity, lifecycle, attribution, and source-time contracts.
-2. Complete the forward canonical pipeline snapshot projection before enabling snapshot-dependent measures.
-3. Add the immutable logical provider request/attempt projection, then enable Provider health and request/model usage measures only after its availability boundary.
-4. Add ordered tool-call/task-outcome projection for recovery, sequence, and rate denominators.
-5. Add canonical finding, intervention, and enforcement-registry projections before enabling actionable yield, post-intervention recurrence, uncodified practice, or enforcement-tier panels.
+Calculations are enabled incrementally without mixed-contract panels:
 
-No panel may reconstruct a missing canonical state from activity counts, join local SQLite implicitly, or query superseded projections as a fallback.
+1. Implement **Canonical now** Pipeline health and Model usage calculations
+   using the existing canonical activity, lifecycle, attribution, and
+   source-time contracts.
+2. Complete the forward canonical pipeline snapshot projection before enabling
+   snapshot-dependent calculations.
+3. Add the immutable logical provider request/attempt projection, then enable
+   Provider health and request/model usage calculations only after its
+   availability boundary.
+4. Add ordered tool-call/task-outcome projection for recovery, sequence, and
+   rate denominators.
+5. Add canonical finding, intervention, and enforcement-registry projections
+   before enabling actionable yield, post-intervention recurrence, uncodified
+   practice, or enforcement-tier calculations.
+
+No panel may reconstruct a missing canonical state from activity counts, join
+local SQLite implicitly, or query superseded projections as a fallback.
 
 ## Visual design addendum
 
@@ -733,11 +755,21 @@ Use five dashboard views, not tabs:
 
 The three semantic groups remain Pipeline health, Provider health, and Model usage. Model usage is split because its 18 measures support three different decisions: resource/interaction review, execution diagnosis, and recurrence/intervention review. One Model usage dashboard would require a six-to-eight-screen scroll before recurrence evidence.
 
-Separate dashboards are the baseline because installed SigNoz support for persistent tabs, shared tab filters, focus restoration, and tab deep links is unproven. Do not create a landing dashboard. Numeric titles preserve diagnostic order. A `Next diagnostic step` link is optional only after installed-version verification; static names and the dashboard list are the fallback.
+Separate dashboards are the baseline because installed SigNoz support for
+persistent tabs, shared tab filters, focus restoration, and tab deep links is
+unproven. Do not create a landing dashboard. Numeric titles preserve diagnostic
+order. A `Next diagnostic step` link is optional only after installed-version
+verification; static names and the dashboard list are the fallback.
 
-This is a conceptual information architecture. Persisted dashboard identities, routes, UUIDs, and migration sequencing are implementation concerns outside this visual addendum. Do not expose an empty dashboard when every owned measure is unavailable.
+This is a conceptual information architecture. Persisted dashboard identities,
+routes, UUIDs, and migration sequencing are implementation concerns outside
+this visual addendum. The five companion routes remain visible even when every
+calculation is gated: each designed place renders the missing-data image and
+`Missing data`, not an empty dashboard or a fabricated result.
 
-Each measure has exactly one dashboard owner. A measure may use more than one widget only when the widgets expose different contracted views of that measure. Supporting evidence tables do not become separate measures.
+Each measure has exactly one dashboard owner. A measure may use more than one
+widget only when the widgets expose different contracted views of that measure.
+Supporting evidence tables do not become separate measures.
 
 ### Progressive disclosure and screen density
 
@@ -750,7 +782,7 @@ Every dashboard reads vertically:
 
 The first viewport must answer the dashboard's primary question without scrolling. Do not use generated narrative, trend arrows without a declared comparison window, or a composite health/frustration score.
 
-The grid has 12 columns. Full diagnostic/evidence tables use width `12`; two genuinely compact panels may use `6 + 6`; the first viewport may use one full-width panel followed by two half-width panels. Graph height is `5–6`, compact table height `4–5`, and diagnostic/evidence table height `6–8`. Responsive behavior stacks panels full width. Every deployed availability wave persists its own exact non-overlapping `(x,y,w,h)` manifest and compacts enabled panels upward; hidden panels never leave blank first-viewport slots.
+The grid has 12 columns. Full diagnostic/evidence tables use width `12`; two genuinely compact panels may use `6 + 6`; the first viewport may use one full-width panel followed by two half-width panels. Graph height is `5–6`, compact table height `4–5`, and diagnostic/evidence table height `6–8`. Responsive behavior stacks panels full width. Every deployed availability wave persists its own exact non-overlapping `(x,y,w,h)` manifest. Before a calculation gate opens, its designed place remains occupied by the missing-data image and `Missing data`; it is not hidden or compacted.
 
 ### Shared panel contract
 
@@ -785,7 +817,13 @@ Visual rules:
 | Integrity failure | A fail-closed invariant rejected the cohort. | `Results withheld` plus invariant; suppress affected aggregates. |
 | Query/system error | SigNoz or ClickHouse did not produce a valid result. | `Query failed — outcome unknown`; never render zero. |
 
-`Requires projection`, `Local only`, and `Deferred` measures are absent until their canonical gate opens. The dashboard description lists omitted measure IDs, required projection, and availability boundary. An entirely gated dashboard route is not created.
+`Missing data` is a gate-presentation message, not an eighth result state:
+while `Requires projection`, `Local only`, or `Deferred` authority is blocked,
+the route shell renders the repository-owned missing-data image in every
+designed measurement/control/evidence place. It never means `No data`, never
+uses `Unavailable`, and does not claim an applicable query ran. `Unavailable`
+remains reserved for a deployed canonical contract that became incomplete or
+unqueryable after its availability boundary.
 
 ### 01 · Pipeline health
 
@@ -823,7 +861,10 @@ P10's two widgets have separate contracts and gates; no widget mixes snapshot co
 
 ### 02 · Provider health
 
-Do not create Provider health until the immutable logical request/attempt projection is remotely available and its forward boundary is recorded.
+The Provider health route shell and every designed place render the
+missing-data image and `Missing data` until the immutable logical
+request/attempt projection is remotely available and its forward boundary is
+recorded. This does not enable a Provider health calculation.
 
 #### Provider and model filters
 
@@ -873,7 +914,9 @@ R3 stays a table because phase cohorts differ. R7 uses tables by default; a grap
 
 ### 03a · Model usage · Usage & interaction
 
-Use global time plus `Project`. Provider/model controls remain absent until every included population has a canonical model association.
+Use global time plus `Project`. Provider/model controls retain their designed
+places and render the missing-data image and `Missing data` until every included
+population has a canonical model association.
 
 Visible domain sections:
 
@@ -886,7 +929,7 @@ If section headers are unsupported, prefix each title with `Request terminal tim
 
 | Widget | Type | `(x,y,w,h)` | Contract |
 | --- | --- | --- | --- |
-| M1 · Provenance summary | table | `(0,0,12,4)` | Request/model provenance coverage; hidden until provider projection carries project. |
+| M1 · Provenance summary | table | `(0,0,12,4)` | Request/model provenance coverage; renders missing-data presentation until the provider projection carries project. |
 | M2 · Request-accounted token pressure | table | `(0,4,6,5)` | Per-request input, cached-input, output, reasoning, and total tokens; terminal/accounting-time population only. Tool calls are excluded. |
 | M3 · Explicit-friction rate | table | `(6,4,6,5)` | Capability-comparable task numerator/denominator. |
 | M1 · Calls over time | graph | `(0,9,12,5)` | Logical requests by terminal time. |
@@ -894,7 +937,7 @@ If section headers are unsupported, prefix each title with `Request terminal tim
 | M4 · Friction timing/recovery | table | `(0,19,12,6)` | Timing columns first; recovery columns only after explicit task-outcome projection. |
 | Friction evidence | latest-100 table | `(0,25,12,7)` | Explicit signal, source time, producer, project, task short ID, and explicit outcome. |
 
-The first viewport has exactly M1 summary, M2 request-accounted pressure, and M3. When request accounting is unavailable, compact trace-accounted M2 and M3 upward without leaving blank first-viewport slots.
+The first viewport has exactly M1 summary, M2 request-accounted pressure, and M3. While their authority is blocked, each retains its designed place with the missing-data image and `Missing data`; no widget is compacted upward or treated as trace-accounted data.
 
 ### 03b · Model usage · Tool execution
 
@@ -917,7 +960,9 @@ M5–M11 use tables because their identities are high cardinality. Full measure 
 
 ### 03c · Model usage · Recurrence & interventions
 
-Use global time plus `Project`. Show this dashboard in navigation when any complete owned M12–M18 calculation is remotely available; otherwise omit it. It never joins local SQLite.
+Use global time plus `Project`. The route shell is always present in navigation.
+Each designed place renders the missing-data image and `Missing data` until its
+owned M12–M18 calculation is remotely available. It never joins local SQLite.
 
 #### Recurrence and interventions full target manifest
 
@@ -942,7 +987,9 @@ All three Model usage dashboards use the same control:
 - Resolved option value is canonical project ID; label is `<canonical project name> · <short project ID>`.
 - `Unresolved` selects canonical ID/state `unresolved`; it is never empty-string, corruption, or fallback.
 - Conflicting project identity fails closed.
-- Selection filters each canonical record population by the project carried by that record. Provider-request panels stay hidden until that projection carries project identity.
+- Selection filters each canonical record population by the project carried by
+  that record. Provider-request panels retain their designed places with
+  missing-data presentation until that projection carries project identity.
 - A valid empty cohort shows `No data` and preserves selection.
 - Time changes never reset project.
 
@@ -950,12 +997,20 @@ Cross-dashboard state transfer is optional after URL-state proof. Manual reselec
 
 ### Availability constraints
 
-- Render only measures whose complete canonical population and required fields are available.
-- Omit unavailable panels rather than presenting disabled widgets or zero-filled placeholders.
-- Never combine snapshot counts with event-level detail, request accounting with trace/task accounting, or activity counts with finding/intervention state in one visual.
-- A count-only view uses an explicit `Observed ... counts` title and omits unavailable rate, recovery, sequence, or outcome columns.
-- Compact remaining panels upward while preserving aggregate-to-evidence order and at most three first-viewport panels.
-- Record unsupported SigNoz interactions as constraints with the fallbacks in this addendum; implementation sequencing remains outside this visual design.
+- Render every designed measurement, control, and supporting evidence-table
+  place. When its complete canonical population and required fields are
+  blocked, show the repository-owned missing-data image and `Missing data`
+  instead of a disabled widget, zero-filled placeholder, `No data`, or
+  `Unavailable`.
+- Never combine snapshot counts with event-level detail, request accounting
+  with trace/task accounting, or activity counts with finding/intervention state
+  in one visual.
+- A count-only view uses an explicit `Observed ... counts` title and omits
+  unavailable rate, recovery, sequence, or outcome columns.
+- Keep designed placements while authority is missing; only a deployed
+  availability-wave manifest may define calculated-widget compaction.
+- Record unsupported SigNoz interactions as constraints with the fallbacks in
+  this addendum; implementation sequencing remains outside this visual design.
 
 ### Navigation, accessibility, and fallbacks
 
@@ -996,15 +1051,21 @@ The visual target has no unresolved design issue. Runtime capability and data-pr
 
 ## Appendix A: dashboard mock control data readiness
 
-The attached
-[Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md)
-defines how every unproven `High-level gap closure` is tested and classified
-before it can open an implementation gate in the
-[React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md).
+The [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md)
+records the current human-readable proof status and remaining action for every
+unproven `High-level gap closure`. The
+[Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md)
+retains the historical experiments that tested those closures. Machine-readable
+Appendix row outcomes remain in
+[`dashboard-prototype-proof-matrix.json`](dashboard-prototype-proof-matrix.json).
+No historical experiment table opens an implementation gate; the active
+[React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md)
+remains gated by the applicable row-level proof.
 
 This appendix inventories every measurement-bearing panel and data filter in
-`/tmp/show-me-signoz-dashboard-mocks.html`. Navigation, refresh, and overflow-menu
-controls are excluded because they do not form measurement output.
+the local [dashboard mock](mock/show-me-signoz-dashboard-mocks.html).
+Navigation, refresh, and overflow-menu controls are excluded because they do
+not form measurement output.
 
 `Fields exist?` answers the schema question only:
 

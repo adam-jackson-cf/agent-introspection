@@ -28,6 +28,8 @@ from experiments.dashboard_prototype.contracts import (
 
 
 def ready_row_payload() -> dict[str, object]:
+    from experiments.dashboard_prototype.attribution_common import AttributionRowMemberEvidence
+
     native_session_id = "native-1"
     event_id_inputs = {
         stage: {
@@ -37,20 +39,25 @@ def ready_row_payload() -> dict[str, object]:
             "native_session_id": native_session_id,
             "source_id": "source-immutable",
             "reducer_id": "reducer-immutable",
-            "entity_version": 2,
+            "entity_version": 3,
             "event_id_ordinal": ordinal,
         }
         for ordinal, stage in enumerate(("source", "reducer", "delivery"))
     }
+    member = AttributionRowMemberEvidence(
+        native_session_id,
+        "source-immutable",
+        "reducer-immutable",
+        event_id_inputs,
+        {stage: f"delivered-{stage}" for stage in event_id_inputs},
+    )
     row = AttributionRowEvidence(
         AttributionExperimentId.BASELINE,
         "A07",
         "omp",
-        native_session_id,
         AttributionRowState.READY,
         None,
-        event_id_inputs,
-        {stage: f"delivered-{stage}" for stage in event_id_inputs},
+        (member,),
         {"count": 1},
         {"count": "integer"},
         {"count": 1},
@@ -122,7 +129,7 @@ def test_row_obligations_are_independent_of_aggregate_event_ids() -> None:
 
     assert len(rows) == 9
     assert len({row.deterministic_id() for row in rows}) == 9
-    assert all(row.state.value == "Blocked" and row.event_ids is None for row in rows)
+    assert all(row.state.value == "Blocked" and row.members is None for row in rows)
 
 
 def test_e2_aggregate_does_not_promote_app_server_row_obligations() -> None:
@@ -155,7 +162,7 @@ def test_e2_aggregate_does_not_promote_app_server_row_obligations() -> None:
         ("A08", AttributionRowState.BLOCKED, "no_row_authority"),
         ("A09", AttributionRowState.BLOCKED, "no_row_authority"),
     ]
-    assert all(row.native_session_id is None and row.event_ids is None for row in app_server_rows)
+    assert all(row.members is None for row in app_server_rows)
     envelope = execution.RunEnvelope(
         execution.NAMESPACE,
         "safe-run",
@@ -167,6 +174,8 @@ def test_e2_aggregate_does_not_promote_app_server_row_obligations() -> None:
         {},
         {},
         rows,
+        (),
+        {},
     )
     assert len(json.loads(envelope.canonical_json())["row_obligations"]) == 9
 
@@ -185,13 +194,15 @@ def test_native_lineage_is_serializable_only_in_a_canonical_top_level_row_obliga
         {},
         {},
         (execution._canonical_row_evidence(row),),
+        (),
+        {},
     )
     serialized = envelope.canonical_json()
-    assert json.loads(serialized)["row_obligations"][0]["native_session_id"] == "native-1"
-    assert {
-        input_["native_session_id"]
-        for input_ in json.loads(serialized)["row_obligations"][0]["event_id_inputs"].values()
-    } == {"native-1"}
+    member = json.loads(serialized)["row_obligations"][0]["members"][0]
+    assert member["native_session_id"] == "native-1"
+    assert {input_["native_session_id"] for input_ in member["event_id_inputs"].values()} == {
+        "native-1"
+    }
     with pytest.raises(execution.AttributionExecutionError, match="unsafe evidence field"):
         execution.canonical_json({"native_session_id": "native-1"})
     with pytest.raises(execution.AttributionExecutionError, match="top-level"):
@@ -201,10 +212,14 @@ def test_native_lineage_is_serializable_only_in_a_canonical_top_level_row_obliga
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda row: row.pop("event_ids"),
+        lambda row: row["members"][0].pop("event_ids"),
         lambda row: row.update({"unexpected": "identity"}),
-        lambda row: row["event_id_inputs"]["delivery"].update({"native_session_id": "other"}),
-        lambda row: row["event_id_inputs"]["source"].update({"transcript": "prohibited"}),
+        lambda row: row["members"][0]["event_id_inputs"]["delivery"].update(
+            {"native_session_id": "other"}
+        ),
+        lambda row: row["members"][0]["event_id_inputs"]["source"].update(
+            {"transcript": "prohibited"}
+        ),
         lambda row: row.update({"deterministic_id": "forged"}),
     ],
 )
@@ -293,6 +308,7 @@ def test_remote_calculation_shapes() -> None:
             item(
                 AttributionExperimentId.LATE_CONTEXT,
                 {
+                    "primitive_kind": "transition",
                     "producer": "omp",
                     "surface": "omp",
                     "method": "context",
@@ -326,10 +342,20 @@ def test_remote_calculation_shapes() -> None:
                         "diagnostic": "",
                         "project_digest": "none",
                         "count": 1,
+                        "selected_event_ids": [event.event_id for event in e1],
+                        "immutable_payload_count": len(e1),
                     }
                 ]
             if "E-Attribution-2" in sql:
-                return [{"scenario": "fresh", "scenario_population": 1, "accepted_count": 1}]
+                return [
+                    {
+                        "scenario": "fresh",
+                        "scenario_population": 1,
+                        "accepted_count": 1,
+                        "selected_event_ids": [event.event_id for event in e2],
+                        "immutable_payload_count": len(e2),
+                    }
+                ]
             if "E-Attribution-4" in sql:
                 return [
                     {
@@ -340,17 +366,28 @@ def test_remote_calculation_shapes() -> None:
                         "n": 1,
                         "p50_lifecycle_delay_seconds": 1.0,
                         "p95_lifecycle_delay_seconds": 1.0,
+                        "selected_event_ids": [event.event_id for event in e4],
+                        "immutable_payload_count": len(e4),
                     }
                 ]
             return [
                 {
+                    "primitive_kind": "transition",
                     "cohort": e5[0].attributes["dashboard.cohort"],
                     "resolved_event_digest": e5[0].attributes["dashboard.resolved_event_digest"],
                     "transition_count": 1,
+                    "selected_event_ids": [event.event_id for event in e5],
+                    "immutable_payload_count": len(e5),
                 }
             ]
 
-    result = execution.remote_calculations(Client(), e1 + e2 + e4 + e5, window(), "safe-run")
+    result = execution.remote_calculations(
+        Client(),
+        e1 + e2 + e4 + e5,
+        window(),
+        "safe-run",
+        query_evidence={},
+    )
     assert set(result) == {
         "E-Attribution-1",
         "E-Attribution-2",
@@ -395,7 +432,16 @@ def test_e1_remote_reducer_accumulates_p8_across_distinct_projects() -> None:
     }
     evidence = AttributionLiveEvidence(
         proof(AttributionExperimentId.BASELINE),
-        first.primitives + second.primitives,
+        (
+            *first.primitives,
+            AttributionCalculationPrimitive(
+                AttributionExperimentId.BASELINE,
+                second.primitives[0].source_time,
+                first.primitives[0].ordinal + 1,
+                second.primitives[0].dimensions,
+                second.primitives[0].measures,
+            ),
+        ),
         "e1",
         expected,
     )
@@ -403,18 +449,25 @@ def test_e1_remote_reducer_accumulates_p8_across_distinct_projects() -> None:
 
     class Client:
         def query(self, sql: str, parameters: object) -> list[dict[str, object]]:
-            assert "GROUP BY primitive_kind" in sql
             return [
                 {
                     **dimensions,
                     "matched": "false",
                     "project_digest": digest,
                     "count": 1,
+                    "selected_event_ids": [event.event_id],
+                    "immutable_payload_count": 1,
                 }
-                for digest in ("a" * 64, "b" * 64)
+                for digest, event in zip(("a" * 64, "b" * 64), events, strict=True)
             ]
 
-    remote = execution.remote_calculations(Client(), events, window(), "safe-run")
+    remote = execution.remote_calculations(
+        Client(),
+        events,
+        window(),
+        "safe-run",
+        query_evidence={},
+    )
     assert remote["E-Attribution-1"] == expected
     finalized = execution._final_proofs((evidence,), remote)[0]
     assert finalized.result is ExperimentResult.BLOCKED
@@ -458,6 +511,8 @@ def test_visibility_retries_and_cleanup_is_exact(monkeypatch: pytest.MonkeyPatch
         {},
         {},
         (),
+        (),
+        {},
     )
     assert envelope.payload()["row_obligations"] == []
     cleanup = envelope.payload()["cleanup_selector"]
@@ -504,7 +559,9 @@ def test_mismatch_aborts_before_result_enqueue_or_output(
     monkeypatch.setattr(
         execution,
         "remote_calculations",
-        lambda *_: {"E-Attribution-2": {"fresh": {"accepted_count": 0, "scenario_population": 1}}},
+        lambda *_, query_evidence: {
+            "E-Attribution-2": {"fresh": {"accepted_count": 0, "scenario_population": 1}},
+        },
     )
     enqueued: list[object] = []
     monkeypatch.setattr(execution, "enqueue_events", lambda _, events: enqueued.append(events))
@@ -523,7 +580,12 @@ def test_mismatch_aborts_before_result_enqueue_or_output(
             config=config,
         )
     assert len(enqueued) == 1
-    assert not output.exists()
+    retained = json.loads(output.read_text())
+    assert retained["status"] == "failed"
+    assert retained["failed_stage"] == "aggregate_calculation"
+    assert retained["event_map"]["result"] == []
+    assert isinstance(enqueued[0], list)
+    assert retained["event_map"]["primitive"] == [event.event_id for event in enqueued[0]]
 
 
 def test_e5_digest_mismatch_fails_reconciliation() -> None:
@@ -535,6 +597,7 @@ def test_e5_digest_mismatch_fails_reconciliation() -> None:
                 window().end,
                 1,
                 {
+                    "primitive_kind": "transition",
                     "producer": "omp",
                     "surface": "omp",
                     "method": "context",

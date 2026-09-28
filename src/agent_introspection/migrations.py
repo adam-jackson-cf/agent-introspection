@@ -5,10 +5,19 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
+
+from agent_introspection.backup_observations import (
+    BackupObservation,
+    record_backup_observation,
+)
+from agent_introspection.ledger_identity import database_identity
+from agent_introspection.pipeline_delivery import PIPELINE_DELIVERY_MIGRATION_STATEMENTS
 
 
 class MigrationError(RuntimeError):
@@ -47,6 +56,15 @@ class _MigrationApplication:
     connection: sqlite3.Connection
     database_path: Path
     migration: Migration
+
+
+@dataclass(frozen=True, slots=True)
+class _MigrationBackup:
+    """A verified pre-migration artifact and the instant it completed."""
+
+    path: Path
+    completed_at_ns: int
+    size_bytes: int | None
 
 
 _INITIAL_SCHEMA: Final[tuple[str, ...]] = (
@@ -1311,6 +1329,116 @@ _METRIC_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA: Final[tuple[str, ...]] = (
 )
 
 
+_PIPELINE_PROJECTION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE pipeline_snapshot_oracle (
+        event_id TEXT PRIMARY KEY REFERENCES otlp_outbox(event_id),
+        scan_run_id TEXT NOT NULL UNIQUE REFERENCES scan_runs(id),
+        payload_schema_version INTEGER NOT NULL CHECK (payload_schema_version = 2),
+        completed_at_ns INTEGER NOT NULL CHECK (completed_at_ns > 0),
+        extraction_bound_ns INTEGER NOT NULL CHECK (extraction_bound_ns > 0),
+        terminal_status TEXT NOT NULL,
+        error_class TEXT,
+        duration_ms REAL NOT NULL CHECK (duration_ms >= 0),
+        rows_processed INTEGER CHECK (rows_processed IS NULL OR rows_processed >= 0),
+        logs_count INTEGER CHECK (logs_count IS NULL OR logs_count >= 0),
+        traces_count INTEGER CHECK (traces_count IS NULL OR traces_count >= 0),
+        context_events_count INTEGER CHECK (
+            context_events_count IS NULL OR context_events_count >= 0
+        ),
+        canonical_activities_count INTEGER CHECK (
+            canonical_activities_count IS NULL OR canonical_activities_count >= 0
+        ),
+        pending_after_drain INTEGER CHECK (
+            pending_after_drain IS NULL OR pending_after_drain >= 0
+        ),
+        failed_during_drain INTEGER CHECK (
+            failed_during_drain IS NULL OR failed_during_drain >= 0
+        ),
+        runtime_identity TEXT NOT NULL,
+        schedule_interval_seconds INTEGER NOT NULL CHECK (schedule_interval_seconds = 300),
+        schedule_timezone TEXT NOT NULL CHECK (schedule_timezone = 'Europe/London'),
+        UNIQUE (scan_run_id, payload_schema_version)
+    ) STRICT, WITHOUT ROWID
+    """,
+)
+
+_PIPELINE_OBSERVATION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE pipeline_integrity_audits (
+        scan_run_id TEXT PRIMARY KEY REFERENCES scan_runs(id),
+        event_id TEXT NOT NULL UNIQUE REFERENCES otlp_outbox(event_id),
+        observed_at_ns TEXT NOT NULL CHECK (
+            observed_at_ns NOT GLOB '*[^0-9]*' AND observed_at_ns GLOB '[1-9]*'
+        ),
+        physical_count INTEGER NOT NULL CHECK (physical_count >= 0),
+        incident_count INTEGER NOT NULL CHECK (incident_count >= 0),
+        incident_event_ids_json TEXT NOT NULL CHECK (json_valid(incident_event_ids_json))
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE pipeline_lifecycle_interval_versions (
+        opening_event_id TEXT PRIMARY KEY REFERENCES session_context_events(event_id),
+        version INTEGER NOT NULL CHECK (version > 0),
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 64),
+        event_id TEXT NOT NULL UNIQUE REFERENCES otlp_outbox(event_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE pipeline_lifecycle_supersessions (
+        original_event_id TEXT PRIMARY KEY REFERENCES session_context_event_supersessions(original_event_id),
+        replacement_event_id TEXT NOT NULL REFERENCES session_context_events(event_id),
+        event_id TEXT NOT NULL UNIQUE REFERENCES otlp_outbox(event_id)
+    ) STRICT, WITHOUT ROWID
+    """,
+)
+
+
+_BACKUP_OBSERVATION_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE backup_observations (
+        backup_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE REFERENCES otlp_outbox(event_id),
+        database_identity TEXT NOT NULL CHECK (length(database_identity) = 64),
+        operation TEXT NOT NULL CHECK (length(operation) > 0),
+        state TEXT NOT NULL CHECK (state IN ('succeeded', 'failed')),
+        completed_at_ns TEXT NOT NULL CHECK (
+            completed_at_ns NOT GLOB '*[^0-9]*'
+            AND completed_at_ns GLOB '[1-9]*'
+        ),
+        bytes INTEGER CHECK (bytes IS NULL OR bytes >= 0),
+        verification TEXT NOT NULL CHECK (
+            verification IN ('ok', 'failed', 'not_performed')
+        ),
+        failure_class TEXT,
+        CHECK (
+            (state = 'succeeded' AND verification = 'ok' AND failure_class IS NULL)
+            OR (state = 'failed' AND failure_class IS NOT NULL)
+        )
+    ) STRICT, WITHOUT ROWID
+    """,
+    """
+    CREATE INDEX backup_observations_latest_idx
+    ON backup_observations(database_identity, completed_at_ns DESC, backup_id DESC)
+    """,
+)
+_SCAN_EXECUTION_INPUTS_SCHEMA: Final[tuple[str, ...]] = (
+    """
+    CREATE TABLE scan_execution_inputs (
+        scan_run_id TEXT PRIMARY KEY REFERENCES scan_runs(id),
+        monotonic_started REAL NOT NULL,
+        monotonic_finished REAL NOT NULL,
+        logs_json TEXT CHECK (logs_json IS NULL OR json_valid(logs_json)),
+        traces_json TEXT CHECK (traces_json IS NULL OR json_valid(traces_json)),
+        context_events_json TEXT CHECK (context_events_json IS NULL OR json_valid(context_events_json)),
+        canonical_activities_json TEXT CHECK (
+            canonical_activities_json IS NULL OR json_valid(canonical_activities_json)
+        )
+    ) STRICT
+    """,
+)
+
+
 MIGRATIONS: Final[tuple[Migration, ...]] = (
     Migration(version=1, name="canonical schema", statements=_CANONICAL_SCHEMA),
     Migration(
@@ -1394,6 +1522,27 @@ MIGRATIONS: Final[tuple[Migration, ...]] = (
         name="reconcile metric source delivery delay",
         statements=_METRIC_RAW_SOURCE_SESSION_RECONCILIATION_SCHEMA,
     ),
+    Migration(
+        version=18,
+        name="canonical pipeline projection and observations",
+        statements=(
+            _PIPELINE_PROJECTION_SCHEMA
+            + _PIPELINE_OBSERVATION_SCHEMA
+            + _BACKUP_OBSERVATION_SCHEMA
+            + (
+                "ALTER TABLE source_session_current ADD COLUMN source_timestamp_ns TEXT",
+                "ALTER TABLE source_session_current ADD COLUMN conversation_ids_json TEXT",
+                "ALTER TABLE source_session_records ADD COLUMN source_timestamp_ns TEXT",
+                "ALTER TABLE source_session_records ADD COLUMN conversation_ids_json TEXT",
+            )
+            + PIPELINE_DELIVERY_MIGRATION_STATEMENTS
+        ),
+    ),
+    Migration(
+        version=19,
+        name="scan execution inputs",
+        statements=_SCAN_EXECUTION_INPUTS_SCHEMA,
+    ),
 )
 
 
@@ -1419,7 +1568,7 @@ def _verify_backup(path: Path) -> None:
 
 def _backup_before_migration(
     connection: sqlite3.Connection, database_path: Path, version: int
-) -> Path:
+) -> _MigrationBackup:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     backup_path = database_path.with_name(
         f"{database_path.name}.migration-v{version:04d}-{stamp}.bak"
@@ -1432,7 +1581,11 @@ def _backup_before_migration(
     finally:
         destination.close()
     _verify_backup(backup_path)
-    return backup_path
+    try:
+        size_bytes = backup_path.stat().st_size
+    except OSError:
+        size_bytes = None
+    return _MigrationBackup(backup_path, time.time_ns(), size_bytes)
 
 
 def _applied_history(connection: sqlite3.Connection) -> dict[int, tuple[str, str]]:
@@ -1540,7 +1693,29 @@ def _validate_migration_result(application: _MigrationApplication, suffix: str =
         )
 
 
-def _execute_migration_transaction(application: _MigrationApplication) -> None:
+def _record_migration_backup_observation(
+    application: _MigrationApplication, backup: _MigrationBackup
+) -> None:
+    if application.migration.version < 18:
+        return
+    record_backup_observation(
+        application.connection,
+        BackupObservation(
+            backup_id=str(uuid.uuid4()),
+            database_id=database_identity(application.connection),
+            operation=f"pre-migration-v{application.migration.version}",
+            state="succeeded",
+            completed_at_ns=backup.completed_at_ns,
+            size_bytes=backup.size_bytes,
+            verification="ok",
+            failure_class=None,
+        ),
+    )
+
+
+def _execute_migration_transaction(
+    application: _MigrationApplication, backup: _MigrationBackup
+) -> None:
     connection = application.connection
     migration = application.migration
     try:
@@ -1548,6 +1723,7 @@ def _execute_migration_transaction(application: _MigrationApplication) -> None:
         for statement in migration.statements:
             connection.execute(statement)
         _record_migration(application)
+        _record_migration_backup_observation(application, backup)
         _validate_migration_result(application)
         connection.commit()
     except BaseException as exc:
@@ -1576,29 +1752,29 @@ def _validate_restored_foreign_key_enforcement(
     _validate_migration_result(application, " after rebuild")
 
 
-def _apply_selected_migration(application: _MigrationApplication) -> Path:
+def _apply_selected_migration(application: _MigrationApplication) -> _MigrationBackup:
     migration = application.migration
-    backup_path = _backup_before_migration(
+    backup = _backup_before_migration(
         application.connection, application.database_path, migration.version
     )
     if migration.requires_foreign_keys_disabled:
         _disable_foreign_key_enforcement(application)
     try:
-        _execute_migration_transaction(application)
+        _execute_migration_transaction(application, backup)
     finally:
         if migration.requires_foreign_keys_disabled:
             _enable_foreign_key_enforcement(application)
     if migration.requires_foreign_keys_disabled:
         _validate_restored_foreign_key_enforcement(application)
-    return backup_path
+    return backup
 
 
-def _record_applied_migration(migration: Migration, backup_path: Path) -> AppliedMigration:
+def _record_applied_migration(migration: Migration, backup: _MigrationBackup) -> AppliedMigration:
     return AppliedMigration(
         version=migration.version,
         name=migration.name,
         checksum=migration.checksum,
-        backup_path=backup_path,
+        backup_path=backup.path,
     )
 
 
@@ -1616,6 +1792,6 @@ def apply_migrations(
     )
     backups = tuple(_apply_selected_migration(application) for application in applications)
     return tuple(
-        _record_applied_migration(application.migration, backup_path)
-        for application, backup_path in zip(applications, backups, strict=True)
+        _record_applied_migration(application.migration, backup)
+        for application, backup in zip(applications, backups, strict=True)
     )

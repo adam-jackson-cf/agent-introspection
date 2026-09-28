@@ -1,0 +1,25 @@
+{
+  "recorded_at": "2026-09-05T11:18:59.970Z",
+  "verification_record": "experiments/dashboard_prototype/evidence/metric-proof-verification-20260905T111648419Z-baaa9327-db7.json",
+  "removed_owned_throwaway_drivers": [
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_attribution.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_scan_capture.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_scan_existing.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_recurrence.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_pipeline_capture.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_pipeline_replay.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/diagnose_visibility.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_attribution_individual.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/run_pipeline_pending.py",
+    ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/verify_pending_native.py"
+  ],
+  "retained_runtime_artifacts_sha256_rechecked": 59,
+  "preserved_database_clones_size_rechecked": 3,
+  "final_markdown_check": {
+    "command": "bunx --bun markdownlint-cli2@0.23.2 docs/authoritative-proof-closure-plan.md docs/gap-closure-prototype-experiment-plan.md docs/react-signoz-companion-implementation-plan.md",
+    "exit_code": 0,
+    "files": 3,
+    "issues": 0
+  },
+  "production_cutover": false
+}

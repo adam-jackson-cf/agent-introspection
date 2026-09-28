@@ -26,6 +26,18 @@ from agent_introspection.legacy_attribution import (
 from agent_introspection.source import ClickHouseClient
 
 
+def _backup_outbox_snapshot(connection: sqlite3.Connection) -> tuple[str, str, str]:
+    snapshot = connection.execute(
+        """
+        SELECT event_id, payload_json, status
+        FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."event.scope"') = 'database-backup'
+        """
+    ).fetchone()
+    assert snapshot is not None
+    return snapshot
+
+
 def test_cli_requires_explicit_legacy_run_arguments() -> None:
     parser = _parser()
     with pytest.raises(SystemExit):
@@ -159,6 +171,7 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
             }
 
     connection = connect_database(config.database.path)
+    backup_snapshot = _backup_outbox_snapshot(connection)
     start = datetime(2023, 11, 14, tzinfo=UTC)
     end = start + timedelta(minutes=1)
     response = MagicMock(status=200)
@@ -180,7 +193,11 @@ def test_manual_writer_persists_only_canonical_fields_and_refuses_duplicate(tmp_
         "SELECT normalized_target, source_membership_json FROM canonical_activities"
     ).fetchone()
     assert activity == (".", '{"event_ids":[],"log_ids":["safe-log"],"span_ids":[]}')
-    assert connection.execute("SELECT count(*) FROM otlp_outbox").fetchone() == (1,)
+    assert connection.execute(
+        "SELECT count(*) FROM otlp_outbox WHERE event_id = ?",
+        (result["outbox_event_ids"][0],),
+    ).fetchone() == (1,)
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
     fact = connection.execute(
         """
         SELECT approved_by, denominator, accepted, rejected, unresolved, source_ids_json
@@ -235,6 +252,7 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
             }
 
     connection = connect_database(config.database.path)
+    backup_snapshot = _backup_outbox_snapshot(connection)
     start = datetime(2023, 11, 14, tzinfo=UTC)
     try:
         with (
@@ -258,7 +276,12 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
         fact_set_id = connection.execute("SELECT id FROM legacy_attribution_fact_sets").fetchone()[
             0
         ]
-        event_id = connection.execute("SELECT event_id FROM otlp_outbox").fetchone()[0]
+        event_id = connection.execute(
+            """
+            SELECT event_id FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.scope"') = 'canonical-activity'
+            """
+        ).fetchone()[0]
         attempt = connection.execute(
             """
             SELECT intended_event_ids_json, intended_event_count, local_delivery_result_json,
@@ -278,7 +301,7 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
         assert connection.execute(
             "SELECT count(*) FROM canonical_activity_versions"
         ).fetchone() == (1,)
-        assert connection.execute("SELECT count(*) FROM otlp_outbox").fetchone() == (1,)
+        assert _backup_outbox_snapshot(connection) == backup_snapshot
 
         remote_ready = True
         response = MagicMock(status=200)
@@ -300,15 +323,15 @@ def test_manual_writer_recovers_transport_failure_with_exact_immutable_event_set
         assert attempts[1][0] == attempts[1][1] == json.dumps([event_id], separators=(",", ":"))
         assert attempts[1][2] is None
         assert attempts[1][3] is not None
-        assert connection.execute("SELECT event_id, status FROM otlp_outbox").fetchone() == (
-            event_id,
-            "delivered",
-        )
+        assert connection.execute(
+            "SELECT event_id, status FROM otlp_outbox WHERE event_id = ?",
+            (event_id,),
+        ).fetchone() == (event_id, "delivered")
         assert connection.execute("SELECT count(*) FROM canonical_activities").fetchone() == (1,)
         assert connection.execute(
             "SELECT count(*) FROM canonical_activity_versions"
         ).fetchone() == (1,)
-        assert connection.execute("SELECT count(*) FROM otlp_outbox").fetchone() == (1,)
+        assert _backup_outbox_snapshot(connection) == backup_snapshot
         assert recover_legacy_project_attribution(
             connection, client=Client(), fact_set_id=fact_set_id
         ) == {"status": "verified", "fact_set_id": fact_set_id, "idempotent": True}
@@ -345,6 +368,7 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
             }
 
     connection = connect_database(config.database.path)
+    backup_snapshot = _backup_outbox_snapshot(connection)
     response = MagicMock(status=200)
     response.__enter__.return_value = response
     start = datetime(2023, 11, 14, tzinfo=UTC)
@@ -367,7 +391,13 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
             "SELECT count(*) FROM legacy_attribution_fact_sets"
         ).fetchone()
         assert fact_count == (1,)
-        assert connection.execute("SELECT status FROM otlp_outbox").fetchone() == ("delivered",)
+        assert connection.execute(
+            """
+            SELECT status FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.scope"') = 'canonical-activity'
+            """
+        ).fetchone() == ("delivered",)
+        assert _backup_outbox_snapshot(connection) == backup_snapshot
         attempt = connection.execute(
             """
             SELECT intended_event_count, remote_event_count, failure_reason, verified_at
@@ -402,6 +432,7 @@ def test_manual_writer_refuses_remote_event_id_mismatch_after_delivery(tmp_path:
         assert connection.execute(
             "SELECT count(*) FROM legacy_attribution_delivery_attempts"
         ).fetchone() == (2,)
+        assert _backup_outbox_snapshot(connection) == backup_snapshot
         assert recover_legacy_project_attribution(
             connection, client=RecoveryClient(), fact_set_id=fact_set_id
         ) == {"status": "verified", "fact_set_id": fact_set_id, "idempotent": True}

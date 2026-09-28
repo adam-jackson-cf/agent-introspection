@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
 from statistics import median
@@ -47,7 +48,7 @@ class SourceLagScan:
     population_end: datetime
     started_at: datetime
     completed_at: datetime
-    extraction_bound: datetime
+    extraction_bound_ns: int
     capability_available: bool | None
 
     def __post_init__(self) -> None:
@@ -55,8 +56,8 @@ class SourceLagScan:
             raise PrototypeContractError("source-lag scan identity must be nonempty")
         _require_ordered_instants(self.population_start, self.population_end)
         _require_ordered_instants(self.started_at, self.completed_at)
-        _require_aware_instant(self.extraction_bound)
-        if self.extraction_bound > self.completed_at:
+        _require_nanoseconds(self.extraction_bound_ns)
+        if self.extraction_bound_ns > _canonical_datetime_ns(self.completed_at):
             raise PrototypeContractError(
                 "source-lag extraction bound must not exceed scan completion"
             )
@@ -69,16 +70,16 @@ class AuthoritativeSourceObservation:
     observation_id: str
     scan_id: str
     cohort: SourceLagCohort
-    source_time: datetime
+    source_time_ns: int
     current_identity: str
-    extraction_bound: datetime | None = None
+    extraction_bound_ns: int | None = None
 
     def __post_init__(self) -> None:
         if not self.observation_id or not self.scan_id or not self.current_identity:
             raise PrototypeContractError("source observations require exact identities")
-        _require_aware_instant(self.source_time)
-        if self.extraction_bound is not None:
-            _require_aware_instant(self.extraction_bound)
+        _require_nanoseconds(self.source_time_ns)
+        if self.extraction_bound_ns is not None:
+            _require_nanoseconds(self.extraction_bound_ns)
 
 
 class SourceLagDisposition(StrEnum):
@@ -185,17 +186,18 @@ def build_source_lag_proof(
         for selection in accepted
         if selection.lag_seconds is not None and not selection.negative_skew
     ]
-    metrics = {
+    metrics: dict[str, int | float] = {
         "population": population,
         "accepted": len(accepted),
         "missing_capability": sum(metric.missing_capability for metric in reduction.cohorts),
         "rejected": sum(metric.rejected for metric in reduction.cohorts),
         "duplicate": sum(metric.duplicate for metric in reduction.cohorts),
         "n": len(latency_lags),
-        "p50_lag_seconds": float(median(latency_lags)) if latency_lags else 0.0,
-        "p95_lag_seconds": _nearest_rank(latency_lags, 95) if latency_lags else 0.0,
-        "negative_skew_count": sum(selection.negative_skew for selection in accepted),
+        "negative_skew_count": sum(selection.negative_skew for selection in reduction.selections),
     }
+    if latency_lags:
+        metrics["p50_lag_seconds"] = float(median(latency_lags))
+        metrics["p95_lag_seconds"] = _nearest_rank(latency_lags, 95)
     return PipelineExperimentProof(
         experiment_id=PipelineExperimentId.SOURCE_LAG,
         run_id=run_id,
@@ -250,7 +252,7 @@ def _observations_by_scan_cohort(
             sorted(
                 rows,
                 key=lambda observation: (
-                    observation.source_time,
+                    observation.source_time_ns,
                     observation.observation_id,
                 ),
             )
@@ -334,28 +336,38 @@ def _select_scan_source(
     if scan_key in seen_scan_keys:
         return _selection(scan, SourceLagDisposition.DUPLICATE), None
     seen_scan_keys.add(scan_key)
-    if scan.capability_available is False:
-        return _selection(scan, SourceLagDisposition.MISSING_CAPABILITY), None
-    if scan.capability_available is None:
+    if scan.capability_available is not True:
+        if scan.capability_available is False:
+            return _selection(scan, SourceLagDisposition.MISSING_CAPABILITY), None
         return _selection(scan, SourceLagDisposition.REJECTED), "capability"
-    if any(observation.extraction_bound != scan.extraction_bound for observation in observations):
+    if any(
+        observation.extraction_bound_ns != scan.extraction_bound_ns for observation in observations
+    ):
         return _selection(scan, SourceLagDisposition.REJECTED), "source-extraction-bound"
-    selected = _latest_scan_observation(observations)
+    selected = next(
+        (
+            observation
+            for observation in reversed(observations)
+            if _is_at_or_before_extraction_bound(scan, observation)
+        ),
+        None,
+    )
     if selected is None:
-        return _selection(scan, SourceLagDisposition.REJECTED), "source-observation"
+        skew_observed = any(
+            observation.source_time_ns > scan.extraction_bound_ns for observation in observations
+        )
+        return (
+            _selection(scan, SourceLagDisposition.REJECTED, negative_skew=skew_observed),
+            "source-observation",
+        )
     return _accepted_selection(scan, selected), None
-
-
-def _latest_scan_observation(
-    observations: tuple[AuthoritativeSourceObservation, ...],
-) -> AuthoritativeSourceObservation | None:
-    return observations[-1] if observations else None
 
 
 def _accepted_selection(
     scan: SourceLagScan, observation: AuthoritativeSourceObservation
 ) -> SourceLagSelection:
-    lag_seconds = (scan.extraction_bound - observation.source_time).total_seconds()
+    lag_nanoseconds = scan.extraction_bound_ns - observation.source_time_ns
+    lag_seconds = float(Decimal(lag_nanoseconds) / Decimal(1_000_000_000))
     return SourceLagSelection(
         scan_id=scan.scan_id,
         cohort=scan.cohort,
@@ -363,7 +375,7 @@ def _accepted_selection(
         selected_observation_id=observation.observation_id,
         selected_current_identity=observation.current_identity,
         lag_seconds=lag_seconds,
-        negative_skew=lag_seconds < 0,
+        negative_skew=lag_nanoseconds < 0,
     )
 
 
@@ -371,14 +383,22 @@ def _is_population_member(scan: SourceLagScan) -> bool:
     return scan.population_start < scan.completed_at <= scan.population_end
 
 
-def _selection(scan: SourceLagScan, disposition: SourceLagDisposition) -> SourceLagSelection:
-    return _selection_for_cohort(scan.scan_id, scan.cohort, disposition)
+def _selection(
+    scan: SourceLagScan, disposition: SourceLagDisposition, *, negative_skew: bool = False
+) -> SourceLagSelection:
+    return _selection_for_cohort(
+        scan.scan_id, scan.cohort, disposition, negative_skew=negative_skew
+    )
 
 
 def _selection_for_cohort(
-    scan_id: str, cohort: SourceLagCohort, disposition: SourceLagDisposition
+    scan_id: str,
+    cohort: SourceLagCohort,
+    disposition: SourceLagDisposition,
+    *,
+    negative_skew: bool = False,
 ) -> SourceLagSelection:
-    return SourceLagSelection(scan_id, cohort, disposition, None, None, None, False)
+    return SourceLagSelection(scan_id, cohort, disposition, None, None, None, negative_skew)
 
 
 def _cohort_metrics(
@@ -397,10 +417,10 @@ def _cohort_metrics(
         ),
         rejected=sum(row.disposition is SourceLagDisposition.REJECTED for row in rows),
         duplicate=sum(row.disposition is SourceLagDisposition.DUPLICATE for row in rows),
+        n=len(lags),
         p50_lag_seconds=float(median(lags)) if lags else None,
         p95_lag_seconds=_nearest_rank(lags, 95) if lags else None,
-        n=len(lags),
-        negative_skew_count=sum(row.negative_skew for row in accepted),
+        negative_skew_count=sum(row.negative_skew for row in rows),
     )
 
 
@@ -414,6 +434,23 @@ def _require_ordered_instants(*instants: datetime) -> None:
         _require_aware_instant(instant)
     if any(left > right for left, right in pairwise(instants)):
         raise PrototypeContractError("scan instants must be ordered")
+
+
+def _is_at_or_before_extraction_bound(
+    scan: SourceLagScan, observation: AuthoritativeSourceObservation
+) -> bool:
+    return observation.source_time_ns <= scan.extraction_bound_ns
+
+
+def _canonical_datetime_ns(value: datetime) -> int:
+    instant = value.astimezone(UTC)
+    delta = instant - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
+def _require_nanoseconds(value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PrototypeContractError("source-lag nanoseconds must be integers")
 
 
 def _require_aware_instant(value: datetime) -> None:

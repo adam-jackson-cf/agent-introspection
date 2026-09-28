@@ -1,28 +1,28 @@
-# Authoritative Proof Closure Plan
+# Authoritative Proof Closure Plan — Retired
 
-## Status and purpose
+## Retirement status
 
-This is the follow-on execution plan for the 23 experiments classified as
-`Blocked` by the completed
-[Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md)
-and for the blocked row-level obligations attached to E-Attribution-1.
-E-Attribution-1 remains experiment-level `Proven`; this plan does not change
-that result, any other Phase 0–6 result, the production-cutover prohibition, or
-the unmet M13/M16 exit gate.
+**Retired as an active execution plan — 2026-09-05.** The bounded execution
+record is retained below. The
+[Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md)
+supersedes this plan's metric table and remaining-action queue.
 
-The objective is to obtain row-level authoritative proof for every applicable
-supported producer without inventing producer capability or allowing synthetic
-success to replace bounded real evidence.
+Retirement does not mean authoritative proof closure: this execution qualified
+E-Pipeline-5, retained historical E-Attribution-1, and left 22 experiments
+`Blocked`. No Appendix row was promoted. Unfinished obligations remain explicit
+in the register; they have not been completed, waived, or declared impossible.
 
-Canonical inputs remain:
+The requirements, workstream actions, and completion conditions below describe
+the historical execution scope, not a second active plan. Retained evidence
+remains valid for its stated population and outcome.
 
-- [Dashboard Measure Design](dashboard-measure-v2.md), including Appendix A;
-- [Prototype Proof Matrix](dashboard-prototype-proof-matrix.json), which owns
-  row classifications and exact proof obligations;
-- [Gap-Closure Prototype Experiment Plan](gap-closure-prototype-experiment-plan.md),
-  which records the executed experiments and retained blockers;
-- [React + SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md),
-  which remains gated by row-level proof.
+- [Dashboard Measure v2](dashboard-measure-v2.md) owns normative calculations.
+- [Prototype Proof Matrix](dashboard-prototype-proof-matrix.json) owns
+  machine-readable Appendix row classifications.
+- [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md) owns
+  current human-readable proof status, missing boundaries, and next actions.
+- [React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md)
+  remains active and gated; production cutover is not authorized.
 
 Supported producers remain exactly `omp`, `codex-cli`, and
 `codex-app-server`. Claude Code remains outside supported-producer denominators
@@ -119,6 +119,38 @@ Pipeline and Attribution may execute in parallel. Request and Task do not depend
 on Pipeline completion, but neither should resume without a changed native
 contract. Recurrence evidence work follows each experiment's proof-matrix
 dependencies; no shared workstream gate may replace them.
+
+## Metric-to-proof register
+
+The metric-to-proof table has moved to the
+[Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md).
+It covers P1–P12, R1–R8, M1–M18, all A01–A43 controls for each supported
+producer, and the independent widget obligations not represented in Appendix A.
+Use that register for current findings, evidence links, and reopen conditions.
+
+### Native contract change ownership
+
+The retained Request and Task audits remain the evidence, not an invitation to
+repeat unchanged field searches. Their native owners must change as follows:
+
+- OMP provider request execution and its retry/accounting boundary must expose
+  one native session/request/attempt/accounting lineage with timing, separate
+  requested/response models, tokens, terminal state, error and retry semantics.
+  The OMP lifecycle extension does not own those facts.
+- Codex CLI and Codex app-server native request execution/OTEL must expose the
+  same co-occurring request/attempt/accounting authority. CLI `notify` and
+  app-server `SessionStart`/`SessionEnd` are attribution boundaries, not provider
+  request adapters.
+- Each supported producer's native operation dispatcher must retain immutable
+  operation identity, route, task membership, complete order, explicit outcome
+  and source time. A separate native task terminal boundary must identify the
+  same durable task with explicit success, failure, timeout, cancellation or
+  unknown outcome. A session/thread identifier, last successful tool, response
+  text, or absent error is not that boundary.
+- The application may normalize observed authority and attach project identity
+  only after these native contracts exist. A new reader, synthesized identifier,
+  inferred terminal outcome, or adapter-generated request grouping is not the
+  required contract change.
 
 ## Workstream actions
 
@@ -232,7 +264,126 @@ For each execution:
 - preserve `evidence_bundle: null` for every row that remains `Blocked` or
   `Not applicable`.
 
-## Stop and completion conditions
+## Execution record: 2026-09-05
+
+### Qualified experiment and retained native boundaries
+
+[Final Pipeline replay](../experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json)
+and its
+[frozen inputs](../experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037-inputs.json)
+retain the original source window and independently observed subject drain.
+All 31 primitives and six results were delivered. E-Pipeline-5 is `Proven`:
+10 selected events, 10 attempted events, 10 final-drain attempts, zero failed
+events, zero pending events, null oldest pending age, and `0.0` drain-failure
+percentage. The native query retains `Nullable(Float64)` evidence, one exact
+matching completion, and all 21 immutable calculation primitives.
+
+The
+[native replay audit](../experiments/dashboard_prototype/evidence/metric-proof-native-audit-20260905T102950599646Z-aa9a68ca45b1.json)
+observed 105 physical rows for 21 immutable primitives. Identical physical
+copies collapse by timestamp and complete sorted typed attribute maps;
+conflicting payloads for one immutable ID fail qualification. This preserves
+the canonical idempotent-replay contract rather than counting transport copies
+as new logical events.
+
+The
+[pending diagnostic](../experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T102258487Z-5785ea48-5ba.json)
+uses all 31 events from the retained real failed drain. The old string-map query
+counted zero pending events; the Boolean-map query counted 31. This is
+nonqualifying diagnostic evidence: native failed-attempt instants are absent,
+and canonical normalization rejects the missing authoritative completion.
+Neither failed-attempt times nor retry history were backfilled. The fresh
+pre-state capture guard remains intact.
+
+| Experiment | Remaining native boundary |
+| --- | --- |
+| E-Pipeline-1 | `durable_population_oracle`, `snapshot.bounded_drain_id`, `snapshot.error_class`, `snapshot.failed_during_drain`, `snapshot.payload_schema_version`, `snapshot.pending_outbox`, `snapshot.terminal_class` |
+| E-Pipeline-2 | `authoritative schedule policy identity` |
+| E-Pipeline-3 | Seven unavailable producer/surface/signal cohorts; complete deterministic count summaries remain in the final envelope. |
+| E-Pipeline-4 | `bounded remote calculation counts`, `durable-integrity-failure population`; canonical rejections do not establish the full durable integrity-failure population. |
+| E-Pipeline-6 | `maintenance_observation` |
+
+E-Pipeline-5 has no decisive Appendix ownership. The proof matrix is unchanged:
+127 rows remain `Blocked`, OMP A24/A34 remain `Not applicable`, and all 129
+`evidence_bundle` values remain null.
+
+### Attribution row assessment
+
+The
+[frozen independent Attribution inputs](../experiments/dashboard_prototype/evidence/metric-proof-attribution-individual-20260905T091325779Z-c6afecca-9d7-inputs.json)
+retain uncapped native row identities, primitive IDs, and local oracles before
+delivery. M21 counts native sessions, not repeated source records; its two
+directional containment populations remain independent.
+
+| Row / producer | Members | Unbound native identities | Outside observed 15-day retention | Frozen local oracle |
+| --- | ---: | ---: | ---: | --- |
+| A07 `codex-cli` | 189 | 0 | 67 | source 52; source-with-lifecycle 0; lifecycle 137; lifecycle-with-source 1 |
+| A07 `omp` | 5695 | 0 | 396 | source 2639; source-with-lifecycle 2479; lifecycle 3056; lifecycle-with-source 2481 |
+| A08 `codex-cli` | 17 | 8 | 17 | eligible 17; attributed 4; unresolved 13; distinct projects 1 |
+| A09 `codex-cli` | 17 | 8 | 17 | eligible 17; unresolved 13; diagnostic count 13 |
+
+All 17 native activity timestamps retain their exact submicrosecond remainder
+through primitive construction. Public numeric attributes do not carry
+nanosecond integers above the exact Float64 range. This is extraction and
+serialization evidence, not full-population remote proof.
+
+The
+[full Attribution attempt](../experiments/dashboard_prototype/evidence/metric-proof-attribution-20260905T080550620Z-9c9356c8-d8e.json)
+delivered 5902 selected primitives but failed remote visibility. The
+[visibility record](../experiments/dashboard_prototype/evidence/metric-proof-visibility-20260905T081003380049Z-572d8795b80c.json)
+retains all 474 missing IDs; the
+[native retention observation](../experiments/dashboard_prototype/evidence/metric-proof-retention-20260905T085441455Z-37edc7a6-d44.json)
+establishes that all were outside the observed 15-day retention window:
+473 E-Attribution-1 IDs and one E-Attribution-4 ID. No population was trimmed or
+rebased to obtain delivery. Historical E-Attribution-1 remains `Proven`; no
+current row-bound proof qualifies.
+
+Independent E-Attribution-2, E-Attribution-3, and E-Attribution-5 runs each
+delivered their single `Blocked` result without inventing calculation inputs.
+Their missing boundaries remain native Codex app-server scenario source
+authority, Claude three-way identity authority, and late-context lifecycle
+authority plus the remote ever-unresolved denominator.
+
+### Recurrence and unchanged producer contracts
+
+[Final Recurrence replay](../experiments/dashboard_prototype/evidence/metric-proof-recurrence-final-20260905T104833748Z-7b8b7293-c8e.json)
+uses the retained real scanner finding capture and the original selected
+window. E-Recurrence-0–4 remain `Blocked`. The capture preserves exact private
+`thread:<id>` lineage, explicit window definition, and native Float64
+`reducer_counts`. Exact table and trigger definitions are validated.
+
+The observed scanner policy is `rolling_utc_7d`, not
+`europe_london_calendar_7d`; equal-looking dates do not establish the required
+policy. Global latest activity-version authority and immutable canonical-task
+membership remain unqualified. Practice, rule, intervention, and recurrence
+projections retain their separate native prerequisites.
+
+Request and Task contracts were not re-audited or simulated. The exact missing
+native fields and owners are now in the standalone metric-to-proof register;
+the workstream actions above retain the execution's historical obligations.
+Claude ingestion and supported-producer
+denominators remain closed.
+
+All failed, blocked, and successful evidence and database clones are retained.
+The isolated collector was stopped; installed producer configuration,
+production `ClickHouseClient`, production telemetry, and production dashboard
+cutover were not changed.
+
+### Verification
+
+[Retained verification record](../experiments/dashboard_prototype/evidence/metric-proof-verification-20260905T111648419Z-baaa9327-db7.json)
+records the successful maintained gate: Ruff, mypy across 27 source files,
+995 pytest tests, TypeScript lint, and Markdown lint. All four new maintained
+Python files separately passed Ruff and formatting checks. The earlier
+994-pass/one-failure run is retained in the record; its missing durable-integrity
+authority marker was corrected in source without weakening the behavioral
+assertion.
+
+The record inventories 59 runtime artifacts with SHA-256 checksums and retains
+all three application database clones. It also records the resolved independent
+reviews and the isolated collector's successful exit and automatic removal.
+
+## Historical stop and completion conditions
 
 Use the proof matrix as the single live source for row status and prerequisites.
 Run any available independent experiment or row-bound capture.
@@ -242,10 +393,11 @@ contract is unavailable. Record the exact missing boundary and do not
 substitute synthetic authority. Do not repeat an unchanged contract audit;
 resume only when that boundary changes.
 
-Each of the 23 `Blocked` experiments remains an explicit plan item and remains
-open until it produces its stated completion evidence. Experiments without
-decisive Appendix ownership remain mandatory; an existing or continuing
-`Blocked` row does not complete them.
+Each of the original 23 experiment actions remains an explicit plan item.
+E-Pipeline-5 has produced its stated completion evidence; the remaining 22
+experiments remain `Blocked` and open. Experiments without decisive Appendix
+ownership remain mandatory; an existing or continuing `Blocked` row does not
+complete them.
 
 Promote only rows whose individual gates pass and preserve every still-`Blocked`
 classification. The plan's authoritative-proof objective is complete only when

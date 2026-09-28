@@ -19,7 +19,7 @@ from experiments.dashboard_prototype.attribution_live_common import (
     AttributionLiveEvidence,
     LiveProofRequest,
 )
-from experiments.dashboard_prototype.contracts import EvidenceProvenance
+from experiments.dashboard_prototype.contracts import EvidenceProvenance, ExperimentResult
 
 _REMOTE_QUERY_ID = "attribution-late-context-v1"
 _CANONICAL_EVENT_NAME = "introspection.activity.version.recorded"
@@ -46,11 +46,17 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> Attrib
         connection.execute(
             """
             WITH selected_activity_ids AS (
-                SELECT id
-                FROM canonical_activities
-                WHERE producer IN ('omp', 'codex-cli', 'codex-app-server')
-                  AND source_ended_at_ns > ?
-                  AND source_ended_at_ns <= ?
+                SELECT DISTINCT activity.id
+                FROM canonical_activities AS activity
+                JOIN canonical_activity_versions AS version ON version.activity_id = activity.id
+                JOIN canonical_activity_outbox_evidence AS evidence
+                  ON evidence.activity_id = version.activity_id
+                 AND evidence.activity_version = version.version
+                 AND evidence.payload_schema_version = ?
+                 AND evidence.event_name = ?
+                WHERE activity.producer IN ('omp', 'codex-cli', 'codex-app-server')
+                  AND activity.source_ended_at_ns > ?
+                  AND activity.source_ended_at_ns <= ?
             )
             SELECT a.id, a.producer, a.producer_surface, a.correlation_id,
                    a.source_ended_at_ns, av.version, av.attribution_state,
@@ -67,6 +73,8 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> Attrib
             ORDER BY a.id, av.version, evidence.event_id
             """,
             (
+                _CANONICAL_PAYLOAD_SCHEMA_VERSION,
+                _CANONICAL_EVENT_NAME,
                 _epoch_ns(request.start),
                 _epoch_ns(request.end),
                 _CANONICAL_PAYLOAD_SCHEMA_VERSION,
@@ -74,19 +82,7 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> Attrib
             ),
         )
     )
-    selected_activity_ids = {
-        str(row[0])
-        for row in connection.execute(
-            """
-            SELECT id
-            FROM canonical_activities
-            WHERE producer IN ('omp', 'codex-cli', 'codex-app-server')
-              AND source_ended_at_ns > ?
-              AND source_ended_at_ns <= ?
-            """,
-            (_epoch_ns(request.start), _epoch_ns(request.end)),
-        )
-    }
+    selected_activity_ids = {str(row[0]) for row in rows}
     intervals = tuple(
         connection.execute(
             """
@@ -99,45 +95,70 @@ def extract(connection: sqlite3.Connection, request: LiveProofRequest) -> Attrib
     )
     versions, authority_missing = _versions(rows, intervals, selected_activity_ids)
     reduction = reduce_late_context(versions, start=request.start, end=request.end)
-    # The local all-version count is not remote denominator authority.
-    remote_denominator = None
     proof = build_late_context_proof(
         request.run_id,
         EvidenceProvenance.FRESH_REAL,
         request.source_boundary,
         reduction,
-        remote_denominator=remote_denominator,
+        remote_denominator=None,
     )
     if authority_missing:
         proof = replace(
             proof,
+            result=ExperimentResult.BLOCKED,
             blocked_boundaries=tuple(
                 sorted(set(proof.blocked_boundaries) | {"late-context.lifecycle-authority"})
             ),
         )
-    primitives = (
-        tuple(
-            AttributionCalculationPrimitive(
-                experiment_id=AttributionExperimentId.LATE_CONTEXT,
-                source_time=transition.source_time,
-                ordinal=ordinal,
-                dimensions={
-                    "producer": transition.producer,
-                    "surface": transition.surface,
-                    "method": transition.attribution_method,
-                    "project_id": transition.project_id,
-                    "activity_hash": transition.activity_hash,
-                    "resolved_event_digest": transition.resolved_event_id,
-                    "prior_reason": transition.prior_reason_code or "none",
-                },
-                measures={"transition_count": 1},
-            )
-            for ordinal, transition in enumerate(reduction.transitions)
+    denominator_members = {
+        version.activity_id: version
+        for version in versions
+        if version.attribution_state == "unresolved"
+    }
+    denominator_primitives = tuple(
+        AttributionCalculationPrimitive(
+            experiment_id=AttributionExperimentId.LATE_CONTEXT,
+            source_time=_source_datetime(version.source_time_ns),
+            ordinal=ordinal,
+            dimensions={
+                "primitive_kind": "ever_unresolved",
+                "activity_hash": version.activity_hash,
+                "cohort": "ever_unresolved",
+            },
+            measures={"ever_unresolved_count": 1},
+            source_time_ns=version.source_time_ns,
         )
-        if not authority_missing
-        else ()
+        for ordinal, version in enumerate(
+            sorted(denominator_members.values(), key=lambda item: item.activity_id)
+        )
     )
+    transition_primitives = tuple(
+        AttributionCalculationPrimitive(
+            experiment_id=AttributionExperimentId.LATE_CONTEXT,
+            source_time=_source_datetime(transition.source_time_ns),
+            ordinal=len(denominator_primitives) + ordinal,
+            dimensions={
+                "primitive_kind": "transition",
+                "producer": transition.producer,
+                "surface": transition.surface,
+                "method": transition.attribution_method,
+                "project_id": transition.project_id,
+                "activity_hash": transition.activity_hash,
+                "resolved_event_digest": transition.resolved_event_id,
+                "prior_reason": transition.prior_reason_code or "none",
+            },
+            measures={"transition_count": 1},
+            source_time_ns=transition.source_time_ns,
+        )
+        for ordinal, transition in enumerate(reduction.transitions)
+    )
+    primitives = denominator_primitives + transition_primitives if not authority_missing else ()
     oracle = _transition_oracle(reduction.transitions) if not authority_missing else {}
+    if primitives:
+        oracle = {
+            **oracle,
+            "ever_unresolved": {"ever_unresolved_count": len(denominator_primitives)},
+        }
     return AttributionLiveEvidence(
         proof,
         primitives,
@@ -189,7 +210,9 @@ def _versions(
     for row in rows:
         observed_activity_ids.add(str(row[0]))
         try:
-            source_time = datetime.fromtimestamp(int(str(row[4])) / 1_000_000_000, UTC)
+            source_time_ns = _exact_int(row[4])
+            version = _exact_int(row[5], positive=True)
+            source_time = _source_datetime(source_time_ns)
             producer, surface, session_id = str(row[1]), str(row[2]), str(row[3])
             if (producer, surface) not in _SUPPORTED_PAIRS or not _contained(
                 lifecycle.get((producer, session_id), ()), source_time
@@ -197,17 +220,14 @@ def _versions(
                 authority_missing = True
                 continue
             event_id = str(row[10]) if row[10] is not None else ""
-            payload_schema_version = row[11]
+            payload_schema_version = _exact_int(row[11], positive=True)
             event_name = row[12]
             if (
                 payload_schema_version != _CANONICAL_PAYLOAD_SCHEMA_VERSION
                 or event_name != _CANONICAL_EVENT_NAME
                 or event_id
                 != _canonical_event_id(
-                    str(row[0]),
-                    int(str(row[5])),
-                    int(str(payload_schema_version)),
-                    str(event_name),
+                    str(row[0]), version, payload_schema_version, str(event_name)
                 )
             ):
                 authority_missing = True
@@ -215,11 +235,11 @@ def _versions(
             result.append(
                 ActivityVersion(
                     activity_id=str(row[0]),
-                    version=int(str(row[5])),
+                    version=version,
                     event_id=event_id,
                     producer=producer,
                     surface=surface,
-                    source_time=source_time,
+                    source_time_ns=source_time_ns,
                     attribution_state=str(row[6]),
                     attribution_method=str(row[7]),
                     reason_code=None if row[8] is None else str(row[8]),
@@ -229,6 +249,12 @@ def _versions(
         except (TypeError, ValueError, OverflowError, OSError):
             authority_missing = True
     return tuple(result), authority_missing or observed_activity_ids != selected_activity_ids
+
+
+def _exact_int(value: object, *, positive: bool = False) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or (positive and value <= 0):
+        raise ValueError("immutable numeric field is not an exact integer")
+    return value
 
 
 def _lifecycle_index(
@@ -293,3 +319,8 @@ def _blocked(request: LiveProofRequest, boundaries: tuple[str, ...]) -> Attribut
         blocked_boundaries=tuple(sorted(set(proof.blocked_boundaries) | set(boundaries))),
     )
     return AttributionLiveEvidence(proof, (), None, {})
+
+
+def _source_datetime(source_time_ns: int) -> datetime:
+    seconds, nanoseconds = divmod(source_time_ns, 1_000_000_000)
+    return datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanoseconds // 1_000)

@@ -1,0 +1,28 @@
+{
+  "started_at": "2026-09-05T09:02:47.730026+00:00",
+  "finding_capture": "recurrence-finding-20260905T090247729213Z-5dc651da-8d6b-441c-9a65-9619157abcf8.sqlite",
+  "isolated_clone": ".tmp/metric-proof-scan-20260905T081245989Z-419a0701-5eb/application.sqlite3",
+  "capture_mode": "new_scan_on_existing_isolated_clone",
+  "result": {
+    "scan_run_id": "d723e58d-b0f2-4001-8f88-0ebd64427d3b",
+    "status": "succeeded",
+    "logs": 1461,
+    "traces": 3430,
+    "observations": 0,
+    "trend_evaluations": 0,
+    "session_context_events": 32,
+    "recovered_interrupted_scan_runs": 0,
+    "telemetry_delivered": 774,
+    "source_sessions": 741,
+    "conservation": {
+      "included": 741,
+      "attributed": 141,
+      "expected_rejection": 0,
+      "failed": 600,
+      "blocked": 0
+    },
+    "telemetry_pending": 1
+  },
+  "status": "succeeded",
+  "completed_at": "2026-09-05T09:03:21.384315+00:00"
+}

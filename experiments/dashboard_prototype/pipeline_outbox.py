@@ -407,7 +407,7 @@ def _require_attempt_ordering(attempts: list[DeliveryAttempt]) -> None:
         by_event[attempt.event_id] = attempt.attempted_at
 
 
-E5_REMOTE_RESULT_FIELDS = (
+E5_REMOTE_METRIC_FIELDS = (
     "selected_event_count",
     "pending_event_count",
     "attempted_event_count",
@@ -416,14 +416,98 @@ E5_REMOTE_RESULT_FIELDS = (
     "oldest_pending_age_seconds",
     "drain_failure_percentage",
 )
+E5_REMOTE_COMPLETION_FIELDS = (
+    "final_drain_completion_count",
+    "final_drain_completed_at_ns",
+    "matching_final_drain_completion_count",
+)
+E5_REMOTE_AUDIT_FIELDS = (
+    "primitive_event_count",
+    "distinct_primitive_event_count",
+    "expected_primitive_event_count",
+    "selected_primitive_population_matches",
+    "missing_native_pending_count",
+)
+E5_REMOTE_RESULT_FIELDS = (
+    *E5_REMOTE_METRIC_FIELDS,
+    *E5_REMOTE_COMPLETION_FIELDS,
+    *E5_REMOTE_AUDIT_FIELDS,
+)
 
 E5_REMOTE_SQL = """
 WITH
-    {event_ids:Array(String)} AS exact_event_ids,
+    JSONExtract({event_ids:String}, 'Array(String)') AS exact_event_ids,
+    JSONExtract({primitive_event_ids:String}, 'Array(String)') AS exact_primitive_event_ids,
     {final_drain_id:String} AS exact_final_drain_id,
-    {source_start:DateTime64(9, 'UTC')} AS source_start,
-    {source_end:DateTime64(9, 'UTC')} AS source_end,
-    {scan_completed_at:DateTime64(9, 'UTC')} AS scan_completed_at,
+    {source_start_ns:Int64} AS source_start_ns,
+    {source_end_ns:Int64} AS source_end_ns,
+    {expected_final_drain_completed_at_ns:Int64}
+        AS expected_final_drain_completed_at_ns,
+    fromUnixTimestamp64Nano(source_start_ns) AS source_start,
+    fromUnixTimestamp64Nano(source_end_ns) AS source_end,
+    native_primitives AS
+    (
+        SELECT
+            timestamp AS primitive_timestamp,
+            mapSort(attributes_string) AS primitive_attributes_string,
+            mapSort(attributes_number) AS primitive_attributes_number,
+            mapSort(attributes_bool) AS primitive_attributes_bool
+        FROM signoz_logs.distributed_logs_v2
+        WHERE attributes_string['event.id'] IN exact_primitive_event_ids
+    ),
+    distinct_native_primitives AS
+    (
+        SELECT DISTINCT
+            primitive_timestamp,
+            primitive_attributes_string,
+            primitive_attributes_number,
+            primitive_attributes_bool
+        FROM native_primitives
+    ),
+    dashboard_outbox_events AS
+    (
+        SELECT
+            primitive_attributes_string['dashboard.outbox_event_id'] AS event_id,
+            fromUnixTimestamp64Nano(
+                toInt64(primitive_attributes_string['dashboard.created_at_ns'])
+            ) AS created_at,
+            primitive_attributes_bool['dashboard.is_pending'] AS is_pending
+        FROM distinct_native_primitives
+        WHERE primitive_attributes_string['dashboard.created_at_ns'] != ''
+    ),
+    dashboard_outbox_delivery_attempts AS
+    (
+        SELECT
+            primitive_attributes_string['dashboard.attempt_id'] AS attempt_id,
+            primitive_attributes_string['dashboard.outbox_event_id'] AS event_id,
+            primitive_attributes_string['dashboard.drain_id'] AS drain_id,
+            fromUnixTimestamp64Nano(
+                toInt64(primitive_attributes_string['dashboard.attempted_at_ns'])
+            ) AS attempted_at,
+            primitive_attributes_string['dashboard.status'] AS status
+        FROM distinct_native_primitives
+        WHERE primitive_attributes_string['dashboard.attempt_id'] != ''
+    ),
+    final_drain_observations AS
+    (
+        SELECT
+            primitive_attributes_string['event.id'] AS primitive_event_id,
+            toInt64(primitive_attributes_string['dashboard.completed_at_ns'])
+                AS observed_completed_at_ns
+        FROM distinct_native_primitives
+        WHERE primitive_attributes_string['dashboard.drain_id'] = exact_final_drain_id
+          AND primitive_attributes_string['dashboard.completed_at_ns'] != ''
+    ),
+    final_drain_completion AS
+    (
+        SELECT
+            count() AS completion_count,
+            min(observed_completed_at_ns) AS single_completed_at_ns,
+            countIf(
+                observed_completed_at_ns = expected_final_drain_completed_at_ns
+            ) AS matching_completion_count
+        FROM final_drain_observations
+    ),
     selected_events AS
     (
         SELECT
@@ -464,21 +548,67 @@ SELECT
     toUInt64(count()) AS selected_event_count,
     toUInt64(countIf(is_pending)) AS pending_event_count,
     toUInt64((SELECT count() FROM terminal_attempts)) AS attempted_event_count,
-    toUInt64((SELECT countIf(status = 'failed') FROM terminal_attempts)) AS failed_event_count,
-    toUInt64((SELECT count() FROM final_drain_attempts)) AS final_drain_attempt_count,
+    toUInt64((SELECT countIf(status = 'failed') FROM terminal_attempts))
+        AS failed_event_count,
+    toUInt64((SELECT count() FROM final_drain_attempts))
+        AS final_drain_attempt_count,
     if(
         countIf(is_pending) = 0,
         CAST(NULL, 'Nullable(Float64)'),
-        toFloat64(dateDiff('microsecond', minIf(created_at, is_pending), scan_completed_at))
-            / 1000000.0
+        toFloat64(
+            dateDiff(
+                'microsecond',
+                minIf(created_at, is_pending),
+                fromUnixTimestamp64Nano(
+                    (SELECT single_completed_at_ns FROM final_drain_completion)
+                )
+            )
+        ) / 1000000.0
     ) AS oldest_pending_age_seconds,
     if(
         (SELECT count() FROM terminal_attempts) = 0,
         CAST(NULL, 'Nullable(Float64)'),
-        100.0 * toFloat64((SELECT countIf(status = 'failed') FROM terminal_attempts))
+        100.0 * toFloat64(
+            (SELECT countIf(status = 'failed') FROM terminal_attempts)
+        )
             / toFloat64((SELECT count() FROM terminal_attempts))
-    ) AS drain_failure_percentage
+    ) AS drain_failure_percentage,
+    toTypeName(oldest_pending_age_seconds) AS oldest_pending_age_seconds_type,
+    toTypeName(drain_failure_percentage) AS drain_failure_percentage_type,
+    toUInt64(
+        (SELECT completion_count FROM final_drain_completion)
+    ) AS final_drain_completion_count,
+    toInt64(
+        (SELECT single_completed_at_ns FROM final_drain_completion)
+    ) AS final_drain_completed_at_ns,
+    toUInt64(
+        (SELECT matching_completion_count FROM final_drain_completion)
+    ) AS matching_final_drain_completion_count,
+    toUInt64(
+        (SELECT count() FROM distinct_native_primitives)
+    ) AS primitive_event_count,
+    toUInt64(
+        (SELECT uniqExact(primitive_attributes_string['event.id'])
+         FROM distinct_native_primitives)
+    ) AS distinct_primitive_event_count,
+    toUInt64(length(exact_primitive_event_ids)) AS expected_primitive_event_count,
+    toUInt64(
+        (SELECT count() FROM selected_events) = length(exact_event_ids)
+        AND (SELECT uniqExact(event_id) FROM selected_events) = length(exact_event_ids)
+    ) AS selected_primitive_population_matches,
+    toUInt64(
+        (
+            SELECT count()
+            FROM distinct_native_primitives
+            WHERE primitive_attributes_string['dashboard.outbox_event_id'] IN exact_event_ids
+              AND primitive_attributes_string['dashboard.created_at_ns'] != ''
+              AND NOT mapContains(
+                  primitive_attributes_bool, 'dashboard.is_pending'
+              )
+        )
+    ) AS missing_native_pending_count
 FROM selected_events
+SETTINGS output_format_json_quote_64bit_integers = 0
 """.strip()
 
 
@@ -528,7 +658,41 @@ def parse_e5_remote_result(rows: Sequence[Mapping[str, object]]) -> OutboxReduct
     row = rows[0]
     if set(row) != set(E5_REMOTE_RESULT_FIELDS):
         raise PrototypeContractError("E-Pipeline-5 remote result has an unexpected shape")
-    counts = tuple(_require_exact_int(row[field], field) for field in E5_REMOTE_RESULT_FIELDS[:5])
+    counts = tuple(_require_exact_int(row[field], field) for field in E5_REMOTE_METRIC_FIELDS[:5])
+    if _require_exact_int(row["final_drain_completion_count"], "final drain completion count") != 1:
+        raise PrototypeContractError("remote final drain completion must have one exact primitive")
+    if (
+        _require_exact_int(
+            row["matching_final_drain_completion_count"],
+            "matching final drain completion count",
+        )
+        != 1
+    ):
+        raise PrototypeContractError("remote final drain completion does not match authority")
+    _require_exact_int(row["final_drain_completed_at_ns"], "final drain completion time")
+    (
+        primitive_event_count,
+        distinct_primitive_event_count,
+        expected_primitive_event_count,
+        selected_primitive_population_matches,
+        missing_native_pending_count,
+    ) = tuple(_require_exact_int(row[field], field) for field in E5_REMOTE_AUDIT_FIELDS)
+    if primitive_event_count != distinct_primitive_event_count:
+        raise PrototypeContractError(
+            "remote native primitive population contains duplicate immutable payloads"
+        )
+    if primitive_event_count != expected_primitive_event_count:
+        raise PrototypeContractError(
+            "remote native primitive population does not match immutable authority"
+        )
+    if selected_primitive_population_matches != 1:
+        raise PrototypeContractError(
+            "remote selected native primitive population does not match authority"
+        )
+    if missing_native_pending_count != 0:
+        raise PrototypeContractError(
+            "remote native primitive population lacks pending boolean authority"
+        )
     oldest_age = _require_optional_float(row["oldest_pending_age_seconds"], "oldest pending age")
     failure_percentage = _require_optional_float(
         row["drain_failure_percentage"], "drain failure percentage"

@@ -1,0 +1,11 @@
+{
+  "status": "failed",
+  "observed_at": "2026-09-05T00:57:10.985320+00:00",
+  "run_id": "metric-proof-pipeline-20260905T005659358610Z-541346ad76a3",
+  "capture_artifact": {
+    "name": "metric-proof-pipeline-20260905T004502631073Z-1efc97a6eae7.sqlite3",
+    "sha256": "5e688ca1f42d19909d2b2eb0fff75684d846365de512566a71c77492251a1852"
+  },
+  "error_class": "ValueError",
+  "error": "pipeline evidence must contain exact scalar values"
+}

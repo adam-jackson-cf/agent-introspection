@@ -1,0 +1,11 @@
+{
+  "status": "failed",
+  "observed_at": "2026-09-05T00:52:29.166339+00:00",
+  "run_id": "metric-proof-pipeline-20260905T005229159703Z-8216c23f3090",
+  "capture_artifact": {
+    "name": "metric-proof-pipeline-20260905T004502631073Z-1efc97a6eae7.sqlite3",
+    "sha256": "5e688ca1f42d19909d2b2eb0fff75684d846365de512566a71c77492251a1852"
+  },
+  "error_class": "PipelineExecutionError",
+  "error": "pipeline calculation inputs lack a remote query"
+}

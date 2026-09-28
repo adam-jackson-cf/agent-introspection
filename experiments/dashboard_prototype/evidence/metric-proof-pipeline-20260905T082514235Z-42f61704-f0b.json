@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "recorded_at": "2026-09-05T08:25:55.410472+00:00",
+  "run_id": "metric-proof-pipeline-20260905T082514235Z-42f61704-f0b",
+  "error_type": "SourceError",
+  "seed_event_ids": [
+    "d2bbd0d5-6167-6423-cabb-7d6e25b621f8",
+    "18df6473-5981-941a-3079-ce713e703d25",
+    "0f2367ae-a39c-2182-49b8-815f1e06e1aa",
+    "b5fa5cb9-7664-dd63-36ce-f500afd4d621",
+    "df742fa5-c7e8-08be-fee4-822218e71a2c",
+    "734f2b1f-4b60-4b9f-935b-8d6f37ad2c54",
+    "76a5960d-67c9-8119-bd14-8f3d77eb4a98",
+    "db0acc14-8468-6c7e-d6a1-f552c5155632",
+    "a4863f52-4b3a-b325-8852-304ae6c55fd1",
+    "59fc7e3e-0187-9dfa-a786-58c3982fe92d"
+  ],
+  "capture": "metric-proof-pipeline-20260905T082514235Z-42f61704-f0b.sqlite3"
+}

@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
+from types import MappingProxyType
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -63,8 +64,8 @@ EXPERIMENT_IDS = tuple(f"E-Attribution-{n}" for n in range(1, 6))
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z", re.ASCII)
 FIXTURE = Path("tests/fixtures/producer_identity_proofs.json")
 
-# Each query is bounded by the event family, temporal boundary, hashed run, query identity,
-# and exact emitted IDs.  These are intentionally scalar-only telemetry projections.
+# Each calculation reconciles its uncapped event-ID population in the same bounded
+# run/family/window query as the scalar result; no mutable second membership query.
 _E1_SQL = """
 SELECT attributes_string['dashboard.primitive_kind'] AS primitive_kind,
  attributes_string['dashboard.producer'] AS producer,
@@ -75,7 +76,9 @@ SELECT attributes_string['dashboard.primitive_kind'] AS primitive_kind,
  attributes_string['dashboard.method'] AS method,
  attributes_string['dashboard.diagnostic'] AS diagnostic,
  attributes_string['dashboard.project_digest'] AS project_digest,
- toUInt32(count()) AS count
+ toUInt32(uniqExact(attributes_string['event.id'])) AS count,
+ groupUniqArray(attributes_string['event.id']) AS selected_event_ids,
+ toUInt32(uniqExact((attributes_string['event.id'], timestamp))) AS immutable_payload_count
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
@@ -85,7 +88,6 @@ WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND attributes_string['dashboard.experiment_id'] = 'E-Attribution-1'
  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
  AND attributes_string['dashboard.query_id'] = {query_id:String}
- AND attributes_string['event.id'] IN ({event_ids})
 GROUP BY primitive_kind, producer, surface, direction, matched, outcome, method,
  diagnostic, project_digest
 ORDER BY primitive_kind, producer, surface, direction, matched, outcome, method,
@@ -93,8 +95,12 @@ ORDER BY primitive_kind, producer, surface, direction, matched, outcome, method,
 """.strip()
 _E2_SQL = """
 SELECT attributes_string['dashboard.scenario'] AS scenario,
- toUInt32(count()) AS scenario_population,
- toUInt32(countIf(attributes_string['dashboard.accepted'] = 'true')) AS accepted_count
+ toUInt32(uniqExact(attributes_string['event.id'])) AS scenario_population,
+ toUInt32(uniqExactIf(attributes_string['event.id'],
+   attributes_string['dashboard.accepted'] = 'true')) AS accepted_count,
+ groupUniqArray(attributes_string['event.id']) AS selected_event_ids,
+ toUInt32(uniqExact((attributes_string['event.id'], timestamp,
+   attributes_string['dashboard.accepted']))) AS immutable_payload_count
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
@@ -104,107 +110,143 @@ WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND attributes_string['dashboard.experiment_id'] = 'E-Attribution-2'
  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
  AND attributes_string['dashboard.query_id'] = {query_id:String}
- AND attributes_string['event.id'] IN ({event_ids})
 GROUP BY scenario ORDER BY scenario
 """.strip()
 _E4_SQL = """
-SELECT attributes_string['dashboard.cohort'] AS cohort,
+SELECT cohort,
  toUInt32(count()) AS selected_sessions,
- toUInt32(countIf(attributes_string['dashboard.matched'] = 'true')) AS matched_sessions,
- toUInt32(sum(attributes_number['dashboard.negative_skew'])) AS negative_skew_sessions,
- toUInt32(countIf(
-   attributes_string['dashboard.matched'] = 'true'
-   AND attributes_number['dashboard.negative_skew'] = 0
- )) AS n,
+ toUInt32(countIf(matched = 'true')) AS matched_sessions,
+ toUInt32(sum(negative_skew)) AS negative_skew_sessions,
+ toUInt32(countIf(matched = 'true' AND negative_skew = 0)) AS n,
  if(n = 0, 0., quantileExact(0.5)(if(
-   attributes_string['dashboard.matched'] = 'true'
-   AND attributes_number['dashboard.negative_skew'] = 0,
-   attributes_number['dashboard.lifecycle_delay_seconds'], NULL
+   matched = 'true' AND negative_skew = 0, lifecycle_delay_seconds, NULL
  ))) AS p50_lifecycle_delay_seconds,
  if(n = 0, 0., arrayElement(arraySort(groupArrayIf(
-   attributes_number['dashboard.lifecycle_delay_seconds'],
-   attributes_string['dashboard.matched'] = 'true'
-   AND attributes_number['dashboard.negative_skew'] = 0
- )), toUInt64(greatest(1, ceil(n * 0.95))))) AS p95_lifecycle_delay_seconds
-FROM signoz_logs.distributed_logs_v2
-WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
- AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
- AND resource.`service.name` = 'agent-introspection'
- AND attributes_string['event.name'] = {event_name:String}
- AND attributes_string['dashboard.event_kind'] = 'primitive'
- AND attributes_string['dashboard.experiment_id'] = 'E-Attribution-4'
- AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
- AND attributes_string['dashboard.query_id'] = {query_id:String}
- AND attributes_string['event.id'] IN ({event_ids})
+   lifecycle_delay_seconds, matched = 'true' AND negative_skew = 0
+ )), toUInt64(greatest(1, ceil(n * 0.95))))) AS p95_lifecycle_delay_seconds,
+ groupUniqArray(event_id) AS selected_event_ids,
+ toUInt32(count()) AS immutable_payload_count
+FROM (
+ SELECT DISTINCT attributes_string['event.id'] AS event_id, timestamp,
+  attributes_string['dashboard.cohort'] AS cohort,
+  attributes_string['dashboard.matched'] AS matched,
+  attributes_number['dashboard.negative_skew'] AS negative_skew,
+  attributes_number['dashboard.lifecycle_delay_seconds'] AS lifecycle_delay_seconds
+ FROM signoz_logs.distributed_logs_v2
+ WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND resource.`service.name`::String = 'agent-introspection'
+  AND attributes_string['event.name'] = {event_name:String}
+  AND attributes_string['dashboard.event_kind'] = 'primitive'
+  AND attributes_string['dashboard.experiment_id'] = 'E-Attribution-4'
+  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
+  AND attributes_string['dashboard.query_id'] = {query_id:String}
+)
 GROUP BY cohort ORDER BY cohort
 """.strip()
 _E5_SQL = """
-SELECT attributes_string['dashboard.cohort'] AS cohort,
+SELECT attributes_string['dashboard.primitive_kind'] AS primitive_kind,
+ attributes_string['dashboard.cohort'] AS cohort,
  attributes_string['dashboard.resolved_event_digest'] AS resolved_event_digest,
- toUInt32(sum(attributes_number['dashboard.transition_count'])) AS transition_count
+ toUInt32(uniqExactIf(attributes_string['dashboard.activity_hash'],
+   attributes_string['dashboard.primitive_kind'] = 'ever_unresolved')) AS ever_unresolved_count,
+ toUInt32(arraySum(arrayMap(pair -> pair.2, groupUniqArray((
+   attributes_string['event.id'],
+   attributes_number['dashboard.transition_count']
+ ))))) AS transition_count,
+ groupUniqArray(attributes_string['event.id']) AS selected_event_ids,
+ toUInt32(uniqExact((attributes_string['event.id'], timestamp,
+   attributes_string['dashboard.activity_hash'],
+   attributes_number['dashboard.transition_count']))) AS immutable_payload_count
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
- AND resource.`service.name` = 'agent-introspection'
+ AND resource.`service.name`::String = 'agent-introspection'
  AND attributes_string['event.name'] = {event_name:String}
  AND attributes_string['dashboard.event_kind'] = 'primitive'
  AND attributes_string['dashboard.experiment_id'] = 'E-Attribution-5'
  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
  AND attributes_string['dashboard.query_id'] = {query_id:String}
- AND attributes_string['event.id'] IN ({event_ids})
-GROUP BY cohort, resolved_event_digest ORDER BY cohort, resolved_event_digest
+GROUP BY primitive_kind, cohort, resolved_event_digest
+ORDER BY primitive_kind, cohort, resolved_event_digest
 """.strip()
 
 
+_ROW_POPULATION_COLUMNS = """
+ groupUniqArray(attributes_string['event.id']) AS selected_event_ids,
+ toUInt32(uniqExact((
+   attributes_string['event.id'], timestamp,
+   attributes_string['dashboard.row_stage'],
+   attributes_string['dashboard.row_source_member'],
+   attributes_string['dashboard.row_source_with_lifecycle'],
+   attributes_string['dashboard.row_lifecycle_member'],
+   attributes_string['dashboard.row_lifecycle_with_source'],
+   attributes_string['dashboard.row_attributed'],
+   attributes_string['dashboard.row_unresolved'],
+   attributes_string['dashboard.row_project_digest']
+ ))) AS immutable_payload_count
+""".strip()
+
 _A07_SQL = """
-SELECT toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'source'))
-           AS source_sessions,
-       toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'source'))
-           AS source_with_lifecycle,
-       toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'reducer'))
-           AS lifecycle_sessions,
-       toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'reducer'))
-           AS lifecycle_with_source
+SELECT {population_columns}, toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'source'
+           AND attributes_string['dashboard.row_source_member'] = '1'
+       )) AS source_sessions,
+       toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'source'
+           AND attributes_string['dashboard.row_source_with_lifecycle'] = '1'
+       )) AS source_with_lifecycle,
+       toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'reducer'
+           AND attributes_string['dashboard.row_lifecycle_member'] = '1'
+       )) AS lifecycle_sessions,
+       toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'reducer'
+           AND attributes_string['dashboard.row_lifecycle_with_source'] = '1'
+       )) AS lifecycle_with_source
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
   AND attributes_string['event.id'] IN ({event_ids})
-""".strip()
+""".strip().replace("{population_columns}", _ROW_POPULATION_COLUMNS)
 _A08_SQL = """
-SELECT toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'delivery')) AS eligible,
-       toUInt32(countIf(
+SELECT {population_columns}, toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'delivery')) AS eligible,
+       toUInt32(uniqExactIf(attributes_string['event.id'],
            attributes_string['dashboard.row_stage'] = 'delivery'
            AND attributes_string['dashboard.row_attributed'] = '1'
        )) AS attributed,
-       toUInt32(countIf(
+       toUInt32(uniqExactIf(attributes_string['event.id'],
            attributes_string['dashboard.row_stage'] = 'delivery'
            AND attributes_string['dashboard.row_unresolved'] = '1'
        )) AS unresolved,
-       toUInt32(countIf(
+       toUInt32(uniqExactIf(
+           attributes_string['dashboard.row_project_digest'],
            attributes_string['dashboard.row_stage'] = 'delivery'
-           AND attributes_string['dashboard.row_project'] = '1'
-       )) AS distinct_projects
+           AND attributes_string['dashboard.row_project_digest'] != 'none'
+       )) AS distinct_projects,
+       groupUniqArrayIf(attributes_string['dashboard.row_project_digest'],
+           attributes_string['dashboard.row_stage'] = 'delivery'
+           AND attributes_string['dashboard.row_project_digest'] != 'none'
+       ) AS project_digests
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
   AND attributes_string['event.id'] IN ({event_ids})
-""".strip()
+""".strip().replace("{population_columns}", _ROW_POPULATION_COLUMNS)
 _A09_SQL = """
-SELECT toUInt32(countIf(attributes_string['dashboard.row_stage'] = 'delivery')) AS eligible,
-       toUInt32(countIf(
+SELECT {population_columns}, toUInt32(uniqExactIf(attributes_string['event.id'],
+           attributes_string['dashboard.row_stage'] = 'delivery')) AS eligible,
+       toUInt32(uniqExactIf(attributes_string['event.id'],
            attributes_string['dashboard.row_stage'] = 'delivery'
            AND attributes_string['dashboard.row_unresolved'] = '1'
        )) AS unresolved,
-       toUInt32(countIf(
+       toUInt32(uniqExactIf(attributes_string['event.id'],
            attributes_string['dashboard.row_stage'] = 'delivery'
            AND attributes_string['dashboard.row_unresolved'] = '1'
-       )) AS diagnostic_count,
-       maxIf(
-           attributes_string['dashboard.row_diagnostic'],
-           attributes_string['dashboard.row_stage'] = 'delivery'
-       ) AS diagnostic
+       )) AS diagnostic_count
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
   AND attributes_string['event.id'] IN ({event_ids})
-""".strip()
+""".strip().replace("{population_columns}", _ROW_POPULATION_COLUMNS)
 
 
 class AttributionExecutionError(ValueError):
@@ -236,9 +278,11 @@ class RunEnvelope:
     remote_result: Mapping[str, Mapping[str, object]]
     drain: Mapping[str, int]
     row_obligations: tuple[AttributionRowEvidence, ...]
+    row_event_ids: tuple[str, ...]
+    calculation_queries: Mapping[str, object]
 
     def payload(self) -> dict[str, object]:
-        ids = self.primitive_event_ids + self.result_event_ids
+        ids = self.primitive_event_ids + self.result_event_ids + self.row_event_ids
         return {
             "namespace": self.namespace,
             "run_id": self.run_id,
@@ -256,6 +300,8 @@ class RunEnvelope:
                 "primitive": list(self.primitive_event_ids),
                 "result": list(self.result_event_ids),
             },
+            "row_event_ids": list(self.row_event_ids),
+            "calculation_queries": dict(self.calculation_queries),
             "drain": dict(self.drain),
             "row_obligations": [_row_payload(row) for row in self.row_obligations],
             "cleanup_selector": {
@@ -378,14 +424,12 @@ def _event(
             "dashboard.proof_hash": proof_hash,
             **dict(spec.attributes),
         },
-        int(window.end.timestamp() * 1e9) if spec.timestamp_ns is None else spec.timestamp_ns,
+        _epoch_ns(window.end) if spec.timestamp_ns is None else spec.timestamp_ns,
     )
 
 
-def _safe_attributes(
-    item: AttributionLiveEvidence, dimensions: Mapping[str, object], measures: Mapping[str, object]
-) -> dict[str, str | int | float | bool]:
-    allowed = {
+def _allowed_dimension_names(item: AttributionLiveEvidence) -> set[str]:
+    return {
         "E-Attribution-1": {
             "producer",
             "surface",
@@ -404,9 +448,16 @@ def _safe_attributes(
             "surface",
             "method",
             "prior_reason",
+            "primitive_kind",
+            "activity_hash",
             "resolved_event_digest",
         },
     }[item.proof.experiment_id.value]
+
+
+def _dimension_attributes(
+    dimensions: Mapping[str, object], allowed: set[str]
+) -> dict[str, str | int | float | bool]:
     attrs: dict[str, str | int | float | bool] = {}
     for key, value in dimensions.items():
         if key not in allowed:
@@ -417,27 +468,62 @@ def _safe_attributes(
             attrs[f"dashboard.{key}"] = value
         else:
             raise AttributionExecutionError("primitive dimension is not scalar")
-    if item.proof.experiment_id.value == "E-Attribution-5":
-        attrs["dashboard.cohort"] = hashlib.sha256(
-            "\x1f".join(
-                (
-                    "late-context",
-                    str(dimensions.get("producer", "")),
-                    str(dimensions.get("surface", "")),
-                    str(dimensions.get("method", "")),
-                    str(dimensions.get("prior_reason", "none")),
-                )
-            ).encode()
-        ).hexdigest()[:16]
-        digest = dimensions.get("resolved_event_digest")
-        if not isinstance(digest, str) or not digest:
-            raise AttributionExecutionError("late-context resolved event identity is missing")
-        attrs["dashboard.resolved_event_digest"] = digest
+    return attrs
+
+
+def _late_context_attributes(
+    dimensions: Mapping[str, object], attrs: dict[str, str | int | float | bool]
+) -> None:
+    kind = dimensions.get("primitive_kind")
+    if kind == "ever_unresolved":
+        if not isinstance(dimensions.get("activity_hash"), str):
+            raise AttributionExecutionError("late-context denominator identity is missing")
+        attrs["dashboard.cohort"] = "ever_unresolved"
+        return
+    if kind != "transition":
+        raise AttributionExecutionError("late-context primitive kind is invalid")
+    attrs["dashboard.cohort"] = hashlib.sha256(
+        "\x1f".join(
+            (
+                "late-context",
+                str(dimensions.get("producer", "")),
+                str(dimensions.get("surface", "")),
+                str(dimensions.get("method", "")),
+                str(dimensions.get("prior_reason", "none")),
+            )
+        ).encode()
+    ).hexdigest()[:16]
+    digest = dimensions.get("resolved_event_digest")
+    if not isinstance(digest, str) or not digest:
+        raise AttributionExecutionError("late-context resolved event identity is missing")
+    attrs["dashboard.resolved_event_digest"] = digest
+
+
+def _measure_attributes(
+    measures: Mapping[str, object], attrs: dict[str, str | int | float | bool]
+) -> None:
+    allowed = {
+        "count",
+        "lifecycle_delay_seconds",
+        "negative_skew",
+        "transition_count",
+        "ever_unresolved_count",
+    }
     for key, value in measures.items():
-        if key in {"count", "lifecycle_delay_seconds", "negative_skew", "transition_count"}:
-            if not isinstance(value, (str, int, float, bool)):
-                raise AttributionExecutionError("primitive measure is not scalar")
-            attrs[f"dashboard.{key}"] = value
+        if key not in allowed:
+            continue
+        if not isinstance(value, (str, int, float, bool)):
+            raise AttributionExecutionError("primitive measure is not scalar")
+        attrs[f"dashboard.{key}"] = value
+
+
+def _safe_attributes(
+    item: AttributionLiveEvidence, dimensions: Mapping[str, object], measures: Mapping[str, object]
+) -> dict[str, str | int | float | bool]:
+    attrs = _dimension_attributes(dimensions, _allowed_dimension_names(item))
+    if item.proof.experiment_id.value == "E-Attribution-5":
+        _late_context_attributes(dimensions, attrs)
+    _measure_attributes(measures, attrs)
     _reject_unsafe(attrs)
     return attrs
 
@@ -460,11 +546,20 @@ def primitive_events(
                         item.remote_query_id,
                         primitive.ordinal,
                         _safe_attributes(item, primitive.dimensions, primitive.measures),
-                        int(primitive.source_time.timestamp() * 1e9),
+                        _primitive_source_ns(primitive.source_time, primitive.source_time_ns),
                     ),
                 )
             )
     return tuple(events)
+
+
+def _primitive_source_ns(source_time: datetime, native_ns: int | None) -> int:
+    represented_ns = _epoch_ns(source_time)
+    if native_ns is None:
+        return represented_ns
+    if type(native_ns) is not int or native_ns < 0 or native_ns // 1_000 != represented_ns // 1_000:
+        raise AttributionExecutionError("primitive native source time contradicts its datetime")
+    return native_ns
 
 
 def result_events(
@@ -490,52 +585,70 @@ class _RemoteClient(Protocol):
 def _exact_drain(
     connection: sqlite3.Connection, events: Sequence[DerivedEvent], endpoint: str
 ) -> Mapping[str, int]:
-    result = drain_outbox_event_ids(
-        connection,
-        [e.event_id for e in events],
-        endpoint=f"{endpoint}/v1/logs",
-        include_delivered=True,
-    )
-    if (
-        not isinstance(result, Mapping)
-        or any(
-            isinstance(result.get(k), bool) or not isinstance(result.get(k), int)
-            for k in ("selected", "delivered", "pending")
+    if len({event.event_id for event in events}) != len(events):
+        raise AttributionExecutionError("exact outbox population contains duplicate IDs")
+    totals: dict[str, int] = dict.fromkeys(("selected", "delivered", "pending"), 0)
+    for offset in range(0, len(events), 512):
+        batch = events[offset : offset + 512]
+        result = drain_outbox_event_ids(
+            connection,
+            [event.event_id for event in batch],
+            endpoint=f"{endpoint}/v1/logs",
+            include_delivered=True,
         )
-        or (result["selected"], result["delivered"], result["pending"])
-        != (len(events), len(events), 0)
-    ):
-        raise AttributionExecutionError("exact outbox drain mismatch")
-    return {k: int(result[k]) for k in ("selected", "delivered", "pending")}
+        if (
+            not isinstance(result, Mapping)
+            or any(
+                isinstance(result.get(key), bool) or not isinstance(result.get(key), int)
+                for key in totals
+            )
+            or (result["selected"], result["delivered"], result["pending"])
+            != (len(batch), len(batch), 0)
+        ):
+            raise AttributionExecutionError("exact outbox drain mismatch")
+        for key in totals:
+            totals[key] += int(result[key])
+    return totals
 
 
 def _verify_ids(client: _RemoteClient, events: Sequence[DerivedEvent]) -> None:
-    if not events:
-        return
-    expected = {e.event_id for e in events}
+    missing = {event.event_id: event for event in events}
     for attempt in range(20):
-        if remote_event_ids(client, events) == expected:
+        pending = tuple(missing.values())
+        for offset in range(0, len(pending), 512):
+            for event_id in remote_event_ids(client, pending[offset : offset + 512]):
+                if event_id not in missing:
+                    raise AttributionExecutionError("remote ID is outside the selected population")
+                del missing[event_id]
+        if not missing:
             return
         if attempt < 19:
             sleep(0.5)
     raise AttributionExecutionError("exact remote event IDs mismatch")
 
 
-def _params(
-    events: Sequence[DerivedEvent], window: ExtractionWindow, query_id: str, run_id: str
-) -> tuple[str, dict[str, str | int]]:
-    placeholders = ", ".join(f"{{event_{i}:String}}" for i in range(len(events)))
-    params: dict[str, str | int] = {
-        "start_ns": int(window.start.timestamp() * 1e9),
-        "end_ns": int(window.end.timestamp() * 1e9),
-        "start_bucket": max(0, int(window.start.timestamp()) - 1800),
-        "end_bucket": int(window.end.timestamp()),
+def _deliver_exact_events(
+    connection: sqlite3.Connection,
+    client: _RemoteClient,
+    events: Sequence[DerivedEvent],
+    endpoint: str,
+) -> Mapping[str, int]:
+    enqueue_events(connection, list(events))
+    drained = _exact_drain(connection, events, endpoint)
+    _verify_ids(client, events)
+    return drained
+
+
+def _params(window: ExtractionWindow, query_id: str, run_id: str) -> dict[str, str | int]:
+    return {
+        "start_ns": _epoch_ns(window.start),
+        "end_ns": _epoch_ns(window.end),
+        "start_bucket": max(0, _epoch_ns(window.start) // 1_000_000_000 - 1800),
+        "end_bucket": _epoch_ns(window.end) // 1_000_000_000,
         "event_name": EVENT_NAME,
         "run_id_hash": canonical_hash(run_id),
         "query_id": query_id,
     }
-    params.update({f"event_{i}": e.event_id for i, e in enumerate(events)})
-    return placeholders, params
 
 
 def _number(value: object, *, integral: bool) -> int | float:
@@ -550,13 +663,20 @@ def _number(value: object, *, integral: bool) -> int | float:
 
 
 def remote_calculations(
-    client: _RemoteClient, primitives: Sequence[DerivedEvent], window: ExtractionWindow, run_id: str
+    client: _RemoteClient,
+    primitives: Sequence[DerivedEvent],
+    window: ExtractionWindow,
+    run_id: str,
+    *,
+    query_evidence: dict[str, object],
 ) -> dict[str, Mapping[str, object]]:
     grouped = {
-        eid: tuple(e for e in primitives if e.attributes["dashboard.experiment_id"] == eid)
+        eid: tuple(
+            event for event in primitives if event.attributes["dashboard.experiment_id"] == eid
+        )
         for eid in EXPERIMENT_IDS
     }
-    output = {}
+    output: dict[str, Mapping[str, object]] = {}
     for eid, sql in (
         ("E-Attribution-1", _E1_SQL),
         ("E-Attribution-2", _E2_SQL),
@@ -565,12 +685,32 @@ def remote_calculations(
     ):
         if not grouped[eid]:
             continue
-        placeholders, params = _params(
-            grouped[eid], window, str(grouped[eid][0].attributes["dashboard.query_id"]), run_id
-        )
-        rows = list(client.query(sql.replace("{event_ids}", placeholders), params))
+        params = _params(window, str(grouped[eid][0].attributes["dashboard.query_id"]), run_id)
+        record: dict[str, object] = {"sql": sql, "parameters": params, "status": "prepared"}
+        query_evidence[eid] = record
+        rows = list(client.query(sql, params))
+        record.update({"rows": rows, "status": "returned"})
+        _verify_calculation_population(rows, {event.event_id for event in grouped[eid]})
         output[eid] = _reduce_remote(eid, rows)
     return output
+
+
+def _verify_calculation_population(
+    rows: Sequence[Mapping[str, object]], expected: set[str]
+) -> None:
+    observed: set[str] = set()
+    for row in rows:
+        ids = row.get("selected_event_ids")
+        if not isinstance(ids, list) or any(not isinstance(value, str) for value in ids):
+            raise AttributionExecutionError("remote calculation lacks exact event-ID population")
+        population = set(ids)
+        if len(population) != len(ids) or observed.intersection(population):
+            raise AttributionExecutionError("remote immutable event appears in conflicting groups")
+        if _count(row, "immutable_payload_count") != len(population):
+            raise AttributionExecutionError("remote immutable event payloads conflict")
+        observed.update(population)
+    if observed != expected:
+        raise AttributionExecutionError("remote calculation event-ID population mismatch")
 
 
 def _reduce_remote(eid: str, rows: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
@@ -718,9 +858,23 @@ def _reduce_cohorts(
 def _reduce_e5(rows: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
     output: dict[str, dict[str, object]] = {}
     for row in rows:
+        kind = row.get("primitive_kind")
         cohort = row.get("cohort")
+        if kind == "ever_unresolved":
+            if cohort != "ever_unresolved" or cohort in output:
+                raise AttributionExecutionError("remote E5 denominator identity mismatch")
+            output["ever_unresolved"] = {
+                "ever_unresolved_count": _count(row, "ever_unresolved_count")
+            }
+            continue
         digest = row.get("resolved_event_digest")
-        if not isinstance(cohort, str) or not cohort or not isinstance(digest, str) or not digest:
+        if (
+            kind != "transition"
+            or not isinstance(cohort, str)
+            or not cohort
+            or not isinstance(digest, str)
+            or not digest
+        ):
             raise AttributionExecutionError("remote E5 resolved identity mismatch")
         metrics = output.setdefault(cohort, {"transition_count": 0, "resolved_event_digests": {}})
         digests = metrics["resolved_event_digests"]
@@ -739,8 +893,12 @@ def _expected_oracle(item: AttributionLiveEvidence) -> Mapping[str, object]:
     if item.proof.experiment_id.value != "E-Attribution-5":
         return item.remote_oracle
     output: dict[str, dict[str, object]] = {}
+    if "ever_unresolved" in item.remote_oracle:
+        output["ever_unresolved"] = dict(item.remote_oracle["ever_unresolved"])
     for primitive in item.primitives:
         attrs = _safe_attributes(item, primitive.dimensions, primitive.measures)
+        if attrs["dashboard.primitive_kind"] == "ever_unresolved":
+            continue
         cohort = attrs["dashboard.cohort"]
         digest = attrs["dashboard.resolved_event_digest"]
         if not isinstance(cohort, str) or not isinstance(digest, str):
@@ -770,7 +928,25 @@ def _final_proofs(
         if item.remote_oracle:
             expected = _deep_plain(_expected_oracle(item))
             actual = _deep_plain(remote.get(eid, {}))
-            reconciled = actual == expected
+            reconciled = json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+            if (
+                reconciled
+                and proof.experiment_id is AttributionExperimentId.LATE_CONTEXT
+                and proof.result is ExperimentResult.BLOCKED
+                and proof.blocked_boundaries == ("late-context.remote-ever-unresolved-denominator",)
+                and item.primitives
+            ):
+                proof = replace(
+                    proof,
+                    result=ExperimentResult.PROVEN,
+                    blocked_boundaries=(),
+                    assertions={**proof.assertions, "denominator_reconciled": True},
+                    metrics={
+                        **proof.metrics,
+                        "late_context_rate": _count(proof.metrics, "transition_count")
+                        / _count(proof.metrics, "ever_unresolved_count"),
+                    },
+                )
             proof = replace(
                 proof,
                 result=ExperimentResult.FAILED if not reconciled else proof.result,
@@ -812,11 +988,20 @@ def _row_payload(row: AttributionRowEvidence) -> dict[str, object]:
         "experiment_id": row.experiment_id.value,
         "row_id": row.row_id,
         "producer": row.producer,
-        "native_session_id": row.native_session_id,
         "state": row.state.value,
         "blocked_reason": row.blocked_reason,
-        "event_id_inputs": row.event_id_inputs,
-        "event_ids": row.event_ids,
+        "members": [
+            {
+                "native_session_id": member.native_session_id,
+                "source_id": member.source_id,
+                "reducer_id": member.reducer_id,
+                "event_id_inputs": member.event_id_inputs,
+                "event_ids": member.event_ids,
+            }
+            for member in row.members or ()
+        ]
+        if row.members is not None
+        else None,
         "direct_remote_sql_parameters": row.direct_remote_sql_parameters,
         "direct_remote_sql_parameter_types": row.direct_remote_sql_parameter_types,
         "direct_remote_result": row.direct_remote_result,
@@ -828,13 +1013,23 @@ def _row_payload(row: AttributionRowEvidence) -> dict[str, object]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _RowDirectCalculation:
+    parameters: Mapping[str, str | int]
+    result: Mapping[str, str | int | bool | None]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
+        object.__setattr__(self, "result", MappingProxyType(dict(self.result)))
+
+
 def row_obligations(
     evidence: Sequence[AttributionLiveEvidence],
     baseline_rows: Sequence[AttributionRowAuthority],
-    delivered: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
-    direct_results: Mapping[tuple[str, str], Mapping[str, str | int | bool | None]] | None = None,
+    delivered: Mapping[tuple[str, str, str, str, str], Mapping[str, str]] | None = None,
+    direct_results: Mapping[tuple[str, str], _RowDirectCalculation] | None = None,
 ) -> tuple[AttributionRowEvidence, ...]:
-    """Promote E1 rows only when post-drain derived IDs are supplied."""
+    """Promote one full-population E1 obligation per row/producer."""
     proof_by_id = {item.proof.experiment_id: item.proof for item in evidence}
     grouped: dict[tuple[str, str], list[AttributionRowAuthority]] = {}
     for candidate in baseline_rows:
@@ -843,9 +1038,25 @@ def row_obligations(
     aggregate = proof_by_id[AttributionExperimentId.BASELINE]
     for producer in ("omp", "codex-cli"):
         for row_id in ("A07", "A08", "A09"):
-            candidates = grouped.get((row_id, producer), ())
-            candidate = candidates[0] if len(candidates) == 1 else None
-            ids = delivered.get((row_id, producer)) if delivered else None
+            candidates = tuple(
+                sorted(
+                    grouped.get((row_id, producer), ()),
+                    key=lambda item: (
+                        item.source_time,
+                        item.native_session_id,
+                        item.source_id,
+                        item.reducer_id,
+                    ),
+                )
+            )
+            delivered_members = (
+                tuple(
+                    (candidate, delivered.get(_row_member_key(candidate)))
+                    for candidate in candidates
+                )
+                if delivered
+                else ()
+            )
             if not candidates:
                 reason = (
                     "missing_canonical_activity_authority"
@@ -855,16 +1066,20 @@ def row_obligations(
                 rows.append(
                     _blocked_row(AttributionExperimentId.BASELINE, row_id, producer, reason)
                 )
-            elif candidate is None:
+            elif any(not candidate.native_identity_bound for candidate in candidates):
                 rows.append(
                     _blocked_row(
                         AttributionExperimentId.BASELINE,
                         row_id,
                         producer,
-                        "ambiguous_row_native_authority",
+                        "missing_row_native_authority",
                     )
                 )
-            elif aggregate.provenance is not EvidenceProvenance.FRESH_REAL or ids is None:
+            elif (
+                aggregate.provenance is not EvidenceProvenance.FRESH_REAL
+                or len(delivered_members) != len(candidates)
+                or any(ids is None for _, ids in delivered_members)
+            ):
                 rows.append(
                     _blocked_row(
                         AttributionExperimentId.BASELINE,
@@ -873,64 +1088,146 @@ def row_obligations(
                         "undelivered_row_authority",
                     )
                 )
-            elif (
-                direct_results is None
-                or direct_results.get((row_id, producer)) != candidate.expected_result
-            ):
-                rows.append(
-                    _blocked_row(
-                        AttributionExperimentId.BASELINE,
-                        row_id,
-                        producer,
-                        "row_calculation_mismatch",
-                    )
-                )
             else:
-                rows.append(_ready_row(candidate, ids))
+                expected = _row_population_oracle(row_id, candidates)
+                query = direct_results.get((row_id, producer)) if direct_results else None
+                actual = query.result if query is not None else None
+                if (
+                    query is None
+                    or actual is None
+                    or actual != expected
+                    or {key: _row_scalar_type(value) for key, value in actual.items()}
+                    != {key: _row_scalar_type(value) for key, value in expected.items()}
+                ):
+                    rows.append(
+                        _blocked_row(
+                            AttributionExperimentId.BASELINE,
+                            row_id,
+                            producer,
+                            "row_calculation_mismatch",
+                        )
+                    )
+                else:
+                    rows.append(_ready_row(row_id, producer, delivered_members, expected, query))
     rows.extend(_app_server_rows(proof_by_id[AttributionExperimentId.CODEX_APP_SERVER], evidence))
     return tuple(rows)
 
 
-def _ready_row(
-    candidate: AttributionRowAuthority, event_ids: Mapping[str, str]
-) -> AttributionRowEvidence:
-    inputs = {
-        stage: {
-            "experiment_id": AttributionExperimentId.BASELINE.value,
-            "row_id": candidate.row_id,
-            "producer": candidate.producer,
-            "native_session_id": candidate.native_session_id,
-            "source_id": candidate.source_id,
-            "reducer_id": candidate.reducer_id,
-            "entity_version": 2,
-            "event_id_ordinal": ordinal,
+def _row_member_key(row: AttributionRowAuthority) -> tuple[str, str, str, str, str]:
+    return (row.row_id, row.producer, row.native_session_id, row.source_id, row.reducer_id)
+
+
+def _row_population_oracle(
+    row_id: str, candidates: Sequence[AttributionRowAuthority]
+) -> dict[str, str | int | bool | None]:
+    if row_id == "A07":
+        keys = (
+            "source_sessions",
+            "source_with_lifecycle",
+            "lifecycle_sessions",
+            "lifecycle_with_source",
+        )
+        return {key: sum(_member_count(row, key) for row in candidates) for key in keys}
+    if row_id == "A08":
+        return {
+            "eligible": len(candidates),
+            "attributed": sum(_member_count(row, "attributed") for row in candidates),
+            "unresolved": sum(_member_count(row, "unresolved") for row in candidates),
+            "distinct_projects": len(
+                {
+                    row.expected_result["project_digest"]
+                    for row in candidates
+                    if row.expected_result["project_digest"] != "none"
+                }
+            ),
         }
-        for ordinal, stage in enumerate(("source", "reducer", "delivery"))
+    return {
+        "eligible": len(candidates),
+        "unresolved": sum(_member_count(row, "unresolved") for row in candidates),
+        "diagnostic_count": sum(_member_count(row, "diagnostic_count") for row in candidates),
     }
-    parameters: dict[str, str | int] = {
-        "row_id": candidate.row_id,
-        "source_id": candidate.source_id,
-        "reducer_id": candidate.reducer_id,
-        "event_count": len(event_ids),
-    }
-    result = dict(candidate.expected_result)
+
+
+def _member_count(row: AttributionRowAuthority, key: str) -> int:
+    value = row.expected_result.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise AttributionExecutionError("row authority contains a non-integer calculation")
+    return value
+
+
+def _ready_row(
+    row_id: str,
+    producer: str,
+    delivered_members: Sequence[tuple[AttributionRowAuthority, Mapping[str, str] | None]],
+    result: Mapping[str, str | int | bool | None],
+    query: _RowDirectCalculation,
+) -> AttributionRowEvidence:
+    from experiments.dashboard_prototype.attribution_common import AttributionRowMemberEvidence
+
+    direct_result = query.result
+
+    members = []
+    for candidate, event_ids in delivered_members:
+        assert event_ids is not None
+        inputs = {
+            stage: {
+                "experiment_id": AttributionExperimentId.BASELINE.value,
+                "row_id": row_id,
+                "producer": producer,
+                "native_session_id": candidate.native_session_id,
+                "source_id": candidate.source_id,
+                "reducer_id": candidate.reducer_id,
+                "entity_version": 3,
+                "event_id_ordinal": ordinal,
+            }
+            for ordinal, stage in enumerate(("source", "reducer", "delivery"))
+        }
+        members.append(
+            AttributionRowMemberEvidence(
+                candidate.native_session_id,
+                candidate.source_id,
+                candidate.reducer_id,
+                inputs,
+                dict(event_ids),
+            )
+        )
+    parameters = dict(query.parameters)
     types = {key: _row_scalar_type(value) for key, value in parameters.items()}
     result_types = {key: _row_scalar_type(value) for key, value in result.items()}
+    direct_types = {key: _row_scalar_type(value) for key, value in direct_result.items()}
+    oracle_parameters: dict[str, str | int] = {
+        "start_ns": int(parameters["start_ns"]),
+        "end_ns": int(parameters["end_ns"]),
+        "members_json": json.dumps(
+            [
+                {
+                    "native_session_id": candidate.native_session_id,
+                    "source_id": candidate.source_id,
+                    "reducer_id": candidate.reducer_id,
+                    "source_time_ns": str(candidate.source_time_ns),
+                    "measures": dict(candidate.expected_result),
+                }
+                for candidate, _ in delivered_members
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ),
+    }
+    oracle_types = {key: _row_scalar_type(value) for key, value in oracle_parameters.items()}
     return AttributionRowEvidence(
         AttributionExperimentId.BASELINE,
-        candidate.row_id,
-        candidate.producer,
-        candidate.native_session_id,
+        row_id,
+        producer,
         AttributionRowState.READY,
         None,
-        inputs,
-        dict(event_ids),
+        tuple(members),
         parameters,
         types,
-        result,
-        result_types,
-        dict(parameters),
-        dict(types),
+        dict(direct_result),
+        direct_types,
+        oracle_parameters,
+        oracle_types,
         dict(result),
         dict(result_types),
     )
@@ -951,7 +1248,7 @@ def _row_scalar_type(value: object) -> str:
 def row_primitive_events(
     rows: Sequence[AttributionRowAuthority], run_id: str, window: ExtractionWindow
 ) -> tuple[DerivedEvent, ...]:
-    """Emit immutable row primitives without a run-scoped payload."""
+    """Emit an immutable source/reducer/delivery triplet for every exact member."""
     del run_id, window
     events: list[DerivedEvent] = []
     for row in rows:
@@ -972,25 +1269,34 @@ def row_primitive_events(
                 DerivedEvent(
                     NAMESPACE,
                     entity_id,
-                    2,
+                    3,
                     ordinal,
                     "dashboard_prototype.attribution_row.v1",
                     {
                         "dashboard.row_id": row.row_id,
                         "dashboard.row_stage": stage,
                         "dashboard.producer": row.producer,
-                        "dashboard.source_id": row.source_id,
-                        "dashboard.reducer_id": row.reducer_id,
+                        "dashboard.source_id": canonical_hash(row.source_id),
+                        "dashboard.reducer_id": canonical_hash(row.reducer_id),
+                        "dashboard.row_source_member": str(
+                            row.expected_result.get("source_sessions", 0)
+                        ),
+                        "dashboard.row_lifecycle_member": str(
+                            row.expected_result.get("lifecycle_sessions", 0)
+                        ),
+                        "dashboard.row_source_with_lifecycle": str(
+                            row.expected_result.get("source_with_lifecycle", 0)
+                        ),
+                        "dashboard.row_lifecycle_with_source": str(
+                            row.expected_result.get("lifecycle_with_source", 0)
+                        ),
                         "dashboard.row_attributed": str(row.expected_result.get("attributed", 0)),
                         "dashboard.row_unresolved": str(row.expected_result.get("unresolved", 0)),
-                        "dashboard.row_project": str(
-                            row.expected_result.get("distinct_projects", 0)
-                        ),
-                        "dashboard.row_diagnostic": str(
-                            row.expected_result.get("diagnostic") or ""
+                        "dashboard.row_project_digest": str(
+                            row.expected_result.get("project_digest", "none")
                         ),
                     },
-                    int(row.source_time.timestamp() * 1e9),
+                    row.source_time_ns,
                 )
             )
     return tuple(events)
@@ -998,13 +1304,12 @@ def row_primitive_events(
 
 def delivered_row_ids(
     rows: Sequence[AttributionRowAuthority], events: Sequence[DerivedEvent]
-) -> Mapping[tuple[str, str], Mapping[str, str]]:
-    """Bind only the exact derived IDs which were enqueued and remotely verified."""
-    expected = len(rows) * 3
-    if len(events) != expected:
+) -> Mapping[tuple[str, str, str, str, str], Mapping[str, str]]:
+    """Bind every exact derived member ID which reached remote storage."""
+    if len(events) != len(rows) * 3:
         raise AttributionExecutionError("row event population is incomplete")
     return {
-        (row.row_id, row.producer): {
+        _row_member_key(row): {
             stage: events[index * 3 + ordinal].event_id
             for ordinal, stage in enumerate(("source", "reducer", "delivery"))
         }
@@ -1012,29 +1317,107 @@ def delivered_row_ids(
     }
 
 
+def _group_row_event_ids(
+    rows: Sequence[AttributionRowAuthority],
+    event_ids: Mapping[tuple[str, str, str, str, str], Mapping[str, str]],
+) -> dict[tuple[str, str], list[str]]:
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        grouped.setdefault((row.row_id, row.producer), []).extend(
+            event_ids[_row_member_key(row)].values()
+        )
+    return grouped
+
+
+def _direct_row_result(
+    client: _RemoteClient,
+    sql: str,
+    parameters: Mapping[str, str | int],
+    batch_context: tuple[int, Sequence[str]],
+    batches: list[Mapping[str, object]],
+) -> tuple[Mapping[str, object], Mapping[str, str | int]]:
+    offset, batch = batch_context
+    bindings = {
+        "start_ns": parameters["start_ns"],
+        "end_ns": parameters["end_ns"],
+        **{f"event_{offset + index}": event_id for index, event_id in enumerate(batch)},
+    }
+    placeholders = ", ".join(f"{{event_{offset + index}:String}}" for index in range(len(batch)))
+    query = sql.replace("{event_ids}", placeholders)
+    record: dict[str, object] = {
+        "sql": query,
+        "parameters": bindings,
+        "status": "prepared",
+    }
+    batches.append(record)
+    result = list(client.query(query, bindings))
+    record.update({"rows": result, "status": "returned"})
+    if len(result) != 1:
+        raise AttributionExecutionError("row direct SQL must return one scalar row")
+    _verify_calculation_population(result, set(batch))
+    return result[0], bindings
+
+
+def _add_direct_row_totals(
+    totals: dict[str, str | int | bool | None], result: Mapping[str, object]
+) -> None:
+    excluded = {
+        "selected_event_ids",
+        "immutable_payload_count",
+        "project_digests",
+        "distinct_projects",
+    }
+    for key in result:
+        if key not in excluded:
+            totals[key] = (
+                _count(totals, key) + _count(result, key) if key in totals else _count(result, key)
+            )
+
+
+def _direct_row_projects(result: Mapping[str, object]) -> set[str]:
+    project_ids = result.get("project_digests")
+    if not isinstance(project_ids, list) or any(
+        not isinstance(value, str) or not value or value == "none" for value in project_ids
+    ):
+        raise AttributionExecutionError("remote row lacks distinct project identities")
+    if len(set(project_ids)) != _count(result, "distinct_projects"):
+        raise AttributionExecutionError("remote distinct project population mismatch")
+    return set(project_ids)
+
+
 def direct_row_calculations(
     client: _RemoteClient,
     rows: Sequence[AttributionRowAuthority],
-    event_ids: Mapping[tuple[str, str], Mapping[str, str]],
+    event_ids: Mapping[tuple[str, str, str, str, str], Mapping[str, str]],
     window: ExtractionWindow,
-) -> dict[tuple[str, str], Mapping[str, str | int | bool | None]]:
-    """Execute only the row-specific A07/A08/A09 projections."""
-    output: dict[tuple[str, str], Mapping[str, str | int | bool | None]] = {}
-    for row in rows:
-        ids = event_ids[(row.row_id, row.producer)]
-        placeholders = ", ".join(f"{{event_{i}:String}}" for i in range(3))
-        sql = _A07_SQL if row.row_id == "A07" else _A08_SQL if row.row_id == "A08" else _A09_SQL
+    *,
+    query_evidence: dict[str, object],
+) -> dict[tuple[str, str], _RowDirectCalculation]:
+    """Merge disjoint row counts; union project identities, never distinct counts."""
+    output: dict[tuple[str, str], _RowDirectCalculation] = {}
+    for (row_id, producer), ids in _group_row_event_ids(rows, event_ids).items():
+        if len(set(ids)) != len(ids):
+            raise AttributionExecutionError("row population contains duplicate immutable IDs")
+        sql = _A07_SQL if row_id == "A07" else _A08_SQL if row_id == "A08" else _A09_SQL
         parameters: dict[str, str | int] = {
-            "start_ns": int(window.start.timestamp() * 1e9),
-            "end_ns": int(window.end.timestamp() * 1e9),
-            **{f"event_{index}": value for index, value in enumerate(ids.values())},
+            "start_ns": _epoch_ns(window.start),
+            "end_ns": _epoch_ns(window.end),
         }
-        result = list(client.query(sql.replace("{event_ids}", placeholders), parameters))
-        if len(result) != 1:
-            raise AttributionExecutionError("row direct SQL must return one scalar row")
-        output[(row.row_id, row.producer)] = {
-            key: _row_value(value) for key, value in result[0].items()
-        }
+        totals: dict[str, str | int | bool | None] = {}
+        projects: set[str] = set()
+        batches: list[Mapping[str, object]] = []
+        query_evidence[f"{row_id}.{producer}"] = {"batches": batches, "result": totals}
+        for offset in range(0, len(ids), 512):
+            result, bindings = _direct_row_result(
+                client, sql, parameters, (offset, ids[offset : offset + 512]), batches
+            )
+            _add_direct_row_totals(totals, result)
+            if row_id == "A08":
+                projects.update(_direct_row_projects(result))
+            parameters.update(bindings)
+        if row_id == "A08":
+            totals["distinct_projects"] = len(projects)
+        output[(row_id, producer)] = _RowDirectCalculation(parameters, totals)
     return output
 
 
@@ -1053,10 +1436,8 @@ def _blocked_row(
         experiment_id,
         row_id,
         producer,
-        None,
         AttributionRowState.BLOCKED,
         reason,
-        None,
         None,
         None,
         None,
@@ -1085,41 +1466,67 @@ def _app_server_rows(
     ]
 
 
+def _epoch_ns(value: datetime) -> int:
+    delta = value.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
 def run(
     *, run_id: str, start: datetime, end: datetime, output: Path, config: AppConfig | None = None
 ) -> RunEnvelope:
     validate_run_id(run_id)
     output = validate_output_path(output)
+    if output.exists():
+        raise AttributionExecutionError("immutable evidence output already exists")
     window = ExtractionWindow(start, end)
     config = config or load_config()
     endpoint = validate_loopback_endpoint(config.signoz.otlp_http_endpoint)
     request = LiveProofRequest(run_id, start, end)
     connection = sqlite3.connect(f"file:{config.database.path}?mode=rw", uri=True)
+    evidence: tuple[AttributionLiveEvidence, ...] = ()
+    primitives: tuple[DerivedEvent, ...] = ()
+    row_events: tuple[DerivedEvent, ...] = ()
+    results: tuple[DerivedEvent, ...] = ()
+    calculation_queries: dict[str, object] = {}
+    stage = "source_extraction"
     try:
+        connection.execute("BEGIN")
         evidence = extract_live(connection, request)
         baseline_rows = baseline_row_evidence_inputs(connection, request)
+        connection.commit()
         primitives = primitive_events(evidence, run_id, window)
+        row_events = row_primitive_events(baseline_rows, run_id, window)
         client = ClickHouseClient(
             docker_context=config.signoz.docker_context,
             container=config.signoz.clickhouse_container,
         )
-        enqueue_events(connection, list(primitives))
-        pd = _exact_drain(connection, primitives, endpoint)
-        _verify_ids(client, primitives)
-        remote = remote_calculations(client, primitives, window, run_id)
+        stage = "primitive_delivery"
+        pd = _deliver_exact_events(connection, client, primitives, endpoint)
+        stage = "aggregate_calculation"
+        remote = remote_calculations(
+            client,
+            primitives,
+            window,
+            run_id,
+            query_evidence=calculation_queries,
+        )
         proofs = _final_proofs(evidence, remote)
-        if any(p.result is ExperimentResult.FAILED for p in proofs):
+        if any(proof.result is ExperimentResult.FAILED for proof in proofs):
             raise AttributionExecutionError("remote calculation reconciliation mismatch")
+        stage = "result_delivery"
         results = result_events(proofs, run_id, window)
-        enqueue_events(connection, list(results))
-        rd = _exact_drain(connection, results, endpoint)
-        _verify_ids(client, results)
-        row_events = row_primitive_events(baseline_rows, run_id, window)
-        enqueue_events(connection, list(row_events))
-        _exact_drain(connection, row_events, endpoint)
-        _verify_ids(client, row_events)
+        rd = _deliver_exact_events(connection, client, results, endpoint)
+        stage = "row_delivery"
+        row_drain = _deliver_exact_events(connection, client, row_events, endpoint)
         row_ids = delivered_row_ids(baseline_rows, row_events)
-        direct_rows = direct_row_calculations(client, baseline_rows, row_ids, window)
+        stage = "row_calculation"
+        direct_rows = direct_row_calculations(
+            client,
+            baseline_rows,
+            row_ids,
+            window,
+            query_evidence=calculation_queries,
+        )
         obligations = row_obligations(
             tuple(replace(item, proof=proof) for item, proof in zip(evidence, proofs, strict=True)),
             baseline_rows,
@@ -1131,8 +1538,8 @@ def run(
             run_id,
             window,
             proofs,
-            tuple(e.event_id for e in primitives),
-            tuple(e.event_id for e in results),
+            tuple(event.event_id for event in primitives),
+            tuple(event.event_id for event in results),
             _local_oracle(evidence),
             remote,
             {
@@ -1140,14 +1547,48 @@ def run(
                 "primitive_delivered": pd["delivered"],
                 "result_selected": rd["selected"],
                 "result_delivered": rd["delivered"],
+                "row_selected": row_drain["selected"],
+                "row_delivered": row_drain["delivered"],
             },
             obligations,
+            tuple(event.event_id for event in row_events),
+            calculation_queries,
         )
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(envelope.canonical_json() + "\n", encoding="utf-8")
+        stage = "evidence_write"
+        _write_evidence(output, envelope.canonical_json())
         return envelope
+    except BaseException as error:
+        if not output.exists():
+            _write_evidence(
+                output,
+                _canonical_envelope_json(
+                    {
+                        "namespace": NAMESPACE,
+                        "run_id": run_id,
+                        "status": "failed",
+                        "recorded_at": datetime.now(UTC).isoformat(),
+                        "failed_stage": stage,
+                        "error_type": type(error).__name__,
+                        "window": {"start": start.isoformat(), "end": end.isoformat()},
+                        "event_map": {
+                            "primitive": [event.event_id for event in primitives],
+                            "row": [event.event_id for event in row_events],
+                            "result": [event.event_id for event in results],
+                        },
+                        "domain_local_oracle": _local_oracle(evidence),
+                        "calculation_queries": calculation_queries,
+                    }
+                ),
+            )
+        raise
     finally:
         connection.close()
+
+
+def _write_evidence(output: Path, payload: str) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x", encoding="utf-8") as handle:
+        handle.write(payload + "\n")
 
 
 def _reject_unsafe(value: object, *, top_level: bool = False) -> None:
@@ -1188,11 +1629,9 @@ _ROW_PAYLOAD_FIELDS = frozenset(
         "experiment_id",
         "row_id",
         "producer",
-        "native_session_id",
         "state",
         "blocked_reason",
-        "event_id_inputs",
-        "event_ids",
+        "members",
         "direct_remote_sql_parameters",
         "direct_remote_sql_parameter_types",
         "direct_remote_result",
@@ -1215,20 +1654,35 @@ def _reject_row_obligations(value: object) -> None:
 
 
 def _canonical_row_evidence(value: object) -> AttributionRowEvidence:
+    from experiments.dashboard_prototype.attribution_common import AttributionRowMemberEvidence
+
     if not isinstance(value, Mapping) or {str(key) for key in value} != _ROW_PAYLOAD_FIELDS:
         raise AttributionExecutionError("row obligation must have the complete canonical schema")
     if any(not isinstance(key, str) for key in value):
         raise AttributionExecutionError("row obligation field names must be exact strings")
+    raw_members = value["members"]
     try:
+        members = (
+            None
+            if raw_members is None
+            else tuple(
+                AttributionRowMemberEvidence(
+                    item["native_session_id"],
+                    item["source_id"],
+                    item["reducer_id"],
+                    item["event_id_inputs"],
+                    item["event_ids"],
+                )
+                for item in raw_members
+            )
+        )
         row = AttributionRowEvidence(
             AttributionExperimentId(value["experiment_id"]),
             value["row_id"],
             value["producer"],
-            value["native_session_id"],
             AttributionRowState(value["state"]),
             value["blocked_reason"],
-            value["event_id_inputs"],
-            value["event_ids"],
+            members,
             value["direct_remote_sql_parameters"],
             value["direct_remote_sql_parameter_types"],
             value["direct_remote_result"],
@@ -1242,7 +1696,7 @@ def _canonical_row_evidence(value: object) -> AttributionRowEvidence:
         raise AttributionExecutionError("invalid canonical row obligation") from error
     if value["deterministic_id"] != row.deterministic_id():
         raise AttributionExecutionError("row obligation deterministic ID is invalid")
-    for field in _ROW_PAYLOAD_FIELDS - {"native_session_id", "event_id_inputs"}:
+    for field in _ROW_PAYLOAD_FIELDS - {"members"}:
         _reject_unsafe(value[field])
     return row
 

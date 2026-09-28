@@ -53,7 +53,7 @@ def resolve_attribution(
     source_at: datetime,
     clock_skew_seconds: int = 0,
 ) -> Attribution:
-    """Resolve exactly one half-open session-context interval or one fixed reason."""
+    """Resolve attribution through the producer's supported session context."""
     if source_at.tzinfo is None:
         raise ValueError("source time must be timezone-aware")
     if clock_skew_seconds < 0:
@@ -62,49 +62,7 @@ def resolve_attribution(
         correlation_id
     ):
         return Attribution("unresolved", None, "session_context", None, _MISSING_CORRELATION)
-    rows = connection.execute(
-        """
-        SELECT event_id, project_id
-        FROM session_context_intervals AS interval
-        WHERE producer = ? AND session_id = ? AND started_at <= ?
-          AND (ended_at IS NULL OR ? < ended_at)
-          AND NOT EXISTS (
-              SELECT 1 FROM session_context_event_supersessions AS supersession
-              WHERE supersession.original_event_id = interval.event_id
-                 OR supersession.original_event_id = interval.end_event_id
-          )
-        """,
-        (
-            producer,
-            correlation_id,
-            source_at.astimezone(UTC).isoformat(),
-            source_at.astimezone(UTC).isoformat(),
-        ),
-    ).fetchall()
-    if not rows and clock_skew_seconds:
-        rows = connection.execute(
-            """
-            SELECT interval.event_id, interval.project_id
-            FROM session_context_intervals AS interval
-            JOIN session_context_events AS event ON event.event_id = interval.event_id
-            WHERE interval.producer = ? AND interval.session_id = ?
-              AND event.event_type = 'session_start'
-              AND ? < interval.started_at AND interval.started_at <= ?
-              AND NOT EXISTS (
-                  SELECT 1 FROM session_context_event_supersessions AS supersession
-                  WHERE supersession.original_event_id = interval.event_id
-                     OR supersession.original_event_id = interval.end_event_id
-              )
-            """,
-            (
-                producer,
-                correlation_id,
-                source_at.astimezone(UTC).isoformat(),
-                (source_at.astimezone(UTC) + timedelta(seconds=clock_skew_seconds)).isoformat(),
-            ),
-        ).fetchall()
-    method = "session_context_interval"
-    if not rows and producer == "codex-cli":
+    if producer == "codex-cli":
         rows = connection.execute(
             """
             SELECT MIN(event_id), project_id
@@ -119,6 +77,46 @@ def resolve_attribution(
             (producer, correlation_id),
         ).fetchall()
         method = "session_context"
+    else:
+        source_at_utc = source_at.astimezone(UTC)
+        source_time = source_at_utc.isoformat()
+        rows = connection.execute(
+            """
+            SELECT event_id, project_id
+            FROM session_context_intervals AS interval
+            WHERE producer = ? AND session_id = ? AND started_at <= ?
+              AND (ended_at IS NULL OR ? < ended_at)
+              AND NOT EXISTS (
+                  SELECT 1 FROM session_context_event_supersessions AS supersession
+                  WHERE supersession.original_event_id = interval.event_id
+                     OR supersession.original_event_id = interval.end_event_id
+              )
+            """,
+            (producer, correlation_id, source_time, source_time),
+        ).fetchall()
+        if not rows and clock_skew_seconds:
+            rows = connection.execute(
+                """
+                SELECT interval.event_id, interval.project_id
+                FROM session_context_intervals AS interval
+                JOIN session_context_events AS event ON event.event_id = interval.event_id
+                WHERE interval.producer = ? AND interval.session_id = ?
+                  AND event.event_type = 'session_start'
+                  AND ? < interval.started_at AND interval.started_at <= ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM session_context_event_supersessions AS supersession
+                      WHERE supersession.original_event_id = interval.event_id
+                         OR supersession.original_event_id = interval.end_event_id
+                  )
+                """,
+                (
+                    producer,
+                    correlation_id,
+                    source_time,
+                    (source_at_utc + timedelta(seconds=clock_skew_seconds)).isoformat(),
+                ),
+            ).fetchall()
+        method = "session_context_interval"
     if not rows:
         return Attribution("unresolved", None, "session_context", None, _NO_CONTEXT_INTERVAL)
     if len(rows) != 1:
@@ -145,7 +143,7 @@ def resolve_metric_attribution(
         source_at=source_at,
         clock_skew_seconds=delivery_grace_seconds,
     )
-    if attribution.reason_code != _NO_CONTEXT_INTERVAL:
+    if producer == "codex-cli" or attribution.reason_code != _NO_CONTEXT_INTERVAL:
         return attribution
     source_at_utc = source_at.astimezone(UTC)
     grace_start = source_at_utc - timedelta(seconds=delivery_grace_seconds)

@@ -1,0 +1,42 @@
+{
+  "completed_at": "2026-09-05T00:29:41.775648+00:00",
+  "finding_capture_artifact": "recurrence-finding-20260905T002927199064Z-5ad8a92c-3b05-4bcd-aea0-023136adf389.sqlite",
+  "finding_capture_sha256": "3adcab8ca2c8f6395a9cd77872ef2c17016a6d089ba77fd51b0791d0fe19a989",
+  "finding_task_authority": [
+    {
+      "count": 17,
+      "reason": "historical_detector_event"
+    }
+  ],
+  "finding_window_authority": {
+    "memberships_with_observed_window": 0,
+    "total_memberships": 17
+  },
+  "isolated_collector_records": 329,
+  "matrix_promoted": false,
+  "outcome": {
+    "conservation": {
+      "attributed": 166,
+      "blocked": 0,
+      "expected_rejection": 0,
+      "failed": 36,
+      "included": 202
+    },
+    "logs": 271,
+    "observations": 0,
+    "recovered_interrupted_scan_runs": 0,
+    "session_context_events": 1,
+    "source_sessions": 202,
+    "status": "succeeded",
+    "telemetry_delivered": 204,
+    "telemetry_pending": 1,
+    "traces": 1812,
+    "trend_evaluations": 0
+  },
+  "production_telemetry_delivered": false,
+  "result": "Succeeded",
+  "run_id": "metric-proof-scan-20260905T002927198973Z-ffd2c8c1245f",
+  "source_population_artifact": "metric-proof-scan-20260905T002927198973Z-ffd2c8c1245f-sources.json",
+  "source_population_sha256": "de0111659984c80f4988a2cfce4c5b95151d7f961abfe9b39ae752c13fe7533c",
+  "started_at": "2026-09-05T00:29:27.199082+00:00"
+}

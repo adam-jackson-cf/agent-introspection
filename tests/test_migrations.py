@@ -29,13 +29,36 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
             )
         }
         assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        observations = connection.execute(
+            """
+            SELECT observation.operation, observation.state, observation.verification,
+                   outbox.event_id
+            FROM backup_observations AS observation
+            JOIN otlp_outbox AS outbox ON outbox.event_id = observation.event_id
+            """
+        ).fetchall()
+        expected_operations = {
+            f"pre-migration-v{migration.version}"
+            for migration in applied
+            if migration.version >= 18
+        }
+        assert len(observations) == len(expected_operations)
+        assert {row[:3] for row in observations} == {
+            (operation, "succeeded", "ok") for operation in expected_operations
+        }
+        assert {row[3] for row in observations} == {
+            row[0] for row in connection.execute("SELECT event_id FROM otlp_outbox")
+        }
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         connection.close()
 
-    assert len(MIGRATIONS) == len(applied) == 17
+    assert tuple(migration.version for migration in applied) == tuple(
+        migration.version for migration in MIGRATIONS
+    )
     assert all(migration.backup_path.is_file() for migration in applied)
     assert tables == {
+        "backup_observations",
         "canonical_activities",
         "canonical_activity_outbox_evidence",
         "canonical_activity_versions",
@@ -62,6 +85,15 @@ def test_canonical_migration_creates_current_runtime_schema_without_retired_obje
         "raw_source_window_completions",
         "review_sessions",
         "scan_runs",
+        "pipeline_final_drain_attempts",
+        "pipeline_final_drain_pending_events",
+        "pipeline_final_drain_selected_events",
+        "pipeline_final_drains",
+        "pipeline_integrity_audits",
+        "pipeline_lifecycle_interval_versions",
+        "pipeline_lifecycle_supersessions",
+        "pipeline_snapshot_oracle",
+        "scan_execution_inputs",
         "scheduler_leases",
         "semantic_classifications",
         "session_context_event_supersessions",

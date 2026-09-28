@@ -9,7 +9,8 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -39,6 +40,23 @@ from agent_introspection.detectors import DetectorEngine, DetectorEvent, Observa
 from agent_introspection.identities import ProjectIdentity, canonical_task
 from agent_introspection.normalization import NormalizationError, normalize_tool_operation
 from agent_introspection.outcomes import derive_outcome
+from agent_introspection.pipeline_delivery import (
+    FinalDrainResult,
+    capture_final_drain,
+    enqueue_final_drain_projection,
+)
+from agent_introspection.pipeline_integrity import (
+    INTEGRITY_INCIDENT_EVENT,
+    capture_remote_integrity,
+)
+from agent_introspection.pipeline_observations import (
+    capture_lifecycle_authority,
+    capture_maintenance,
+    capture_source_lag,
+    record_observation_events,
+    source_lag_events,
+)
+from agent_introspection.pipeline_runtime import implementation_fingerprint
 from agent_introspection.session_context import drain_inbox, inbox_path
 from agent_introspection.source import (
     CANONICAL_SERVICE_PRODUCERS,
@@ -53,7 +71,6 @@ from agent_introspection.telemetry import (
     OPERATIONAL_SCOPE,
     CanonicalActivityVersionEvent,
     DerivedEvent,
-    drain_outbox,
     enqueue_canonical_activity_version,
     enqueue_events,
 )
@@ -65,6 +82,12 @@ from agent_introspection.trends import (
 
 class ScanError(RuntimeError):
     """A scan cannot safely commit its extraction window."""
+
+
+def _datetime_ns(value: datetime) -> int:
+    utc = value.astimezone(UTC)
+    delta = utc - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 class ScanDeadlineError(ScanError):
@@ -129,8 +152,16 @@ class _PipelineSnapshotRequest:
     hydration: PipelineStream
     finished_ns: int
     duration_ms: float
-    rows_processed: int
-    pending_after_drain: int
+    rows_processed: int | None
+    logs_count: int | None
+    traces_count: int | None
+    context_events_count: int | None
+    canonical_activities_count: int | None
+    pending_after_drain: int | None
+    failed_during_drain: int | None
+    runtime_identity: str
+    schedule_interval_seconds: int
+    schedule_timezone: str
 
 
 def _snapshot_attributes(
@@ -143,6 +174,7 @@ def _snapshot_attributes(
     logs_lag_state, logs_lag_ms = logs_lag
     traces_lag_state, traces_lag_ms = traces_lag
     attributes: dict[str, str | int | float | bool] = {
+        "pipeline.payload_schema_version": 2,
         "pipeline.state": _pipeline_state(
             terminal_status=request.terminal_status,
             freshness=freshness,
@@ -151,6 +183,11 @@ def _snapshot_attributes(
             hydration=request.hydration,
         ),
         "scan.terminal_status": request.terminal_status,
+        "scan.completed_at_ns": str(request.finished_ns),
+        "scan.extraction_bound_ns": str(request.end_ns),
+        "scan.runtime_identity": request.runtime_identity,
+        "scan.schedule_interval_seconds": request.schedule_interval_seconds,
+        "scan.schedule_timezone": request.schedule_timezone,
         "pipeline.freshness": freshness,
         "logs.query_status": request.logs.query_status,
         "logs.data_state": request.logs.data_state,
@@ -161,18 +198,57 @@ def _snapshot_attributes(
         "logs.lag_state": logs_lag_state,
         "traces.lag_state": traces_lag_state,
         "scan.duration_ms": request.duration_ms,
-        "rows.processed": request.rows_processed,
-        "outbox.pending_after_drain_excluding_terminal_event": request.pending_after_drain,
+        "rows.data_state": ("records" if request.rows_processed else "no_data")
+        if request.rows_processed is not None
+        else "unknown",
+        "context.data_state": ("records" if request.context_events_count else "no_data")
+        if request.context_events_count is not None
+        else "unknown",
+        "canonical.activities_data_state": (
+            "records" if request.canonical_activities_count else "no_data"
+        )
+        if request.canonical_activities_count is not None
+        else "unknown",
+        "outbox.drain_state": (
+            "completed" if request.pending_after_drain is not None else "unavailable"
+        ),
     }
+    measured_counts = (
+        ("rows.processed", request.rows_processed),
+        ("logs.count", request.logs_count),
+        ("traces.count", request.traces_count),
+        ("context.events_count", request.context_events_count),
+        ("canonical.activities_count", request.canonical_activities_count),
+    )
+    attributes.update({key: value for key, value in measured_counts if value is not None})
     optional = (
+        ("outbox.pending_after_drain", request.pending_after_drain),
+        ("outbox.failed_during_drain", request.failed_during_drain),
         ("pipeline.error_class", request.error_class),
-        ("logs.latest_timestamp_ns", request.logs.latest_timestamp_ns),
-        ("traces.latest_timestamp_ns", request.traces.latest_timestamp_ns),
+        (
+            "logs.latest_timestamp_ns",
+            None
+            if request.logs.latest_timestamp_ns is None
+            else str(request.logs.latest_timestamp_ns),
+        ),
+        (
+            "traces.latest_timestamp_ns",
+            None
+            if request.traces.latest_timestamp_ns is None
+            else str(request.traces.latest_timestamp_ns),
+        ),
         ("logs.lag_ms", logs_lag_ms),
         ("traces.lag_ms", traces_lag_ms),
     )
     attributes.update({key: value for key, value in optional if value is not None})
     return attributes
+
+
+def _pipeline_runtime_identity(config: AppConfig) -> str:
+    """Return a stable redacted scanner identity, never a filesystem path."""
+    return hashlib.sha256(
+        f"{config.database.path.resolve()}|{config.signoz.clickhouse_container}".encode()
+    ).hexdigest()
 
 
 def _stream_lag(stream: PipelineStream, *, finished_ns: int) -> tuple[str, int | None]:
@@ -245,12 +321,9 @@ def _pipeline_snapshot_event(request: _PipelineSnapshotRequest) -> DerivedEvent:
         event_sequence=1,
         event_name="introspection.pipeline.snapshot",
         attributes=_snapshot_attributes(
-            request,
-            freshness=freshness,
-            logs_lag=logs_lag,
-            traces_lag=traces_lag,
+            request, freshness=freshness, logs_lag=logs_lag, traces_lag=traces_lag
         ),
-        timestamp_ns=request.end_ns,
+        timestamp_ns=request.finished_ns,
     )
 
 
@@ -772,7 +845,8 @@ def _source_session_current(
         for current in connection.execute(
             f"""SELECT source_kind, service_name, source_id, version, terminal_outcome,
             terminal_reason, context_evidence_id, project_id, project_name,
-            project_root, project_kind, projection_event_id FROM source_session_current
+            project_root, project_kind, projection_event_id, source_timestamp_ns,
+            conversation_ids_json FROM source_session_current
             WHERE (source_kind, service_name, source_id) IN ({placeholders})""",
             parameters,
         ):
@@ -793,7 +867,6 @@ def _source_session_attributes(
         "source.signal": row.source_kind,
         "source.service": row.service_name,
         "source.record.id": row.source_id,
-        "source.timestamp_ns": int(row.source_timestamp.timestamp() * 1_000_000_000),
         "source.native_key.status": row.session_status,
         "source.session_group.id": _source_session_group_id(row),
         "source.inclusion.status": "included",
@@ -811,6 +884,10 @@ def _source_session_attributes(
             }
         )
     optional = (
+        (
+            "source.timestamp_ns",
+            str(row.source_timestamp_ns) if row.source_timestamp_ns is not None else None,
+        ),
         ("source.context.evidence_id", evidence_id),
         ("agent.project.id", project_id),
         ("agent.project.name", project_name),
@@ -823,12 +900,13 @@ def _source_session_attributes(
     return attributes
 
 
-def _source_session_identifiers(row: SourceSessionRow) -> tuple[str, str, str, str]:
+def _source_session_identifiers(row: SourceSessionRow) -> tuple[str, str, str, str, str]:
     return (
         json.dumps(row.session_ids, separators=(",", ":")),
         json.dumps(row.thread_ids, separators=(",", ":")),
         json.dumps(row.legacy_thread_ids, separators=(",", ":")),
         json.dumps(row.gen_ai_conversation_ids, separators=(",", ":")),
+        json.dumps(row.conversation_ids, separators=(",", ":")),
     )
 
 
@@ -838,7 +916,7 @@ def _append_source_session_change(request: _SourceSessionChangeRequest) -> tuple
     projection_event_id = hashlib.sha256(
         f"{_source_session_identity(row)}\x1f{version}".encode()
     ).hexdigest()
-    source_timestamp_ns = int(row.source_timestamp.timestamp() * 1_000_000_000)
+    source_timestamp_ns = _datetime_ns(row.source_timestamp)
     request.state.events.append(
         DerivedEvent(
             scope="source-session",
@@ -872,6 +950,7 @@ def _append_source_session_change(request: _SourceSessionChangeRequest) -> tuple
             *request.projection,
             projection_event_id,
             row.source_timestamp.isoformat(),
+            str(row.source_timestamp_ns) if row.source_timestamp_ns is not None else None,
             *_source_session_identifiers(row),
             *(native_key if native_key is not None else (None, None)),
             request.state.persisted_at,
@@ -881,6 +960,8 @@ def _append_source_session_change(request: _SourceSessionChangeRequest) -> tuple
         version,
         *request.projection,
         projection_event_id,
+        str(row.source_timestamp_ns) if row.source_timestamp_ns is not None else None,
+        json.dumps(row.conversation_ids, separators=(",", ":")),
     )
     return version, projection_event_id
 
@@ -900,6 +981,7 @@ def _append_source_session_record(
                 row.service_name,
                 row.source_id,
                 row.source_timestamp.isoformat(),
+                str(row.source_timestamp_ns) if row.source_timestamp_ns is not None else None,
                 *_source_session_identifiers(row),
                 *projection,
                 projection_event_id,
@@ -924,7 +1006,13 @@ def _persist_source_session_row(
     key = row.source_kind, row.service_name, row.source_id
     projection = _source_session_projection(terminal)
     current = state.current_by_key.get(key)
-    if current is not None and tuple(current[1:8]) == projection:
+    if (
+        current is not None
+        and tuple(current[1:8]) == projection
+        and current[9]
+        == (str(row.source_timestamp_ns) if row.source_timestamp_ns is not None else None)
+        and current[10] == json.dumps(row.conversation_ids, separators=(",", ":"))
+    ):
         version, projection_event_id = int(cast(int, current[0])), str(current[8])
     else:
         version, projection_event_id = _append_source_session_change(
@@ -957,10 +1045,11 @@ def _flush_source_session_persistence(
             INSERT INTO source_session_current (
                 source_kind, service_name, source_id, version, terminal_outcome, terminal_reason,
                 context_evidence_id, project_id, project_name, project_root, project_kind,
-                projection_event_id, source_timestamp, session_ids_json, thread_ids_json,
-                legacy_thread_ids_json, gen_ai_conversation_ids_json, native_producer,
-                native_session_id, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                projection_event_id, source_timestamp, source_timestamp_ns,
+                session_ids_json, thread_ids_json, legacy_thread_ids_json,
+                gen_ai_conversation_ids_json, conversation_ids_json,
+                native_producer, native_session_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_kind, service_name, source_id) DO UPDATE SET
                 version = excluded.version, terminal_outcome = excluded.terminal_outcome,
                 terminal_reason = excluded.terminal_reason,
@@ -969,6 +1058,8 @@ def _flush_source_session_persistence(
                 project_root = excluded.project_root, project_kind = excluded.project_kind,
                 projection_event_id = excluded.projection_event_id,
                 source_timestamp = excluded.source_timestamp,
+                source_timestamp_ns = excluded.source_timestamp_ns,
+                conversation_ids_json = excluded.conversation_ids_json,
                 session_ids_json = excluded.session_ids_json,
                 thread_ids_json = excluded.thread_ids_json,
                 legacy_thread_ids_json = excluded.legacy_thread_ids_json,
@@ -984,11 +1075,12 @@ def _flush_source_session_persistence(
             """
             INSERT INTO source_session_records (
                 scan_run_id, source_kind, service_name, source_id, source_timestamp,
-                session_ids_json, thread_ids_json, legacy_thread_ids_json,
-                gen_ai_conversation_ids_json, terminal_outcome, terminal_reason,
+                source_timestamp_ns, session_ids_json, thread_ids_json, legacy_thread_ids_json,
+                gen_ai_conversation_ids_json, conversation_ids_json, terminal_outcome,
+                terminal_reason,
                 context_evidence_id, project_id, project_name, project_root, project_kind,
                 projection_event_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             state.records,
         )
@@ -1206,7 +1298,8 @@ def _persist_canonical_activities(
     activities: list[CanonicalActivity],
     *,
     now: datetime,
-) -> tuple[list[str], list[TrendEvaluation]]:
+) -> tuple[list[str], list[str], list[TrendEvaluation]]:
+    persisted_ids: list[str] = []
     changed_ids: list[str] = []
     for activity in activities:
         source_at = datetime.fromtimestamp(activity.source_ended_at_ns / 1_000_000_000, tz=UTC)
@@ -1218,6 +1311,7 @@ def _persist_canonical_activities(
         ).canonical(created_at=_iso_now())
         _persist_attribution_project(connection, attribution)
         write = persist_canonical_activity(connection, activity, attribution)
+        persisted_ids.append(write.activity_id)
         attributes = canonical_activity_event_attributes(connection, activity, attribution)
         enqueue_canonical_activity_version(
             connection,
@@ -1253,7 +1347,7 @@ def _persist_canonical_activities(
             """.format(",".join("?" for _ in changed_ids)),
             (_iso_now(), *changed_ids),
         )
-    return changed_ids, evaluations
+    return persisted_ids, changed_ids, evaluations
 
 
 def _canonical_activity_from_storage(row: tuple[Any, ...]) -> CanonicalActivity:
@@ -1350,7 +1444,7 @@ def _reconcile_late_source_sessions(
             """
             SELECT source_kind, source_id, source_timestamp, service_name,
                    session_ids_json, thread_ids_json, legacy_thread_ids_json,
-                   gen_ai_conversation_ids_json
+                   gen_ai_conversation_ids_json, conversation_ids_json, source_timestamp_ns
             FROM source_session_current
             WHERE native_producer = ? AND native_session_id = ?
             """,
@@ -1360,7 +1454,7 @@ def _reconcile_late_source_sessions(
             source_kind = str(raw[0])
             if source_kind not in ("log", "trace", "metric"):
                 raise ScanError("current raw source session has invalid source kind")
-            if any(value is None for value in raw[2:]):
+            if any(value is None for value in raw[2:8]):
                 raise ScanError("current raw source session lacks durable native-key payload")
             row = SourceSessionRow(
                 source_kind=cast(Literal["log", "trace", "metric"], source_kind),
@@ -1371,6 +1465,8 @@ def _reconcile_late_source_sessions(
                 thread_ids=tuple(json.loads(str(raw[5]))),
                 legacy_thread_ids=tuple(json.loads(str(raw[6]))),
                 gen_ai_conversation_ids=tuple(json.loads(str(raw[7]))),
+                conversation_ids=tuple(json.loads(str(raw[8]))) if raw[8] is not None else (),
+                source_timestamp_ns=int(str(raw[9])) if raw[9] is not None else None,
             )
             if row.session_status != "exact" or row.native_session_ids[0] != session_id:
                 continue
@@ -1511,8 +1607,104 @@ class _SourceAcquisition:
 @dataclass(frozen=True, slots=True)
 class _DetectorPersistence:
     activities: list[CanonicalActivity]
+    canonical_activity_ids: list[str]
     trend_evaluations: list[TrendEvaluation]
     source_conservation: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class RecurrenceFindingScanObservation:
+    """One committed canonical finding/member snapshot for an experiment observer."""
+
+    scan_run_id: str
+    observed_at: datetime
+    evidence_start_ns: int | None
+    evidence_end_ns: int | None
+    evidence_window_definition: str | None
+    finding_version_source_id: str
+    membership_source_id: str
+    activity_version_source_id: str
+    activity_source_started_at_ns: int
+    activity_source_ended_at_ns: int
+    detector_id: str
+    detector_version: int
+    finding_fingerprint: str
+    finding_state: str
+    finding_occurrence_count: int
+    finding_canonical_task_count: int
+    finding_local_day_count: int
+    task_membership_state: str
+    native_task_id: str | None
+    producer: str
+    activity_version: int
+    latest_activity_version: int
+
+    def __post_init__(self) -> None:
+        if not self.scan_run_id or not self.detector_id or not self.finding_state:
+            raise ValueError("scan observation identity is required")
+        if (
+            not self.producer
+            or type(self.activity_version) is not int
+            or type(self.latest_activity_version) is not int
+            or self.activity_version < 1
+            or self.latest_activity_version < 1
+        ):
+            raise ValueError("scan observation requires exact activity versions and producer")
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+            raise ValueError("scan observation time must be timezone-aware")
+        for value, name in (
+            (self.finding_version_source_id, "finding version source ID"),
+            (self.membership_source_id, "membership source ID"),
+            (self.activity_version_source_id, "activity version source ID"),
+            (self.finding_fingerprint, "finding fingerprint"),
+        ):
+            if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+                raise ValueError(f"{name} must be a SHA-256 digest")
+        self._validate_native_membership()
+        self._validate_evaluation_window()
+        for numeric_value, name in (
+            (self.activity_source_started_at_ns, "activity source start"),
+            (self.activity_source_ended_at_ns, "activity source end"),
+            (self.detector_version, "detector version"),
+            (self.finding_occurrence_count, "finding occurrence count"),
+            (self.finding_canonical_task_count, "finding canonical task count"),
+            (self.finding_local_day_count, "finding local day count"),
+        ):
+            if (
+                isinstance(numeric_value, bool)
+                or not isinstance(numeric_value, int)
+                or numeric_value < 0
+            ):
+                raise ValueError(f"{name} must be a nonnegative integer")
+
+    def _validate_native_membership(self) -> None:
+        if self.native_task_id is not None and (
+            not self.native_task_id.startswith("thread:") or self.native_task_id == "thread:"
+        ):
+            raise ValueError("native task ID must retain an exact thread identity")
+        if self.task_membership_state not in (
+            "qualified",
+            "episode_task_identity",
+            "multiple_canonical_tasks",
+            "missing_detector_event",
+            "historical_detector_event",
+            "unbound_task_identity",
+        ):
+            raise ValueError("task membership state is not registered")
+        if (self.task_membership_state == "qualified") != (self.native_task_id is not None):
+            raise ValueError("qualified membership requires exactly one native task ID")
+
+    def _validate_evaluation_window(self) -> None:
+        if (self.evidence_start_ns is None) != (self.evidence_end_ns is None):
+            raise ValueError("finding evaluation bounds must be observed together")
+        if (self.evidence_start_ns is None) != (self.evidence_window_definition is None):
+            raise ValueError("finding evaluation window definition must be observed with bounds")
+        if self.evidence_window_definition not in (
+            None,
+            "rolling_utc_7d",
+            "europe_london_calendar_7d",
+        ):
+            raise ValueError("finding evaluation window definition is not registered")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1523,6 +1715,7 @@ class _DetectorPersistenceRequest:
     now: datetime
     window: _ScanWindow
     sources: _SourceAcquisition
+    experiment_observer: Callable[[tuple[RecurrenceFindingScanObservation, ...]], None] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1534,6 +1727,7 @@ class _LeasedScanRequest:
     scan_run_id: str
     started: float
     deadline: tuple[Any, tuple[float, float]]
+    experiment_observer: Callable[[tuple[RecurrenceFindingScanObservation, ...]], None] | None
 
 
 def _prepare_scan_window(
@@ -1570,17 +1764,18 @@ def _prepare_scan_window(
     )
 
 
-def _acquire_scan_sources(source: ClickHouseClient, window: _ScanWindow) -> _SourceAcquisition:
-    logs = list(source.logs(start_ns=window.start_ns, end_ns=window.end_ns))
-    logs_stream = PipelineStream(
-        query_status="available",
-        data_state="records" if logs else "no_data",
-        latest_timestamp_ns=max((log.timestamp_ns for log in logs), default=None),
+def _acquire_scan_sources(
+    source: ClickHouseClient, window: _ScanWindow, sources: _SourceAcquisition
+) -> _SourceAcquisition:
+    sources.logs.extend(source.logs(start_ns=window.start_ns, end_ns=window.end_ns))
+    sources.logs_stream.query_status = "available"
+    sources.logs_stream.data_state = "records" if sources.logs else "no_data"
+    sources.logs_stream.latest_timestamp_ns = max(
+        (log.timestamp_ns for log in sources.logs), default=None
     )
-    source_sessions: list[SourceSessionRow] = []
     if window.raw_source_window is not None:
         raw_start_ns, raw_end_ns = window.raw_source_window
-        source_sessions = list(
+        sources.source_sessions.extend(
             source.source_sessions(
                 start=datetime.fromtimestamp(raw_start_ns / 1_000_000_000, tz=UTC),
                 end=datetime.fromtimestamp(raw_end_ns / 1_000_000_000, tz=UTC),
@@ -1588,24 +1783,23 @@ def _acquire_scan_sources(source: ClickHouseClient, window: _ScanWindow) -> _Sou
                 end_ns=raw_end_ns,
             )
         )
-    traces = list(
+    sources.traces.extend(
         source.traces(
             start=datetime.fromtimestamp(window.start_ns / 1_000_000_000, tz=UTC),
             end=datetime.fromtimestamp(window.end_ns / 1_000_000_000, tz=UTC),
         )
     )
-    traces_stream = PipelineStream(
-        query_status="available",
-        data_state="records" if traces else "no_data",
-        latest_timestamp_ns=max(
-            (int(trace.ended_at.timestamp() * 1_000_000_000) for trace in traces),
-            default=None,
-        ),
+    sources.traces_stream.query_status = "available"
+    sources.traces_stream.data_state = "records" if sources.traces else "no_data"
+    sources.traces_stream.latest_timestamp_ns = max(
+        (int(trace.ended_at.timestamp() * 1_000_000_000) for trace in sources.traces),
+        default=None,
     )
-    hydration: list[HydrationRow] = []
-    shortlisted = _shortlisted_log_ids(logs, {trace.trace_id: trace for trace in traces})
+    shortlisted = _shortlisted_log_ids(
+        sources.logs, {trace.trace_id: trace for trace in sources.traces}
+    )
     for offset in range(0, len(shortlisted), 250):
-        hydration.extend(
+        sources.hydration.extend(
             source.hydrate(
                 HydrationRequest(
                     identity_kind="log_id",
@@ -1617,17 +1811,136 @@ def _acquire_scan_sources(source: ClickHouseClient, window: _ScanWindow) -> _Sou
                 )
             )
         )
-    return _SourceAcquisition(
-        logs=logs,
-        traces=traces,
-        hydration=hydration,
-        source_sessions=source_sessions,
-        logs_stream=logs_stream,
-        traces_stream=traces_stream,
-        hydration_stream=PipelineStream(
-            query_status="available", data_state="records" if hydration else "no_data"
-        ),
-    )
+    sources.hydration_stream.query_status = "available"
+    sources.hydration_stream.data_state = "records" if sources.hydration else "no_data"
+    return sources
+
+
+def _source_hash(*values: object) -> str:
+    return hashlib.sha256(
+        json.dumps(values, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _task_membership_authority(
+    *,
+    event_ids: tuple[str, ...],
+    event_index: dict[str, DetectorEvent],
+    activity_source_ended_at_ns: int,
+    window: _ScanWindow,
+) -> tuple[str, str | None]:
+    events = tuple(event_index[event_id] for event_id in event_ids if event_id in event_index)
+    if len(events) != len(event_ids):
+        state = (
+            "historical_detector_event"
+            if activity_source_ended_at_ns < window.start_ns
+            else "missing_detector_event"
+        )
+        return state, None
+    task_ids = {event.task_id for event in events}
+    if any(
+        not event.counts_as_distinct_task or event.task_id.startswith("episode:")
+        for event in events
+    ):
+        return "episode_task_identity", None
+    if any(not event.task_id.startswith("thread:") for event in events):
+        return "unbound_task_identity", None
+    if len(task_ids) != 1:
+        return "multiple_canonical_tasks", None
+    return "qualified", task_ids.pop()
+
+
+def _recurrence_finding_observations(
+    request: _DetectorPersistenceRequest,
+    evaluations: list[TrendEvaluation],
+    event_index: dict[str, DetectorEvent],
+) -> tuple[RecurrenceFindingScanObservation, ...]:
+    """Freeze active finding memberships from the recomputation transaction."""
+    evaluated = {evaluation.finding_id: evaluation for evaluation in evaluations}
+    connection = request.connection
+    rows = connection.execute(
+        """
+        SELECT f.id, f.entity_version, f.fingerprint, f.detector_id, f.detector_version,
+               f.trend_state, f.occurrence_count, f.canonical_task_count, f.local_day_count,
+               cfm.activity_id, cfm.rationale, cfm.created_at,
+               a.source_ended_at_ns, a.source_membership_json,
+               av.version,
+               (SELECT MAX(latest.version)
+                FROM canonical_activity_versions latest
+                WHERE latest.activity_id = a.id) AS latest_activity_version,
+               a.source_started_at_ns, a.producer
+        FROM findings f
+        JOIN canonical_finding_membership cfm ON cfm.finding_id = f.id
+        JOIN canonical_activities a ON a.id = cfm.activity_id
+        JOIN canonical_activity_versions av
+          ON av.activity_id = a.id
+         AND av.version = (
+             SELECT MAX(latest.version)
+             FROM canonical_activity_versions latest
+             WHERE latest.activity_id = a.id
+         )
+        WHERE f.is_active = 1
+        ORDER BY f.id, cfm.activity_id
+        """
+    ).fetchall()
+    frozen: list[RecurrenceFindingScanObservation] = []
+    for row in rows:
+        membership = json.loads(str(row[13]))
+        event_ids = tuple(sorted(str(event_id) for event_id in membership["event_ids"]))
+        activity_source_ended_at_ns = int(row[12])
+        task_membership_state, native_task_id = _task_membership_authority(
+            event_ids=event_ids,
+            event_index=event_index,
+            activity_source_ended_at_ns=activity_source_ended_at_ns,
+            window=request.window,
+        )
+        finding_id = str(row[0])
+        evaluation = evaluated.get(finding_id)
+        activity_id = str(row[9])
+        frozen.append(
+            RecurrenceFindingScanObservation(
+                scan_run_id=request.scan_run_id,
+                observed_at=request.now.astimezone(UTC),
+                evidence_start_ns=evaluation.window_started_at_ns if evaluation else None,
+                evidence_end_ns=evaluation.window_ended_at_ns if evaluation else None,
+                evidence_window_definition="rolling_utc_7d" if evaluation else None,
+                finding_version_source_id=_source_hash(
+                    "finding",
+                    finding_id,
+                    int(row[1]),
+                    str(row[2]),
+                    str(row[5]),
+                    int(row[6]),
+                    int(row[7]),
+                    int(row[8]),
+                ),
+                membership_source_id=_source_hash(
+                    "finding_membership",
+                    finding_id,
+                    activity_id,
+                    str(row[10]),
+                    str(row[11]),
+                ),
+                activity_version_source_id=_source_hash(
+                    "activity_version", activity_id, int(row[14])
+                ),
+                activity_source_started_at_ns=int(row[16]),
+                activity_source_ended_at_ns=activity_source_ended_at_ns,
+                finding_fingerprint=str(row[2]),
+                detector_id=str(row[3]),
+                detector_version=int(row[4]),
+                finding_state=str(row[5]),
+                finding_occurrence_count=int(row[6]),
+                finding_canonical_task_count=int(row[7]),
+                finding_local_day_count=int(row[8]),
+                task_membership_state=task_membership_state,
+                native_task_id=native_task_id,
+                producer=str(row[17]),
+                activity_version=int(row[14]),
+                latest_activity_version=int(row[15]),
+            )
+        )
+    return tuple(frozen)
 
 
 def _detect_and_persist(request: _DetectorPersistenceRequest) -> _DetectorPersistence:
@@ -1658,7 +1971,9 @@ def _detect_and_persist(request: _DetectorPersistenceRequest) -> _DetectorPersis
     ]
     connection.execute("BEGIN IMMEDIATE")
     _persist_source_rejections(connection, sources.traces)
-    _, trend_evaluations = _persist_canonical_activities(connection, activities, now=now)
+    canonical_activity_ids, _, trend_evaluations = _persist_canonical_activities(
+        connection, activities, now=now
+    )
     source_conservation = _persist_source_sessions(
         _SourceSessionPersistenceRequest(
             connection,
@@ -1681,27 +1996,21 @@ def _detect_and_persist(request: _DetectorPersistenceRequest) -> _DetectorPersis
         )
     _advance_activity_source_watermark(connection, end_ns=window.end_ns)
     _ensure_current_activity_outbox(connection)
-    connection.commit()
-    return _DetectorPersistence(activities, trend_evaluations, source_conservation)
-
-
-def _drain_scan_telemetry(connection: sqlite3.Connection, config: AppConfig) -> tuple[int, int]:
-    delivered = 0
-    for _ in range(20):
-        drain = drain_outbox(
-            connection,
-            endpoint=f"{config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
-            limit=500,
+    frozen_observations = (
+        _recurrence_finding_observations(
+            request,
+            trend_evaluations,
+            event_index=event_index,
         )
-        delivered += drain["delivered"]
-        if drain["selected"] == 0 or drain["delivered"] == 0:
-            break
-    pending = int(
-        connection.execute("SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'").fetchone()[
-            0
-        ]
+        if request.experiment_observer is not None
+        else ()
     )
-    return delivered, pending
+    connection.commit()
+    if request.experiment_observer is not None:
+        request.experiment_observer(frozen_observations)
+    return _DetectorPersistence(
+        activities, canonical_activity_ids, trend_evaluations, source_conservation
+    )
 
 
 def _scan_details(
@@ -1731,6 +2040,8 @@ def run_scan(
     *,
     client: ClickHouseClient | None = None,
     end_time: datetime | None = None,
+    experiment_observer: Callable[[tuple[RecurrenceFindingScanObservation, ...]], None]
+    | None = None,
 ) -> dict[str, Any]:
     """Run one fail-closed canonical extraction and reconciliation window."""
     started = time.monotonic()
@@ -1741,7 +2052,6 @@ def run_scan(
         docker_context=config.signoz.docker_context,
         container=config.signoz.clickhouse_container,
     )
-    quick_check(connection)
     scan_run_id = str(uuid.uuid4())
     deadline = _arm_scan_deadline()
     try:
@@ -1753,29 +2063,31 @@ def run_scan(
         raise
     try:
         return _run_leased_scan(
-            _LeasedScanRequest(connection, config, source, now, scan_run_id, started, deadline)
+            _LeasedScanRequest(
+                connection,
+                config,
+                source,
+                now,
+                scan_run_id,
+                started,
+                deadline,
+                experiment_observer,
+            )
         )
     finally:
         scheduler.release_lease(connection, lease)
 
 
-def _begin_scan_run(request: _LeasedScanRequest, snapshot_end_ns: int) -> _ScanWindow:
-    window = _prepare_scan_window(
-        request.connection,
-        config=request.config,
-        source=request.source,
-        end_ns=snapshot_end_ns,
-    )
+def _begin_scan_run(request: _LeasedScanRequest, snapshot_end_ns: int) -> None:
     with request.connection:
         request.connection.execute(
             """
             INSERT INTO scan_runs (
-                id, status, started_at, source_start_ns, source_end_ns, details_json
-            ) VALUES (?, 'running', ?, ?, ?, '{}')
+                id, status, started_at, source_end_ns, details_json
+            ) VALUES (?, 'running', ?, ?, '{}')
             """,
-            (request.scan_run_id, _iso_now(), window.start_ns, window.end_ns),
+            (request.scan_run_id, _iso_now(), snapshot_end_ns),
         )
-    return window
 
 
 def _process_context_phase(
@@ -1811,9 +2123,10 @@ def _process_context_phase(
 def _process_source_phase(
     request: _LeasedScanRequest,
     window: _ScanWindow,
+    sources: _SourceAcquisition,
     persistence: _DetectorPersistence,
 ) -> tuple[_SourceAcquisition, _DetectorPersistence, str]:
-    sources = _acquire_scan_sources(request.source, window)
+    sources = _acquire_scan_sources(request.source, window, sources)
     current_persistence = _detect_and_persist(
         _DetectorPersistenceRequest(
             request.connection,
@@ -1822,6 +2135,7 @@ def _process_source_phase(
             request.now,
             window,
             sources,
+            request.experiment_observer,
         )
     )
     persistence = replace(
@@ -1832,106 +2146,377 @@ def _process_source_phase(
     return sources, persistence, terminal_status
 
 
-def _run_leased_scan(request: _LeasedScanRequest) -> dict[str, Any]:
-    connection = request.connection
-    sources = _SourceAcquisition(
-        [], [], [], [], PipelineStream(), PipelineStream(), PipelineStream()
+def _contains_scan_deadline(error: BaseException, seen: set[int] | None = None) -> bool:
+    seen = set() if seen is None else seen
+    if id(error) in seen:
+        return False
+    seen.add(id(error))
+    if isinstance(error, ScanDeadlineError):
+        return True
+    if isinstance(error, BaseExceptionGroup):
+        return any(_contains_scan_deadline(item, seen) for item in error.exceptions)
+    return any(
+        _contains_scan_deadline(cause, seen)
+        for cause in (error.__cause__, error.__context__)
+        if cause is not None
     )
-    persistence = _DetectorPersistence(
-        [],
-        [],
-        {
-            "included": 0,
-            "attributed": 0,
-            "expected_rejection": 0,
-            "failed": 0,
-            "blocked": 0,
-        },
-    )
+
+
+@dataclass(slots=True)
+class _ScanWork:
+    sources: _SourceAcquisition
+    persistence: _DetectorPersistence
+    runtime_identity: str
     context_events: tuple[DerivedEvent, ...] = ()
-    terminal_status, error_class, failure = "failed", None, None
-    scan_run_persisted = False
-    telemetry_delivered = pending_after_drain = 0
-    snapshot_end_ns = int(request.now.astimezone(UTC).timestamp() * 1_000_000_000)
+    terminal_status: str = "running"
+    error_class: str | None = None
+    failure: BaseException | None = None
+    deadline_exceeded: bool = False
     window: _ScanWindow | None = None
-    try:
-        try:
-            window = _begin_scan_run(request, snapshot_end_ns)
-            scan_run_persisted = True
-            context_events, persistence = _process_context_phase(request, persistence)
-            sources, persistence, terminal_status = _process_source_phase(
-                request, window, persistence
-            )
-        except BaseException as exc:
-            failure = exc
-            if connection.in_transaction:
-                connection.rollback()
-            error_class = (
+    drain: FinalDrainResult | None = None
+    source_lag: dict[tuple[str, str, str], int] | None = None
+    observations: list[DerivedEvent] = field(default_factory=list)
+    context_observed: bool = False
+    source_processed: bool = False
+
+    def fail(self, error: BaseException, phase: str) -> None:
+        self.deadline_exceeded |= _contains_scan_deadline(error)
+        if self.failure is None:
+            self.failure = error
+            self.error_class = (
                 "scan_timeout"
-                if isinstance(exc, ScanDeadlineError)
-                else ("capability" if isinstance(exc, CapabilityError) else "processing")
+                if self.deadline_exceeded
+                else ("capability" if isinstance(error, CapabilityError) else phase)
             )
-        try:
-            telemetry_delivered, pending_after_drain = _drain_scan_telemetry(
-                connection, request.config
+        else:
+            self.failure = BaseExceptionGroup(
+                "Multiple scan boundaries failed", [self.failure, error]
             )
-        except BaseException as exc:
-            failure, terminal_status = exc, "failed"
-            error_class = "scan_timeout" if isinstance(exc, ScanDeadlineError) else "telemetry"
-    finally:
-        _disarm_scan_deadline(request.deadline)
+            self.error_class = "multiple"
+        self.terminal_status = "failed"
+
+
+def _execute_scan_work(request: _LeasedScanRequest, work: _ScanWork) -> None:
+    try:
+        quick_check(request.connection)
+        work.window = _prepare_scan_window(
+            request.connection,
+            config=request.config,
+            source=request.source,
+            end_ns=_datetime_ns(request.now),
+        )
+        with request.connection:
+            request.connection.execute(
+                "UPDATE scan_runs SET source_start_ns = ?, source_end_ns = ? WHERE id = ?",
+                (work.window.start_ns, work.window.end_ns, request.scan_run_id),
+            )
+    except BaseException as exc:
+        if request.connection.in_transaction:
+            request.connection.rollback()
+        work.fail(exc, "processing")
+        return
+    try:
+        work.context_events, work.persistence = _process_context_phase(request, work.persistence)
+        work.context_observed = True
+    except BaseException as exc:
+        if request.connection.in_transaction:
+            request.connection.rollback()
+        work.fail(exc, "processing")
+        return
+    try:
+        work.sources, work.persistence, work.terminal_status = _process_source_phase(
+            request, work.window, work.sources, work.persistence
+        )
+        work.source_processed = True
+    except BaseException as exc:
+        if request.connection.in_transaction:
+            request.connection.rollback()
+        work.fail(exc, "processing")
+
+
+def _capture_scan_observations(request: _LeasedScanRequest, work: _ScanWork) -> None:
+    observed_at_ns = _datetime_ns(datetime.now(UTC))
+    audit = capture_remote_integrity(
+        request.source,
+        scan_run_id=request.scan_run_id,
+        observed_at_ns=observed_at_ns,
+        runtime_identity=work.runtime_identity,
+    )
+    work.observations.extend(audit)
+    if any(event.event_name == INTEGRITY_INCIDENT_EVENT for event in audit):
+        work.fail(ScanError("canonical telemetry integrity validation failed"), "integrity")
+    work.observations.extend(
+        capture_lifecycle_authority(
+            request.connection,
+            observed_at_ns=observed_at_ns,
+            scan_run_id=request.scan_run_id,
+            runtime_identity=work.runtime_identity,
+        )
+    )
+    if work.window is not None and work.terminal_status != "failed":
+        work.source_lag = capture_source_lag(
+            connection=request.connection,
+            client=request.source,
+            extraction_bound_ns=work.window.end_ns,
+        )
+
+
+def _observe_scan_work(request: _LeasedScanRequest, work: _ScanWork) -> None:
+    if work.deadline_exceeded:
+        return
+    try:
+        _capture_scan_observations(request, work)
+    except BaseException as exc:
+        work.fail(exc, "observation")
+    if work.deadline_exceeded:
+        return
+    try:
+        work.drain = capture_final_drain(
+            request.connection,
+            scan_run_id=request.scan_run_id,
+            endpoint=f"{request.config.signoz.otlp_http_endpoint.rstrip('/')}/v1/logs",
+        )
+    except BaseException as exc:
+        work.fail(exc, "telemetry")
+    if work.deadline_exceeded:
+        return
+    try:
+        maintenance = capture_maintenance(
+            request.connection,
+            scan_run_id=request.scan_run_id,
+            database_path=request.config.database.path,
+            runtime_identity=work.runtime_identity,
+        )
+        work.observations.append(maintenance)
+        if maintenance.attributes["database.check_result"] != "ok":
+            raise ScanError("final ledger integrity check failed")
+    except BaseException as exc:
+        work.fail(exc, "ledger")
+
+
+def _completed_scan_snapshot(
+    request: _LeasedScanRequest,
+    work: _ScanWork,
+    completed_at_ns: int,
+    *,
+    monotonic_finished: float,
+) -> DerivedEvent:
     snapshot = _pipeline_snapshot_event(
         _PipelineSnapshotRequest(
             scan_run_id=request.scan_run_id,
-            end_ns=window.end_ns if window is not None else snapshot_end_ns,
-            terminal_status=terminal_status,
-            error_class=error_class,
-            logs=sources.logs_stream,
-            traces=sources.traces_stream,
-            hydration=sources.hydration_stream,
-            finished_ns=time.time_ns(),
-            duration_ms=(time.monotonic() - request.started) * 1000,
-            rows_processed=len(sources.logs) + len(sources.traces),
-            pending_after_drain=pending_after_drain,
+            end_ns=work.window.end_ns if work.window is not None else _datetime_ns(request.now),
+            terminal_status=work.terminal_status,
+            error_class=work.error_class,
+            logs=work.sources.logs_stream,
+            traces=work.sources.traces_stream,
+            hydration=work.sources.hydration_stream,
+            finished_ns=completed_at_ns,
+            duration_ms=(monotonic_finished - request.started) * 1000,
+            rows_processed=(
+                len(work.sources.logs) + len(work.sources.traces)
+                if (
+                    work.sources.logs_stream.query_status == "available"
+                    and work.sources.traces_stream.query_status == "available"
+                )
+                else None
+            ),
+            logs_count=(
+                len(work.sources.logs)
+                if work.sources.logs_stream.query_status == "available"
+                else None
+            ),
+            traces_count=(
+                len(work.sources.traces)
+                if work.sources.traces_stream.query_status == "available"
+                else None
+            ),
+            context_events_count=(len(work.context_events) if work.context_observed else None),
+            canonical_activities_count=(
+                len(work.persistence.activities) if work.source_processed else None
+            ),
+            pending_after_drain=work.drain.pending_events if work.drain is not None else None,
+            failed_during_drain=work.drain.failed_events if work.drain is not None else None,
+            runtime_identity=work.runtime_identity,
+            schedule_interval_seconds=request.config.scheduler.interval_seconds,
+            schedule_timezone=request.config.scheduler.timezone,
         )
     )
-    with connection:
-        if scan_run_persisted:
-            connection.execute(
-                """
-                UPDATE scan_runs
-                SET status = ?, completed_at = ?, rows_processed = ?, error_code = ?,
-                    details_json = ?
-                WHERE id = ?
-                """,
-                (
-                    terminal_status,
-                    datetime.now(UTC).isoformat(),
-                    len(sources.logs) + len(sources.traces),
-                    type(failure).__name__ if failure is not None else error_class,
-                    _scan_details(sources, persistence, context_events),
-                    request.scan_run_id,
-                ),
-            )
-        enqueue_events(connection, [snapshot])
-    pending = int(
-        connection.execute("SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'").fetchone()[
-            0
-        ]
+    attributes = dict(snapshot.attributes)
+    fingerprint = implementation_fingerprint()
+    attributes["scan.deployment_fingerprint"] = fingerprint
+    attributes["scan.projection_fingerprint"] = fingerprint
+    for prefix, name in (
+        ("lifecycle", "introspection.session_context.population"),
+        ("integrity", "introspection.pipeline.integrity_audit"),
+    ):
+        observation = next((event for event in work.observations if event.event_name == name), None)
+        attributes[f"{prefix}.capture_state"] = (
+            "completed" if observation is not None else "unavailable"
+        )
+        if observation is not None:
+            attributes[f"{prefix}.observation_event_id"] = observation.event_id
+            attributes[f"{prefix}.observed_at_ns"] = str(observation.timestamp_ns)
+    return replace(snapshot, attributes=attributes)
+
+
+def _record_scan_execution_inputs(
+    connection: sqlite3.Connection,
+    request: _LeasedScanRequest,
+    work: _ScanWork,
+    *,
+    monotonic_finished: float,
+) -> None:
+    sources = work.sources
+    connection.execute(
+        """
+        INSERT INTO scan_execution_inputs (
+            scan_run_id, monotonic_started, monotonic_finished, logs_json, traces_json,
+            context_events_json, canonical_activities_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            request.scan_run_id,
+            request.started,
+            monotonic_finished,
+            (
+                json.dumps([log.log_id for log in sources.logs], separators=(",", ":"))
+                if sources.logs_stream.query_status == "available"
+                else None
+            ),
+            (
+                json.dumps([trace.trace_id for trace in sources.traces], separators=(",", ":"))
+                if sources.traces_stream.query_status == "available"
+                else None
+            ),
+            (
+                json.dumps(
+                    [event.entity_id for event in work.context_events], separators=(",", ":")
+                )
+                if work.context_observed
+                else None
+            ),
+            (
+                json.dumps(work.persistence.canonical_activity_ids, separators=(",", ":"))
+                if work.source_processed
+                else None
+            ),
+        ),
     )
-    if failure is not None:
-        raise failure
+
+
+def _record_snapshot_oracle(connection: sqlite3.Connection, snapshot: DerivedEvent) -> None:
+    connection.execute(
+        """
+        INSERT INTO pipeline_snapshot_oracle (
+            event_id, scan_run_id, payload_schema_version, completed_at_ns,
+            extraction_bound_ns, terminal_status, error_class, duration_ms,
+            rows_processed, logs_count, traces_count, context_events_count,
+            canonical_activities_count, pending_after_drain, failed_during_drain,
+            runtime_identity, schedule_interval_seconds, schedule_timezone
+        ) VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            snapshot.event_id,
+            snapshot.entity_id,
+            snapshot.attributes["scan.completed_at_ns"],
+            snapshot.attributes["scan.extraction_bound_ns"],
+            snapshot.attributes["scan.terminal_status"],
+            snapshot.attributes.get("pipeline.error_class"),
+            snapshot.attributes["scan.duration_ms"],
+            snapshot.attributes.get("rows.processed"),
+            snapshot.attributes.get("logs.count"),
+            snapshot.attributes.get("traces.count"),
+            snapshot.attributes.get("context.events_count"),
+            snapshot.attributes.get("canonical.activities_count"),
+            snapshot.attributes.get("outbox.pending_after_drain"),
+            snapshot.attributes.get("outbox.failed_during_drain"),
+            snapshot.attributes["scan.runtime_identity"],
+            snapshot.attributes["scan.schedule_interval_seconds"],
+            snapshot.attributes["scan.schedule_timezone"],
+        ),
+    )
+
+
+def _finish_scan(request: _LeasedScanRequest, work: _ScanWork) -> None:
+    completed_at = datetime.now(UTC)
+    completed_at_ns = _datetime_ns(completed_at)
+    monotonic_finished = time.monotonic()
+    snapshot = _completed_scan_snapshot(
+        request, work, completed_at_ns, monotonic_finished=monotonic_finished
+    )
+    if work.source_lag is not None and work.window is not None:
+        work.observations.extend(
+            source_lag_events(
+                work.source_lag,
+                scan_run_id=request.scan_run_id,
+                extraction_bound_ns=work.window.end_ns,
+                completed_at_ns=completed_at_ns,
+            )
+        )
+    with request.connection:
+        request.connection.execute(
+            """
+            UPDATE scan_runs
+            SET status = ?, completed_at = ?, rows_processed = ?, error_code = ?, details_json = ?
+            WHERE id = ?
+            """,
+            (
+                work.terminal_status,
+                completed_at.isoformat(),
+                len(work.sources.logs) + len(work.sources.traces),
+                type(work.failure).__name__ if work.failure is not None else work.error_class,
+                _scan_details(work.sources, work.persistence, work.context_events),
+                request.scan_run_id,
+            ),
+        )
+        if work.drain is not None:
+            enqueue_final_drain_projection(request.connection, work.drain)
+        enqueue_events(request.connection, [snapshot, *work.observations])
+        record_observation_events(
+            request.connection, work.observations, observed_at_ns=completed_at_ns
+        )
+        _record_scan_execution_inputs(
+            request.connection, request, work, monotonic_finished=monotonic_finished
+        )
+        _record_snapshot_oracle(request.connection, snapshot)
+
+
+def _run_leased_scan(request: _LeasedScanRequest) -> dict[str, Any]:
+    work = _ScanWork(
+        sources=_SourceAcquisition(
+            [], [], [], [], PipelineStream(), PipelineStream(), PipelineStream()
+        ),
+        persistence=_DetectorPersistence(
+            [],
+            [],
+            [],
+            {"included": 0, "attributed": 0, "expected_rejection": 0, "failed": 0, "blocked": 0},
+        ),
+        runtime_identity=_pipeline_runtime_identity(request.config),
+    )
+    try:
+        _begin_scan_run(request, _datetime_ns(request.now))
+        _execute_scan_work(request, work)
+        _observe_scan_work(request, work)
+    finally:
+        _disarm_scan_deadline(request.deadline)
+    _finish_scan(request, work)
+    if work.failure is not None:
+        raise work.failure
     return {
         "scan_run_id": request.scan_run_id,
-        "status": terminal_status,
-        "logs": len(sources.logs),
-        "traces": len(sources.traces),
-        "observations": len(persistence.activities),
-        "trend_evaluations": len(persistence.trend_evaluations),
-        "session_context_events": len(context_events),
+        "status": work.terminal_status,
+        "logs": len(work.sources.logs),
+        "traces": len(work.sources.traces),
+        "observations": len(work.persistence.activities),
+        "trend_evaluations": len(work.persistence.trend_evaluations),
+        "session_context_events": len(work.context_events),
         "recovered_interrupted_scan_runs": 0,
-        "telemetry_delivered": telemetry_delivered,
-        "source_sessions": len(sources.source_sessions),
-        "conservation": persistence.source_conservation,
-        "telemetry_pending": pending,
+        "telemetry_delivered": work.drain.delivered_events if work.drain is not None else None,
+        "conservation": work.persistence.source_conservation,
+        "telemetry_pending": int(
+            request.connection.execute(
+                "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
+            ).fetchone()[0]
+        ),
     }

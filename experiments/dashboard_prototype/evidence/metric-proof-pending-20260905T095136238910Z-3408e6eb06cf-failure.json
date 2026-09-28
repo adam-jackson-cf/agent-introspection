@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "recorded_at": "2026-09-05T10:00:26.911285+00:00",
+  "run_id": "metric-proof-pending-20260905T095136238910Z-3408e6eb06cf",
+  "error_type": "RuntimeError",
+  "capture": "metric-proof-pending-20260905T095136238910Z-3408e6eb06cf.sqlite3",
+  "frozen_inputs": "metric-proof-pending-20260905T095136238910Z-3408e6eb06cf-inputs.json",
+  "pre_fix_result": "metric-proof-pending-20260905T095136238910Z-3408e6eb06cf-pre-fix-result.json"
+}

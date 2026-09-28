@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ def test_documented_defaults_are_canonical() -> None:
     assert config.signoz.docker_context == "orbstack"
     assert config.signoz.docker_host == "unix:///Users/adamjackson/.orbstack/run/docker.sock"
     assert config.scheduler.interval_seconds == 300
+    assert config.pipeline.measurement_start is None
     assert config.lifecycle.clock_skew_seconds == 300
 
 
@@ -43,6 +45,7 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
                 "lease_seconds": 300,
             },
             "lifecycle": {"clock_skew_seconds": 120},
+            "pipeline": {"measurement_start": "2025-10-07T13:12:11.123456+01:00"},
         }
     )
 
@@ -52,6 +55,9 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
     assert config.scheduler.interval_seconds == 300
     assert config.scheduler.lease_seconds == 300
     assert config.lifecycle.clock_skew_seconds == 120
+    assert config.pipeline.measurement_start == datetime(
+        2025, 10, 7, 12, 12, 11, 123_000, tzinfo=UTC
+    )
 
 
 @pytest.mark.parametrize(
@@ -70,6 +76,18 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
         ({"scheduler": {"timezone": "Mars/Olympus"}}, "must name an installed timezone"),
         ({"attribution": {}}, "unsupported keys in root"),
         ({"lifecycle": {"clock_skew_seconds": 0}}, "must be a positive integer"),
+        ({"pipeline": []}, "pipeline must be a TOML table"),
+        ({"pipeline": {"other": 1}}, "unsupported keys in pipeline"),
+        ({"pipeline": {"measurement_start": 1}}, "must be an RFC3339 timestamp"),
+        ({"pipeline": {"measurement_start": "  "}}, "must be an RFC3339 timestamp"),
+        (
+            {"pipeline": {"measurement_start": "not-a-timestamp"}},
+            "must be an RFC3339 timestamp",
+        ),
+        (
+            {"pipeline": {"measurement_start": "2025-10-07T13:12:11"}},
+            "must include a timezone offset",
+        ),
     ],
 )
 def test_invalid_configuration_fails_closed(document: dict[str, object], message: str) -> None:

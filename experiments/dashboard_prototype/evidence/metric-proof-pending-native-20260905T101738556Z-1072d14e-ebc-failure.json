@@ -1,0 +1,10 @@
+{
+  "recorded_at": "2026-09-05T10:20:37.014Z",
+  "run_id": "metric-proof-pending-native-20260905T101738556Z-1072d14e-ebc",
+  "status": "failed",
+  "stage": "canonical primitive construction before delivery",
+  "error_type": "PipelineExecutionError",
+  "error": "pipeline calculation inputs lack a remote query",
+  "classification": "Blocked",
+  "native_deliveries": 0
+}

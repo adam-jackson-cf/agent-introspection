@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -13,7 +14,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_introspection.backup_observations import (
+    BackupObservation,
+    record_backup_observation,
+)
+from agent_introspection.backup_observations import (
+    latest_backup_observation as _latest_backup_observation,
+)
 from agent_introspection.identities import CanonicalActivityIdentity, canonical_activity_id
+from agent_introspection.ledger_identity import database_identity
 from agent_introspection.migrations import apply_migrations
 
 _CANONICAL_PRODUCER_SURFACE_PAIRS = frozenset(
@@ -252,6 +261,14 @@ class SourceWatermark:
 
 
 @dataclass(frozen=True, slots=True)
+class _BackupResult:
+    """The verified file and its immutable observation, retained across restore."""
+
+    path: Path
+    observation: BackupObservation
+
+
+@dataclass(frozen=True, slots=True)
 class RestoreResult:
     """Paths proving a completed restore and its pre-restore safety backup."""
 
@@ -458,11 +475,21 @@ def verify_database_file(path: Path) -> tuple[str, ...]:
         connection.close()
 
 
-def backup_database(connection: sqlite3.Connection, destination: Path) -> Path:
-    """Create and verify one SQLite online backup without overwriting evidence."""
-    _require_idle(connection, "online backup")
-    integrity_check(connection)
-    backup_path = destination.expanduser().resolve(strict=False)
+def _backup_failure_class(exc: BaseException, verification: str) -> str:
+    if verification == "failed":
+        return "verification_failed"
+    if isinstance(exc, DatabaseIntegrityError):
+        return "source_integrity_failed"
+    if isinstance(exc, sqlite3.Error):
+        return "sqlite_backup_failed"
+    if isinstance(exc, OSError):
+        return "backup_storage_failed"
+    if isinstance(exc, DatabaseError):
+        return "backup_precondition_failed"
+    return "backup_unexpected_failure"
+
+
+def _prepare_backup_destination(connection: sqlite3.Connection, backup_path: Path) -> None:
     if backup_path.exists():
         raise DatabaseError(f"backup destination already exists: {backup_path}")
     source_row = connection.execute("PRAGMA database_list").fetchone()
@@ -471,6 +498,9 @@ def backup_database(connection: sqlite3.Connection, destination: Path) -> Path:
         if source_path == backup_path:
             raise DatabaseError("backup destination must differ from the source database")
     backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _copy_online_backup(connection: sqlite3.Connection, backup_path: Path) -> None:
     destination_connection = sqlite3.connect(backup_path)
     try:
         connection.backup(destination_connection)
@@ -480,12 +510,92 @@ def backup_database(connection: sqlite3.Connection, destination: Path) -> Path:
         raise DatabaseError(f"online backup failed: {backup_path}") from exc
     else:
         destination_connection.close()
+
+
+def _observed_backup_size(backup_path: Path) -> int | None:
     try:
-        verify_database_file(backup_path)
-    except BaseException:
-        backup_path.unlink(missing_ok=True)
+        return backup_path.stat().st_size
+    except OSError:
+        return None
+
+
+def _record_failed_backup(
+    connection: sqlite3.Connection,
+    source_identity: str,
+    operation: str,
+    verification: str,
+    exc: BaseException,
+) -> None:
+    try:
+        record_backup_observation(
+            connection,
+            BackupObservation(
+                backup_id=str(uuid.uuid4()),
+                database_id=source_identity,
+                operation=operation,
+                state="failed",
+                completed_at_ns=time.time_ns(),
+                size_bytes=None,
+                verification=verification,
+                failure_class=_backup_failure_class(exc, verification),
+            ),
+        )
+    except BaseException as observation_error:
+        raise BaseExceptionGroup(
+            "Backup and observation persistence failed", [exc, observation_error]
+        ) from None
+
+
+def backup_database(connection: sqlite3.Connection, destination: Path, *, operation: str) -> Path:
+    """Create and verify one SQLite online backup without overwriting evidence."""
+    result = _create_verified_backup(connection, destination, operation=operation)
+    record_backup_observation(connection, result.observation)
+    return result.path
+
+
+def _create_verified_backup(
+    connection: sqlite3.Connection, destination: Path, *, operation: str
+) -> _BackupResult:
+    """Create and verify one SQLite online backup without overwriting evidence."""
+    if not operation:
+        raise ValueError("backup operation is required")
+    source_identity = database_identity(connection)
+    verification = "not_performed"
+    backup_path = destination.expanduser().resolve(strict=False)
+    try:
+        _require_idle(connection, "online backup")
+        integrity_check(connection)
+        _prepare_backup_destination(connection, backup_path)
+        _copy_online_backup(connection, backup_path)
+        verification = "failed"
+        try:
+            verify_database_file(backup_path)
+        except BaseException:
+            backup_path.unlink(missing_ok=True)
+            raise
+        verification = "ok"
+        size_bytes = _observed_backup_size(backup_path)
+    except BaseException as exc:
+        _record_failed_backup(connection, source_identity, operation, verification, exc)
         raise
-    return backup_path
+    observation = BackupObservation(
+        backup_id=str(uuid.uuid4()),
+        database_id=source_identity,
+        operation=operation,
+        state="succeeded",
+        completed_at_ns=time.time_ns(),
+        size_bytes=size_bytes,
+        verification="ok",
+        failure_class=None,
+    )
+    return _BackupResult(backup_path, observation)
+
+
+def latest_backup_observation(
+    connection: sqlite3.Connection, database_path: Path
+) -> Mapping[str, str | int] | None:
+    """Return the latest durable backup fact for the named canonical database."""
+    return _latest_backup_observation(connection, database_path)
 
 
 def restore_database(
@@ -505,6 +615,7 @@ def restore_database(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     safety_backup: Path | None = None
+    safety_observation: BackupObservation | None = None
     if target.exists():
         current = sqlite3.connect(target, timeout=busy_timeout_ms / 1_000)
         try:
@@ -512,7 +623,9 @@ def restore_database(
             current.execute("BEGIN EXCLUSIVE")
             current.rollback()
             safety_backup = target.with_name(f"{target.name}.pre-restore-{_utc_stamp()}.bak")
-            backup_database(current, safety_backup)
+            safety_observation = _create_verified_backup(
+                current, safety_backup, operation="restore-safety"
+            ).observation
         finally:
             current.close()
 
@@ -532,6 +645,12 @@ def restore_database(
             Path(f"{target}{suffix}").unlink(missing_ok=True)
         os.replace(temporary, target)
         verify_database_file(target)
+        if safety_observation is not None:
+            restored = connect_database(target, busy_timeout_ms=busy_timeout_ms)
+            try:
+                record_backup_observation(restored, safety_observation)
+            finally:
+                restored.close()
     finally:
         temporary.unlink(missing_ok=True)
     return RestoreResult(database_path=target, safety_backup_path=safety_backup)
@@ -544,6 +663,8 @@ def weekly_maintenance(
     backup_directory: Path | None = None,
 ) -> MaintenanceResult:
     """Run the weekly integrity check, ANALYZE, and verified online backup."""
+    _require_idle(connection, "weekly maintenance")
+    database_identity(connection, database_path=database_path)
     result = integrity_check(connection)
     with connection:
         connection.execute("ANALYZE")
@@ -553,7 +674,9 @@ def weekly_maintenance(
         else database_path.expanduser().resolve(strict=False).parent / "backups"
     )
     backup_path = directory / f"introspection-{_utc_stamp()}.sqlite3"
-    return MaintenanceResult(result, backup_database(connection, backup_path))
+    return MaintenanceResult(
+        result, backup_database(connection, backup_path, operation="weekly-maintenance")
+    )
 
 
 def manual_vacuum(
@@ -564,6 +687,7 @@ def manual_vacuum(
 ) -> VacuumResult:
     """VACUUM only above 25 percent free pages and after a verified backup."""
     _require_idle(connection, "VACUUM")
+    database_identity(connection, database_path=database_path)
     page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
     free_pages = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
     free_page_ratio = free_pages / page_count if page_count else 0.0
@@ -574,7 +698,11 @@ def manual_vacuum(
         if backup_directory is not None
         else database_path.expanduser().resolve(strict=False).parent / "backups"
     )
-    backup_path = backup_database(connection, directory / f"pre-vacuum-{_utc_stamp()}.sqlite3")
+    backup_path = backup_database(
+        connection,
+        directory / f"pre-vacuum-{_utc_stamp()}.sqlite3",
+        operation="manual-vacuum",
+    )
     connection.execute("VACUUM")
     quick_check(connection)
     return VacuumResult(free_page_ratio, True, backup_path)

@@ -47,7 +47,12 @@ _ATTEMPT_COLUMNS = (
     "status",
     "error_class",
 )
-_DRAIN_COLUMNS = ("drain_id", "completed_at", "is_final")
+_DRAIN_COLUMNS = (
+    "drain_id",
+    "completed_at",
+    "is_final",
+    "failure_timing_authoritative",
+)
 _EVENT_STATUSES = frozenset({"pending", "delivered"})
 _REMOTE_QUERY_ID = "pipeline-outbox-current-pending-v1"
 
@@ -207,7 +212,8 @@ def _final_drain(
     try:
         drains = connection.execute(
             "SELECT drain_id, completed_at FROM otlp_outbox_drains "
-            "WHERE is_final = 1 AND completed_at > ? AND completed_at <= ? "
+            "WHERE is_final = 1 AND failure_timing_authoritative = 1 "
+            "AND completed_at > ? AND completed_at <= ? "
             "ORDER BY completed_at, drain_id",
             (request.start.isoformat(), request.end.isoformat()),
         ).fetchall()

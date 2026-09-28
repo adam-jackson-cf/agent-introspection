@@ -18,6 +18,7 @@ from agent_introspection.session_context import (
     spool_event,
 )
 from agent_introspection.source import (
+    CANONICAL_SERVICE_PRODUCERS,
     ClickHouseClient,
     HydrationRequest,
     HydrationRow,
@@ -27,6 +28,12 @@ from agent_introspection.source import (
     SourceSessionRow,
     TraceRow,
 )
+
+
+def _datetime_from_ns(timestamp_ns: int) -> datetime:
+    return datetime.fromtimestamp(timestamp_ns // 1_000_000_000, tz=UTC).replace(
+        microsecond=(timestamp_ns % 1_000_000_000) // 1_000
+    )
 
 
 class FakeSource(ClickHouseClient):
@@ -42,9 +49,13 @@ class FakeSource(ClickHouseClient):
         self.hydration_batch_sizes: list[int] = []
 
     def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
-        del parameters
         if "timezone()" in sql:
             yield {"timezone": "UTC"}
+            return
+        if "attributes_string AS strings" in sql:
+            return
+        if "bound" in parameters:
+            yield from self._source_lag(sql, int(parameters["bound"]))
             return
         if "system.columns" in sql:
             names = {
@@ -90,6 +101,31 @@ class FakeSource(ClickHouseClient):
             return
         yield {"event_names": [], "string_attribute_keys": [], "number_attribute_keys": []}
 
+    def _source_lag(self, sql: str, bound: int) -> Iterator[dict[str, Any]]:
+        candidates = (
+            ((row.service_name, row.timestamp_ns) for row in self.log_rows)
+            if "signoz_logs" in sql
+            else (
+                (service, scan_module._datetime_ns(row.started_at))
+                for row in self.trace_rows
+                for service in row.service_names
+            )
+        )
+        latest: dict[str, int] = {}
+        for service, timestamp in candidates:
+            pair = CANONICAL_SERVICE_PRODUCERS.get(service or "")
+            if (
+                pair is not None
+                and pair[0] in {"omp", "codex-cli", "codex-app-server"}
+                and timestamp <= bound
+                and service is not None
+            ):
+                latest[service] = max(timestamp, latest.get(service, timestamp))
+        yield from (
+            {"service_name": service, "timestamp_ns": timestamp}
+            for service, timestamp in latest.items()
+        )
+
     def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
         del start_ns, end_ns
         self.log_reads += 1
@@ -111,14 +147,16 @@ class FakeSource(ClickHouseClient):
             yield SourceSessionRow(
                 source_kind="log",
                 source_id=log.log_id,
-                source_timestamp=datetime.fromtimestamp(log.timestamp_ns / 1_000_000_000, tz=UTC),
+                source_timestamp=_datetime_from_ns(log.timestamp_ns),
                 service_name=log.service_name or "codex-cli",
-                session_ids=tuple(value for value in (log.conversation_id,) if value),
+                session_ids=(),
                 thread_ids=tuple(value for value in (log.thread_id,) if value),
                 legacy_thread_ids=tuple(value for value in (log.legacy_thread_id,) if value),
                 gen_ai_conversation_ids=tuple(
                     value for value in (log.gen_ai_conversation_id,) if value
                 ),
+                conversation_ids=tuple(value for value in (log.conversation_id,) if value),
+                source_timestamp_ns=log.timestamp_ns,
             )
         for trace in self.trace_rows:
             yield SourceSessionRow(
@@ -126,10 +164,12 @@ class FakeSource(ClickHouseClient):
                 source_id=trace.trace_id,
                 source_timestamp=trace.started_at,
                 service_name=(trace.service_names[0] if trace.service_names else "codex-cli"),
-                session_ids=trace.conversation_ids,
+                session_ids=(),
                 thread_ids=trace.thread_ids,
                 legacy_thread_ids=trace.legacy_thread_ids,
                 gen_ai_conversation_ids=trace.gen_ai_conversation_ids,
+                conversation_ids=trace.conversation_ids,
+                source_timestamp_ns=None,
             )
 
     def prove_retained_window(self, *, start: datetime, start_ns: int, start_bucket: int) -> None:
@@ -171,10 +211,11 @@ def scan_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[A
     context_inbox = config.database.path.parent / "session-context-inbox"
     monkeypatch.setattr("agent_introspection.scan.inbox_path", lambda _path: context_inbox)
     monkeypatch.setattr("agent_introspection.scan.verify_network_perimeter", lambda **_kwargs: {})
-    monkeypatch.setattr(
-        "agent_introspection.scan.drain_outbox",
-        lambda *_args, **_kwargs: {"selected": 0, "delivered": 0, "pending": 0},
-    )
+
+    def reject_transport(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError("isolated scan transport")
+
+    monkeypatch.setattr("urllib.request.urlopen", reject_transport)
     return connection, config
 
 
@@ -230,13 +271,14 @@ class _ContextEventInput:
     root: Path
     project_id: str
     occurred_at: datetime
+    producer: str = "codex-cli"
 
 
 def _context_event(input_event: _ContextEventInput) -> SessionContextEvent:
     return parse_event(
         {
             "event_id": input_event.event_id,
-            "producer": "codex-cli",
+            "producer": input_event.producer,
             "session_id": "session-1",
             "event_type": input_event.event_type,
             "occurred_at": input_event.occurred_at.isoformat(),
@@ -252,7 +294,7 @@ def _context_event(input_event: _ContextEventInput) -> SessionContextEvent:
     )
 
 
-def _trace(identifier: str, occurred_at: datetime) -> TraceRow:
+def _trace(identifier: str, occurred_at: datetime, *, producer: str = "codex-cli") -> TraceRow:
     return TraceRow(
         trace_id=identifier,
         turn_id=None,
@@ -262,8 +304,8 @@ def _trace(identifier: str, occurred_at: datetime) -> TraceRow:
         total_tokens=0,
         tool_calls=1,
         correlation=SourceActivityCorrelation(
-            producer="codex-cli",
-            producer_surface="codex-cli",
+            producer=producer,
+            producer_surface=producer,
             correlation_id="session-1",
             source_event_timestamp=occurred_at,
             source_event_ids=(identifier,),
@@ -303,7 +345,7 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
         _context_event(
             _ContextEventInput(
                 event_id="a" * 64,
-                event_type="session_start",
+                event_type="session_context",
                 root=root,
                 project_id="1" * 64,
                 occurred_at=occurred_at - timedelta(minutes=1),
@@ -368,6 +410,36 @@ def test_canonical_scan_is_idempotent_and_emits_one_activity_identity(
 
     first = run_scan(connection, config, client=source, end_time=occurred_at)
     first_rows = _activity_rows(connection)
+    execution_inputs = connection.execute(
+        """
+        SELECT monotonic_started, monotonic_finished, logs_json, traces_json,
+               context_events_json, canonical_activities_json
+        FROM scan_execution_inputs
+        WHERE scan_run_id = ?
+        """,
+        (first["scan_run_id"],),
+    ).fetchone()
+    assert execution_inputs is not None
+    monotonic_started, monotonic_finished, logs_json, traces_json, context_json, activities_json = (
+        execution_inputs
+    )
+    assert json.loads(logs_json) == [
+        "log-1",
+        "missing-correlation-log",
+        "conflicting-correlation-log",
+    ]
+    assert json.loads(traces_json) == [
+        "trace-1",
+        "missing-correlation-trace",
+        "conflicting-correlation-trace",
+    ]
+    assert json.loads(context_json) == ["a" * 64]
+    assert json.loads(activities_json) == [first_rows[0][0]]
+    duration_ms = connection.execute(
+        "SELECT duration_ms FROM pipeline_snapshot_oracle WHERE scan_run_id = ?",
+        (first["scan_run_id"],),
+    ).fetchone()[0]
+    assert duration_ms == pytest.approx((monotonic_finished - monotonic_started) * 1000)
     run_scan(connection, config, client=source, end_time=occurred_at + timedelta(seconds=1))
 
     assert first["status"] == "succeeded"
@@ -444,11 +516,11 @@ def test_late_context_bumps_one_canonical_activity_once(
                     identifier="log-1",
                     timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
                     trace_id="trace-1",
-                    producer="codex-cli",
+                    producer="codex-app-server",
                 )
             )
         ],
-        traces=[_trace("trace-1", occurred_at)],
+        traces=[_trace("trace-1", occurred_at, producer="codex-app-server")],
     )
     approve(connection, source)
 
@@ -463,6 +535,7 @@ def test_late_context_bumps_one_canonical_activity_once(
             root=root,
             project_id="2" * 64,
             occurred_at=occurred_at - timedelta(minutes=1),
+            producer="codex-app-server",
         )
     )
     spool_event(
@@ -601,6 +674,7 @@ def test_workspace_transition_splits_canonical_activities(
                 root=first_root,
                 project_id="3" * 64,
                 occurred_at=before - timedelta(minutes=1),
+                producer="codex-app-server",
             )
         ),
         directory=inbox,
@@ -613,6 +687,7 @@ def test_workspace_transition_splits_canonical_activities(
                 root=second_root,
                 project_id="4" * 64,
                 occurred_at=after - timedelta(seconds=1),
+                producer="codex-app-server",
             )
         ),
         directory=inbox,
@@ -624,6 +699,7 @@ def test_workspace_transition_splits_canonical_activities(
                     identifier="log-1",
                     timestamp_ns=int(before.timestamp() * 1_000_000_000),
                     trace_id="trace-1",
+                    producer="codex-app-server",
                 )
             ),
             log_row(
@@ -631,10 +707,11 @@ def test_workspace_transition_splits_canonical_activities(
                     identifier="log-2",
                     timestamp_ns=int(after.timestamp() * 1_000_000_000),
                     trace_id="trace-1",
+                    producer="codex-app-server",
                 )
             ),
         ],
-        traces=[_trace("trace-1", after)],
+        traces=[_trace("trace-1", after, producer="codex-app-server")],
     )
     approve(connection, source)
 
@@ -693,7 +770,7 @@ def test_run_scan_closes_context_obligation_after_persisting_first_raw(
                 _LogRowInput(
                     identifier="raw-1",
                     timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
-                    thread_id="session-1",
+                    conversation_id="session-1",
                     producer="codex-cli",
                 )
             )
@@ -768,7 +845,7 @@ def test_run_scan_recloses_later_context_for_attributed_raw(
                 _LogRowInput(
                     identifier="raw-1",
                     timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
-                    thread_id="session-1",
+                    conversation_id="session-1",
                     producer="codex-cli",
                 )
             )
@@ -810,7 +887,7 @@ def test_run_scan_rolls_back_reconciliation_and_recovers_durable_raw(
                 _LogRowInput(
                     identifier="raw-1",
                     timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
-                    thread_id="session-1",
+                    conversation_id="session-1",
                     producer="codex-cli",
                 )
             ),
@@ -818,7 +895,7 @@ def test_run_scan_rolls_back_reconciliation_and_recovers_durable_raw(
                 _LogRowInput(
                     identifier="raw-2",
                     timestamp_ns=int(occurred_at.timestamp() * 1_000_000_000),
-                    thread_id="session-1",
+                    conversation_id="session-1",
                     producer="codex-cli",
                 )
             ),
@@ -1051,3 +1128,109 @@ def test_raw_source_cursor_bounds_stale_activity_replays(
         "SELECT timestamp_ns FROM source_watermarks WHERE source = 'signoz_logs'"
     ).fetchone() == (bounded_end_ns,)
     assert source.anchor_reads == 1
+
+
+@pytest.mark.parametrize("interruption", ["before_acquisition", "partial_trace"])
+def test_pipeline_snapshot_omits_unobserved_population_counts(
+    scan_environment: tuple[Any, AppConfig], interruption: str
+) -> None:
+    connection, config = scan_environment
+    end = datetime(2025, 1, 2, tzinfo=UTC)
+
+    class InterruptedSource(FakeSource):
+        def logs(self, *, start_ns: int, end_ns: int) -> Iterator[LogRow]:
+            if interruption == "before_acquisition":
+                raise RuntimeError("source stream interrupted") from scan_module.ScanDeadlineError(
+                    "bounded scan"
+                )
+            yield from super().logs(start_ns=start_ns, end_ns=end_ns)
+
+        def traces(self, *, start: datetime, end: datetime) -> Iterator[TraceRow]:
+            yield self.trace_rows[0]
+            raise RuntimeError("source stream interrupted") from scan_module.ScanDeadlineError(
+                "bounded scan"
+            )
+
+    source = InterruptedSource(
+        logs=[
+            log_row(_LogRowInput(f"log-{index}", scan_module._datetime_ns(end)))
+            for index in range(3)
+        ],
+        traces=[_trace("trace-first", end), _trace("trace-unread", end)],
+    )
+    approve(connection, source)
+    with pytest.raises(RuntimeError):
+        run_scan(connection, config, client=source, end_time=end)
+
+    payload = json.loads(
+        connection.execute(
+            """SELECT payload_json FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.name"') =
+                'introspection.pipeline.snapshot'"""
+        ).fetchone()[0]
+    )
+    assert payload["scan.terminal_status"] == "failed"
+    assert payload["pipeline.error_class"] == "scan_timeout"
+    assert {
+        "rows.processed",
+        "traces.count",
+        "canonical.activities_count",
+        "outbox.pending_after_drain",
+        "outbox.failed_during_drain",
+    }.isdisjoint(payload)
+    recorded_rows = connection.execute("SELECT rows_processed FROM scan_runs").fetchone()[0]
+    inputs = connection.execute(
+        """
+        SELECT logs_json, traces_json, context_events_json, canonical_activities_json
+        FROM scan_execution_inputs
+        """
+    ).fetchone()
+    assert inputs is not None
+    logs_json, traces_json, context_json, activities_json = inputs
+    assert context_json == "[]"
+    assert activities_json is None
+    if interruption == "before_acquisition":
+        assert logs_json is None
+    else:
+        assert json.loads(logs_json) == [row.log_id for row in source.log_rows]
+    assert traces_json is None
+    if interruption == "before_acquisition":
+        assert "logs.count" not in payload
+        assert recorded_rows == 0
+    else:
+        assert payload["logs.count"] == len(source.log_rows)
+        assert recorded_rows == len(source.log_rows) + 1
+
+
+def test_pipeline_snapshot_keeps_observed_empty_populations_measured(
+    scan_environment: tuple[Any, AppConfig],
+) -> None:
+    connection, config = scan_environment
+    source = FakeSource()
+    approve(connection, source)
+    result = run_scan(connection, config, client=source, end_time=datetime(2025, 1, 2, tzinfo=UTC))
+
+    payload = json.loads(
+        connection.execute(
+            """SELECT payload_json FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.name"') =
+                'introspection.pipeline.snapshot'"""
+        ).fetchone()[0]
+    )
+    assert result["status"] == "no_data"
+    assert {
+        "rows.processed": 0,
+        "logs.count": 0,
+        "traces.count": 0,
+        "context.events_count": 0,
+        "canonical.activities_count": 0,
+    }.items() <= payload.items()
+    inputs = connection.execute(
+        """
+        SELECT logs_json, traces_json, context_events_json, canonical_activities_json
+        FROM scan_execution_inputs
+        WHERE scan_run_id = ?
+        """,
+        (result["scan_run_id"],),
+    ).fetchone()
+    assert inputs == ("[]", "[]", "[]", "[]")

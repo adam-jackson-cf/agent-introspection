@@ -1,20 +1,34 @@
-# Gap-Closure Prototype Experiment Plan
+# Gap-Closure Prototype Experiment Plan — Retired
 
-## Purpose
+> **Retired as an active execution plan — 2026-09-05.** This completed bounded
+> prototype program is retained for its experiment record and historical
+> evidence. It is not a current work queue or status authority. For current
+> metric/proof status and remaining actions, see the
+> [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md).
 
-Prove whether the proposed dashboard gap closures are viable before committing
-to their production schemas, reducers, projections, queries, and React pages.
-The experiments must establish which calculations in Appendix A of
+## Historical purpose
+
+This plan tested whether the proposed dashboard gap closures were viable before
+committing to their production schemas, reducers, projections, queries, and
+React pages. The experiments established which calculations in Appendix A of
 [Dashboard Measure v2](dashboard-measure-v2.md#appendix-a-dashboard-mock-control-data-readiness)
-can be computed correctly across every supported producer.
+could be computed correctly across every supported producer.
 
-This plan is the proof gate for the
+It was the prototype proof gate for the
 [React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md).
-A successful prototype authorizes design and implementation work; it is not a
+A successful prototype authorized design and implementation work; it was not a
 production implementation or permission to display experimental data as
 canonical.
 
-## Execution progress
+## Historical execution record
+
+The 2026-09-05 follow-on execution and its retained evidence are recorded
+below. E-Pipeline-5 joined E-Attribution-1 as experiment-level `Proven`; 22
+experiments remained `Blocked`. No Appendix row or production-cutover gate was
+promoted. The tables and aggregate decisions below are historical records, not
+current classifications or actions; consult the
+[Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md) for
+current status and remaining work.
 
 | Work item | Status | Matrix | Evidence | Proposal |
 | --- | --- | --- | --- | --- |
@@ -23,7 +37,7 @@ canonical.
 | E-Pipeline-2 | Blocked | 6 rows: Blocked | [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json): `authoritative schedule policy identity` | Read-only terminal cadence inventory |
 | E-Pipeline-3 | Blocked | 3 rows: Blocked | [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json): 35 retained `source-observation:<producer>/<surface>/<signal>@<bound>` boundaries; accepted 10, rejected 35, population 45; 9 local cohort maps equal 9 remote cohort maps; `remote_calculation_reconciled=true`; only normative capability absence is `Not applicable` | Bound each source-lag reading to the scan extraction boundary. |
 | E-Pipeline-4 | Blocked | No decisive Appendix ownership | [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json): `durable-integrity-failure population`; remote counts reconciled | Project only redacted P11 integrity incidents after reconciliation. |
-| E-Pipeline-5 | Blocked | No decisive Appendix ownership | [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json): `attempts`, `final drain id`, `scan completed at` | Await the exact bounded outbox and final-drain evidence. |
+| E-Pipeline-5 | Completed — Proven | No decisive Appendix ownership | [`metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json`](../experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json): 31/31 primitives and 6/6 results delivered; 21 immutable E5 primitives; 10 selected events and 10 successful attempts; exact native completion and Float64 reconciliation | Project immutable outbox events and exact final-drain reconciliation. |
 | E-Pipeline-6 | Blocked | No decisive Appendix ownership | [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json): `maintenance_observation` | Allowlisted maintenance-ledger reconciliation only; no database access or writes. |
 | E-Attribution-1 | Completed — Proven | 6 rows: Blocked | [`attribution-20260901-phase2-2.json`](../experiments/dashboard_prototype/evidence/attribution-20260901-phase2-2.json): fresh-real retained authority; P5 directional capabilities and P5/P7 population conservation; P8 uses P7 population; exact remote calculation equality | Use exact producer/native-session authority and a common latest-version population for P7/P8. |
 | E-Attribution-2 | Completed — Blocked | 3 rows: Blocked | [`attribution-20260901-phase2-2.json`](../experiments/dashboard_prototype/evidence/attribution-20260901-phase2-2.json): `startup-scenario-source-authority`, `resume-scenario-source-authority`, `clear-scenario-source-authority`, `compact-scenario-source-authority`; accepted=0/4 scenarios | Canonical `codex-app-server` attribution requires exact lifecycle and source tuples. |
@@ -336,9 +350,9 @@ prototyped without changing producer hooks.
 
 #### E-Pipeline-5: immutable outbox delivery detail
 
-- **Status:** Blocked.
-- **Evidence:** [`pipeline-20260901T213721Z.json`](../experiments/dashboard_prototype/evidence/pipeline-20260901T213721Z.json) retained fresh-real run `pipeline-20260901T213721Z`; exact blockers: `attempts`, `final drain id`, `scan completed at`.
-- **Proposal:** Await the exact bounded outbox and final-drain evidence.
+- **Status:** Completed — Proven.
+- **Evidence:** [`metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json`](../experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json) and its [frozen inputs](../experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037-inputs.json) retain the independently completed subject drain, exact source window, complete immutable primitive population, native SQL/bindings/types, and local/remote equality. The separate failed-drain pending diagnostic remains `Blocked`; unavailable failed-attempt timestamps are not backfilled.
+- **Proposal:** Project immutable outbox events and exact final-drain reconciliation.
 
 - Project immutable event creation identity/time, destination, event type,
   bounded final-drain identity, delivery-attempt identity/time, attempt status,
@@ -911,7 +925,7 @@ cutover or any later recurrence projection.
    event-id inputs needed to promote an Appendix row.
 2. **Experiment status and evidence closure.** Every experiment has a recorded
    status, immutable evidence reference, and implementation proposal in
-   [Execution progress](#execution-progress). E-Attribution-1 is the sole
+   [Historical execution record](#historical-execution-record). E-Attribution-1 is the sole
    `Proven` experiment; every other experiment is `Blocked`.
 3. **Identity reconciliation.** The cleanup evidence records 1,298 unique local
    delivered identities and 1,281 remote identities before cleanup. Seventeen
@@ -968,19 +982,19 @@ The original Phase 5 exit gate remains unchanged and unmet: The Canonical-now
 M13/M16 Wave-A calculations reconcile remotely before later recurrence
 projections.
 
-## Authoritative proof follow-on
+## Historical proof follow-on
 
-The
-[Authoritative Proof Closure Plan](authoritative-proof-closure-plan.md)
-owns the recommended actions for the 23 `Blocked` experiments and the blocked
-row-level obligations attached to E-Attribution-1. It applies the recorded
-unblock proposals without changing any Phase 0–6 classification, retained
-evidence, or exit gate.
+Current actions for the remaining blocked experiments and row-level obligations
+are listed in the
+[Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md).
+The historical Phase 0–6 classifications, retained evidence, and exit gates in
+this plan are unchanged.
 
-## Definition of prototype completion
+## Historical definition of prototype completion
 
-The prototype program is complete when every Appendix A calculation and control
-has been classified across all supported producers as:
+This completed experiment program defined full prototype completion as every
+Appendix A calculation and control being classified across all supported
+producers as:
 
 - `Proven` with bounded real source evidence, deterministic centralized
   reduction, immutable remote delivery, and matching SigNoz and independent

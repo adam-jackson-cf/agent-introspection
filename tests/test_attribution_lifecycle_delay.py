@@ -107,7 +107,7 @@ def _version(version: int, state: str, event_id: str, *, activity_id: str) -> Ac
         event_id=event_id,
         producer="omp",
         surface="omp",
-        source_time=START + timedelta(seconds=1),
+        source_time_ns=int(START.timestamp()) * 1_000_000_000 + 1_000_000_000,
         attribution_state=state,
         attribution_method="lifecycle",
         reason_code="missing_context" if state == "unresolved" else None,

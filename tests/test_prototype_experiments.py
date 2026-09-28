@@ -1,15 +1,19 @@
 import copy
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 
 from experiments.dashboard_prototype.contracts import (
     CANONICAL_APPENDIX_V1_SHA256,
     CANONICAL_TEMPORAL_CONTRACT_V1_SHA256,
+    CENTRAL_INTERVAL_CONTAINMENT_OPERATOR,
+    CENTRAL_SELECTED_RANGE_OPERATORS,
     CLEANUP_RUN_ID_SELECTOR,
     EXPERIMENT_NAMESPACE,
     AppendixQueryId,
@@ -18,6 +22,7 @@ from experiments.dashboard_prototype.contracts import (
     CalculationResult,
     CalculationResultState,
     CalculationValue,
+    CentralEvidenceBundle,
     EvidenceBundle,
     EvidenceProvenance,
     ExperimentResult,
@@ -142,6 +147,407 @@ def _bundle() -> EvidenceBundle:
     )
 
 
+def _central_artifact(content: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "content_sha256": hashlib.sha256(
+            json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "content": content,
+    }
+
+
+def _central_bundle(
+    binding: tuple[str, str, str] = ("p1-snapshot", "P1", "E-Pipeline-1"),
+) -> CentralEvidenceBundle:
+    widget_id, measure_id, dependency_id = binding
+    source_ids = ["central-input-1"]
+    witness = {
+        "kind": "DerivedEvent",
+        "scope": "pipeline",
+        "entity_id": "scan-1",
+        "entity_version": 1,
+        "event_sequence": 0,
+        "event_name": "introspection.pipeline.snapshot",
+    }
+    output_ids = [
+        str(
+            UUID(
+                hashlib.sha256(
+                    "\x1f".join(
+                        (
+                            witness["scope"],
+                            witness["entity_id"],
+                            "1",
+                            "0",
+                            witness["event_name"],
+                        )
+                    ).encode()
+                ).hexdigest()[:32]
+            )
+        )
+    ]
+    lineage = [{"source_input_id": source_ids[0], "output_event_id": output_ids[0]}]
+    policies = {
+        "selected_range_operator": CENTRAL_SELECTED_RANGE_OPERATORS[widget_id],
+        "interval_containment_operator": CENTRAL_INTERVAL_CONTAINMENT_OPERATOR,
+        "evaluation_policy_id": "agent-introspection.pipeline-dashboard",
+        "version_policy_id": "agent-introspection.pipeline-observations",
+        "all_version_requirement": _matrix()["rows"][0]["all_version_requirement"],
+    }
+    panel = {
+        "state": "Data",
+        "rangeOperator": policies["selected_range_operator"],
+        "population": "canonical scans",
+        "provenance": "test fixture",
+        "timeBasis": "scan completion time",
+        "reasons": [],
+        "metrics": [
+            {
+                "label": "count",
+                "value": 1.0,
+                "unit": "rows",
+                "sampleCount": 1,
+                "numerator": None,
+                "denominator": None,
+            }
+        ],
+        "rows": [["kind", -0.0, None, False, 9007199254740993]],
+        "columns": ["label", "value", "missing", "boolean", "large integer"],
+        "series": [{"name": "count", "points": [["1", 1.0]]}],
+    }
+    displayed = {
+        "widget_id": widget_id,
+        "panel_json": json.dumps(panel, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+    }
+    remote_calculation = {
+        "reference_id": "pipeline.central.remote-query",
+        "bound_parameters": {
+            "start_ns": "1",
+            "end_ns": "2",
+            "evaluated_at_ns": "2",
+            "measurement_start_ns": None,
+            **policies,
+        },
+        "result": {"state": "computed", "panel_json": displayed["panel_json"]},
+    }
+    oracle_calculation = {**remote_calculation, "reference_id": "pipeline.central.oracle"}
+    implementation = {
+        "deployment_fingerprint": "a" * 64,
+        "calculation_implementation_id": "agent-introspection.pipeline-dashboard",
+        "calculation_implementation_sha256": "b" * 64,
+        "projection_implementation_id": "agent-introspection.pipeline-observations",
+        "projection_implementation_sha256": "c" * 64,
+    }
+    adverse = {
+        case: f"adverse-{case}"
+        for case in sorted(
+            {
+                "endpoint",
+                "negative",
+                "missing",
+                "conflicting",
+                "duplicate",
+                "out-of-order",
+                "version",
+                "clock-skew",
+            }
+        )
+    }
+    artifacts = {
+        "central_capture": _central_artifact(
+            {
+                "runtime_instance_id": "runtime-1",
+                "scan_run_id": "scan-1",
+                "database_identity": "d" * 64,
+                "bounded_start_ns": "1",
+                "bounded_end_ns": "2",
+                "source_input_ids": source_ids,
+            }
+        ),
+        "projection_manifest": _central_artifact(
+            {"output_event_ids": output_ids, "source_output_lineage": lineage}
+        ),
+        "displayed_calculation": _central_artifact(displayed),
+        "remote_calculation": _central_artifact(remote_calculation),
+        "oracle_calculation": _central_artifact(oracle_calculation),
+        "privacy_inventory": _central_artifact(
+            {
+                "privacy_allowlist": ["token_counts"],
+                "raw_field_inventory": [_inventory("token_counts")],
+            }
+        ),
+        "implementation_witnesses": _central_artifact(implementation),
+        **{
+            artifact_id: _central_artifact(
+                {
+                    "category": case,
+                    "population": "robustness",
+                    "scenario_id": f"{case}-scenario",
+                    "input_manifest_sha256": "e" * 64,
+                    "observed_outcome": "rejected",
+                    "expected_outcome": "rejected",
+                }
+            )
+            for case, artifact_id in adverse.items()
+        },
+    }
+    return CentralEvidenceBundle(
+        schema_version=1,
+        widget_id=widget_id,
+        measure_id=measure_id,
+        dependency_id=dependency_id,
+        runtime_instance_id="runtime-1",
+        scan_run_id="scan-1",
+        database_identity="d" * 64,
+        capture_population="fresh-real-recording",
+        bounded_start_ns="1",
+        bounded_end_ns="2",
+        **policies,
+        retained_artifacts=artifacts,
+        source_input_ids=source_ids,
+        output_event_ids=output_ids,
+        remote_event_ids=output_ids,
+        oracle_event_ids=output_ids,
+        source_output_lineage=lineage,
+        projection_event_witnesses=[{"output_event_id": output_ids[0], "witness": witness}],
+        displayed_calculation=displayed,
+        remote_calculation=remote_calculation,
+        oracle_calculation=oracle_calculation,
+        privacy_allowlist=["token_counts"],
+        raw_field_inventory=[_inventory("token_counts")],
+        adverse_case_artifacts=adverse,
+        unresolved_dependencies=[],
+        **implementation,
+    )
+
+
+def test_central_bundle_rejects_identity_manifest_and_dependency_failures() -> None:
+    bundle = _central_bundle()
+    with pytest.raises(PrototypeContractError, match="identity"):
+        replace(bundle, database_identity="not-a-sha")
+    with pytest.raises(PrototypeContractError, match="manifest equality"):
+        replace(bundle, remote_event_ids=["different-event"])
+    with pytest.raises(PrototypeContractError, match="dependency"):
+        replace(bundle, unresolved_dependencies=["unresolved"])
+
+    artifacts = dict(bundle.retained_artifacts)
+    del artifacts["projection_manifest"]
+    with pytest.raises(PrototypeContractError, match="artifact manifest"):
+        replace(bundle, retained_artifacts=artifacts)
+    with pytest.raises(PrototypeContractError, match="stale or conflicting"):
+        replace(bundle, deployment_fingerprint="e" * 64)
+    for coordinate, value in (
+        ("entity_version", 0),
+        ("event_sequence", -1),
+        ("event_sequence", False),
+    ):
+        witnesses = json.loads(bundle.canonical_json())["projection_event_witnesses"]
+        witnesses[0]["witness"][coordinate] = value
+        with pytest.raises(PrototypeContractError, match="projection witness"):
+            replace(bundle, projection_event_witnesses=witnesses)
+
+    # Rehash modified artifacts so each rejection defends semantics, not a stale hash.
+    mutations = [
+        (("remote_calculation", "bound_parameters", "start_ns"), "0", "bounds"),
+        (("remote_calculation", "bound_parameters", "evaluated_at_ns"), "1", "bounds"),
+        (("remote_calculation", "bound_parameters", "measurement_start_ns"), "-1", "bounds"),
+        (("remote_calculation", "bound_parameters", "evaluation_policy_id"), "unknown", "bounds"),
+        (
+            ("retained_artifacts", "adverse-negative", "content", "observed_outcome"),
+            "accepted",
+            "adverse",
+        ),
+        (
+            ("retained_artifacts", "adverse-version", "content", "input_manifest_sha256"),
+            "invalid",
+            "adverse",
+        ),
+    ]
+    for keys, value, message in mutations:
+        altered = json.loads(bundle.canonical_json())
+        target = altered
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = value
+        for name in ("displayed_calculation", "remote_calculation", "oracle_calculation"):
+            altered["retained_artifacts"][name] = _central_artifact(altered[name])
+        for name, artifact in altered["retained_artifacts"].items():
+            altered["retained_artifacts"][name] = _central_artifact(artifact["content"])
+        with pytest.raises(PrototypeContractError, match=message):
+            CentralEvidenceBundle(**altered)
+
+    # Whole-panel equality preserves kinds, signed zero, exact integers and all
+    # displayed populations without a duplicate scalar map or JavaScript numbers.
+    panel_mutations = [
+        (("metrics", 0, "value"), 1),
+        (("rows", 0, 1), 0.0),
+        (("rows", 0, 4), 9007199254740992),
+        (("metrics", 0, "sampleCount"), 2),
+        (("series", 0, "points", 0, 1), 2.0),
+    ]
+    for keys, value in panel_mutations:
+        altered = json.loads(bundle.canonical_json())
+        panel = json.loads(altered["oracle_calculation"]["result"]["panel_json"])
+        target = panel
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = value
+        altered["oracle_calculation"]["result"]["panel_json"] = json.dumps(
+            panel, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        altered["retained_artifacts"]["oracle_calculation"] = _central_artifact(
+            altered["oracle_calculation"]
+        )
+        with pytest.raises(PrototypeContractError, match="match exactly"):
+            CentralEvidenceBundle(**altered)
+
+
+def test_matrix_accepts_only_a_complete_authoritative_central_binding() -> None:
+    payload = _matrix()
+    payload["application_evidence"]["bindings"] = [
+        {
+            "widget_id": bundle.widget_id,
+            "measure_id": bundle.measure_id,
+            "dependency_id": bundle.dependency_id,
+            "central_identity": {
+                "runtime_instance_id": bundle.runtime_instance_id,
+                "scan_run_id": bundle.scan_run_id,
+                "database_identity": bundle.database_identity,
+            },
+            "qualification": {
+                "provenance": "fresh-real",
+                "result": "Proven",
+                "deployment_fingerprint": bundle.deployment_fingerprint,
+                "calculation_implementation_id": bundle.calculation_implementation_id,
+                "calculation_implementation_sha256": bundle.calculation_implementation_sha256,
+                "projection_implementation_id": bundle.projection_implementation_id,
+                "projection_implementation_sha256": bundle.projection_implementation_sha256,
+                "evidence_bundle": json.loads(bundle.canonical_json()),
+            },
+        }
+        for bundle in (_central_bundle(), _central_bundle(("p12-ledger", "P12", "E-Pipeline-6")))
+    ]
+    validate_proof_matrix(payload)
+    payload["application_evidence"]["bindings"][0]["qualification"]["deployment_fingerprint"] = (
+        "f" * 64
+    )
+    with pytest.raises(PrototypeContractError, match="authoritative"):
+        validate_proof_matrix(payload)
+
+
+def _application_binding() -> dict[str, object]:
+    row = _matrix()["rows"][0]
+    witness = {
+        "kind": "CanonicalActivityVersionEvent",
+        "activity_id": "activity-1",
+        "version": 1,
+        "payload_schema_version": 1,
+        "event_name": "dashboard.metric",
+    }
+    result_event_id = hashlib.sha256(
+        "\x1f".join(
+            (
+                witness["activity_id"],
+                str(witness["version"]),
+                str(witness["payload_schema_version"]),
+                witness["event_name"],
+            )
+        ).encode()
+    ).hexdigest()
+    typed_zero = CalculationResult(
+        CalculationResultState.COMPUTED,
+        {"count": 0, "complete": False, "missing": None},
+    )
+    evidence = replace(
+        _bundle(),
+        selected_range_membership_operator=row["selected_range_operator"],
+        interval_containment_operator=row["interval_containment_operator"],
+        policy_identity=row["evaluation_policy_id"],
+        version_policy_identity=row["version_policy_id"],
+        all_version_requirement=row["all_version_requirement"],
+        remote_result=typed_zero,
+        oracle_result=typed_zero,
+    )
+    qualification = {
+        "provenance": "fresh-real",
+        "result": "Proven",
+        "experiment_id": row["experiment_id"],
+        "deployment_fingerprint": "a" * 64,
+        "calculation_implementation_id": "agent-introspection.pipeline-dashboard",
+        "calculation_implementation_sha256": "b" * 64,
+        "projection_implementation_id": "agent-introspection.pipeline-observations",
+        "projection_implementation_sha256": "c" * 64,
+        "projection_event_witness": witness,
+        "raw_evidence": {
+            "bounded_start_ns": "1",
+            "bounded_end_ns": "2",
+            "opaque_native_event_ids": ["opaque-native-event-1"],
+            "native_identity_tuple": ["omp", "session-1"],
+        },
+        "selected_range_operator": row["selected_range_operator"],
+        "interval_containment_operator": row["interval_containment_operator"],
+        "evaluation_policy_id": row["evaluation_policy_id"],
+        "version_policy_id": row["version_policy_id"],
+        "all_version_requirement": row["all_version_requirement"],
+        "join_chain": [
+            {"source": "native_identity_tuple", "identity_field": "producer,native_session_id"},
+            {"source": "stable_identity", "identity_field": "canonical_session_id"},
+        ],
+        "source_event_ids": ["opaque-native-event-1"],
+        "output_event_ids": [result_event_id],
+        "remote_event_ids": [result_event_id],
+        "oracle_event_ids": [result_event_id],
+        "remote_result": {
+            "state": "computed",
+            "values": {"count": 0, "complete": False, "missing": None},
+        },
+        "oracle_result": {
+            "state": "computed",
+            "values": {"count": 0, "complete": False, "missing": None},
+        },
+        "adverse_cases": [
+            "endpoint",
+            "negative",
+            "missing",
+            "conflicting",
+            "duplicate",
+            "out-of-order",
+            "version",
+            "clock-skew",
+        ],
+        "privacy_allowlist": [
+            "event_id_ordinal",
+            "experiment_id",
+            "native_session_id",
+            "producer",
+            "token_counts",
+        ],
+        "evidence_bundle": json.loads(serialize_evidence_bundle(evidence)),
+    }
+    return {
+        "widget_id": "pipeline-health",
+        "measure_id": "accepted-count",
+        "dependency_id": row["row_id"],
+        "producer": "omp",
+        "native_identity": {
+            "producer": "omp",
+            "native_session_id": "session-1",
+            "native_event_id": "opaque-native-event-1",
+        },
+        "calculation": {
+            "state": "computed",
+            "query_reference_id": row["remote_query"]["reference_id"],
+            "result_event_id": result_event_id,
+        },
+        "projection": {
+            "state": "computed",
+            "projection_id": "pipeline-observations-v1",
+            "result_event_id": result_event_id,
+        },
+        "qualification": qualification,
+    }
+
+
 def test_loads_checked_in_canonical_matrix() -> None:
     matrix = load_proof_matrix(MATRIX_PATH)
 
@@ -152,6 +558,30 @@ def test_loads_checked_in_canonical_matrix() -> None:
         "codex-cli",
         "codex-app-server",
     }
+
+
+def test_application_qualification_requires_full_distinct_native_projection_evidence() -> None:
+    payload = _matrix()
+    payload["application_evidence"]["bindings"] = [_application_binding()]
+
+    validate_proof_matrix(payload)
+
+    incomplete = copy.deepcopy(payload)
+    del incomplete["application_evidence"]["bindings"][0]["qualification"]["evidence_bundle"][
+        "recommendation"
+    ]
+    with pytest.raises(PrototypeContractError):
+        validate_proof_matrix(incomplete)
+
+    conflated = copy.deepcopy(payload)
+    binding = conflated["application_evidence"]["bindings"][0]
+    result_event_id = binding["projection"]["result_event_id"]
+    binding["native_identity"]["native_event_id"] = result_event_id
+    qualification = binding["qualification"]
+    qualification["raw_evidence"]["opaque_native_event_ids"] = [result_event_id]
+    qualification["source_event_ids"] = [result_event_id]
+    with pytest.raises(PrototypeContractError, match="distinct"):
+        validate_proof_matrix(conflated)
 
 
 def test_matrix_requires_exact_experiment_registry_and_retains_it() -> None:

@@ -664,6 +664,7 @@ def _accepted_context_event(event: SessionContextEvent) -> DerivedEvent:
     }
     if event.project.display_name is not None:
         attributes["agent.project.name"] = event.project.display_name
+    delta = event.occurred_at - datetime(1970, 1, 1, tzinfo=UTC)
     return DerivedEvent(
         scope="session-context",
         entity_id=event.event_id,
@@ -671,7 +672,9 @@ def _accepted_context_event(event: SessionContextEvent) -> DerivedEvent:
         event_sequence=1,
         event_name="introspection.session_context.accepted",
         attributes=attributes,
-        timestamp_ns=int(event.occurred_at.timestamp() * 1_000_000_000),
+        timestamp_ns=(
+            (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+        ),
     )
 
 

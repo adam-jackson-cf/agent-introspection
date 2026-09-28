@@ -7,8 +7,10 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
+from typing import cast
 
 from experiments.dashboard_prototype.attribution_baseline import (
     AttributionBaselineProofInput,
@@ -18,6 +20,7 @@ from experiments.dashboard_prototype.attribution_baseline import (
     ProducerAuthority,
     SourceSessionObservation,
     build_attribution_baseline_proof,
+    p5_session_members,
 )
 from experiments.dashboard_prototype.attribution_common import AttributionExperimentId
 from experiments.dashboard_prototype.attribution_live_common import (
@@ -31,6 +34,10 @@ _IDENTITY_BOUNDARY = {
     "omp": ("getSessionId()", "session record id", "gen_ai.conversation.id"),
     "codex-cli": ("notify thread-id", "session_meta.payload.id", "thread.id or thread_id"),
 }
+
+_CANONICAL_ACTIVITY_EVENT = "introspection.activity.version.recorded"
+_CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION = 2
+_INTERVAL_PRODUCERS = frozenset({"omp", "codex-app-server"})
 
 
 def extract(
@@ -54,8 +61,8 @@ def extract(
             end=request.end,
         ),
     )
-    primitives = _primitives(activities or (), sources or (), lifecycles or (), request)
-    oracle = _oracle(primitives) if primitives else {}
+    primitives = _primitives(activities, sources, lifecycles, request)
+    oracle = _oracle(primitives, activities_available=activities is not None)
     return AttributionLiveEvidence(
         proof,
         primitives,
@@ -75,50 +82,75 @@ class AttributionRowAuthority:
     reducer_id: str
     source_time: datetime
     expected_result: Mapping[str, str | int | bool | None]
+    source_time_ns: int
+    native_identity_bound: bool
 
 
 def row_evidence_inputs(
     connection: sqlite3.Connection, request: LiveProofRequest
 ) -> tuple[AttributionRowAuthority, ...]:
-    """Derive row authority only from bounded source and reducer records."""
+    """Derive every bounded source and lifecycle member without collapsing either direction."""
     sources = _current_sources(connection, request)
     activities = _current_activities(connection, request)
     lifecycles = _current_lifecycles(connection)
     if sources is None or activities is None or lifecycles is None:
         return ()
+    observations: chain[SourceSessionObservation | LifecycleSessionObservation] = chain(
+        sources, lifecycles
+    )
+    native_identities = {(item.producer, item.native_session_id) for item in observations}
     rows: list[AttributionRowAuthority] = []
-    for source in sources:
-        matched = any(
-            lifecycle.producer == source.producer
-            and lifecycle.surface == source.surface
-            and lifecycle.native_session_id == source.native_session_id
-            and lifecycle.interval_start <= source.source_time
-            and (lifecycle.interval_end is None or source.source_time < lifecycle.interval_end)
-            for lifecycle in lifecycles
-        )
-        if request.start < source.source_time <= request.end and matched:
-            rows.append(
-                AttributionRowAuthority(
-                    "A07",
-                    source.producer,
-                    source.native_session_id,
-                    _digest(f"source:{source.producer}:{source.native_session_id}"),
-                    _digest(
-                        f"reducer:{source.producer}:{source.native_session_id}:{source.source_time.isoformat()}"
-                    ),
-                    source.source_time,
-                    {
-                        "source_sessions": 1,
-                        "source_with_lifecycle": 1,
-                        "lifecycle_sessions": 1,
-                        "lifecycle_with_source": 1,
-                    },
-                )
+    for member in p5_session_members(sources, lifecycles, start=request.start, end=request.end):
+        source_direction = member.direction == "source_to_lifecycle"
+        if source_direction:
+            if member.source is None or not member.source.source_id:
+                raise ValueError("source session lacks its exact immutable source ID")
+            source_id = member.source.source_id
+        else:
+            accepted = sorted(
+                {
+                    (instant, event_id)
+                    for interval in member.intervals
+                    for instant, event_id in interval.accepted_events
+                    if request.start < instant <= request.end
+                }
             )
+            source_id = accepted[0][1]
+        lineage = (
+            member.producer,
+            member.native_session_id,
+            member.direction,
+            member.source.source_id if member.source else None,
+            [
+                (
+                    interval.lifecycle_event_id,
+                    interval.interval_start.isoformat() if interval.interval_start else None,
+                    interval.interval_end.isoformat() if interval.interval_end else None,
+                )
+                for interval in member.intervals
+            ],
+        )
+        reducer_id = hashlib.sha256(json.dumps(lineage, separators=(",", ":")).encode()).hexdigest()
+        rows.append(
+            AttributionRowAuthority(
+                "A07",
+                member.producer,
+                member.native_session_id,
+                source_id,
+                reducer_id,
+                _source_datetime(member.source_time_ns),
+                {
+                    "source_sessions": int(source_direction),
+                    "source_with_lifecycle": int(source_direction and member.matched),
+                    "lifecycle_sessions": int(not source_direction),
+                    "lifecycle_with_source": int(not source_direction and member.matched),
+                },
+                member.source_time_ns,
+                True,
+            )
+        )
     for activity in activities:
-        if not request.start < activity.source_time <= request.end:
-            continue
-        source_id = _digest(f"source:{activity.producer}:{activity.native_session_id}")
+        source_id = _digest(f"source:{activity.activity_id}")
         reducer_id = _digest(f"reducer:{activity.activity_id}:{activity.version}")
         rows.extend(
             (
@@ -128,13 +160,17 @@ def row_evidence_inputs(
                     activity.native_session_id,
                     source_id,
                     reducer_id,
-                    activity.source_time,
+                    _source_datetime(activity.source_time_ns),
                     {
                         "eligible": 1,
                         "attributed": int(activity.state == "attributed"),
                         "unresolved": int(activity.state == "unresolved"),
-                        "distinct_projects": int(activity.project_id is not None),
+                        "project_digest": _digest(activity.project_id)
+                        if activity.project_id is not None
+                        else "none",
                     },
+                    activity.source_time_ns,
+                    (activity.producer, activity.native_session_id) in native_identities,
                 ),
                 AttributionRowAuthority(
                     "A09",
@@ -142,13 +178,14 @@ def row_evidence_inputs(
                     activity.native_session_id,
                     source_id,
                     reducer_id,
-                    activity.source_time,
+                    _source_datetime(activity.source_time_ns),
                     {
                         "eligible": 1,
                         "unresolved": int(activity.state == "unresolved"),
                         "diagnostic_count": int(activity.state == "unresolved"),
-                        "diagnostic": activity.reason_code,
                     },
+                    activity.source_time_ns,
+                    (activity.producer, activity.native_session_id) in native_identities,
                 ),
             )
         )
@@ -225,69 +262,145 @@ def _current_sources(
     if not _has_columns(
         connection,
         "source_session_current",
-        {"native_producer", "native_session_id", "source_timestamp"},
+        {
+            "native_producer",
+            "native_session_id",
+            "source_id",
+            "source_timestamp",
+            "source_timestamp_ns",
+        },
     ):
         return None
+    start_ns, end_ns = _epoch_ns(request.start), _epoch_ns(request.end)
     rows = connection.execute(
         """
-        SELECT native_producer, native_session_id, MIN(source_timestamp)
+        SELECT native_producer, native_session_id, source_id, source_timestamp_ns
         FROM source_session_current
-        WHERE native_producer IN ('omp', 'codex-cli')
-          AND native_session_id IS NOT NULL
-          AND source_timestamp > ? AND source_timestamp <= ?
-        GROUP BY native_producer, native_session_id
+        WHERE native_producer = 'omp'
+          AND (
+            (CAST(source_timestamp_ns AS INTEGER) > ?
+             AND CAST(source_timestamp_ns AS INTEGER) <= ?)
+            OR (source_timestamp >= ? AND source_timestamp <= ?)
+          )
+        ORDER BY source_id
         """,
-        (request.start.isoformat(), request.end.isoformat()),
+        (start_ns, end_ns, request.start.isoformat(), request.end.isoformat()),
     ).fetchall()
     observations: list[SourceSessionObservation] = []
-    for row in rows:
-        source_time = _instant(str(row[2]))
-        if source_time is not None:
-            observations.append(
-                SourceSessionObservation(
-                    str(row[0]), str(row[0]), _digest(str(row[1])), source_time
-                )
-            )
+    for producer, session_id, source_id, timestamp_ns in rows:
+        # Coarse datetime bounds retain indeterminate boundary records; they never
+        # supply a raw timestamp or establish selected-source membership.
+        if not isinstance(timestamp_ns, str) or not timestamp_ns.isascii():
+            return None
+        if not timestamp_ns.isdecimal():
+            return None
+        source_ns = int(timestamp_ns)
+        if not start_ns < source_ns <= end_ns:
+            continue
+        if not all(isinstance(value, str) and value for value in (session_id, source_id)):
+            return None
+        observations.append(
+            SourceSessionObservation(producer, producer, session_id, source_ns, source_id)
+        )
     return tuple(observations)
 
 
 def _current_lifecycles(
     connection: sqlite3.Connection,
 ) -> tuple[LifecycleSessionObservation, ...] | None:
-    if not _has_columns(
-        connection,
-        "session_context_intervals",
-        {"producer", "session_id", "started_at", "ended_at"},
+    if (
+        not _has_columns(
+            connection,
+            "session_context_intervals",
+            {"event_id", "end_event_id", "producer", "session_id", "started_at", "ended_at"},
+        )
+        or not _has_columns(
+            connection,
+            "session_context_events",
+            {"event_id", "producer", "session_id", "event_type", "occurred_at"},
+        )
+        or not _has_columns(
+            connection,
+            "session_context_event_supersessions",
+            {"original_event_id", "replacement_event_id"},
+        )
     ):
         return None
-    event_times: dict[tuple[str, str], list[datetime]] = {}
-    if _has_columns(
-        connection,
-        "session_context_events",
-        {"producer", "session_id", "occurred_at"},
+    accepted_events: dict[tuple[str, str], list[tuple[datetime, str]]] = {}
+    starts: dict[tuple[str, str, str], datetime] = {}
+    ends: dict[tuple[str, str, str], datetime] = {}
+    for event in connection.execute(
+        """
+        SELECT event.event_id, event.producer, event.session_id, event.event_type, event.occurred_at
+        FROM session_context_events AS event
+        LEFT JOIN session_context_event_supersessions AS supersession
+          ON supersession.original_event_id = event.event_id
+        WHERE event.producer = 'omp'
+          AND supersession.original_event_id IS NULL
+        """
     ):
-        for event in connection.execute(
-            "SELECT producer, session_id, occurred_at FROM session_context_events "
-            "WHERE producer IN ('omp', 'codex-cli')"
-        ):
-            event_time = _instant(str(event[2]))
-            if event_time is not None:
-                event_times.setdefault((str(event[0]), str(event[1])), []).append(event_time)
+        event_time = _instant(str(event[4]))
+        if event_time is None:
+            return None
+        producer, session_id = str(event[1]), str(event[2])
+        accepted_events.setdefault((producer, session_id), []).append((event_time, str(event[0])))
+        if str(event[3]) in {"session_start", "workspace_changed"}:
+            starts[(str(event[0]), producer, session_id)] = event_time
+        if str(event[3]) in {"workspace_changed", "session_end"}:
+            ends[(str(event[0]), producer, session_id)] = event_time
     rows = connection.execute(
-        "SELECT producer, session_id, started_at, ended_at FROM session_context_intervals "
-        "WHERE producer IN ('omp', 'codex-cli')"
+        """
+        SELECT interval.event_id, interval.producer, interval.session_id,
+               interval.started_at, interval.ended_at, interval.end_event_id
+        FROM session_context_intervals AS interval
+        LEFT JOIN session_context_event_supersessions AS opening_supersession
+          ON opening_supersession.original_event_id = interval.event_id
+        LEFT JOIN session_context_event_supersessions AS ending_supersession
+          ON ending_supersession.original_event_id = interval.end_event_id
+        WHERE interval.producer = 'omp'
+          AND opening_supersession.original_event_id IS NULL
+          AND ending_supersession.original_event_id IS NULL
+        """
     ).fetchall()
     observations: list[LifecycleSessionObservation] = []
     for row in rows:
-        start = _instant(str(row[2]))
-        end = _instant(str(row[3])) if row[3] else None
-        if start is not None:
-            events = tuple(event_times.get((str(row[0]), str(row[1])), [start]))
-            observations.append(
-                LifecycleSessionObservation(
-                    str(row[0]), str(row[0]), _digest(str(row[1])), start, end, events
-                )
+        event_id, producer, session_id = str(row[0]), str(row[1]), str(row[2])
+        if producer not in _INTERVAL_PRODUCERS:
+            return None
+        start = _instant(str(row[3]))
+        end = _instant(str(row[4])) if row[4] else None
+        if (
+            start is None
+            or (end is not None and end < start)
+            or starts.get((event_id, producer, session_id)) != start
+            or (row[4] is not None and end is None)
+            or (end is None) != (row[5] is None)
+            or (end is not None and ends.get((str(row[5]), producer, session_id)) != end)
+        ):
+            return None
+        observations.append(
+            LifecycleSessionObservation(
+                producer,
+                producer,
+                session_id,
+                start,
+                end,
+                tuple(sorted(accepted_events[(producer, session_id)])),
+                event_id,
             )
+        )
+    interval_keys = {(row.producer, row.native_session_id) for row in observations}
+    for producer, session_id in sorted(accepted_events.keys() - interval_keys):
+        observations.append(
+            LifecycleSessionObservation(
+                producer,
+                producer,
+                session_id,
+                None,
+                None,
+                tuple(sorted(accepted_events[(producer, session_id)])),
+            )
+        )
     return tuple(observations)
 
 
@@ -307,7 +420,11 @@ def _current_activities(
     required = {
         "canonical_activities",
         "canonical_activity_versions",
+        "canonical_activity_outbox_evidence",
+        "otlp_outbox",
         "session_context_intervals",
+        "session_context_events",
+        "session_context_event_supersessions",
     }
     tables = {
         str(row[0])
@@ -322,98 +439,253 @@ def _current_activities(
     interval_columns = {
         str(row[1]) for row in connection.execute("PRAGMA table_info(session_context_intervals)")
     }
-    needed = {
-        "id",
-        "producer",
-        "producer_surface",
-        "correlation_id",
-        "source_ended_at_ns",
+    event_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(session_context_events)")
     }
-    needed_versions = {
-        "activity_id",
-        "version",
-        "attribution_state",
-        "project_identity_id",
-        "attribution_method",
-        "reason_code",
+    evidence_columns = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(canonical_activity_outbox_evidence)")
     }
-    needed_intervals = {
-        "producer",
-        "session_id",
-        "started_at",
-        "ended_at",
-        "event_id",
-        "project_id",
-    }
+    outbox_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(otlp_outbox)")}
     if (
-        not needed <= columns
-        or not needed_versions <= version_columns
-        or not needed_intervals <= interval_columns
+        not {"id", "producer", "producer_surface", "correlation_id", "source_ended_at_ns"}
+        <= columns
+        or not {
+            "activity_id",
+            "version",
+            "attribution_state",
+            "project_identity_id",
+            "attribution_method",
+            "reason_code",
+        }
+        <= version_columns
+        or not {
+            "producer",
+            "session_id",
+            "started_at",
+            "ended_at",
+            "event_id",
+            "end_event_id",
+            "project_id",
+        }
+        <= interval_columns
+        or not {"event_id", "producer", "session_id", "event_type", "project_id"} <= event_columns
+        or not {
+            "activity_id",
+            "activity_version",
+            "payload_schema_version",
+            "event_name",
+            "event_id",
+        }
+        <= evidence_columns
+        or not {"event_id", "payload_json"} <= outbox_columns
     ):
         return None
     rows = connection.execute(
         """
-        WITH ranked AS (
-          SELECT activity.id, activity.producer, activity.producer_surface, activity.correlation_id,
-                 activity.source_ended_at_ns, version.version, version.attribution_state,
-                 version.project_identity_id, version.attribution_method, version.reason_code,
-                 row_number() OVER (PARTITION BY activity.id ORDER BY version.version DESC) AS rank
-          FROM canonical_activities AS activity
-          JOIN canonical_activity_versions AS version ON version.activity_id = activity.id
-          WHERE activity.producer IN ('omp', 'codex-cli')
-            AND activity.source_ended_at_ns > ? AND activity.source_ended_at_ns <= ?
-        ) SELECT * FROM ranked WHERE rank = 1 ORDER BY source_ended_at_ns, id
+        SELECT activity.id, activity.producer, activity.producer_surface, activity.correlation_id,
+               activity.source_ended_at_ns, version.version, version.attribution_state,
+               version.project_identity_id, version.attribution_method, version.reason_code,
+               evidence.event_id, evidence.payload_schema_version, evidence.event_name,
+               outbox.payload_json
+        FROM canonical_activities AS activity
+        JOIN canonical_activity_versions AS version ON version.activity_id = activity.id
+        LEFT JOIN canonical_activity_outbox_evidence AS evidence
+          ON evidence.activity_id = version.activity_id
+         AND evidence.activity_version = version.version
+         AND evidence.payload_schema_version = ?
+         AND evidence.event_name = ?
+        LEFT JOIN otlp_outbox AS outbox ON outbox.event_id = evidence.event_id
+        WHERE activity.producer IN ('omp', 'codex-cli')
+        ORDER BY activity.id, version.version, evidence.event_id
         """,
         (
-            int(request.start.timestamp() * 1_000_000_000),
-            int(request.end.timestamp() * 1_000_000_000),
+            _CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION,
+            _CANONICAL_ACTIVITY_EVENT,
         ),
     ).fetchall()
-    result: list[CanonicalActivityVersion] = []
+    histories: dict[str, list[tuple[object, ...]]] = {}
     for row in rows:
-        source_time = datetime.fromtimestamp(int(row[4]) / 1_000_000_000, tz=request.start.tzinfo)
-        interval = connection.execute(
-            """
-            SELECT project_id FROM session_context_intervals
-            WHERE producer = ? AND session_id = ? AND started_at <= ?
-              AND (ended_at IS NULL OR ? < ended_at)
-            ORDER BY started_at, event_id
-            LIMIT 1
-            """,
-            (row[1], row[3], source_time.isoformat(), source_time.isoformat()),
-        ).fetchone()
-        matched_project = interval and row[7] == interval[0]
-        state = "attributed" if row[6] == "resolved" and matched_project else "unresolved"
-        reason = None if state == "attributed" else _reason(row[9])
-        if state == "unresolved" and interval is None:
-            reason = "no_authoritative_context"
+        histories.setdefault(str(row[0]), []).append(row)
+    result: list[CanonicalActivityVersion] = []
+    for activity_id, history in sorted(histories.items()):
+        if (
+            any(type(row[5]) is not int for row in history)
+            or [row[5] for row in history] != list(range(1, len(history) + 1))
+            or any(row[1:5] != history[0][1:5] for row in history)
+            or any(not _valid_activity_envelope(row) for row in history)
+            or type(history[0][4]) is not int
+        ):
+            return None
+        if not _epoch_ns(request.start) < history[0][4] <= _epoch_ns(request.end):
+            continue
+        latest = history[-1]
+        try:
+            source_time = _source_datetime(cast(int, latest[4]))
+            context = _activity_context(connection, latest, source_time)
+        except (OverflowError, OSError, ValueError):
+            return None
+        if context is None or (
+            latest[6] == "resolved" and (len(context) != 1 or latest[7] != context[0])
+        ):
+            return None
+        state = "attributed" if latest[6] == "resolved" else "unresolved"
+        reason = None if state == "attributed" else _reason(latest[9])
         result.append(
             CanonicalActivityVersion(
-                _digest(str(row[0])),
-                int(row[5]),
-                source_time,
-                str(row[1]),
-                str(row[2]),
-                _digest(str(row[3])),
+                activity_id,
+                cast(int, latest[5]),
+                cast(int, latest[4]),
+                str(latest[1]),
+                str(latest[2]),
+                str(latest[3]),
                 state,
-                _digest(str(row[7])) if state == "attributed" else None,
+                _digest(str(latest[7])) if state == "attributed" else None,
                 reason,
-                str(row[8]) if row[8] else "none",
+                str(latest[8]) if latest[8] else "none",
             )
         )
     return tuple(result)
 
 
+def _activity_context(
+    connection: sqlite3.Connection, row: tuple[object, ...], source_time: datetime
+) -> tuple[str, ...] | None:
+    producer, session_id = str(row[1]), str(row[3])
+    if producer == "codex-cli":
+        points = connection.execute(
+            """
+            SELECT event.project_id
+            FROM session_context_events AS event
+            LEFT JOIN session_context_event_supersessions AS supersession
+              ON supersession.original_event_id = event.event_id
+            WHERE event.producer = 'codex-cli' AND event.session_id = ?
+              AND event.event_type = 'session_context'
+              AND supersession.original_event_id IS NULL
+            """,
+            (session_id,),
+        ).fetchall()
+        if any(not _valid_project_id(point[0]) for point in points):
+            return None
+        projects = {str(point[0]) for point in points}
+        return tuple(sorted(projects))
+    if producer not in _INTERVAL_PRODUCERS:
+        return None
+    intervals = connection.execute(
+        """
+        SELECT interval.project_id FROM session_context_intervals AS interval
+        LEFT JOIN session_context_event_supersessions AS opening_supersession
+          ON opening_supersession.original_event_id = interval.event_id
+        LEFT JOIN session_context_event_supersessions AS ending_supersession
+          ON ending_supersession.original_event_id = interval.end_event_id
+        WHERE interval.producer = ? AND interval.session_id = ? AND interval.started_at <= ?
+          AND (interval.ended_at IS NULL OR ? < interval.ended_at)
+          AND opening_supersession.original_event_id IS NULL
+          AND ending_supersession.original_event_id IS NULL
+        ORDER BY interval.started_at, interval.event_id
+        """,
+        (producer, session_id, source_time.isoformat(), source_time.isoformat()),
+    ).fetchall()
+    if any(not _valid_project_id(interval[0]) for interval in intervals):
+        return None
+    return tuple(str(interval[0]) for interval in intervals)
+
+
+def _valid_activity_envelope(row: tuple[object, ...]) -> bool:
+    try:
+        activity_id, producer, surface, correlation_id, source_time_ns, version = row[:6]
+        event_id, payload_schema_version, event_name, payload_json = row[10:14]
+        if (
+            not isinstance(activity_id, str)
+            or not isinstance(producer, str)
+            or not isinstance(surface, str)
+            or not isinstance(correlation_id, str)
+            or type(source_time_ns) is not int
+            or source_time_ns < 0
+            or type(version) is not int
+            or row[6] not in {"resolved", "unresolved"}
+            or not isinstance(row[8], str)
+            or (row[6] == "resolved" and (not _valid_project_id(row[7]) or row[9] is not None))
+            or (
+                row[6] == "unresolved"
+                and (row[7] is not None or not isinstance(row[9], str) or not row[9])
+            )
+            or type(payload_schema_version) is not int
+            or payload_schema_version != _CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION
+            or event_name != _CANONICAL_ACTIVITY_EVENT
+            or event_id
+            != hashlib.sha256(
+                "\x1f".join(
+                    (
+                        activity_id,
+                        str(version),
+                        str(payload_schema_version),
+                        str(event_name),
+                    )
+                ).encode()
+            ).hexdigest()
+        ):
+            return False
+        payload = json.loads(str(payload_json))
+        expected = {
+            "event.id": event_id,
+            "event.scope": "canonical-activity",
+            "event.name": event_name,
+            "activity.id": activity_id,
+            "activity.version": version,
+            "activity.payload_schema_version": payload_schema_version,
+            "timestamp_ns": source_time_ns,
+            "activity.producer": producer,
+            "activity.producer_surface": surface,
+            "activity.correlation_id": correlation_id,
+            "activity.attribution.state": row[6],
+            "activity.attribution.method": row[8],
+        }
+        if not isinstance(payload, dict) or any(
+            type(payload.get(key)) is not type(value) or payload[key] != value
+            for key, value in expected.items()
+        ):
+            return False
+        if row[6] == "resolved":
+            return (
+                payload.get("agent.project.id") == row[7]
+                and payload.get("activity.attribution.project_identity_id") == row[7]
+                and "activity.attribution.reason_code" not in payload
+            )
+        return (
+            row[6] == "unresolved"
+            and row[7] is None
+            and payload.get("agent.project.id") == "unresolved"
+            and payload.get("activity.attribution.reason_code") == row[9]
+            and "activity.attribution.project_identity_id" not in payload
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _valid_project_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _source_datetime(source_time_ns: int) -> datetime:
+    seconds, nanoseconds = divmod(source_time_ns, 1_000_000_000)
+    return datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanoseconds // 1_000)
+
+
 def _primitives(
-    activities: tuple[CanonicalActivityVersion, ...],
-    sources: tuple[SourceSessionObservation, ...],
-    lifecycles: tuple[LifecycleSessionObservation, ...],
+    activities: tuple[CanonicalActivityVersion, ...] | None,
+    sources: tuple[SourceSessionObservation, ...] | None,
+    lifecycles: tuple[LifecycleSessionObservation, ...] | None,
     request: LiveProofRequest,
 ) -> tuple[AttributionCalculationPrimitive, ...]:
     activity_primitives = tuple(
         AttributionCalculationPrimitive(
             AttributionExperimentId.BASELINE,
-            row.source_time,
+            _source_datetime(row.source_time_ns),
             ordinal,
             {
                 "producer": row.producer,
@@ -425,83 +697,39 @@ def _primitives(
                 "project_digest": row.project_id or "none",
             },
             {"count": 1},
+            source_time_ns=row.source_time_ns,
         )
-        for ordinal, row in enumerate(activities)
-        if request.start < row.source_time <= request.end
+        for ordinal, row in enumerate(activities if activities is not None else ())
+        if _epoch_ns(request.start) < row.source_time_ns <= _epoch_ns(request.end)
     )
-    p5_primitives: list[AttributionCalculationPrimitive] = []
-    ordinal = len(activity_primitives)
-    for source in sources:
-        matched = any(
-            lifecycle.producer == source.producer
-            and lifecycle.surface == source.surface
-            and lifecycle.native_session_id == source.native_session_id
-            and lifecycle.interval_start <= source.source_time
-            and (lifecycle.interval_end is None or source.source_time < lifecycle.interval_end)
-            for lifecycle in lifecycles
+    p5_primitives = tuple(
+        AttributionCalculationPrimitive(
+            AttributionExperimentId.BASELINE,
+            _source_datetime(member.source_time_ns),
+            len(activity_primitives) + ordinal,
+            {
+                "producer": member.producer,
+                "surface": member.surface,
+                "primitive_kind": "p5",
+                "direction": member.direction,
+                "matched": member.matched,
+            },
+            {"count": 1},
+            source_time_ns=member.source_time_ns,
         )
-        p5_primitives.append(
-            AttributionCalculationPrimitive(
-                AttributionExperimentId.BASELINE,
-                source.source_time,
-                ordinal,
-                {
-                    "producer": source.producer,
-                    "surface": source.surface,
-                    "primitive_kind": "p5",
-                    "direction": "source_to_lifecycle",
-                    "matched": matched,
-                },
-                {"count": 1},
-            )
+        for ordinal, member in enumerate(
+            p5_session_members(sources, lifecycles, start=request.start, end=request.end)
+            if sources is not None and lifecycles is not None
+            else ()
         )
-        ordinal += 1
-    lifecycle_groups: dict[tuple[str, str, str], list[LifecycleSessionObservation]] = {}
-    for lifecycle in lifecycles:
-        lifecycle_groups.setdefault(
-            (lifecycle.producer, lifecycle.surface, lifecycle.native_session_id), []
-        ).append(lifecycle)
-    for key, intervals in sorted(lifecycle_groups.items()):
-        event_times = sorted(
-            event_time
-            for lifecycle in intervals
-            for event_time in lifecycle.accepted_event_times
-            if request.start < event_time <= request.end
-        )
-        if not event_times:
-            continue
-        matched = any(
-            source.producer == key[0]
-            and source.surface == key[1]
-            and source.native_session_id == key[2]
-            and any(
-                interval.interval_start <= source.source_time
-                and (interval.interval_end is None or source.source_time < interval.interval_end)
-                for interval in intervals
-            )
-            for source in sources
-        )
-        p5_primitives.append(
-            AttributionCalculationPrimitive(
-                AttributionExperimentId.BASELINE,
-                event_times[0],
-                ordinal,
-                {
-                    "producer": key[0],
-                    "surface": key[1],
-                    "primitive_kind": "p5",
-                    "direction": "lifecycle_to_source",
-                    "matched": matched,
-                },
-                {"count": 1},
-            )
-        )
-        ordinal += 1
+    )
     return activity_primitives + tuple(p5_primitives)
 
 
 def _oracle(
     primitives: tuple[AttributionCalculationPrimitive, ...],
+    *,
+    activities_available: bool,
 ) -> dict[str, dict[str, int]]:
     p7_p8 = [row for row in primitives if row.dimensions["primitive_kind"] == "p7_p8"]
     p5: dict[str, dict[str, int]] = {}
@@ -551,6 +779,8 @@ def _oracle(
             and row.dimensions["project_digest"] != "none"
         }
         cohort["distinct_projects"] = len(projects)
+    if not activities_available:
+        return p5
     return {
         "p7": {
             "eligible": len(p7_p8),
@@ -582,6 +812,11 @@ def _capability(value: object) -> CapabilityState:
 def _reason(value: object) -> str:
     candidate = str(value) if value else "no_authoritative_context"
     return candidate if candidate.replace("_", "").isalnum() else "invalid_reason"
+
+
+def _epoch_ns(value: datetime) -> int:
+    delta = value.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _digest(value: str) -> str:

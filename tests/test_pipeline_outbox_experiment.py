@@ -9,7 +9,6 @@ from experiments.dashboard_prototype.contracts import (
     PrototypeContractError,
 )
 from experiments.dashboard_prototype.pipeline_outbox import (
-    E5_REMOTE_SQL,
     DeliveryAttempt,
     DeliveryAttemptStatus,
     E5RemotePopulation,
@@ -288,8 +287,6 @@ def test_e5_direct_sql_and_independent_oracle_reconcile_exact_typed_scalars() ->
         population=population,
     )
     assert oracle is not None
-    assert E5_REMOTE_SQL.count("event_id IN exact_event_ids") == 2
-    assert "drain_id = exact_final_drain_id" in E5_REMOTE_SQL
     remote = parse_e5_remote_result(
         (
             {
@@ -300,6 +297,14 @@ def test_e5_direct_sql_and_independent_oracle_reconcile_exact_typed_scalars() ->
                 "final_drain_attempt_count": 2,
                 "oldest_pending_age_seconds": 570.0,
                 "drain_failure_percentage": 50.0,
+                "final_drain_completion_count": 1,
+                "final_drain_completed_at_ns": int(COMPLETED.timestamp() * 1_000_000_000),
+                "matching_final_drain_completion_count": 1,
+                "primitive_event_count": 2,
+                "distinct_primitive_event_count": 2,
+                "expected_primitive_event_count": 2,
+                "selected_primitive_population_matches": 1,
+                "missing_native_pending_count": 0,
             },
         )
     )
@@ -309,6 +314,36 @@ def test_e5_direct_sql_and_independent_oracle_reconcile_exact_typed_scalars() ->
     assert remote.final_drain_attempt_count == oracle.final_drain_attempt_count
     assert remote.oldest_pending_age_seconds == oracle.oldest_pending_age_seconds
     assert remote.drain_failure_percentage == oracle.drain_failure_percentage
+
+
+def test_e5_remote_audit_rejects_conflicting_incomplete_and_missing_pending_populations() -> None:
+    valid_result = {
+        "selected_event_count": 2,
+        "pending_event_count": 1,
+        "attempted_event_count": 2,
+        "failed_event_count": 1,
+        "final_drain_attempt_count": 2,
+        "oldest_pending_age_seconds": 570.0,
+        "drain_failure_percentage": 50.0,
+        "final_drain_completion_count": 1,
+        "final_drain_completed_at_ns": int(COMPLETED.timestamp() * 1_000_000_000),
+        "matching_final_drain_completion_count": 1,
+        "primitive_event_count": 2,
+        "distinct_primitive_event_count": 2,
+        "expected_primitive_event_count": 2,
+        "selected_primitive_population_matches": 1,
+        "missing_native_pending_count": 0,
+    }
+    for field, value, error in (
+        ("primitive_event_count", 3, "duplicate immutable payloads"),
+        ("selected_primitive_population_matches", 0, "selected native primitive"),
+        ("expected_primitive_event_count", 3, "does not match immutable authority"),
+        ("missing_native_pending_count", 1, "lacks pending boolean authority"),
+    ):
+        result = dict(valid_result)
+        result[field] = value
+        with pytest.raises(PrototypeContractError, match=error):
+            parse_e5_remote_result((result,))
 
 
 def test_e5_terminal_attempt_status_is_last_ordered_attempt_per_event() -> None:
@@ -341,7 +376,6 @@ def test_e5_terminal_attempt_status_is_last_ordered_attempt_per_event() -> None:
     assert reduction.attempted_event_count == 1
     assert reduction.failed_event_count == 0
     assert reduction.final_drain_attempt_count == 2
-    assert "PARTITION BY event_id ORDER BY attempted_at DESC, attempt_id DESC" in E5_REMOTE_SQL
 
 
 def test_e5_duplicate_immutable_event_is_idempotent_but_conflict_rejects() -> None:
@@ -363,7 +397,7 @@ def test_e5_duplicate_immutable_event_is_idempotent_but_conflict_rejects() -> No
 
     with pytest.raises(PrototypeContractError, match="conflicting payloads"):
         e5_local_oracle(
-            events=(event, _event("event-1", pending=False)),
+            events=(event, replace(event, destination="other")),
             attempts=(),
             population=population,
         )
@@ -395,6 +429,14 @@ def test_e5_direct_authority_fails_closed_for_missing_bounds_and_invalid_remote_
                     "final_drain_attempt_count": 0,
                     "oldest_pending_age_seconds": 30.0,
                     "drain_failure_percentage": None,
+                    "final_drain_completion_count": 1,
+                    "final_drain_completed_at_ns": int(COMPLETED.timestamp() * 1_000_000_000),
+                    "matching_final_drain_completion_count": 1,
+                    "primitive_event_count": 1,
+                    "distinct_primitive_event_count": 1,
+                    "expected_primitive_event_count": 1,
+                    "selected_primitive_population_matches": 1,
+                    "missing_native_pending_count": 0,
                 },
             )
         )

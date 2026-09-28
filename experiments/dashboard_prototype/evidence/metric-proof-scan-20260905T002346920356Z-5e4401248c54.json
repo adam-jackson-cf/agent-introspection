@@ -1,0 +1,16 @@
+{
+  "capture_file_present": true,
+  "failed_at": "2026-09-05T00:24:41.262159+00:00",
+  "failure_boundary": "finding_membership_observation insert column/value cardinality",
+  "native_schema_mutated": false,
+  "production_telemetry_delivered": false,
+  "result": "Failed",
+  "run_id": "metric-proof-scan-20260905T002346920356Z-5e4401248c54",
+  "source_populations": {
+    "hydration": 0,
+    "logs": 207,
+    "source_sessions": 119,
+    "traces": 1478
+  },
+  "started_at": "2026-09-05T00:23:46.920415+00:00"
+}

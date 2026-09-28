@@ -6,7 +6,7 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType
 
 from experiments.dashboard_prototype.attribution_common import (
@@ -27,7 +27,7 @@ class ActivityVersion:
     event_id: str
     producer: str
     surface: str
-    source_time: datetime
+    source_time_ns: int
     attribution_state: str
     attribution_method: str
     reason_code: str | None
@@ -42,8 +42,8 @@ class ActivityVersion:
             or not self.surface
             or self.attribution_state not in {"resolved", "unresolved"}
             or not self.attribution_method
-            or self.source_time.tzinfo is None
-            or self.source_time.utcoffset() is None
+            or type(self.source_time_ns) is not int
+            or self.source_time_ns < 0
         ):
             raise ValueError("late-context activity version is invalid")
         if self.attribution_state == "resolved" and not self.project_id:
@@ -69,7 +69,7 @@ class LateContextTransition:
 
     activity_hash: str
     resolved_event_id: str
-    source_time: datetime
+    source_time_ns: int
     producer: str
     surface: str
     attribution_method: str
@@ -105,6 +105,7 @@ def reduce_late_context(
     """
     if not _ordered_window(start, end):
         raise ValueError("late-context source window must be ordered and timezone-aware")
+    start_ns, end_ns = _epoch_ns(start), _epoch_ns(end)
     histories: dict[str, list[ActivityVersion]] = defaultdict(list)
     for version in versions:
         histories[version.activity_id].append(version)
@@ -112,7 +113,7 @@ def reduce_late_context(
     candidates = {
         activity_id
         for activity_id, history in histories.items()
-        if any(start < item.source_time <= end for item in history)
+        if any(start_ns < item.source_time_ns <= end_ns for item in history)
     }
     transitions: list[LateContextTransition] = []
     ever_unresolved = 0
@@ -120,11 +121,11 @@ def reduce_late_context(
     seen_event_ids: set[str] = set()
     for activity_id in sorted(candidates):
         history = sorted(histories[activity_id], key=lambda item: item.version)
-        if any(item.attribution_state == "unresolved" for item in history):
-            ever_unresolved += 1
         if not _valid_history(history, seen_event_ids):
             invalid += 1
             continue
+        if any(item.attribution_state == "unresolved" for item in history):
+            ever_unresolved += 1
         latest = history[-1]
         predecessor = history[-2] if len(history) > 1 else None
         if (
@@ -136,7 +137,7 @@ def reduce_late_context(
                 LateContextTransition(
                     activity_hash=latest.activity_hash,
                     resolved_event_id=latest.event_hash,
-                    source_time=latest.source_time,
+                    source_time_ns=latest.source_time_ns,
                     producer=latest.producer,
                     surface=latest.surface,
                     attribution_method=latest.attribution_method,
@@ -214,7 +215,7 @@ def _valid_history(history: list[ActivityVersion], seen_event_ids: set[str]) -> 
     return all(
         item.producer == first.producer
         and item.surface == first.surface
-        and item.source_time == first.source_time
+        and item.source_time_ns == first.source_time_ns
         for item in history
     )
 
@@ -227,6 +228,11 @@ def _ordered_window(start: datetime, end: datetime) -> bool:
         and end.utcoffset() is not None
         and start < end
     )
+
+
+def _epoch_ns(value: datetime) -> int:
+    delta = value - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _hash(parts: tuple[str, str]) -> str:

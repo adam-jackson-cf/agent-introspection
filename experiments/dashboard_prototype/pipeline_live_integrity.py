@@ -67,17 +67,20 @@ def extract(
         source_boundary=source_boundary,
         expected_remote_counts=expected_remote_counts,
     )
+    # Canonical rejections do not establish the full durable integrity-failure population.
     proof = replace(
         proof,
         result=(
-            ExperimentResult.BLOCKED if proof.result is ExperimentResult.PROVEN else proof.result
+            ExperimentResult.FAILED
+            if proof.result is ExperimentResult.FAILED
+            else ExperimentResult.BLOCKED
         ),
         assertions={
             **proof.assertions,
             "durable_integrity_failure_population_authoritative": False,
         },
         blocked_boundaries=tuple(
-            sorted(set(proof.blocked_boundaries) | {"durable-integrity-failure population"})
+            sorted({*proof.blocked_boundaries, "durable-integrity-failure population"})
         ),
     )
     return LiveExperimentEvidence(

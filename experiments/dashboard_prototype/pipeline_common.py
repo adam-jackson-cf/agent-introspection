@@ -105,7 +105,7 @@ def _validate_scalar_evidence(value: object) -> None:
         for nested in value.values():
             _validate_scalar_evidence(nested)
         return
-    if not isinstance(value, (str, int, float)) or (
+    if not isinstance(value, (str, int, float, type(None))) or (
         isinstance(value, float) and not math.isfinite(value)
     ):
         raise ValueError("pipeline evidence must contain exact scalar values")

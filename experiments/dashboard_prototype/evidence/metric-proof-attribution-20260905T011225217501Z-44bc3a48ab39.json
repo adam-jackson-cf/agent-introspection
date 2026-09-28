@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "observed_at": "2026-09-05T01:17:24.886436+00:00",
+  "run_id": "metric-proof-attribution-20260905T011225217501Z-44bc3a48ab39",
+  "window": {
+    "start": "2026-08-06T15:35:59+00:00",
+    "end": "2026-09-05T00:29:41.775648+00:00"
+  },
+  "error_class": "KeyboardInterrupt",
+  "error": "Execution interrupted after 180 seconds; no final output was written.",
+  "completion_phase": "not_observed"
+}

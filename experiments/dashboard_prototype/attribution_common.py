@@ -49,17 +49,26 @@ _ROW_EVENT_INPUT_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class AttributionRowMemberEvidence:
+    """The exact native lineage and three immutable events for one row member."""
+
+    native_session_id: str
+    source_id: str
+    reducer_id: str
+    event_id_inputs: Mapping[str, Mapping[str, object]]
+    event_ids: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class AttributionRowEvidence:
-    """One row-local execution output; aggregate experiment evidence never promotes it."""
+    """One row-local full-population execution output; no member is collapsed."""
 
     experiment_id: AttributionExperimentId
     row_id: str
     producer: str
-    native_session_id: str | None
     state: AttributionRowState
     blocked_reason: str | None
-    event_id_inputs: Mapping[str, Mapping[str, object]] | None
-    event_ids: Mapping[str, str] | None
+    members: tuple[AttributionRowMemberEvidence, ...] | None
     direct_remote_sql_parameters: Mapping[str, _ROW_SCALAR] | None
     direct_remote_sql_parameter_types: Mapping[str, str] | None
     direct_remote_result: Mapping[str, _ROW_SCALAR] | None
@@ -70,21 +79,61 @@ class AttributionRowEvidence:
     oracle_result_types: Mapping[str, str] | None
 
     def __post_init__(self) -> None:
-        _validate_row_identity(self)
+        if self.row_id not in _ROW_IDS or not isinstance(self.producer, str) or not self.producer:
+            raise ValueError("row evidence must target a producer A07--A09 obligation")
         if self.state is AttributionRowState.BLOCKED:
-            _validate_blocked_row(self)
+            if (
+                self.blocked_reason is None
+                or self.members is not None
+                or any(value is not None for value in _evidence_bindings(self))
+            ):
+                raise ValueError("blocked rows retain no evidence bundle")
             return
-        _validate_ready_row(self)
+        if (
+            self.blocked_reason is not None
+            or not self.members
+            or any(value is None for value in _evidence_bindings(self))
+        ):
+            raise ValueError("ready rows require complete evidence bindings")
+        identities = set()
+        for member in self.members:
+            identity = (member.native_session_id, member.source_id, member.reducer_id)
+            if identity in identities:
+                raise ValueError("row members must retain unique exact lineages")
+            identities.add(identity)
+            _validate_member(self, member)
+        _validate_row_scalars(
+            self.direct_remote_sql_parameters,
+            self.direct_remote_sql_parameter_types,
+            "direct remote SQL parameters",
+        )
+        _validate_row_scalars(
+            self.direct_remote_result, self.direct_remote_result_types, "direct remote result"
+        )
+        _validate_row_scalars(
+            self.oracle_parameters, self.oracle_parameter_types, "oracle parameters"
+        )
+        _validate_row_scalars(self.oracle_result, self.oracle_result_types, "oracle result")
+        if self.direct_remote_result != self.oracle_result:
+            raise ValueError("row direct remote result must equal its independent oracle")
 
     def deterministic_id(self) -> str:
-        """Return the immutable identity of this row obligation."""
+        """Return the immutable identity of this full-population row obligation."""
         return hashlib.sha256(
             json.dumps(
                 {
                     "experiment_id": self.experiment_id.value,
                     "row_id": self.row_id,
                     "producer": self.producer,
-                    "native_session_id": self.native_session_id,
+                    "members": [
+                        {
+                            "native_session_id": item.native_session_id,
+                            "source_id": item.source_id,
+                            "reducer_id": item.reducer_id,
+                            "event_ids": dict(item.event_ids),
+                        }
+                        for item in self.members or ()
+                    ],
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -92,17 +141,8 @@ class AttributionRowEvidence:
         ).hexdigest()
 
 
-def _validate_row_identity(row: AttributionRowEvidence) -> None:
-    if row.row_id not in _ROW_IDS:
-        raise ValueError("row evidence must target A07--A09")
-    if not isinstance(row.producer, str):
-        raise ValueError("row evidence requires a producer")
-
-
 def _evidence_bindings(row: AttributionRowEvidence) -> tuple[object | None, ...]:
     return (
-        row.event_id_inputs,
-        row.event_ids,
         row.direct_remote_sql_parameters,
         row.direct_remote_sql_parameter_types,
         row.direct_remote_result,
@@ -114,90 +154,35 @@ def _evidence_bindings(row: AttributionRowEvidence) -> tuple[object | None, ...]
     )
 
 
-def _validate_blocked_row(row: AttributionRowEvidence) -> None:
+def _validate_member(row: AttributionRowEvidence, member: AttributionRowMemberEvidence) -> None:
     if (
-        row.native_session_id is not None
-        or not row.blocked_reason
-        or any(value is not None for value in _evidence_bindings(row))
+        not all(
+            isinstance(value, str) and value
+            for value in (member.native_session_id, member.source_id, member.reducer_id)
+        )
+        or set(member.event_id_inputs) != set(_ROW_STAGES)
+        or set(member.event_ids) != set(_ROW_STAGES)
     ):
-        raise ValueError("blocked rows retain no evidence bundle")
-
-
-def _validate_ready_row(row: AttributionRowEvidence) -> None:
-    if row.blocked_reason is not None:
-        raise ValueError("ready rows cannot retain a blocked reason")
-    if not isinstance(row.native_session_id, str) or not row.native_session_id:
-        raise ValueError("ready row evidence requires exact native lineage")
-    if any(value is None for value in _evidence_bindings(row)):
-        raise ValueError("ready rows require complete evidence bindings")
-    _validate_ready_event_ids(row)
-    _validate_row_scalars(
-        row.direct_remote_sql_parameters,
-        row.direct_remote_sql_parameter_types,
-        "direct remote SQL parameters",
-    )
-    _validate_row_scalars(
-        row.direct_remote_result, row.direct_remote_result_types, "direct remote result"
-    )
-    _validate_row_scalars(row.oracle_parameters, row.oracle_parameter_types, "oracle parameters")
-    _validate_row_scalars(row.oracle_result, row.oracle_result_types, "oracle result")
-    if row.direct_remote_result != row.oracle_result:
-        raise ValueError("row direct remote result must equal its independent oracle")
-
-
-def _validate_ready_event_ids(row: AttributionRowEvidence) -> None:
-    assert row.event_id_inputs is not None
-    assert row.event_ids is not None
-    assert row.native_session_id is not None
-    if set(row.event_id_inputs) != set(_ROW_STAGES) or set(row.event_ids) != set(_ROW_STAGES):
-        raise ValueError("row evidence requires source, reducer, and delivery IDs")
+        raise ValueError("row members require exact lineage and all stage IDs")
     for ordinal, stage in enumerate(_ROW_STAGES):
-        _validate_event_id_input(row, stage, ordinal)
-        if not isinstance(row.event_ids[stage], str) or not row.event_ids[stage]:
-            raise ValueError("row event IDs must be immutable scalar IDs")
-
-
-def _validate_event_id_input(row: AttributionRowEvidence, stage: str, ordinal: int) -> None:
-    assert row.event_id_inputs is not None
-    event_input = row.event_id_inputs[stage]
-    if set(event_input) != _ROW_EVENT_INPUT_FIELDS:
-        raise ValueError("row event IDs require the canonical identity fields")
-    if (
-        event_input.get("experiment_id") != row.experiment_id.value
-        or event_input.get("row_id") != row.row_id
-        or event_input.get("producer") != row.producer
-        or event_input.get("native_session_id") != row.native_session_id
-        or not isinstance(event_input.get("source_id"), str)
-        or not event_input["source_id"]
-        or not isinstance(event_input.get("reducer_id"), str)
-        or not event_input["reducer_id"]
-        or event_input.get("entity_version") != 2
-        or not isinstance(event_input.get("event_id_ordinal"), int)
-        or isinstance(event_input["event_id_ordinal"], bool)
-        or event_input["event_id_ordinal"] != ordinal
-    ):
-        raise ValueError("row event IDs must bind exact native lineage")
-
-    def deterministic_id(self) -> str:
-        """Return the immutable identity of this row obligation."""
-        return hashlib.sha256(
-            json.dumps(
-                {
-                    "experiment_id": self.experiment_id.value,
-                    "row_id": self.row_id,
-                    "producer": self.producer,
-                    "native_session_id": self.native_session_id,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        event_input = member.event_id_inputs[stage]
+        if set(event_input) != _ROW_EVENT_INPUT_FIELDS or (
+            event_input.get("experiment_id") != row.experiment_id.value
+            or event_input.get("row_id") != row.row_id
+            or event_input.get("producer") != row.producer
+            or event_input.get("native_session_id") != member.native_session_id
+            or event_input.get("source_id") != member.source_id
+            or event_input.get("reducer_id") != member.reducer_id
+            or event_input.get("entity_version") != 3
+            or event_input.get("event_id_ordinal") != ordinal
+            or not isinstance(member.event_ids[stage], str)
+            or not member.event_ids[stage]
+        ):
+            raise ValueError("row member event IDs must bind exact native lineage")
 
 
 def _validate_row_scalars(
-    values: Mapping[str, _ROW_SCALAR] | None,
-    types: Mapping[str, str] | None,
-    label: str,
+    values: Mapping[str, _ROW_SCALAR] | None, types: Mapping[str, str] | None, label: str
 ) -> None:
     if not values or types is None or set(values) != set(types):
         raise ValueError(f"{label} requires exact scalar types")

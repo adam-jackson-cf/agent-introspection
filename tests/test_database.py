@@ -16,6 +16,7 @@ from agent_introspection.database import (
     backup_database,
     connect_database,
     integrity_check,
+    latest_backup_observation,
     manual_vacuum,
     persist_canonical_activity,
     persist_observations_and_watermark,
@@ -24,7 +25,7 @@ from agent_introspection.database import (
     verify_database_file,
     weekly_maintenance,
 )
-from agent_introspection.migrations import MIGRATIONS
+from agent_introspection.migrations import MIGRATIONS, apply_migrations
 
 
 def _scan(connection: sqlite3.Connection, scan_id: str = "scan-1") -> None:
@@ -287,13 +288,25 @@ def test_conflicting_replay_and_watermark_regression_fail_closed(tmp_path: Path)
         connection.close()
 
 
+@pytest.mark.parametrize("schema_version", [17, len(MIGRATIONS)])
 def test_online_backup_and_restore_are_verified_and_preserve_safety_copy(
     tmp_path: Path,
+    schema_version: int,
 ) -> None:
     path = tmp_path / "introspection.sqlite3"
-    connection = connect_database(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    apply_migrations(connection, path, MIGRATIONS[:schema_version])
     _scan(connection)
-    backup_path = backup_database(connection, tmp_path / "backups" / "known-good.sqlite3")
+    backup_path = tmp_path / "known-good.sqlite3"
+    if schema_version == len(MIGRATIONS):
+        backup_path = backup_database(connection, backup_path, operation="test-backup")
+    else:
+        historical = sqlite3.connect(backup_path)
+        try:
+            connection.backup(historical)
+        finally:
+            historical.close()
     connection.execute(
         "UPDATE scan_runs SET status = 'succeeded', completed_at = ? WHERE id = 'scan-1'",
         ("2026-07-10T10:05:00+00:00",),
@@ -301,7 +314,7 @@ def test_online_backup_and_restore_are_verified_and_preserve_safety_copy(
     connection.commit()
     connection.close()
 
-    result = restore_database(path, backup_path)
+    result = restore_database(database_path=path, backup_path=backup_path)
 
     assert result.safety_backup_path is not None
     assert verify_database_file(result.database_path) == ("ok",)
@@ -310,9 +323,84 @@ def test_online_backup_and_restore_are_verified_and_preserve_safety_copy(
     try:
         assert restored.execute("SELECT status FROM scan_runs").fetchone()[0] == "running"
         assert safety.execute("SELECT status FROM scan_runs").fetchone()[0] == "succeeded"
+        assert safety.execute("SELECT max(version) FROM migrations").fetchone() == (schema_version,)
+        assert restored.execute("SELECT max(version) FROM migrations").fetchone() == (
+            len(MIGRATIONS),
+        )
+        assert restored.execute(
+            """SELECT state, verification, bytes FROM backup_observations
+               WHERE operation = 'restore-safety'"""
+        ).fetchall() == [("succeeded", "ok", result.safety_backup_path.stat().st_size)]
+        assert restored.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         restored.close()
         safety.close()
+
+
+def test_backup_observations_retain_verified_success_and_real_failure(tmp_path: Path) -> None:
+    path = tmp_path / "introspection.sqlite3"
+    connection = connect_database(path)
+    try:
+        backup_database(connection, tmp_path / "backups" / "verified.sqlite3", operation="test")
+        succeeded = latest_backup_observation(connection, path)
+        assert succeeded is not None
+        assert succeeded["backup.state"] == "succeeded"
+        assert succeeded["backup.verification"] == "ok"
+        assert isinstance(succeeded["backup.completed_at_ns"], str)
+        assert isinstance(succeeded["backup.bytes"], int)
+        assert isinstance(succeeded["backup.event_id"], str)
+
+        existing = tmp_path / "backups" / "exists.sqlite3"
+        existing.write_bytes(b"evidence")
+        with pytest.raises(DatabaseError, match="already exists"):
+            backup_database(connection, existing, operation="test")
+
+        failed = latest_backup_observation(connection, path)
+        assert failed is not None
+        assert failed["backup.state"] == "failed"
+        assert failed["backup.verification"] == "not_performed"
+        assert "backup.bytes" not in failed
+        assert failed["backup.event_id"] != succeeded["backup.event_id"]
+        assert connection.execute(
+            "SELECT failure_class FROM backup_observations WHERE event_id = ?",
+            (failed["backup.event_id"],),
+        ).fetchone() == ("backup_precondition_failed",)
+
+        connection.execute("CREATE TABLE caller_records (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO caller_records VALUES ('retained')")
+        with pytest.raises(DatabaseError):
+            backup_database(connection, existing, operation="caller-transaction")
+        assert connection.in_transaction
+        pending = latest_backup_observation(connection, path)
+        assert pending is not None
+        assert pending["backup.event_id"] != failed["backup.event_id"]
+        connection.rollback()
+        assert latest_backup_observation(connection, path) == failed
+        assert connection.execute("SELECT value FROM caller_records").fetchall() == []
+
+        outbox_count = connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0]
+        connection.execute(
+            """CREATE TRIGGER reject_backup_observation
+               BEFORE INSERT ON backup_observations
+               BEGIN SELECT RAISE(FAIL, 'rejected ownership'); END"""
+        )
+        for caller_owned in (False, True):
+            if caller_owned:
+                connection.execute("INSERT INTO caller_records VALUES ('retained')")
+            with pytest.RaisesGroup(DatabaseError, sqlite3.IntegrityError):
+                backup_database(connection, existing, operation="secondary-failure")
+            assert connection.in_transaction is caller_owned
+            assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone() == (
+                outbox_count,
+            )
+            assert latest_backup_observation(connection, path) == failed
+            assert connection.execute("SELECT value FROM caller_records").fetchall() == (
+                [("retained",)] if caller_owned else []
+            )
+            connection.rollback()
+        assert existing.read_bytes() == b"evidence"
+    finally:
+        connection.close()
 
 
 def test_corrupt_restore_source_leaves_target_unchanged(tmp_path: Path) -> None:
@@ -337,6 +425,19 @@ def test_weekly_maintenance_runs_integrity_analyze_and_online_backup(tmp_path: P
     path = tmp_path / "introspection.sqlite3"
     connection = connect_database(path)
     try:
+        with pytest.raises(ValueError, match="does not match database path"):
+            weekly_maintenance(
+                connection, tmp_path / "wrong.sqlite3", backup_directory=tmp_path / "wrong-backups"
+            )
+        assert not (tmp_path / "wrong-backups").exists()
+        connection.execute("CREATE TABLE caller_records (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO caller_records VALUES ('retained')")
+        with pytest.raises(DatabaseError):
+            weekly_maintenance(connection, path, backup_directory=tmp_path / "weekly-backups")
+        assert connection.in_transaction
+        connection.rollback()
+        assert connection.execute("SELECT value FROM caller_records").fetchall() == []
+        assert not (tmp_path / "weekly-backups").exists()
         result = weekly_maintenance(connection, path, backup_directory=tmp_path / "weekly-backups")
         assert result.integrity_result == ("ok",)
         assert result.backup_path.is_file()
@@ -354,9 +455,13 @@ def test_manual_vacuum_requires_more_than_25_percent_free_pages_and_backup(
     path = tmp_path / "introspection.sqlite3"
     connection = connect_database(path)
     try:
+        with pytest.raises(ValueError, match="does not match database path"):
+            manual_vacuum(connection, tmp_path / "wrong.sqlite3")
+        previous_backup = latest_backup_observation(connection, path)
         not_needed = manual_vacuum(connection, path, backup_directory=tmp_path / "backups")
         assert not not_needed.vacuumed
         assert not_needed.backup_path is None
+        assert latest_backup_observation(connection, path) == previous_backup
 
         connection.execute("CREATE TABLE disposable (payload BLOB NOT NULL)")
         connection.executemany(
@@ -371,5 +476,13 @@ def test_manual_vacuum_requires_more_than_25_percent_free_pages_and_backup(
         assert compacted.vacuumed
         assert compacted.backup_path is not None
         assert verify_database_file(compacted.backup_path) == ("ok",)
+        observation = latest_backup_observation(connection, path)
+        assert observation is not None
+        assert observation["backup.state"] == "succeeded"
+        assert observation["backup.verification"] == "ok"
+        assert connection.execute(
+            "SELECT operation FROM backup_observations WHERE event_id = ?",
+            (observation["backup.event_id"],),
+        ).fetchone() == ("manual-vacuum",)
     finally:
         connection.close()

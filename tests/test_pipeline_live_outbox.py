@@ -156,7 +156,9 @@ def test_conflicting_current_rows_fail_closed() -> None:
 
 def _add_delivery_authority(connection: sqlite3.Connection) -> None:
     connection.execute(
-        "CREATE TABLE otlp_outbox_drains (drain_id TEXT, completed_at TEXT, is_final INTEGER)"
+        "CREATE TABLE otlp_outbox_drains ("
+        "drain_id TEXT, completed_at TEXT, is_final INTEGER, "
+        "failure_timing_authoritative INTEGER)"
     )
     connection.execute(
         "CREATE TABLE otlp_outbox_delivery_attempts "
@@ -198,8 +200,8 @@ def test_emits_complete_typed_final_drain_authority_without_raw_errors() -> None
         ),
     )
     connection.execute(
-        "INSERT INTO otlp_outbox_drains VALUES (?, ?, ?)",
-        ("final-drain", END.isoformat(), 1),
+        "INSERT INTO otlp_outbox_drains VALUES (?, ?, ?, ?)",
+        ("final-drain", END.isoformat(), 1, 1),
     )
     connection.executemany(
         "INSERT INTO otlp_outbox_delivery_attempts VALUES (?, ?, ?, ?, ?, ?)",
@@ -325,8 +327,8 @@ def test_raw_delivery_error_fails_closed_without_exposure() -> None:
         ),
     )
     connection.execute(
-        "INSERT INTO otlp_outbox_drains VALUES (?, ?, ?)",
-        ("final-drain", END.isoformat(), 1),
+        "INSERT INTO otlp_outbox_drains VALUES (?, ?, ?, ?)",
+        ("final-drain", END.isoformat(), 1, 1),
     )
     connection.execute(
         "INSERT INTO otlp_outbox_delivery_attempts VALUES (?, ?, ?, ?, ?, ?)",
@@ -341,6 +343,33 @@ def test_raw_delivery_error_fails_closed_without_exposure() -> None:
     )
 
     evidence = pipeline_live_outbox.extract(connection, _request())
-
     assert evidence.proof.result is ExperimentResult.BLOCKED
     assert "connection refused" not in repr(evidence.primitives)
+
+
+def test_unobserved_failed_attempt_time_blocks_final_drain_authority() -> None:
+    connection = _connection()
+    _add_delivery_authority(connection)
+    connection.execute(
+        "INSERT INTO otlp_outbox VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "event",
+            "do-not-read",
+            "pending",
+            1,
+            "",
+            (START + timedelta(minutes=1)).isoformat(),
+            None,
+            "otlp",
+            "outbox-event",
+        ),
+    )
+    connection.execute(
+        "INSERT INTO otlp_outbox_drains VALUES (?, ?, ?, ?)",
+        ("final-drain", END.isoformat(), 1, 0),
+    )
+
+    evidence = pipeline_live_outbox.extract(connection, _request())
+
+    assert evidence.proof.result is ExperimentResult.BLOCKED
+    assert evidence.remote_query_id is None

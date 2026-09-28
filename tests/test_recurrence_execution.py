@@ -84,16 +84,20 @@ def test_extract_live_composes_blocked_evidence_with_retained_source_ids(
     request = execution.LiveProofRequest("safe-run", window().start, window().end)
     extractors = (
         recurrence_live_wave_a,
-        recurrence_live_finding,
         recurrence_live_practice,
         recurrence_live_rule,
         recurrence_live_intervention,
     )
     for index, module in enumerate(extractors):
-        item = evidence()[index]
+        item = evidence()[index if index == 0 else index + 1]
         monkeypatch.setattr(module, "extract", lambda connection, request, item=item: item)
+    monkeypatch.setattr(
+        recurrence_live_finding,
+        "extract_capture",
+        lambda capture_path, request: evidence()[1],
+    )
 
-    composed = execution.extract_live(sqlite3.connect(":memory:"), request)
+    composed = execution.extract_live(sqlite3.connect(":memory:"), request, Path("capture.sqlite"))
 
     assert tuple(item.proof.experiment_id for item in composed) == tuple(RecurrenceExperimentId)
     assert all(item.proof.result is ExperimentResult.BLOCKED for item in composed)
@@ -137,7 +141,7 @@ def test_blocked_closure_has_exact_ids_numeric_time_and_five_results() -> None:
     )
 
 
-def test_a38_only_promotes_the_complete_finding_row() -> None:
+def test_a38_stays_blocked_without_scan_time_global_latest_authority() -> None:
     items = list(evidence())
     finding_index = list(RecurrenceExperimentId).index(RecurrenceExperimentId.FINDING_PROJECTION)
     finding = items[finding_index]
@@ -151,83 +155,17 @@ def test_a38_only_promotes_the_complete_finding_row() -> None:
                 "membership_task_identity_authoritative": True,
                 "selected_finding_evidence_range_exact": True,
                 "selected_membership_denominator_reconciled": True,
-                "latest_activity_versions_global": True,
+                "latest_activity_versions_global": False,
             },
         ),
-        finding_version_source_ids=("finding-version-immutable-1",),
-        canonical_task_membership_source_ids=("canonical-membership-immutable-1",),
+        finding_version_source_ids=("finding-version-captured-1",),
+        canonical_task_membership_source_ids=("canonical-membership-captured-1",),
     )
     primitives = execution.primitive_events(tuple(items), "safe-run", window())
     local = execution._local_oracle(primitives)
     proofs = execution._final_proofs(tuple(items), local, primitives)
-    results = execution.result_events(proofs, "safe-run", window())
-    bundle = execution._finding_evidence_bundle(
-        execution._FindingEvidenceInputs(
-            tuple(items),
-            proofs,
-            primitives,
-            results,
-            local,
-            local,
-            {
-                "row_id": execution.A38_ROW_ID,
-                "sql": "SELECT",
-                "parameters": {
-                    "start_ns": 1,
-                    "end_ns": 2,
-                    "run_id_hash": "run",
-                    "event_name": execution.EVENT_NAME,
-                    "experiment_id": execution.FINDING_EXPERIMENT_ID,
-                    "event_0": primitives[0].event_id,
-                    "event_1": primitives[1].event_id,
-                    "event_2": primitives[2].event_id,
-                    "event_3": primitives[3].event_id,
-                    "event_4": primitives[4].event_id,
-                },
-            },
-        )
-    )
 
-    assert [proof.result for proof in proofs] == [
-        ExperimentResult.BLOCKED,
-        ExperimentResult.PROVEN,
-        ExperimentResult.BLOCKED,
-        ExperimentResult.BLOCKED,
-        ExperimentResult.BLOCKED,
-    ]
-    assert bundle is not None
-    assert bundle["row_id"] == "A38"
-    source = cast(dict[str, tuple[str, ...]], bundle["source"])
-    remote = cast(dict[str, object], bundle["remote"])
-    oracle = cast(dict[str, object], bundle["oracle"])
-    reducer = cast(dict[str, tuple[str, ...]], bundle["reducer"])
-    delivery = cast(dict[str, tuple[str, ...]], bundle["delivery"])
-    assert source["finding_version_ids"] == ("finding-version-immutable-1",)
-    assert source["canonical_task_membership_ids"] == ("canonical-membership-immutable-1",)
-    assert remote["sql"] == "SELECT"
-    assert set(cast(dict[str, object], remote["parameters"])) == {
-        "start_ns",
-        "end_ns",
-        "run_id_hash",
-        "event_name",
-        "experiment_id",
-        "event_0",
-        "event_1",
-        "event_2",
-        "event_3",
-        "event_4",
-    }
-    assert remote["scalars"] == oracle["scalars"]
-    assert remote["scalars"] == (
-        {
-            "dimension": next(iter(local[execution.FINDING_EXPERIMENT_ID])),
-            "measure": "reducer_counts",
-            "value": 1.0,
-            "declared_type": "Float64",
-        },
-    )
-    assert len(reducer["event_ids"]) == 1
-    assert len(delivery["event_ids"]) == 1
+    assert proofs[finding_index].result is ExperimentResult.BLOCKED
 
 
 def test_a38_stays_blocked_without_each_immutable_source_binding() -> None:
@@ -338,7 +276,9 @@ def test_remote_mismatch_aborts_before_result_emission(
             ),
         ),
     )
-    monkeypatch.setattr(execution, "extract_live", lambda connection, request: evidence())
+    monkeypatch.setattr(
+        execution, "extract_live", lambda connection, request, finding_capture_path: evidence()
+    )
     monkeypatch.setattr(execution, "ClickHouseClient", lambda **kwargs: object())
     monkeypatch.setattr(
         execution,
@@ -365,9 +305,9 @@ def test_remote_mismatch_aborts_before_result_emission(
     with pytest.raises(execution.RecurrenceExecutionError, match="reconciliation mismatch"):
         execution.run(
             run_id="safe-run",
-            start=window().start,
-            end=window().end,
+            window=window(),
             output=tmp_path / "proof.json",
+            finding_capture_path=database,
             config=config,
         )
 
@@ -408,6 +348,8 @@ def test_pre_epoch_window_never_enqueues(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(
         execution, "enqueue_events", lambda connection, events: enqueued.append(events)
     )
+    capture = tmp_path / "capture.sqlite"
+    sqlite3.connect(capture).close()
     config = cast(
         Any,
         SimpleNamespace(
@@ -415,20 +357,21 @@ def test_pre_epoch_window_never_enqueues(monkeypatch: pytest.MonkeyPatch, tmp_pa
             signoz=SimpleNamespace(otlp_http_endpoint="http://127.0.0.1:4318"),
         ),
     )
-
     with pytest.raises(execution.RecurrenceExecutionError, match="Unix epoch"):
         execution.run(
             run_id="safe-run",
-            start=datetime(1969, 12, 31, tzinfo=UTC),
-            end=datetime(1970, 1, 1, tzinfo=UTC),
+            window=execution.ExtractionWindow(
+                datetime(1969, 12, 31, tzinfo=UTC), datetime(1970, 1, 1, tzinfo=UTC)
+            ),
             output=tmp_path / "proof.json",
+            finding_capture_path=capture,
             config=config,
         )
 
     assert not enqueued
 
 
-def test_remote_float64_scalar_normalizes_json_integral_encoding() -> None:
+def test_remote_float64_scalar_accepts_integral_wire_encoding_with_native_type_evidence() -> None:
     primitives = execution.primitive_events(evidence(), "safe-run", window())
     finding_primitive = primitives[
         list(RecurrenceExperimentId).index(RecurrenceExperimentId.FINDING_PROJECTION)

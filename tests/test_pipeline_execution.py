@@ -41,10 +41,12 @@ from experiments.dashboard_prototype.pipeline_live_common import (
     RemoteCalculationPrimitive,
 )
 from experiments.dashboard_prototype.pipeline_live_outbox import (
+    E5DeliveryAttemptPrimitive,
     E5FinalDrainPrimitive,
     E5OutboxEventPrimitive,
     OutboxEventStatus,
 )
+from experiments.dashboard_prototype.pipeline_outbox import DeliveryAttemptStatus
 
 
 @pytest.fixture
@@ -258,10 +260,21 @@ def test_remote_integrity_counts_all_incidents_but_excludes_withheld_aggregate()
 
     class Client:
         def query(self, sql: str, parameters: Mapping[str, str | int]) -> list[dict[str, Any]]:
-            assert "GROUP BY metric, withheld" in sql
             return [
-                {"metric": "p11.clean", "withheld": "false", "incident_rows": 1, "value": 1},
-                {"metric": "p11.corrupt", "withheld": "true", "incident_rows": 1, "value": 0},
+                {
+                    "metric": "p11.clean",
+                    "withheld": "false",
+                    "incident_rows": 1,
+                    "value": 1,
+                    "selected_event_ids": [events[0].event_id],
+                },
+                {
+                    "metric": "p11.corrupt",
+                    "withheld": "true",
+                    "incident_rows": 1,
+                    "value": 0,
+                    "selected_event_ids": [events[1].event_id],
+                },
             ]
 
     assert remote_calculations(Client(), events, window(), "safe-run") == {
@@ -299,6 +312,7 @@ def test_source_lag_float64_transport_accepts_json_numbers_and_rejects_non_numbe
         "p50_lag_seconds": 1,
         "p95_lag_seconds": 1.5,
         "negative_skew_count": 0,
+        "invalid_primitive_count": 0,
     }
 
     class Client:
@@ -308,7 +322,6 @@ def test_source_lag_float64_transport_accepts_json_numbers_and_rejects_non_numbe
         def query(
             self, sql: str, parameters: Mapping[str, str | int]
         ) -> list[Mapping[str, object]]:
-            assert "toFloat64" in sql
             return [self.result]
 
     remote = remote_calculations(Client(row), events, window(), "safe-run")
@@ -326,6 +339,33 @@ def test_source_lag_float64_transport_accepts_json_numbers_and_rejects_non_numbe
             PipelineExecutionError, match="remote calculation returned an incorrectly typed scalar"
         ):
             remote_calculations(Client(malformed), events, window(), "safe-run")
+
+    empty = {
+        **row,
+        "accepted": 0,
+        "rejected": 1,
+        "n": 0,
+        "negative_skew_count": 1,
+        "p50_lag_seconds": None,
+        "p95_lag_seconds": None,
+    }
+    empty_remote = remote_calculations(Client(empty), events, window(), "safe-run")
+    empty_metrics = empty_remote["E-Pipeline-3"]["cohort-1"]
+    assert isinstance(empty_metrics, Mapping)
+    assert empty_metrics["n"] == 0
+    assert empty_metrics["negative_skew_count"] == 1
+    assert "p50_lag_seconds" not in empty_metrics
+    assert "p95_lag_seconds" not in empty_metrics
+    for percentile in ("p50_lag_seconds", "p95_lag_seconds"):
+        with pytest.raises(PipelineExecutionError, match="null percentiles"):
+            remote_calculations(Client({**empty, percentile: 0.0}), events, window(), "safe-run")
+        missing = {key: value for key, value in empty.items() if key != percentile}
+        with pytest.raises(PipelineExecutionError, match="null percentiles"):
+            remote_calculations(Client(missing), events, window(), "safe-run")
+    with pytest.raises(PipelineExecutionError, match="primitive measurements are invalid"):
+        remote_calculations(
+            Client({**row, "invalid_primitive_count": 1}), events, window(), "safe-run"
+        )
 
 
 def test_snapshot_direct_queries_bind_multiple_event_ids_as_one_sql_list() -> None:
@@ -477,12 +517,28 @@ def test_run_composes_all_stages_and_persists_exact_cleanup(
         for experiment in PipelineExperimentId
     )
 
+    class NativeClient:
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> list[dict[str, object]]:
+            assert sql == "SELECT native evidence"
+            assert parameters == {"run": "safe-run"}
+            return [
+                {
+                    "primitive_event_count": 4,
+                    "distinct_primitive_event_count": 4,
+                    "expected_primitive_event_count": 4,
+                    "selected_primitive_population_matches": 1,
+                    "missing_native_pending_count": 0,
+                    "oldest_pending_age_seconds_type": "Nullable(Float64)",
+                    "drain_failure_percentage_type": "Nullable(Float64)",
+                }
+            ]
+
     monkeypatch.setattr(execution, "validate_output_path", lambda _: output)
     monkeypatch.setattr(execution, "extract_live", lambda *_: calls.append("extract") or evidence)
     monkeypatch.setattr(
         execution,
         "ClickHouseClient",
-        lambda **_: calls.append("client") or object(),
+        lambda **_: calls.append("client") or NativeClient(),
     )
 
     def record_enqueue(_: sqlite3.Connection, events: list[DerivedEvent]) -> None:
@@ -498,17 +554,18 @@ def test_run_composes_all_stages_and_persists_exact_cleanup(
     monkeypatch.setattr(execution, "enqueue_events", record_enqueue)
     monkeypatch.setattr(execution, "_exact_drain", record_drain)
     monkeypatch.setattr(execution, "_verify_ids", record_ids)
-    monkeypatch.setattr(
-        execution,
-        "remote_calculations",
-        lambda *_, **__: (
-            calls.append("calculations")
-            or {
-                "E-Pipeline-3": {"cohort-1": {"population": 1}},
-                "E-Pipeline-4": {"p11.clean": 1},
-            }
-        ),
-    )
+
+    def record_calculations(
+        client: execution._RemoteClient, *args: object, **kwargs: object
+    ) -> dict[str, Mapping[str, object]]:
+        calls.append("calculations")
+        assert list(client.query("SELECT native evidence", {"run": "safe-run"}))
+        return {
+            "E-Pipeline-3": {"cohort-1": {"population": 1}},
+            "E-Pipeline-4": {"p11.clean": 1},
+        }
+
+    monkeypatch.setattr(execution, "remote_calculations", record_calculations)
     monkeypatch.setattr(
         execution,
         "extract_integrity",
@@ -517,8 +574,7 @@ def test_run_composes_all_stages_and_persists_exact_cleanup(
 
     envelope = run(
         run_id="safe-run",
-        start=window().start,
-        end=window().end,
+        window=window(),
         output=output,
         config=config,
     )
@@ -553,6 +609,24 @@ def test_run_composes_all_stages_and_persists_exact_cleanup(
     assert isinstance(remote_result, dict)
     assert local_oracle.get("E-Pipeline-3") == {"cohort-1": {"population": 1}}
     assert remote_result.get("E-Pipeline-3") == {"cohort-1": {"population": 1}}
+    native_results = payload["native_query_results"]
+    assert native_results == [
+        {
+            "sql": "SELECT native evidence",
+            "parameters": {"run": "safe-run"},
+            "rows": [
+                {
+                    "primitive_event_count": 4,
+                    "distinct_primitive_event_count": 4,
+                    "expected_primitive_event_count": 4,
+                    "selected_primitive_population_matches": 1,
+                    "missing_native_pending_count": 0,
+                    "oldest_pending_age_seconds_type": "Nullable(Float64)",
+                    "drain_failure_percentage_type": "Nullable(Float64)",
+                }
+            ],
+        }
+    ]
     authority = payload["authority"]
     assert isinstance(authority, dict)
     assert authority["E-Pipeline-3"]["remote_query_id"] == "pipeline-source-lag-v1"
@@ -597,8 +671,7 @@ def test_run_stops_before_remote_calculation_on_stage_one_mismatch(
     with pytest.raises(PipelineExecutionError, match=failure):
         run(
             run_id="safe-run",
-            start=window().start,
-            end=window().end,
+            window=window(),
             output=tmp_path / "evidence.json",
             config=AppConfig(database=DatabaseConfig(path=database_path)),
         )
@@ -684,8 +757,7 @@ def test_run_stops_before_results_on_e3_or_e4_reconciliation_mismatch(
     with pytest.raises(PipelineExecutionError, match="remote calculation reconciliation mismatch"):
         run(
             run_id="safe-run",
-            start=window().start,
-            end=window().end,
+            window=window(),
             output=tmp_path / "evidence.json",
             config=AppConfig(database=DatabaseConfig(path=database_path)),
         )
@@ -805,11 +877,21 @@ def test_e5_direct_query_binds_exact_immutable_population() -> None:
                     "derived_event",
                     OutboxEventStatus.PENDING,
                 ),
+                E5DeliveryAttemptPrimitive(
+                    PipelineExperimentId.OUTBOX,
+                    "attempt-1",
+                    "event-1",
+                    "drain-1",
+                    end - timedelta(seconds=1),
+                    DeliveryAttemptStatus.FAILED,
+                    "TimeoutError",
+                ),
                 E5FinalDrainPrimitive(PipelineExperimentId.OUTBOX, "drain-1", end),
             ),
         ),
         "pipeline-outbox-current-pending-v1",
     )
+    events = primitive_events((item,), "safe-run", window())
     calls: list[tuple[str, Mapping[str, str | int]]] = []
 
     class Client:
@@ -819,22 +901,42 @@ def test_e5_direct_query_binds_exact_immutable_population() -> None:
                 {
                     "selected_event_count": 2,
                     "pending_event_count": 1,
-                    "attempted_event_count": 0,
-                    "failed_event_count": 0,
-                    "final_drain_attempt_count": 0,
+                    "attempted_event_count": 1,
+                    "failed_event_count": 1,
+                    "final_drain_attempt_count": 1,
                     "oldest_pending_age_seconds": 1.0,
-                    "drain_failure_percentage": None,
+                    "drain_failure_percentage": 100.0,
+                    "oldest_pending_age_seconds_type": "Nullable(Float64)",
+                    "drain_failure_percentage_type": "Nullable(Float64)",
+                    "final_drain_completion_count": 1,
+                    "final_drain_completed_at_ns": int(end.timestamp() * 1_000_000_000),
+                    "matching_final_drain_completion_count": 1,
+                    "primitive_event_count": 4,
+                    "distinct_primitive_event_count": 4,
+                    "expected_primitive_event_count": 4,
+                    "selected_primitive_population_matches": 1,
+                    "missing_native_pending_count": 0,
                 }
             ]
 
-    assert execution._outbox_remote(Client(), item) == {
+    assert execution._outbox_remote(Client(), item, events, window()) == {
         "selected_event_count": 2,
         "pending_event_count": 1,
-        "attempted_event_count": 0,
-        "failed_event_count": 0,
-        "final_drain_attempt_count": 0,
+        "attempted_event_count": 1,
+        "failed_event_count": 1,
+        "final_drain_attempt_count": 1,
         "oldest_pending_age_seconds": 1.0,
-        "drain_failure_percentage": None,
+        "drain_failure_percentage": 100.0,
     }
-    assert calls[0][1]["event_ids"] == '["event-0", "event-1"]'
-    assert calls[0][1]["final_drain_id"] == "drain-1"
+    bindings = calls[0][1]
+    assert bindings["event_ids"] == '["event-0", "event-1"]'
+    assert bindings["final_drain_id"] == "drain-1"
+    assert bindings["expected_final_drain_completed_at_ns"] == int(end.timestamp() * 1_000_000_000)
+    assert all(
+        isinstance(bindings[field], int)
+        for field in (
+            "source_start_ns",
+            "source_end_ns",
+            "expected_final_drain_completed_at_ns",
+        )
+    )

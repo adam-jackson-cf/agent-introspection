@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
 from opentelemetry.proto.logs.v1.logs_pb2 import LogRecord, ResourceLogs, ScopeLogs
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 
+from agent_introspection.ledger_identity import DATABASE_IDENTITY_ATTRIBUTE, database_identity
 from agent_introspection.project_schema import AGENT_PROJECT_SCHEMA
 from agent_introspection.source import SourceError
 
@@ -482,36 +484,48 @@ def _any_value(value: str | int | float | bool) -> AnyValue:
     if isinstance(value, int):
         return AnyValue(int_value=value)
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("OTLP payload floats must be finite")
         return AnyValue(double_value=value)
-    return AnyValue(string_value=value)
+    if isinstance(value, str):
+        return AnyValue(string_value=value)
+    raise TypeError("OTLP payload values must be scalar")
 
 
-def _encode_otlp(payloads: list[dict[str, Any]]) -> bytes:
+def _encode_otlp(payloads: list[str], *, database_id: str) -> bytes:
     records: list[LogRecord] = []
-    for payload in payloads:
-        timestamp_ns = int(payload.pop("timestamp_ns"))
-        attributes = [KeyValue(key=key, value=_any_value(value)) for key, value in payload.items()]
+    for payload_json in payloads:
+        payload = json.loads(payload_json)
+        timestamp_ns = payload.get("timestamp_ns")
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
+            raise TypeError("OTLP payload timestamp_ns must be an integer")
+        if not isinstance(payload.get("event.name"), str):
+            raise TypeError("OTLP payload event.name must be a string")
         records.append(
             LogRecord(
                 time_unix_nano=timestamp_ns,
                 observed_time_unix_nano=time.time_ns(),
-                body=AnyValue(string_value=str(payload["event.name"])),
-                attributes=attributes,
+                body=AnyValue(string_value=payload_json),
+                attributes=[
+                    KeyValue(key=key, value=_any_value(value))
+                    for key, value in payload.items()
+                    if key != "timestamp_ns"
+                ],
             )
         )
-    request = ExportLogsServiceRequest(
-        resource_logs=[
-            ResourceLogs(
-                resource=Resource(
-                    attributes=[
-                        KeyValue(key="service.name", value=AnyValue(string_value=SERVICE_NAME))
-                    ]
-                ),
-                scope_logs=[ScopeLogs(log_records=records)],
-            )
+    resource = Resource(
+        attributes=[
+            KeyValue(key="service.name", value=AnyValue(string_value=SERVICE_NAME)),
+            KeyValue(key=DATABASE_IDENTITY_ATTRIBUTE, value=AnyValue(string_value=database_id)),
         ]
     )
-    return bytes(request.SerializeToString())
+    return bytes(
+        ExportLogsServiceRequest(
+            resource_logs=[
+                ResourceLogs(resource=resource, scope_logs=[ScopeLogs(log_records=records)])
+            ]
+        ).SerializeToString()
+    )
 
 
 def drain_outbox_event_ids(
@@ -535,6 +549,7 @@ def drain_outbox_event_ids(
     }
     if existing != set(requested):
         raise ValueError("outbox delivery event IDs are not an exact local set")
+    database_id = database_identity(connection)
 
     selected = 0
     delivered_count = 0
@@ -560,7 +575,7 @@ def drain_outbox_event_ids(
             continue
         request = urllib.request.Request(
             endpoint,
-            data=_encode_otlp([json.loads(row[1]) for row in rows]),
+            data=_encode_otlp([row[1] for row in rows], database_id=database_id),
             headers={"Content-Type": "application/x-protobuf"},
             method="POST",
         )
@@ -609,34 +624,45 @@ def drain_outbox(
     endpoint: str = "http://localhost:4318/v1/logs",
     limit: int = 100,
     timeout_seconds: float = 10,
+    attempt_observer: Callable[[Sequence[tuple[str, str, int]], bool, str, str | None], None]
+    | None = None,
 ) -> dict[str, int]:
-    """Deliver pending events, retaining identical IDs and payloads across retries."""
+    """Deliver pending events; an observer shares the state-update transaction."""
     now = datetime.now(UTC).isoformat()
     rows = connection.execute(
         """
         SELECT event_id, payload_json, attempt_count
         FROM otlp_outbox
         WHERE status = 'pending' AND next_attempt_at <= ?
+          AND (
+            NOT ? OR json_extract(payload_json, '$."event.scope"') IS NOT 'pipeline-delivery'
+          )
         ORDER BY created_at, event_id
         LIMIT ?
         """,
-        (now, limit),
+        (now, attempt_observer is not None, limit),
     ).fetchall()
     if not rows:
         return {"selected": 0, "delivered": 0, "pending": 0}
-    payloads = [json.loads(row[1]) for row in rows]
+    payloads = [row[1] for row in rows]
     request = urllib.request.Request(
         endpoint,
-        data=_encode_otlp(payloads),
+        data=_encode_otlp(payloads, database_id=database_identity(connection)),
         headers={"Content-Type": "application/x-protobuf"},
         method="POST",
     )
     delivered = False
+    error_class: str | None = None
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             delivered = 200 <= response.status < 300
-    except (urllib.error.URLError, TimeoutError):
-        delivered = False
+            if not delivered:
+                error_class = "HTTPStatus"
+    except TimeoutError:
+        error_class = "TimeoutError"
+    except urllib.error.URLError as error:
+        error_class = type(error).__name__
+    attempted_at_ns = str(time.time_ns())
     with connection:
         if delivered:
             connection.executemany(
@@ -655,6 +681,8 @@ def drain_outbox(
                     """,
                     (next_attempt, event_id),
                 )
+        if attempt_observer is not None:
+            attempt_observer(rows, delivered, attempted_at_ns, error_class)
     pending = connection.execute(
         "SELECT COUNT(*) FROM otlp_outbox WHERE status = 'pending'"
     ).fetchone()[0]

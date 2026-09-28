@@ -8,6 +8,7 @@ import json
 import math
 import re
 import sqlite3
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,8 @@ from agent_introspection.telemetry import (
     remote_event_ids,
 )
 from experiments.dashboard_prototype.contracts import EvidenceProvenance, ExperimentResult
+from experiments.dashboard_prototype.pipeline_capture import begin_drain_capture
+from experiments.dashboard_prototype.pipeline_capture import capture as capture_pipeline_inputs
 from experiments.dashboard_prototype.pipeline_common import (
     PipelineExecutionAuthority,
     PipelineExperimentProof,
@@ -119,20 +122,30 @@ SELECT attributes_string['dashboard.cohort'] AS cohort,
      attributes_string['dashboard.disposition'] = 'accepted'
      AND attributes_number['dashboard.negative_skew'] = 0
  )) AS n,
- toFloat64(if(n = 0, 0., quantileExactInclusive(0.5)(if(
+ toFloat64(if(n = 0, NULL, quantileExactInclusive(0.5)(if(
      attributes_string['dashboard.disposition'] = 'accepted'
      AND attributes_number['dashboard.negative_skew'] = 0,
      attributes_number['dashboard.lag_seconds'],
      NULL
  )))) AS p50_lag_seconds,
- toFloat64(if(n = 0, 0., arrayElement(arraySort(groupArrayIf(
+ toFloat64(if(n = 0, NULL, arrayElement(arraySort(groupArrayIf(
      attributes_number['dashboard.lag_seconds'],
      attributes_string['dashboard.disposition'] = 'accepted'
      AND attributes_number['dashboard.negative_skew'] = 0
  )),
      toUInt64(greatest(1, ceil(n * 0.95)))))) AS p95_lag_seconds,
- toUInt32(sumIf(attributes_number['dashboard.negative_skew'],
-       attributes_string['dashboard.disposition'] = 'accepted')) AS negative_skew_count
+ toUInt32(sum(attributes_number['dashboard.negative_skew'])) AS negative_skew_count,
+ toUInt32(countIf(
+     attributes_string['dashboard.disposition']
+         NOT IN ('accepted', 'rejected', 'duplicate', 'missing-capability')
+     OR NOT mapContains(attributes_number, 'dashboard.negative_skew')
+     OR attributes_number['dashboard.negative_skew'] NOT IN (0, 1)
+     OR (attributes_string['dashboard.disposition'] = 'accepted'
+         AND (NOT mapContains(attributes_number, 'dashboard.lag_seconds')
+             OR NOT isFinite(attributes_number['dashboard.lag_seconds'])))
+     OR (attributes_string['dashboard.disposition'] != 'accepted'
+         AND mapContains(attributes_number, 'dashboard.lag_seconds'))
+ )) AS invalid_primitive_count
 FROM signoz_logs.distributed_logs_v2
 WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
@@ -146,21 +159,25 @@ WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
 GROUP BY cohort ORDER BY cohort
 """.strip()
 _INTEGRITY_SQL = """
-SELECT attributes_string['dashboard.metric'] AS metric,
- attributes_string['dashboard.withheld'] AS withheld,
- toUInt32(count()) AS incident_rows,
- sumIf(attributes_number['dashboard.value'],
-       attributes_string['dashboard.withheld'] = 'false') AS value
-FROM signoz_logs.distributed_logs_v2
-WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
- AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
- AND resource.`service.name`::String = 'agent-introspection'
- AND attributes_string['event.name'] = {event_name:String}
- AND attributes_string['dashboard.event_kind'] = 'primitive'
- AND attributes_string['dashboard.experiment_id'] = 'E-Pipeline-4'
- AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
- AND attributes_string['dashboard.query_id'] = {query_id:String}
- AND attributes_string['event.id'] IN ({event_ids})
+SELECT metric, withheld, toUInt32(count()) AS incident_rows,
+ groupUniqArray(event_id) AS selected_event_ids,
+ sumIf(value, withheld = 'false') AS value
+FROM (
+ SELECT DISTINCT attributes_string['event.id'] AS event_id, timestamp,
+  attributes_string['dashboard.metric'] AS metric,
+  attributes_string['dashboard.withheld'] AS withheld,
+  attributes_number['dashboard.value'] AS value
+ FROM signoz_logs.distributed_logs_v2
+ WHERE timestamp > {start_ns:UInt64} AND timestamp <= {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND resource.`service.name`::String = 'agent-introspection'
+  AND attributes_string['event.name'] = {event_name:String}
+  AND attributes_string['dashboard.event_kind'] = 'primitive'
+  AND attributes_string['dashboard.experiment_id'] = 'E-Pipeline-4'
+  AND attributes_string['dashboard.run_id_hash'] = {run_id_hash:String}
+  AND attributes_string['dashboard.query_id'] = {query_id:String}
+  AND attributes_string['event.id'] IN ({event_ids})
+)
 GROUP BY metric, withheld ORDER BY metric, withheld
 """.strip()
 
@@ -188,6 +205,13 @@ class _EventSpec:
     query_id: str
     ordinal: int
     attributes: Mapping[str, str | int | float | bool]
+
+
+@dataclass(slots=True)
+class _NativeQueryResult:
+    sql: str
+    parameters: dict[str, str | int]
+    rows: list[dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +244,8 @@ class RunEnvelope:
     remote_result: Mapping[str, Mapping[str, object]]
     drain: Mapping[str, int]
     authority: Mapping[str, PipelineExecutionAuthority] = field(default_factory=dict)
+    capture_artifact: Mapping[str, str] | None = None
+    native_query_results: tuple[_NativeQueryResult, ...] = ()
 
     def payload(self) -> dict[str, object]:
         ids = self.primitive_event_ids + self.result_event_ids
@@ -235,12 +261,21 @@ class RunEnvelope:
             "remote_result": _plain(self.remote_result),
             "provenance": EvidenceProvenance.FRESH_REAL.value,
             "hashes": {"run_id_hash": canonical_hash(self.run_id)},
+            "capture_artifact": dict(self.capture_artifact) if self.capture_artifact else None,
             "exact_source_boundary": self.window.identity(),
             "event_map": {
                 "primitive": list(self.primitive_event_ids),
                 "result": list(self.result_event_ids),
             },
             "drain": dict(self.drain),
+            "native_query_results": [
+                {
+                    "sql": result.sql,
+                    "parameters": dict(result.parameters),
+                    "rows": [dict(row) for row in result.rows],
+                }
+                for result in self.native_query_results
+            ],
             "authority": {
                 experiment: binding.payload()
                 for experiment, binding in sorted(self.authority.items())
@@ -302,6 +337,11 @@ def extract_live(
     if tuple(item.proof.experiment_id.value for item in evidence) != EXPERIMENT_IDS:
         raise PipelineExecutionError("typed proof ordering is incomplete")
     return evidence
+
+
+def _epoch_ns(value: datetime) -> int:
+    delta = value.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _event(
@@ -395,21 +435,23 @@ def _primitive_attributes(
             "dashboard.outbox_event_id": primitive.event_id,
             "dashboard.destination": destination,
             "dashboard.outbox_event_type": event_type,
-            "dashboard.created_at_ns": int(primitive.created_at.timestamp() * 1_000_000_000),
+            "dashboard.created_at_ns": str(_epoch_ns(primitive.created_at)),
             "dashboard.is_pending": primitive.status is OutboxEventStatus.PENDING,
-        }, int(primitive.created_at.timestamp() * 1_000_000_000)
+        }, _epoch_ns(primitive.created_at)
     if isinstance(primitive, E5DeliveryAttemptPrimitive):
         return {
             "dashboard.attempt_id": primitive.attempt_id,
             "dashboard.outbox_event_id": primitive.event_id,
             "dashboard.drain_id": primitive.drain_id,
+            "dashboard.attempted_at_ns": str(_epoch_ns(primitive.attempted_at)),
             "dashboard.status": primitive.status.value,
             "dashboard.error_class": primitive.error_class or "none",
-        }, int(primitive.attempted_at.timestamp() * 1_000_000_000)
+        }, _epoch_ns(primitive.attempted_at)
     if isinstance(primitive, E5FinalDrainPrimitive):
-        return {"dashboard.drain_id": primitive.drain_id}, int(
-            primitive.completed_at.timestamp() * 1_000_000_000
-        )
+        return {
+            "dashboard.drain_id": primitive.drain_id,
+            "dashboard.completed_at_ns": str(_epoch_ns(primitive.completed_at)),
+        }, _epoch_ns(primitive.completed_at)
     if isinstance(primitive, LedgerMaintenancePrimitive):
         return {
             "dashboard.source_event_id": primitive.event_id,
@@ -461,15 +503,51 @@ class _RemoteClient(Protocol):
     ) -> Iterable[Mapping[str, Any]]: ...
 
 
+class _RecordingRemoteClient:
+    """Retain the exact query envelope before calculation parsers normalize it."""
+
+    def __init__(self, client: _RemoteClient) -> None:
+        self._client = client
+        self._records: list[_NativeQueryResult] = []
+
+    @property
+    def records(self) -> tuple[_NativeQueryResult, ...]:
+        return tuple(self._records)
+
+    def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterable[Mapping[str, Any]]:
+        record = _NativeQueryResult(sql, dict(parameters), [])
+        self._records.append(record)
+        for row in self._client.query(sql, parameters):
+            record.rows.append(dict(row))
+            yield row
+
+
 def _exact_drain(
-    connection: sqlite3.Connection, events: Sequence[DerivedEvent], endpoint: str
+    connection: sqlite3.Connection,
+    events: Sequence[DerivedEvent],
+    endpoint: str,
+    *,
+    observation: sqlite3.Connection | None = None,
 ) -> Mapping[str, int]:
+    ids = tuple(event.event_id for event in events)
+    placeholders = ",".join("?" for _ in ids)
+    state_sql = (
+        "SELECT event_id, payload_json, status, attempt_count, next_attempt_at, created_at, "
+        f"delivered_at FROM otlp_outbox WHERE event_id IN ({placeholders}) ORDER BY event_id"
+    )
+    capture = (
+        begin_drain_capture(observation, connection.execute(state_sql, ids).fetchall(), events)
+        if observation is not None
+        else None
+    )
     result = drain_outbox_event_ids(
         connection,
         [event.event_id for event in events],
         endpoint=f"{endpoint}/v1/logs",
         include_delivered=True,
     )
+    if capture is not None:
+        capture.finish(connection.execute(state_sql, ids).fetchall())
     if (
         not isinstance(result, Mapping)
         or any(
@@ -608,13 +686,17 @@ def _snapshot_records(item: LiveExperimentEvidence) -> tuple[PipelineSnapshotAut
         dimensions = primitive.dimensions
         measures = primitive.measures
         try:
+            terminal_class = dimensions["terminal_class"]
+            error_class = dimensions["error_class"]
+            if not isinstance(terminal_class, str) or not isinstance(error_class, str):
+                raise ValueError("snapshot primitive authority is incomplete")
             record = PipelineSnapshotAuthorityRecord(
                 event_id=cast(str | None, dimensions.get("event_id")),
                 completed_at_ns=cast(int | None, measures.get("completed_at_ns")),
                 payload_schema_version=cast(int | None, measures.get("payload_schema_version")),
-                terminal_class=ScanTerminalClass(dimensions["terminal_class"]),
+                terminal_class=ScanTerminalClass(terminal_class),
                 duration_ms=cast(int | None, measures.get("duration_ms")),
-                error_class=ScanErrorClass(dimensions["error_class"]),
+                error_class=ScanErrorClass(error_class),
                 counts=SnapshotPopulationCounts(
                     cast(int | None, measures.get("rows")),
                     cast(int | None, measures.get("logs")),
@@ -704,6 +786,29 @@ def _number(value: object, *, integral: bool) -> int | float:
     return float(value)
 
 
+def _source_lag_metrics(row: Mapping[str, object]) -> dict[str, int | float]:
+    if _number(row.get("invalid_primitive_count"), integral=True) != 0:
+        raise PipelineExecutionError("source-lag primitive measurements are invalid")
+    values = {
+        key: _number(row.get(key), integral=True)
+        for key in (
+            "population",
+            "accepted",
+            "missing_capability",
+            "rejected",
+            "duplicate",
+            "n",
+            "negative_skew_count",
+        )
+    }
+    for key in ("p50_lag_seconds", "p95_lag_seconds"):
+        if values["n"]:
+            values[key] = _number(row.get(key), integral=False)
+        elif key not in row or row[key] is not None:
+            raise PipelineExecutionError("empty source-lag population must have null percentiles")
+    return values
+
+
 def remote_calculations(
     client: _RemoteClient,
     primitives: Sequence[DerivedEvent],
@@ -730,32 +835,15 @@ def remote_calculations(
     if source:
         placeholders, params = _params(source, window, _SOURCE_LAG_QUERY_ID, run_id)
         rows = list(client.query(_SOURCE_LAG_SQL.replace("{event_ids}", placeholders), params))
-        keys = (
-            "population",
-            "accepted",
-            "missing_capability",
-            "rejected",
-            "duplicate",
-            "n",
-            "p50_lag_seconds",
-            "p95_lag_seconds",
-            "negative_skew_count",
-        )
-        output["E-Pipeline-3"] = {
-            str(row["cohort"]): {
-                key: _number(
-                    row.get(key), integral=key not in {"p50_lag_seconds", "p95_lag_seconds"}
-                )
-                for key in keys
-            }
-            for row in rows
-        }
+        output["E-Pipeline-3"] = {str(row["cohort"]): _source_lag_metrics(row) for row in rows}
     if grouped["E-Pipeline-4"]:
         output["E-Pipeline-4"] = _remote_integrity_counts(
             client, grouped["E-Pipeline-4"], window, run_id
         )
     if "E-Pipeline-5" in evidence_by_id:
-        outbox = _outbox_remote(client, evidence_by_id["E-Pipeline-5"])
+        outbox = _outbox_remote(
+            client, evidence_by_id["E-Pipeline-5"], grouped["E-Pipeline-5"], window
+        )
         if outbox is not None:
             output["E-Pipeline-5"] = outbox
     if grouped["E-Pipeline-6"]:
@@ -767,6 +855,7 @@ def remote_calculations(
 
 def _outbox_population(
     item: LiveExperimentEvidence,
+    window: ExtractionWindow,
 ) -> tuple[tuple[OutboxEvent, ...], tuple[DeliveryAttempt, ...], E5RemotePopulation] | None:
     selected: list[OutboxEvent] = []
     attempts: list[DeliveryAttempt] = []
@@ -805,8 +894,8 @@ def _outbox_population(
         E5RemotePopulation(
             tuple(row.event_id for row in events),
             drain.drain_id,
-            min(row.created_at for row in events),
-            max(row.created_at for row in events),
+            window.start,
+            window.end,
             drain.completed_at,
         ),
     )
@@ -845,19 +934,36 @@ def _outbox_parameters(parameters: Mapping[str, object]) -> dict[str, str | int]
     return {
         "event_ids": json.dumps(event_ids),
         "final_drain_id": final_drain_id,
-        "source_start": source_start.astimezone(UTC).isoformat(),
-        "source_end": source_end.astimezone(UTC).isoformat(),
-        "scan_completed_at": scan_completed_at.astimezone(UTC).isoformat(),
+        "source_start_ns": _epoch_ns(source_start),
+        "source_end_ns": _epoch_ns(source_end),
+        "expected_final_drain_completed_at_ns": _epoch_ns(scan_completed_at),
     }
 
 
-def _outbox_remote(client: _RemoteClient, item: LiveExperimentEvidence) -> dict[str, object] | None:
-    population = _outbox_population(item)
+def _outbox_remote(
+    client: _RemoteClient,
+    item: LiveExperimentEvidence,
+    events: Sequence[DerivedEvent],
+    window: ExtractionWindow,
+) -> dict[str, object] | None:
+    population = _outbox_population(item, window)
     if population is None or (parameters := population[2].sql_parameters()) is None:
         return None
-    return _outbox_plain(
-        parse_e5_remote_result(list(client.query(E5_REMOTE_SQL, _outbox_parameters(parameters))))
-    )
+    bindings = _outbox_parameters(parameters)
+    bindings["primitive_event_ids"] = json.dumps([event.event_id for event in events])
+    rows = [dict(row) for row in client.query(E5_REMOTE_SQL, bindings)]
+    for row in rows:
+        for metric_field in ("oldest_pending_age_seconds", "drain_failure_percentage"):
+            if row.pop(f"{metric_field}_type", None) != "Nullable(Float64)":
+                raise PipelineExecutionError("outbox remote measure lacks native Float64 authority")
+            value = row.get(metric_field)
+            if value is not None:
+                if type(value) not in (int, float):
+                    raise PipelineExecutionError(
+                        "outbox remote measure has invalid JSON numeric type"
+                    )
+                row[metric_field] = float(value)
+    return _outbox_plain(parse_e5_remote_result(rows))
 
 
 def _ledger_plain(rows: Sequence[LedgerRemoteResult]) -> dict[str, object]:
@@ -910,7 +1016,7 @@ def _remote_integrity_counts(
 ) -> dict[str, int]:
     placeholders, params = _params(integrity, window, _INTEGRITY_QUERY_ID, run_id)
     rows = list(client.query(_INTEGRITY_SQL.replace("{event_ids}", placeholders), params))
-    expected_rows: dict[tuple[str, str], int] = {}
+    expected_rows: dict[tuple[str, str], set[str]] = {}
     for event in integrity:
         metric = event.attributes.get("dashboard.metric")
         withheld = event.attributes.get("dashboard.withheld")
@@ -921,8 +1027,8 @@ def _remote_integrity_counts(
         ):
             raise PipelineExecutionError("integrity primitive dimensions are invalid")
         key = (metric, withheld)
-        expected_rows[key] = expected_rows.get(key, 0) + 1
-    observed_rows: dict[tuple[str, str], int] = {}
+        expected_rows.setdefault(key, set()).add(event.event_id)
+    observed_rows: dict[tuple[str, str], set[str]] = {}
     counts: dict[str, int] = {}
     for row in rows:
         remote_metric = row.get("metric")
@@ -939,7 +1045,7 @@ def _remote_integrity_counts(
         numeric = _number(row.get("value"), integral=True)
         if not isinstance(incident_rows, int) or not isinstance(numeric, int):
             raise PipelineExecutionError("integrity remote metric mismatch")
-        observed_rows[(remote_metric, remote_withheld)] = incident_rows
+        observed_rows[(remote_metric, remote_withheld)] = _integrity_population(row, incident_rows)
         if remote_withheld == "false":
             counts[remote_metric] = counts.get(remote_metric, 0) + numeric
     if observed_rows != expected_rows:
@@ -950,6 +1056,16 @@ def _remote_integrity_counts(
     if not counts and sentinel != 0:
         raise PipelineExecutionError("integrity zero-population sentinel missing")
     return counts
+
+
+def _integrity_population(row: Mapping[str, object], incident_rows: int) -> set[str]:
+    selected = row.get("selected_event_ids")
+    if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
+        raise PipelineExecutionError("integrity remote event population is missing")
+    population = set(selected)
+    if len(population) != incident_rows:
+        raise PipelineExecutionError("integrity remote immutable payload conflict")
+    return population
 
 
 def _final_proofs(
@@ -1062,8 +1178,10 @@ def _cadence_local(item: LiveExperimentEvidence) -> dict[str, object] | None:
     }
 
 
-def _outbox_local(item: LiveExperimentEvidence) -> dict[str, object] | None:
-    population = _outbox_population(item)
+def _outbox_local(
+    item: LiveExperimentEvidence, window: ExtractionWindow
+) -> dict[str, object] | None:
+    population = _outbox_population(item, window)
     if population is None:
         return None
     events, attempts, authority = population
@@ -1092,7 +1210,10 @@ def _deep_plain_cohort_oracle(
 def _ledger_local(
     item: LiveExperimentEvidence, events: Sequence[DerivedEvent], window: ExtractionWindow
 ) -> dict[str, object] | None:
-    source = tuple(row for row in item.primitives if isinstance(row, LedgerMaintenancePrimitive))
+    primitives: Sequence[object] = item.primitives
+    source: tuple[LedgerMaintenancePrimitive, ...] = tuple(
+        row for row in primitives if isinstance(row, LedgerMaintenancePrimitive)
+    )
     event_ids = tuple(
         event.event_id
         for event in events
@@ -1138,7 +1259,7 @@ def _local_item_oracle(
         case "E-Pipeline-4" if item.primitives:
             value = _integrity_oracle(item.proof, item)
         case "E-Pipeline-5":
-            value = _outbox_local(item)
+            value = _outbox_local(item, window)
         case "E-Pipeline-6":
             value = _ledger_local(item, primitives, window)
     return value
@@ -1205,21 +1326,39 @@ def _authority(inputs: _AuthorityInputs) -> dict[str, PipelineExecutionAuthority
 
 
 def run(
-    *, run_id: str, start: datetime, end: datetime, output: Path, config: AppConfig | None = None
+    *,
+    run_id: str,
+    window: ExtractionWindow,
+    output: Path,
+    config: AppConfig | None = None,
+    capture_path: Path | None = None,
 ) -> RunEnvelope:
     validate_run_id(run_id)
     output = validate_output_path(output)
-    window = ExtractionWindow(start, end)
+    if output.exists():
+        raise PipelineExecutionError("immutable evidence output already exists")
     config = config or load_config()
     endpoint = validate_loopback_endpoint(config.signoz.otlp_http_endpoint)
-    request = LiveProofRequest(run_id, start, end)
+    request = LiveProofRequest(run_id, window.start, window.end)
+    if capture_path is None:
+        capture_path = output.parent / (
+            f"pipeline-capture-{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-{uuid.uuid4()}.sqlite3"
+        )
+        source_connection = sqlite3.connect(f"file:{config.database.path}?mode=ro", uri=True)
+        try:
+            capture_pipeline_inputs(source_connection, capture_path, request, config.scheduler)
+        finally:
+            source_connection.close()
     connection = sqlite3.connect(f"file:{config.database.path}?mode=rw", uri=True)
+    capture_connection = sqlite3.connect(f"file:{capture_path}?mode=ro", uri=True)
     try:
-        evidence = extract_live(connection, request)
+        evidence = extract_live(capture_connection, request)
         primitives = primitive_events(evidence, run_id, window)
-        client = ClickHouseClient(
-            docker_context=config.signoz.docker_context,
-            container=config.signoz.clickhouse_container,
+        client = _RecordingRemoteClient(
+            ClickHouseClient(
+                docker_context=config.signoz.docker_context,
+                container=config.signoz.clickhouse_container,
+            )
         )
         enqueue_events(connection, list(primitives))
         primitive_drain = _exact_drain(connection, primitives, endpoint)
@@ -1251,11 +1390,18 @@ def run(
             _authority(
                 _AuthorityInputs(evidence, proofs, primitives, results, remote, local_oracle)
             ),
+            {
+                "name": capture_path.name,
+                "sha256": hashlib.sha256(capture_path.read_bytes()).hexdigest(),
+            },
+            native_query_results=client.records,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(envelope.canonical_json() + "\n", encoding="utf-8")
+        with output.open("x", encoding="utf-8") as handle:
+            handle.write(envelope.canonical_json() + "\n")
         return envelope
     finally:
+        capture_connection.close()
         connection.close()
 
 
@@ -1295,12 +1441,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--capture", type=Path)
     args = parser.parse_args(argv)
     run(
         run_id=args.run_id,
-        start=datetime.fromisoformat(args.start.replace("Z", "+00:00")),
-        end=datetime.fromisoformat(args.end.replace("Z", "+00:00")),
+        window=ExtractionWindow(
+            datetime.fromisoformat(args.start.replace("Z", "+00:00")),
+            datetime.fromisoformat(args.end.replace("Z", "+00:00")),
+        ),
         output=Path(args.output),
+        capture_path=args.capture,
     )
     return 0
 

@@ -11,9 +11,8 @@ import pytest
 
 from agent_introspection.source import (
     LOG_QUERY,
-    RAW_SOURCE_SESSION_LOG_QUERY,
-    RAW_SOURCE_SESSION_METRIC_QUERY,
-    RAW_SOURCE_SESSION_TRACE_QUERY,
+    RAW_NATIVE_SOURCE_LOG_QUERY,
+    RAW_NATIVE_SOURCE_TRACE_QUERY,
     RAW_SOURCE_WINDOW_ANCHOR_QUERY,
     TRACE_QUERY,
     ClickHouseClient,
@@ -24,6 +23,7 @@ from agent_introspection.source import (
     parse_source_activity_correlation,
     parse_source_session_row,
     parse_trace_row,
+    query_raw_native_sources,
     query_selected_ids,
 )
 
@@ -57,60 +57,6 @@ def test_broad_queries_enumerate_all_services_in_a_half_open_window() -> None:
         assert f"AS {field}" in TRACE_QUERY
 
 
-def test_raw_source_session_queries_scope_canonical_services_in_a_half_open_window() -> None:
-    for query, start, end, service_expression in (
-        (
-            RAW_SOURCE_SESSION_LOG_QUERY,
-            "{start_ns:UInt64}",
-            "{end_ns:UInt64}",
-            "resource.`service.name`::String IN",
-        ),
-        (
-            RAW_SOURCE_SESSION_TRACE_QUERY,
-            "{start:DateTime64(9)}",
-            "{end:DateTime64(9)}",
-            "serviceName IN",
-        ),
-    ):
-        assert f"timestamp >= {start}" in query
-        assert f"timestamp < {end}" in query
-        assert service_expression in query
-        for service_name in (
-            "codex-cli",
-            "claude-code",
-            "omp",
-            "codex_exec",
-            "codex_cli_rs",
-            "codex-app-server",
-            "oh-my-pi",
-        ):
-            assert f"'{service_name}'" in query
-        for native_key in (
-            "session.id",
-            "thread.id",
-            "thread_id",
-            "gen_ai.conversation.id",
-        ):
-            assert f"mapContains(attributes_string, '{native_key}')" in query
-        assert "mapContains(attributes_string, 'thread.id')" in query
-        assert "'oh-my-pi')" in query
-        assert "mapContains(attributes_string, 'gen_ai.conversation.id')" in query
-        assert "GROUP BY service_name, source_id" in query
-        assert "session_ids" in query
-        assert "thread_ids" in query
-        assert "legacy_thread_ids" in query
-        assert "gen_ai_conversation_ids" in query
-
-        assert "ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}" in query
-
-    assert "inserted_at_unix_milli >= {start_ms:Int64}" in RAW_SOURCE_SESSION_METRIC_QUERY
-    assert "inserted_at_unix_milli < {end_ms:Int64}" in RAW_SOURCE_SESSION_METRIC_QUERY
-    assert "metric_name = 'claude_code.session.count'" in RAW_SOURCE_SESSION_METRIC_QUERY
-    assert "attrs['service.name'] = 'claude-code'" in RAW_SOURCE_SESSION_METRIC_QUERY
-    assert "mapContains(attrs, 'session.id')" in RAW_SOURCE_SESSION_METRIC_QUERY
-    assert "GROUP BY service_name, source_id" in RAW_SOURCE_SESSION_METRIC_QUERY
-
-
 def test_metric_source_session_uses_arrival_timestamp_and_claude_session_id() -> None:
     row = parse_source_session_row(
         {
@@ -128,6 +74,190 @@ def test_metric_source_session_uses_arrival_timestamp_and_claude_session_id() ->
     assert row.source_kind == "metric"
     assert row.source_timestamp == datetime.fromtimestamp(1_767_225_600.123, tz=UTC)
     assert row.native_session_ids == ("claude-session",)
+    assert row.source_timestamp_ns == 1_767_225_600_123_000_000
+
+
+def test_codex_cli_uses_only_conversation_ids_and_preserves_uint64_nanoseconds() -> None:
+    row = parse_source_session_row(
+        {
+            "source_id": "log-1",
+            "source_timestamp_ns": "1767225600123456789",
+            "service_name": "codex-cli",
+            "session_ids": [],
+            "thread_ids": ["not-a-cli-native-id"],
+            "legacy_thread_ids": [],
+            "conversation_ids": ["conversation-1"],
+            "gen_ai_conversation_ids": [],
+        },
+        source_kind="log",
+    )
+
+    assert row.source_timestamp_ns == 1_767_225_600_123_456_789
+    assert row.native_session_ids == ("conversation-1",)
+    assert row.session_status == "exact"
+
+
+def test_codex_cli_trace_uses_thread_ids_and_rejects_conflicting_native_ids() -> None:
+    row = parse_source_session_row(
+        {
+            "source_id": "span-1",
+            "source_timestamp_ns": "1767225600123456789",
+            "service_name": "codex-cli",
+            "session_ids": [],
+            "thread_ids": ["thread-1", "thread-2"],
+            "legacy_thread_ids": [],
+            "conversation_ids": ["not-a-trace-native-id"],
+            "gen_ai_conversation_ids": [],
+        },
+        source_kind="trace",
+    )
+
+    assert row.native_session_ids == ("thread-1", "thread-2")
+    assert row.session_status == "conflicting"
+
+
+def test_raw_native_sources_use_exact_nanosecond_endpoints_and_keep_all_events() -> None:
+    def source_row(
+        source_id: str,
+        timestamp_ns: int,
+        conversation_ids: list[str],
+        thread_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "source_id": source_id,
+            "source_timestamp_ns": str(timestamp_ns),
+            "service_name": "codex-cli",
+            "session_ids": [],
+            "thread_ids": thread_ids or [],
+            "legacy_thread_ids": [],
+            "conversation_ids": conversation_ids,
+            "gen_ai_conversation_ids": [],
+        }
+
+    class NativeClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            assert parameters == {
+                "start_ns": 100,
+                "end_ns": 200,
+                "start_bucket": 0,
+                "end_bucket": 0,
+            }
+            if sql == RAW_NATIVE_SOURCE_LOG_QUERY:
+                yield source_row("excluded-start", 100, ["session-1"])
+                yield source_row("first", 101, ["session-1"])
+                yield source_row("second", 102, ["session-1"])
+                return
+            assert sql == RAW_NATIVE_SOURCE_TRACE_QUERY
+            yield source_row("included-end", 200, [], ["session-2"])
+            yield source_row("excluded-after", 201, [], ["session-2"])
+
+    rows = query_raw_native_sources(NativeClient(docker_context="test"), start_ns=100, end_ns=200)
+
+    assert [(row.source_id, row.source_timestamp_ns, row.native_session_ids) for row in rows] == [
+        ("first", 101, ("session-1",)),
+        ("second", 102, ("session-1",)),
+        ("included-end", 200, ("session-2",)),
+    ]
+
+
+def test_raw_native_sources_reject_missing_exact_nanoseconds() -> None:
+    class NativeClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            del sql, parameters
+            yield {
+                "source_id": "span-1",
+                "source_timestamp": "2026-01-01T00:00:00+00:00",
+                "service_name": "codex-cli",
+                "session_ids": [],
+                "thread_ids": ["thread-1"],
+                "legacy_thread_ids": [],
+                "conversation_ids": [],
+                "gen_ai_conversation_ids": [],
+            }
+
+    with pytest.raises(ValueError, match="positive unsigned integer"):
+        query_raw_native_sources(NativeClient(docker_context="test"), start_ns=1, end_ns=2)
+
+
+@pytest.mark.parametrize(
+    ("native_ids", "reason"),
+    [
+        (["thread-1", "thread-2"], "conflicting native identities"),
+        (["thread-1", "thread-1"], "raw native source record is invalid"),
+        (["thread-2", "thread-1"], "raw native source record is invalid"),
+    ],
+)
+def test_raw_native_sources_reject_conflicting_native_ids(
+    native_ids: list[str], reason: str
+) -> None:
+    class NativeClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            del sql, parameters
+            yield {
+                "source_id": "span-1",
+                "source_timestamp_ns": "1",
+                "service_name": "codex-cli",
+                "session_ids": [],
+                "thread_ids": native_ids,
+                "legacy_thread_ids": [],
+                "conversation_ids": [],
+                "gen_ai_conversation_ids": [],
+            }
+
+    with pytest.raises(ValueError, match=reason):
+        query_raw_native_sources(NativeClient(docker_context="test"), start_ns=0, end_ns=2)
+
+
+@pytest.mark.parametrize(
+    ("other_timestamp", "other_native_ids"),
+    [
+        ("101", ["conversation-2"]),
+        ("101", []),
+        ("100", ["conversation-1"]),
+    ],
+    ids=["different-native-identity", "missing-native-identity", "excluded-range-boundary"],
+)
+def test_raw_native_sources_reject_divergent_physical_records_before_deduplication(
+    other_timestamp: str, other_native_ids: list[str]
+) -> None:
+    class NativeClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            del parameters
+            if sql == RAW_NATIVE_SOURCE_LOG_QUERY:
+                yield {
+                    "source_id": "log-1",
+                    "source_timestamp_ns": "101",
+                    "service_name": "codex-cli",
+                    "session_ids": [],
+                    "thread_ids": [],
+                    "legacy_thread_ids": [],
+                    "conversation_ids": ["conversation-1"],
+                    "gen_ai_conversation_ids": [],
+                }
+                yield {
+                    "source_id": "log-1",
+                    "source_timestamp_ns": other_timestamp,
+                    "service_name": "codex-cli",
+                    "session_ids": [],
+                    "thread_ids": [],
+                    "legacy_thread_ids": [],
+                    "conversation_ids": other_native_ids,
+                    "gen_ai_conversation_ids": [],
+                }
+
+    with pytest.raises(ValueError, match="conflicting native identity"):
+        query_raw_native_sources(NativeClient(docker_context="test"), start_ns=100, end_ns=200)
+
+
+def test_raw_native_source_query_errors_remain_source_errors() -> None:
+    class NativeClient(ClickHouseClient):
+        def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+            del sql, parameters
+            raise SourceError("source unavailable")
+            yield
+
+    with pytest.raises(SourceError, match="source unavailable"):
+        query_raw_native_sources(NativeClient(docker_context="test"), start_ns=100, end_ns=200)
 
 
 def test_raw_source_window_anchor_converts_normal_datetime64_output() -> None:

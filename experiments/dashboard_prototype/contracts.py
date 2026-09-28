@@ -6,13 +6,15 @@ import hashlib
 import json
 import math
 import re
+import sys
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 SCHEMA_VERSION = 1
 EXPERIMENT_NAMESPACE = "agent-introspection.dashboard-prototype.v1"
@@ -46,6 +48,7 @@ REQUIRED_MATRIX_KEYS = frozenset(
         "supported_producers",
         "unsupported_boundaries",
         "experiment_registry",
+        "application_evidence",
         "rows",
     }
 )
@@ -74,8 +77,96 @@ REQUIRED_ROW_KEYS = CANONICAL_ROW_FIELDS | frozenset(
     }
 )
 BLOCKED_BOUNDARY_KEYS = frozenset({"missing_boundary", "owner", "owner_surface", "experiment_id"})
+APPLICATION_EVIDENCE_KEYS = frozenset({"schema_version", "bindings"})
+APPLICATION_EVIDENCE_BINDING_KEYS = frozenset(
+    {
+        "widget_id",
+        "measure_id",
+        "dependency_id",
+        "producer",
+        "native_identity",
+        "calculation",
+        "projection",
+        "qualification",
+    }
+)
+CENTRAL_APPLICATION_EVIDENCE_BINDING_KEYS = frozenset(
+    {"widget_id", "measure_id", "dependency_id", "central_identity", "qualification"}
+)
+APPLICATION_NATIVE_IDENTITY_KEYS = frozenset({"producer", "native_session_id", "native_event_id"})
+CENTRAL_IDENTITY_KEYS = frozenset({"runtime_instance_id", "scan_run_id", "database_identity"})
+APPLICATION_CALCULATION_KEYS = frozenset({"state", "query_reference_id", "result_event_id"})
+APPLICATION_PROJECTION_KEYS = frozenset({"state", "projection_id", "result_event_id"})
+APPLICATION_QUALIFICATION_KEYS = frozenset(
+    {
+        "provenance",
+        "result",
+        "experiment_id",
+        "deployment_fingerprint",
+        "calculation_implementation_id",
+        "calculation_implementation_sha256",
+        "projection_implementation_id",
+        "projection_implementation_sha256",
+        "projection_event_witness",
+        "raw_evidence",
+        "selected_range_operator",
+        "interval_containment_operator",
+        "evaluation_policy_id",
+        "version_policy_id",
+        "all_version_requirement",
+        "join_chain",
+        "source_event_ids",
+        "output_event_ids",
+        "remote_event_ids",
+        "oracle_event_ids",
+        "remote_result",
+        "oracle_result",
+        "adverse_cases",
+        "privacy_allowlist",
+        "evidence_bundle",
+    }
+)
+CENTRAL_APPLICATION_QUALIFICATION_KEYS = frozenset(
+    {
+        "provenance",
+        "result",
+        "deployment_fingerprint",
+        "calculation_implementation_id",
+        "calculation_implementation_sha256",
+        "projection_implementation_id",
+        "projection_implementation_sha256",
+        "evidence_bundle",
+    }
+)
 BLOCKED_BOUNDARY_OWNERS = frozenset({"producer", "application", "provider"})
 CANONICAL_SCHEMA_TYPE_DESCRIPTORS = frozenset({"string", "integer", "number", "boolean", "null"})
+CENTRAL_APPLICATION_BINDINGS = frozenset(
+    {
+        ("p1-snapshot", "P1", "E-Pipeline-1"),
+        ("scan-evidence", "P1", "E-Pipeline-1"),
+        ("p2-outcomes", "P2", "E-Pipeline-2"),
+        ("p2-freshness", "P2", "E-Pipeline-2"),
+        ("p3-duration", "P3", "E-Pipeline-1"),
+        ("p3-rows", "P3", "E-Pipeline-1"),
+        ("p3-throughput", "P3", "E-Pipeline-1"),
+        ("p4-source-lag", "P4", "E-Pipeline-3"),
+        ("p10-snapshot", "P10", "E-Pipeline-1"),
+        ("p10-delivery-detail", "P10", "E-Pipeline-5"),
+        ("p11-integrity", "P11", "E-Pipeline-4"),
+        ("p12-ledger", "P12", "E-Pipeline-6"),
+    }
+)
+CENTRAL_INTERVAL_CONTAINMENT_OPERATOR = (
+    "Not applicable: this row does not use lifecycle containment."
+)
+CENTRAL_SELECTED_RANGE_OPERATORS = {
+    widget: (
+        "start < completion <= end"
+        if widget == "p10-delivery-detail"
+        else "start < timestamp <= end"
+    )
+    for widget, _, _ in CENTRAL_APPLICATION_BINDINGS
+}
 EVENT_ID_INPUT_KEYS = frozenset(
     {"experiment_id", "producer", "native_session_id", "event_id_ordinal"}
 )
@@ -369,6 +460,59 @@ class EvidenceBundle:
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class CentralEvidenceBundle:
+    """Immutable proof of one bounded central scan/report calculation."""
+
+    schema_version: int
+    widget_id: str
+    measure_id: str
+    dependency_id: str
+    runtime_instance_id: str
+    scan_run_id: str
+    database_identity: str
+    capture_population: str
+    bounded_start_ns: str
+    bounded_end_ns: str
+    selected_range_operator: str
+    interval_containment_operator: str
+    evaluation_policy_id: str
+    version_policy_id: str
+    all_version_requirement: str
+    retained_artifacts: Mapping[str, Mapping[str, object]]
+    source_input_ids: Sequence[str]
+    output_event_ids: Sequence[str]
+    remote_event_ids: Sequence[str]
+    oracle_event_ids: Sequence[str]
+    source_output_lineage: Sequence[Mapping[str, str]]
+    projection_event_witnesses: Sequence[Mapping[str, object]]
+    displayed_calculation: Mapping[str, object]
+    remote_calculation: Mapping[str, object]
+    oracle_calculation: Mapping[str, object]
+    privacy_allowlist: Sequence[str]
+    raw_field_inventory: Sequence[Mapping[str, object]]
+    adverse_case_artifacts: Mapping[str, str]
+    deployment_fingerprint: str
+    calculation_implementation_id: str
+    calculation_implementation_sha256: str
+    projection_implementation_id: str
+    projection_implementation_sha256: str
+    unresolved_dependencies: Sequence[str]
+
+    def __post_init__(self) -> None:
+        _validate_central_evidence_bundle(self)
+        for field in self.__dataclass_fields__:
+            object.__setattr__(self, field, _freeze(getattr(self, field)))
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            _canonicalize(self), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+
 def load_proof_matrix(path: Path) -> ProofMatrix:
     """Load and validate a schema-version-1 proof matrix from JSON."""
     try:
@@ -408,6 +552,9 @@ def validate_proof_matrix(payload: Mapping[str, object]) -> ProofMatrix:
         )
     _validate_canonical_appendix(rows)
     _validate_canonical_temporal_contract(rows)
+    _validate_application_evidence(
+        payload["application_evidence"], rows, frozenset(experiment_registry)
+    )
     unsupported = payload["unsupported_boundaries"]
     if not isinstance(unsupported, list) or tuple(unsupported) != UNSUPPORTED_BOUNDARIES:
         raise PrototypeContractError("unsupported boundaries must match the checked-in declaration")
@@ -451,6 +598,453 @@ def _validate_matrix_metadata(payload: Mapping[str, object]) -> None:
         raise PrototypeContractError(
             "supported producers must be exactly the canonical producer set"
         )
+
+
+def _validate_central_application_binding(
+    binding: Mapping[str, object],
+    rows: Sequence[ProofMatrixRow],
+    seen: set[tuple[str, str, str, str]],
+) -> None:
+    if set(binding) != CENTRAL_APPLICATION_EVIDENCE_BINDING_KEYS:
+        raise PrototypeContractError(
+            "central application evidence binding must use the exact schema"
+        )
+    widget_id, measure_id, dependency_id = (
+        binding["widget_id"],
+        binding["measure_id"],
+        binding["dependency_id"],
+    )
+    if not all(_is_nonempty_string(item) for item in (widget_id, measure_id, dependency_id)):
+        raise PrototypeContractError("central application evidence binding identity is invalid")
+    central_identity = binding["central_identity"]
+    if (
+        not isinstance(central_identity, Mapping)
+        or set(central_identity) != CENTRAL_IDENTITY_KEYS
+        or not _is_nonempty_string(central_identity["runtime_instance_id"])
+        or not _is_nonempty_string(central_identity["scan_run_id"])
+        or not isinstance(central_identity["database_identity"], str)
+        or not re.fullmatch(r"[a-f0-9]{64}", central_identity["database_identity"])
+    ):
+        raise PrototypeContractError(
+            "central application evidence requires authoritative identities"
+        )
+    identity = (cast(str, widget_id), cast(str, measure_id), cast(str, dependency_id), "central")
+    if identity in seen:
+        raise PrototypeContractError("application evidence bindings must be unique")
+    seen.add(identity)
+    qualification = binding["qualification"]
+    if (
+        not isinstance(qualification, Mapping)
+        or set(qualification) != CENTRAL_APPLICATION_QUALIFICATION_KEYS
+        or qualification["provenance"] != "fresh-real"
+        or qualification["result"] != "Proven"
+    ):
+        raise PrototypeContractError("central qualification requires fresh-real Proven evidence")
+    if (widget_id, measure_id, dependency_id) not in CENTRAL_APPLICATION_BINDINGS:
+        raise PrototypeContractError("central application binding is not an approved measurement")
+    _validate_application_implementation_identity(qualification)
+    evidence = _deserialize_central_evidence_bundle(qualification["evidence_bundle"])
+    central_only = dependency_id in {"E-Pipeline-4", "E-Pipeline-5", "E-Pipeline-6"}
+    # Central-only experiments inherit the shared Time range policy, not native qualification.
+    if (
+        evidence.widget_id != widget_id
+        or evidence.measure_id != measure_id
+        or evidence.dependency_id != dependency_id
+        or evidence.runtime_instance_id != central_identity["runtime_instance_id"]
+        or evidence.scan_run_id != central_identity["scan_run_id"]
+        or evidence.database_identity != central_identity["database_identity"]
+        or {evidence.all_version_requirement}
+        != {
+            row.values["all_version_requirement"]
+            for row in rows
+            if (
+                row.row_id == "A01"
+                if central_only
+                else row.values["experiment_id"] == dependency_id
+            )
+        }
+        or any(
+            evidence_value != qualification[key]
+            for key, evidence_value in (
+                ("deployment_fingerprint", evidence.deployment_fingerprint),
+                ("calculation_implementation_id", evidence.calculation_implementation_id),
+                ("calculation_implementation_sha256", evidence.calculation_implementation_sha256),
+                ("projection_implementation_id", evidence.projection_implementation_id),
+                ("projection_implementation_sha256", evidence.projection_implementation_sha256),
+            )
+        )
+    ):
+        raise PrototypeContractError("central qualification evidence bundle is not authoritative")
+
+
+def _validate_application_evidence(
+    value: object,
+    rows: Sequence[ProofMatrixRow],
+    experiment_registry: frozenset[str],
+) -> None:
+    """Validate native application qualification without promoting prototype evidence."""
+    if not isinstance(value, Mapping) or set(value) != APPLICATION_EVIDENCE_KEYS:
+        raise PrototypeContractError("application evidence must use the exact structured contract")
+    if value["schema_version"] != 1 or not isinstance(value["bindings"], list):
+        raise PrototypeContractError("application evidence must declare schema version 1 bindings")
+    row_references = {
+        (row.row_id, row.producer): cast(Mapping[str, object], row.values["remote_query"])[
+            "reference_id"
+        ]
+        for row in rows
+    }
+    seen: set[tuple[str, str, str, str]] = set()
+    for binding in value["bindings"]:
+        if (
+            isinstance(binding, Mapping)
+            and set(binding) == CENTRAL_APPLICATION_EVIDENCE_BINDING_KEYS
+        ):
+            _validate_central_application_binding(binding, rows, seen)
+        else:
+            _validate_application_binding(binding, rows, experiment_registry, row_references, seen)
+
+
+def _validate_application_binding(
+    binding: object,
+    rows: Sequence[ProofMatrixRow],
+    experiment_registry: frozenset[str],
+    row_references: Mapping[tuple[str, str], object],
+    seen: set[tuple[str, str, str, str]],
+) -> None:
+    if not isinstance(binding, Mapping) or set(binding) != APPLICATION_EVIDENCE_BINDING_KEYS:
+        raise PrototypeContractError("application evidence binding must use the exact schema")
+    widget_id = binding["widget_id"]
+    measure_id = binding["measure_id"]
+    dependency_id = binding["dependency_id"]
+    producer = binding["producer"]
+    if (
+        not all(
+            _is_nonempty_string(item) for item in (widget_id, measure_id, dependency_id, producer)
+        )
+        or producer not in SUPPORTED_PRODUCERS
+    ):
+        raise PrototypeContractError("application evidence binding identity is invalid")
+    identity = (widget_id, measure_id, dependency_id, producer)
+    if identity in seen:
+        raise PrototypeContractError("application evidence bindings must be unique")
+    seen.add(identity)
+    native_identity = _validate_application_native_identity(binding, producer)
+    expected_event_id = _validate_projection_binding(binding)
+    _validate_application_qualification(
+        binding, native_identity, expected_event_id, rows, experiment_registry
+    )
+    expected_reference = row_references.get((dependency_id, producer))
+    calculation = cast(Mapping[str, object], binding["calculation"])
+    if expected_reference is not None:
+        if calculation.get("query_reference_id") != expected_reference:
+            raise PrototypeContractError(
+                "application calculation must bind the matrix query reference"
+            )
+    elif dependency_id not in experiment_registry or not _is_nonempty_string(
+        calculation.get("query_reference_id")
+    ):
+        raise PrototypeContractError(
+            "application evidence dependency must bind a matrix row or independent gate"
+        )
+
+
+def _validate_application_native_identity(
+    binding: Mapping[str, object], producer: object
+) -> Mapping[str, object]:
+    native_identity = binding["native_identity"]
+    if (
+        not isinstance(native_identity, Mapping)
+        or set(native_identity) != APPLICATION_NATIVE_IDENTITY_KEYS
+        or native_identity.get("producer") != producer
+        or not all(
+            _is_nonempty_string(native_identity.get(key))
+            for key in ("native_session_id", "native_event_id")
+        )
+    ):
+        raise PrototypeContractError("application evidence must bind immutable native identity")
+    return native_identity
+
+
+def _validate_projection_binding(binding: Mapping[str, object]) -> str:
+    calculation = binding["calculation"]
+    projection = binding["projection"]
+    if (
+        not isinstance(calculation, Mapping)
+        or set(calculation) != APPLICATION_CALCULATION_KEYS
+        or calculation.get("state") != "computed"
+        or not _is_nonempty_string(calculation.get("result_event_id"))
+    ):
+        raise PrototypeContractError(
+            "application evidence requires a computed projection calculation result"
+        )
+    if (
+        not isinstance(projection, Mapping)
+        or set(projection) != APPLICATION_PROJECTION_KEYS
+        or projection.get("state") != "computed"
+        or not _is_nonempty_string(projection.get("projection_id"))
+        or projection.get("result_event_id") != calculation["result_event_id"]
+    ):
+        raise PrototypeContractError("application evidence requires a computed projected result")
+    return cast(str, calculation["result_event_id"])
+
+
+def _validate_application_qualification(
+    binding: Mapping[str, object],
+    native_identity: Mapping[str, object],
+    result_event_id: str,
+    rows: Sequence[ProofMatrixRow],
+    experiment_registry: frozenset[str],
+) -> None:
+    qualification = binding["qualification"]
+    if (
+        not isinstance(qualification, Mapping)
+        or set(qualification) != APPLICATION_QUALIFICATION_KEYS
+    ):
+        raise PrototypeContractError("application qualification must use the exact schema")
+    if qualification.get("provenance") != "fresh-real" or qualification.get("result") != "Proven":
+        raise PrototypeContractError(
+            "application qualification requires fresh-real Proven evidence"
+        )
+    _validate_application_implementation_identity(qualification)
+    witness_id = _validate_projection_event_witness(qualification["projection_event_witness"])
+    if witness_id != result_event_id:
+        raise PrototypeContractError(
+            "application qualification projected witness identity is invalid"
+        )
+    if native_identity["native_event_id"] == result_event_id:
+        raise PrototypeContractError(
+            "application qualification native and projected event identities must be distinct"
+        )
+    _validate_raw_native_evidence(qualification, native_identity)
+    _validate_application_populations(qualification, result_event_id)
+    _validate_application_join_chain(qualification)
+    _validate_application_typed_results(qualification)
+    dependency_id = cast(str, binding["dependency_id"])
+    producer = cast(str, binding["producer"])
+    evidence = _deserialize_matrix_evidence(qualification["evidence_bundle"])
+    _validate_application_evidence_links(qualification, evidence)
+    row = next(
+        (item for item in rows if item.row_id == dependency_id and item.producer == producer), None
+    )
+    if row is None:
+        if (
+            dependency_id not in experiment_registry
+            or qualification["experiment_id"] != dependency_id
+        ):
+            raise PrototypeContractError(
+                "application qualification independent obligation is not canonical"
+            )
+    else:
+        if qualification["experiment_id"] != row.values["experiment_id"]:
+            raise PrototypeContractError("application qualification must bind the row experiment")
+        _validate_row_evidence_bindings(row.values, evidence, evidence.privacy_allowlist)
+    if (
+        evidence.provenance is not EvidenceProvenance.FRESH_REAL
+        or evidence.result is not ExperimentResult.PROVEN
+        or evidence.experiment_id != qualification["experiment_id"]
+        or evidence.producer != producer
+        or evidence.native_session_id != native_identity["native_session_id"]
+        or dict(evidence.remote_result.values) != qualification["remote_result"]["values"]
+        or dict(evidence.oracle_result.values) != qualification["oracle_result"]["values"]
+    ):
+        raise PrototypeContractError(
+            "application qualification evidence bundle is not authoritative"
+        )
+
+
+def _validate_application_evidence_links(
+    qualification: Mapping[str, object], evidence: EvidenceBundle
+) -> None:
+    if (
+        qualification["selected_range_operator"] != evidence.selected_range_membership_operator
+        or qualification["interval_containment_operator"] != evidence.interval_containment_operator
+        or qualification["evaluation_policy_id"] != evidence.policy_identity
+        or qualification["version_policy_id"] != evidence.version_policy_identity
+        or qualification["all_version_requirement"] != evidence.all_version_requirement
+        or tuple(cast(Sequence[object], qualification["privacy_allowlist"]))
+        != tuple(sorted(evidence.privacy_allowlist))
+        or qualification["join_chain"] != _canonicalize(evidence.join_chain)
+    ):
+        raise PrototypeContractError(
+            "application qualification must exactly bind evidence policies and joins"
+        )
+
+
+def _validate_application_implementation_identity(qualification: Mapping[str, object]) -> None:
+    hashes = (
+        "deployment_fingerprint",
+        "calculation_implementation_sha256",
+        "projection_implementation_sha256",
+    )
+    if (
+        any(
+            not isinstance(qualification.get(key), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", str(qualification[key]))
+            for key in hashes
+        )
+        or qualification.get("calculation_implementation_id")
+        != "agent-introspection.pipeline-dashboard"
+        or qualification.get("projection_implementation_id")
+        != "agent-introspection.pipeline-observations"
+    ):
+        raise PrototypeContractError("application qualification implementation identity is invalid")
+
+
+def _validate_projection_event_witness(witness: object) -> str:
+    if not isinstance(witness, Mapping):
+        raise PrototypeContractError(
+            "application qualification requires a projection event witness"
+        )
+    keys: tuple[str, ...]
+    text_keys: tuple[str, ...]
+    integer_keys: tuple[str, ...]
+    if witness.get("kind") == "DerivedEvent":
+        keys, text_keys, integer_keys = (
+            ("kind", "scope", "entity_id", "entity_version", "event_sequence", "event_name"),
+            ("scope", "entity_id", "event_name"),
+            ("entity_version", "event_sequence"),
+        )
+        expected = str(
+            uuid.UUID(
+                hashlib.sha256(
+                    "\x1f".join(str(witness.get(key, "")) for key in keys[1:]).encode()
+                ).hexdigest()[:32]
+            )
+        )
+    elif witness.get("kind") == "CanonicalActivityVersionEvent":
+        keys, text_keys, integer_keys = (
+            ("kind", "activity_id", "version", "payload_schema_version", "event_name"),
+            ("activity_id", "event_name"),
+            ("version", "payload_schema_version"),
+        )
+        expected = hashlib.sha256(
+            "\x1f".join(str(witness.get(key, "")) for key in keys[1:]).encode()
+        ).hexdigest()
+    else:
+        raise PrototypeContractError("application qualification witness kind is invalid")
+    if (
+        set(witness) != set(keys)
+        or not all(_is_nonempty_string(witness.get(key)) for key in text_keys)
+        or any(
+            not isinstance(witness.get(key), int)
+            or isinstance(witness.get(key), bool)
+            or witness[key] < (0 if key == "event_sequence" else 1)
+            for key in integer_keys
+        )
+    ):
+        raise PrototypeContractError("application qualification projection witness is invalid")
+    return expected
+
+
+def _validate_raw_native_evidence(
+    qualification: Mapping[str, object], native_identity: Mapping[str, object]
+) -> None:
+    raw = qualification["raw_evidence"]
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw)
+        != {
+            "bounded_start_ns",
+            "bounded_end_ns",
+            "opaque_native_event_ids",
+            "native_identity_tuple",
+        }
+        or not all(
+            isinstance(raw.get(key), str) and re.fullmatch(r"(?:0|[1-9]\d*)", raw[key])
+            for key in ("bounded_start_ns", "bounded_end_ns")
+        )
+        or int(cast(str, raw["bounded_start_ns"])) >= int(cast(str, raw["bounded_end_ns"]))
+        or tuple(raw.get("native_identity_tuple", ()))
+        != (native_identity["producer"], native_identity["native_session_id"])
+        or not _is_ordered_nonempty_strings(raw.get("opaque_native_event_ids", ()))
+        or native_identity["native_event_id"] not in raw["opaque_native_event_ids"]
+    ):
+        raise PrototypeContractError(
+            "application qualification requires bounded raw native evidence"
+        )
+
+
+def _validate_application_populations(
+    qualification: Mapping[str, object], result_event_id: str
+) -> None:
+    populations = ("source_event_ids", "output_event_ids", "remote_event_ids", "oracle_event_ids")
+    population_values: dict[str, list[object]] = {}
+    for field in populations:
+        value = qualification.get(field)
+        if (
+            not isinstance(value, list)
+            or not _is_ordered_nonempty_strings(value)
+            or len(set(value)) != len(value)
+        ):
+            raise PrototypeContractError(
+                "application qualification population conservation is invalid"
+            )
+        population_values[field] = value
+    raw = cast(Mapping[str, object], qualification["raw_evidence"])
+    if (
+        set(population_values["source_event_ids"])
+        != set(cast(Sequence[object], raw["opaque_native_event_ids"]))
+        or any(
+            set(population_values[field]) != set(population_values["output_event_ids"])
+            for field in ("remote_event_ids", "oracle_event_ids")
+        )
+        or result_event_id not in population_values["output_event_ids"]
+        or bool(
+            set(population_values["source_event_ids"]) & set(population_values["output_event_ids"])
+        )
+        or any(not _is_projected_event_id(item) for item in population_values["output_event_ids"])
+    ):
+        raise PrototypeContractError("application qualification population conservation is invalid")
+
+
+def _is_projected_event_id(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return bool(re.fullmatch(r"[a-f0-9]{64}", value))
+
+
+def _validate_application_join_chain(qualification: Mapping[str, object]) -> None:
+    chain = qualification["join_chain"]
+    if (
+        not isinstance(chain, list)
+        or len(chain) < 2
+        or chain[0]
+        != {"source": "native_identity_tuple", "identity_field": "producer,native_session_id"}
+        or any(
+            not isinstance(step, Mapping)
+            or set(step) != {"source", "identity_field"}
+            or not _is_nonempty_string(step.get("source"))
+            or not _is_nonempty_string(step.get("identity_field"))
+            for step in chain
+        )
+    ):
+        raise PrototypeContractError(
+            "application qualification requires an anchored native join chain"
+        )
+
+
+def _validate_application_typed_results(qualification: Mapping[str, object]) -> None:
+    adverse_cases = qualification["adverse_cases"]
+    privacy_allowlist = qualification["privacy_allowlist"]
+    remote, oracle = qualification["remote_result"], qualification["oracle_result"]
+    if (
+        not isinstance(adverse_cases, list)
+        or set(adverse_cases) != REQUIRED_ADVERSE_CASES
+        or len(adverse_cases) != len(REQUIRED_ADVERSE_CASES)
+        or not isinstance(privacy_allowlist, list)
+        or not _is_ordered_nonempty_strings(privacy_allowlist)
+        or remote != oracle
+        or not isinstance(remote, Mapping)
+        or set(remote) != {"state", "values"}
+        or remote.get("state") != "computed"
+        or not isinstance(remote.get("values"), Mapping)
+        or not remote["values"]
+        or any(not _is_scalar(value) for value in remote["values"].values())
+    ):
+        raise PrototypeContractError("application qualification requires complete typed evidence")
 
 
 def _validate_experiment_registry(value: object) -> tuple[str, ...]:
@@ -652,6 +1246,319 @@ def _validate_reference_prerequisites(
             ]
             if any(item not in experiment_registry for item in cast(Sequence[str], prerequisites)):
                 raise PrototypeContractError(f"{kind} prerequisite must name a registry experiment")
+
+
+def _deserialize_central_evidence_bundle(value: object) -> CentralEvidenceBundle:
+    if not isinstance(value, Mapping):
+        raise PrototypeContractError("central evidence requires a structured bundle")
+    _require_exact_keys(
+        value, frozenset(CentralEvidenceBundle.__dataclass_fields__), "central bundle"
+    )
+    try:
+        return CentralEvidenceBundle(**cast(Any, dict(value)))
+    except (TypeError, ValueError) as exc:
+        raise PrototypeContractError("central evidence bundle is invalid") from exc
+
+
+def _validate_central_evidence_bundle(bundle: CentralEvidenceBundle) -> None:
+    if (
+        bundle.schema_version != 1
+        or bundle.capture_population != "fresh-real-recording"
+        or not all(
+            _is_nonempty_string(value)
+            for value in (
+                bundle.widget_id,
+                bundle.measure_id,
+                bundle.dependency_id,
+                bundle.runtime_instance_id,
+                bundle.scan_run_id,
+                bundle.selected_range_operator,
+                bundle.interval_containment_operator,
+                bundle.evaluation_policy_id,
+                bundle.version_policy_id,
+                bundle.all_version_requirement,
+            )
+        )
+        or (bundle.widget_id, bundle.measure_id, bundle.dependency_id)
+        not in CENTRAL_APPLICATION_BINDINGS
+        or not re.fullmatch(r"[a-f0-9]{64}", bundle.database_identity)
+        or not all(
+            isinstance(value, str) and re.fullmatch(r"(?:0|[1-9]\d*)", value)
+            for value in (bundle.bounded_start_ns, bundle.bounded_end_ns)
+        )
+        or int(bundle.bounded_start_ns) >= int(bundle.bounded_end_ns)
+        or bundle.selected_range_operator != CENTRAL_SELECTED_RANGE_OPERATORS.get(bundle.widget_id)
+        or bundle.interval_containment_operator != CENTRAL_INTERVAL_CONTAINMENT_OPERATOR
+        or bundle.evaluation_policy_id != bundle.calculation_implementation_id
+        or bundle.version_policy_id != bundle.projection_implementation_id
+        or tuple(bundle.unresolved_dependencies)
+    ):
+        raise PrototypeContractError("central evidence identity, bound, or dependency is invalid")
+    _validate_central_artifacts(bundle)
+    _validate_central_populations(bundle)
+    _validate_central_calculations(bundle)
+    _validate_allowlisted_inventory(
+        bundle.raw_field_inventory, _normalize_privacy_allowlist(bundle.privacy_allowlist)
+    )
+    if not _is_ordered_nonempty_strings(bundle.privacy_allowlist):
+        raise PrototypeContractError("central evidence privacy inventory is invalid")
+    _validate_central_adverse_cases(bundle)
+    implementation = {
+        "deployment_fingerprint": bundle.deployment_fingerprint,
+        "calculation_implementation_id": bundle.calculation_implementation_id,
+        "calculation_implementation_sha256": bundle.calculation_implementation_sha256,
+        "projection_implementation_id": bundle.projection_implementation_id,
+        "projection_implementation_sha256": bundle.projection_implementation_sha256,
+    }
+    _validate_application_implementation_identity(implementation)
+    if bundle.retained_artifacts["implementation_witnesses"]["content"] != implementation:
+        raise PrototypeContractError("central implementation witness is stale or conflicting")
+
+
+def _validate_central_adverse_cases(bundle: CentralEvidenceBundle) -> None:
+    if set(bundle.adverse_case_artifacts) != REQUIRED_ADVERSE_CASES:
+        raise PrototypeContractError("central evidence requires observed adverse-case artifacts")
+    for category, reference in bundle.adverse_case_artifacts.items():
+        content = bundle.retained_artifacts[reference]["content"]
+        if (
+            not isinstance(content, Mapping)
+            or set(content)
+            != {
+                "category",
+                "population",
+                "scenario_id",
+                "input_manifest_sha256",
+                "observed_outcome",
+                "expected_outcome",
+            }
+            or content["category"] != category
+            or content["population"] != "robustness"
+            or not _is_nonempty_string(content["scenario_id"])
+            or not isinstance(content["input_manifest_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", content["input_manifest_sha256"])
+            or not _is_nonempty_string(content["expected_outcome"])
+            or content["observed_outcome"] != content["expected_outcome"]
+        ):
+            raise PrototypeContractError(
+                "central evidence requires matching observed adverse-case artifacts"
+            )
+
+
+def _validate_central_artifacts(bundle: CentralEvidenceBundle) -> None:
+    required = {
+        "central_capture",
+        "projection_manifest",
+        "displayed_calculation",
+        "remote_calculation",
+        "oracle_calculation",
+        "privacy_inventory",
+        "implementation_witnesses",
+        *bundle.adverse_case_artifacts.values(),
+    }
+    if set(bundle.retained_artifacts) != required:
+        raise PrototypeContractError("central evidence must retain the complete artifact manifest")
+    for artifact_id, artifact in bundle.retained_artifacts.items():
+        if (
+            not _is_nonempty_string(artifact_id)
+            or not isinstance(artifact, Mapping)
+            or set(artifact) != {"content_sha256", "content"}
+            or not isinstance(artifact["content_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", artifact["content_sha256"])
+            or not isinstance(artifact["content"], Mapping)
+            or hashlib.sha256(
+                json.dumps(
+                    _canonicalize(artifact["content"]),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            != artifact["content_sha256"]
+        ):
+            raise PrototypeContractError("central retained artifact hash is invalid")
+    capture = _canonicalize(bundle.retained_artifacts["central_capture"]["content"])
+    projection = _canonicalize(bundle.retained_artifacts["projection_manifest"]["content"])
+    if (
+        capture
+        != {
+            "runtime_instance_id": bundle.runtime_instance_id,
+            "scan_run_id": bundle.scan_run_id,
+            "database_identity": bundle.database_identity,
+            "bounded_start_ns": bundle.bounded_start_ns,
+            "bounded_end_ns": bundle.bounded_end_ns,
+            "source_input_ids": list(bundle.source_input_ids),
+        }
+        or projection
+        != {
+            "output_event_ids": list(bundle.output_event_ids),
+            "source_output_lineage": list(bundle.source_output_lineage),
+        }
+        or _canonicalize(bundle.retained_artifacts["privacy_inventory"]["content"])
+        != {
+            "privacy_allowlist": list(bundle.privacy_allowlist),
+            "raw_field_inventory": list(bundle.raw_field_inventory),
+        }
+    ):
+        raise PrototypeContractError("central artifact content does not bind this report")
+
+
+def _validate_central_populations(bundle: CentralEvidenceBundle) -> None:
+    populations = (
+        bundle.source_input_ids,
+        bundle.output_event_ids,
+        bundle.remote_event_ids,
+        bundle.oracle_event_ids,
+    )
+    if (
+        any(
+            not _is_ordered_nonempty_strings(population) or len(set(population)) != len(population)
+            for population in populations
+        )
+        or set(bundle.remote_event_ids) != set(bundle.output_event_ids)
+        or set(bundle.oracle_event_ids) != set(bundle.output_event_ids)
+    ):
+        raise PrototypeContractError("central event manifest equality is invalid")
+    lineage = bundle.source_output_lineage
+    if (
+        not isinstance(lineage, (list, tuple))
+        or not lineage
+        or any(
+            not isinstance(item, Mapping)
+            or set(item) != {"source_input_id", "output_event_id"}
+            or item["source_input_id"] not in bundle.source_input_ids
+            or item["output_event_id"] not in bundle.output_event_ids
+            for item in lineage
+        )
+        or {item["source_input_id"] for item in lineage} != set(bundle.source_input_ids)
+        or {item["output_event_id"] for item in lineage} != set(bundle.output_event_ids)
+        or len({(item["source_input_id"], item["output_event_id"]) for item in lineage})
+        != len(lineage)
+        or set(bundle.source_input_ids) & set(bundle.output_event_ids)
+    ):
+        raise PrototypeContractError("central source-to-output lineage is invalid")
+    witnesses = bundle.projection_event_witnesses
+    if (
+        not isinstance(witnesses, (list, tuple))
+        or len(witnesses) != len(bundle.output_event_ids)
+        or any(
+            not isinstance(item, Mapping)
+            or set(item) != {"output_event_id", "witness"}
+            or item["output_event_id"] not in bundle.output_event_ids
+            or _validate_projection_event_witness(item["witness"]) != item["output_event_id"]
+            for item in witnesses
+        )
+        or {item["output_event_id"] for item in witnesses} != set(bundle.output_event_ids)
+    ):
+        raise PrototypeContractError("central immutable projection witnesses are invalid")
+
+
+def _validate_central_calculations(bundle: CentralEvidenceBundle) -> None:
+    displayed = _central_display_panel(bundle)
+    for name, calculation in (
+        ("remote_calculation", bundle.remote_calculation),
+        ("oracle_calculation", bundle.oracle_calculation),
+    ):
+        if (
+            not isinstance(calculation, Mapping)
+            or set(calculation) != {"reference_id", "bound_parameters", "result"}
+            or not _is_nonempty_string(calculation["reference_id"])
+            or not isinstance(calculation["bound_parameters"], Mapping)
+            or not isinstance(calculation["result"], Mapping)
+            or set(calculation["result"]) != {"state", "panel_json"}
+            or calculation["result"]["state"] != "computed"
+            or calculation["result"]["panel_json"] != displayed
+            or bundle.retained_artifacts[name]["content"] != calculation
+        ):
+            raise PrototypeContractError(
+                "central displayed, remote and oracle calculations must match exactly"
+            )
+        _validate_central_calculation_bounds(bundle, calculation["bound_parameters"])
+    if (
+        bundle.remote_calculation["reference_id"] == bundle.oracle_calculation["reference_id"]
+        or bundle.remote_calculation["bound_parameters"]
+        != bundle.oracle_calculation["bound_parameters"]
+    ):
+        raise PrototypeContractError("central remote and oracle calculations must match exactly")
+
+
+def _validate_central_calculation_bounds(
+    bundle: CentralEvidenceBundle, parameters: Mapping[str, object]
+) -> None:
+    evaluated = parameters.get("evaluated_at_ns")
+    measurement_start = parameters.get("measurement_start_ns")
+    if (
+        not isinstance(evaluated, str)
+        or not re.fullmatch(r"(?:0|[1-9]\d*)", evaluated)
+        or int(evaluated) < int(bundle.bounded_end_ns)
+        or (
+            measurement_start is not None
+            and (
+                not isinstance(measurement_start, str)
+                or not re.fullmatch(r"(?:0|[1-9]\d*)", measurement_start)
+            )
+        )
+        or parameters
+        != {
+            "start_ns": bundle.bounded_start_ns,
+            "end_ns": bundle.bounded_end_ns,
+            "evaluated_at_ns": evaluated,
+            "measurement_start_ns": measurement_start,
+            "selected_range_operator": bundle.selected_range_operator,
+            "interval_containment_operator": bundle.interval_containment_operator,
+            "evaluation_policy_id": bundle.evaluation_policy_id,
+            "version_policy_id": bundle.version_policy_id,
+            "all_version_requirement": bundle.all_version_requirement,
+        }
+    ):
+        raise PrototypeContractError("central calculation bounds and policies must bind the report")
+
+
+def _central_display_panel(bundle: CentralEvidenceBundle) -> str:
+    display = bundle.displayed_calculation
+    if (
+        not isinstance(display, Mapping)
+        or set(display) != {"widget_id", "panel_json"}
+        or display["widget_id"] != bundle.widget_id
+        or not isinstance(display["panel_json"], str)
+        or bundle.retained_artifacts["displayed_calculation"]["content"] != display
+    ):
+        raise PrototypeContractError("central displayed calculation must bind the complete panel")
+    try:
+        panel = json.loads(display["panel_json"])
+        if _central_json(panel) != display["panel_json"]:
+            raise PrototypeContractError("central displayed panel requires canonical JSON")
+    except (ValueError, TypeError) as exc:
+        raise PrototypeContractError(
+            "central displayed panel requires finite canonical JSON"
+        ) from exc
+    if (
+        not isinstance(panel, dict)
+        or set(panel)
+        != {
+            "columns",
+            "metrics",
+            "population",
+            "provenance",
+            "rangeOperator",
+            "reasons",
+            "rows",
+            "series",
+            "state",
+            "timeBasis",
+        }
+        or panel["state"] != "Data"
+        or panel["rangeOperator"] != bundle.selected_range_operator
+        or any(not isinstance(panel[key], list) for key in ("columns", "metrics", "rows", "series"))
+        or not any(panel[key] for key in ("metrics", "rows", "series"))
+    ):
+        raise PrototypeContractError("central displayed calculation requires a complete Data panel")
+    return display["panel_json"]
+
+
+def _central_json(value: object) -> str:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
 
 
 def _deserialize_matrix_evidence(value: object) -> EvidenceBundle:
@@ -1102,7 +2009,14 @@ def _freeze(value: object) -> object:
 
 def _canonicalize(value: object) -> object:
     if isinstance(
-        value, (EvidenceBundle, AppendixQueryReference, CalculationResult, JoinIdentityStep)
+        value,
+        (
+            EvidenceBundle,
+            CentralEvidenceBundle,
+            AppendixQueryReference,
+            CalculationResult,
+            JoinIdentityStep,
+        ),
     ):
         return {field: _canonicalize(getattr(value, field)) for field in value.__dataclass_fields__}
     if isinstance(value, StrEnum):
@@ -1118,3 +2032,20 @@ def _canonicalize(value: object) -> object:
 
 def _canonical_sort_key(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, Mapping):
+            raise PrototypeContractError("proof matrix root must be an object")
+        validate_proof_matrix(payload)
+    except Exception:
+        print("proof matrix validation failed")
+        return 1
+    print("proof matrix validation succeeded")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

@@ -92,7 +92,7 @@ class CompletedScanSnapshotCandidate:
     source_time: datetime | None
     payload_schema_version: int | None
     terminal_class: ScanTerminalClass | None
-    duration_ms: int | None
+    duration_ms: int | float | None
     error_class: ScanErrorClass | None
     counts: SnapshotPopulationCounts
     bounded_drain_id: str | None
@@ -118,8 +118,14 @@ class CompletedScanSnapshotCandidate:
         if self.payload_schema_version != SNAPSHOT_PAYLOAD_SCHEMA_VERSION:
             raise ValueError("snapshot payload schema version is unsupported")
         duration_ms = self.duration_ms
-        if duration_ms is None or isinstance(duration_ms, bool) or duration_ms < 0:
-            raise ValueError("snapshot duration must be a nonnegative integer")
+        if (
+            duration_ms is None
+            or isinstance(duration_ms, bool)
+            or not isinstance(duration_ms, (int, float))
+            or not math.isfinite(duration_ms)
+            or duration_ms < 0
+        ):
+            raise ValueError("snapshot duration must be a finite nonnegative number")
         if self.terminal_class is ScanTerminalClass.COMPLETED:
             if self.error_class is not ScanErrorClass.NONE:
                 raise ValueError("completed snapshot must have no error class")
@@ -157,7 +163,7 @@ class PipelineSnapshotReduction:
     latest_snapshot: CompletedScanSnapshotCandidate
     selected_snapshot_count: int
     latest_workload_count: int
-    latest_duration_ms: int
+    latest_duration_ms: int | float
     reconciliation_matches: bool
 
 
@@ -245,7 +251,7 @@ def build_pipeline_snapshot_proof(
         "fresh_real_provenance": provenance is EvidenceProvenance.FRESH_REAL,
         "required_boundaries_present": not blocked,
     }
-    metrics: dict[str, str | int | bool | None] = {
+    metrics: dict[str, str | int | float | bool | None] = {
         "selected_snapshot_count": len(proof_input.snapshots or ()),
     }
     if blocked:
@@ -617,7 +623,8 @@ def parse_a02_scan_outcome_row(row: Mapping[str, object]) -> A02ScanOutcome:
     count = _optional_integer(row["terminal_scan_count"])
     percent = row["terminal_scan_percent"]
     if (
-        terminal_class not in ScanTerminalClass
+        not isinstance(terminal_class, str)
+        or terminal_class not in ScanTerminalClass
         or count is None
         or not isinstance(percent, float)
         or not math.isfinite(percent)

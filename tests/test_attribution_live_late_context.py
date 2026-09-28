@@ -85,11 +85,14 @@ def test_extracts_all_versions_for_selected_identity_but_blocks_unreconciled_rat
     assert evidence.proof.result is ExperimentResult.BLOCKED
     assert evidence.proof.metrics["transition_count"] == 1
     assert evidence.proof.metrics["ever_unresolved_count"] == 1
-    assert len(evidence.primitives) == 1
-    assert set(evidence.primitives[0].dimensions) >= {"resolved_event_digest"}
-    assert sum(cohort["transition_count"] for cohort in evidence.remote_oracle.values()) == len(
-        evidence.primitives
-    )
+    populations = {
+        primitive.dimensions["primitive_kind"]: primitive for primitive in evidence.primitives
+    }
+    assert set(populations) == {"ever_unresolved", "transition"}
+    assert populations["ever_unresolved"].measures["ever_unresolved_count"] == 1
+    assert "resolved_event_digest" in populations["transition"].dimensions
+    assert evidence.remote_oracle["ever_unresolved"]["ever_unresolved_count"] == 1
+    assert sum(cohort.get("transition_count", 0) for cohort in evidence.remote_oracle.values()) == 1
     serialized = repr(evidence)
     assert "native-session" not in serialized
     assert "stable-activity" not in serialized

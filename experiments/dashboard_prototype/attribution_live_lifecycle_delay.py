@@ -188,7 +188,15 @@ def _intervals(
     seen: dict[str, AcceptedLifecycleInterval] = {}
     for event_id, producer, session_id, started_at, ended_at in rows:
         mapped = _SUPPORTED_SERVICE_PRODUCERS.get(str(producer))
-        if mapped is None or mapped[0] != str(producer):
+        if (
+            mapped is None
+            or mapped[0] != str(producer)
+            or mapped[0]
+            not in {
+                "omp",
+                "codex-app-server",
+            }
+        ):
             continue
         try:
             interval = AcceptedLifecycleInterval(

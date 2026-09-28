@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection.attribution import resolve_attribution
+from agent_introspection.attribution import resolve_attribution, resolve_metric_attribution
 from agent_introspection.migrations import apply_migrations
 from agent_introspection.session_context import (
     SessionContextError,
@@ -89,7 +89,7 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
     second_root.mkdir()
     connection = _connection(database)
     try:
-        start_at = datetime(2026, 1, 1, tzinfo=UTC)
+        start_at = datetime(2026, 1, 1, microsecond=123457, tzinfo=UTC)
         changed_at = start_at + timedelta(minutes=1)
         start = _event(first_root, "session_start", start_at, event_id="f" * 64)
         changed = _event(second_root, "workspace_changed", changed_at, event_id="0" * 64)
@@ -99,7 +99,13 @@ def test_context_lifecycle_transitions_immutable_intervals_and_correlates_projec
 
         accepted = drain_inbox(connection, directory=inbox)
         assert [event.entity_id for event in accepted] == [start.event_id, changed.event_id]
-        assert len(accepted) == 2
+        for source, published in zip((start, changed), accepted, strict=True):
+            seconds, nanoseconds = divmod(published.timestamp_ns, 1_000_000_000)
+            assert nanoseconds % 1_000 == 0
+            assert (
+                datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanoseconds // 1_000)
+                == source.occurred_at
+            )
         assert drain_inbox(connection, directory=inbox) == ()
         assert connection.execute(
             """
@@ -171,6 +177,47 @@ def test_codex_cli_session_context_is_repeatable_non_temporal_and_reconciles(
     try:
         inbox = tmp_path / "inbox"
         occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
+        historical_root = tmp_path / "historical-project"
+        historical_root.mkdir()
+        historical = event_payload(
+            _event(
+                historical_root,
+                "session_start",
+                occurred_at - timedelta(days=2),
+                event_id="e" * 64,
+            )
+        )
+        historical["producer"] = "codex-cli"
+        spool_event(parse_event(historical), directory=inbox)
+        historical_end_at = occurred_at - timedelta(hours=23)
+        historical_end = {
+            **historical,
+            "event_id": "f" * 64,
+            "event_type": "session_end",
+            "occurred_at": historical_end_at.isoformat(),
+        }
+        spool_event(parse_event(historical_end), directory=inbox)
+        drain_inbox(connection, directory=inbox)
+        assert (
+            resolve_attribution(
+                connection,
+                producer="codex-cli",
+                correlation_id="session-1",
+                source_at=occurred_at - timedelta(days=1),
+                clock_skew_seconds=5,
+            ).reason_code
+            == "missing_workspace"
+        )
+        assert (
+            resolve_metric_attribution(
+                connection,
+                producer="codex-cli",
+                correlation_id="session-1",
+                source_at=historical_end_at + timedelta(seconds=1),
+                delivery_grace_seconds=5,
+            ).reason_code
+            == "missing_workspace"
+        )
         first = _event(root, "session_start", occurred_at, event_id="a" * 64)
         first_payload = event_payload(first)
         first_payload.update({"producer": "codex-cli", "event_type": "session_context"})
@@ -189,7 +236,7 @@ def test_codex_cli_session_context_is_repeatable_non_temporal_and_reconciles(
             repeated.event_id,
         ]
         assert connection.execute("SELECT COUNT(*) FROM session_context_intervals").fetchone() == (
-            0,
+            1,
         )
         attribution = resolve_attribution(
             connection,

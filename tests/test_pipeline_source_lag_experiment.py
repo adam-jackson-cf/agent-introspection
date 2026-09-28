@@ -21,6 +21,11 @@ COHORT = SourceLagCohort("omp", "terminal", "session-end")
 OTHER_COHORT = SourceLagCohort("codex-cli", "terminal", "session-end")
 
 
+def _timestamp_ns(timestamp: datetime) -> int:
+    delta = timestamp.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
 def _scan(
     scan_id: str,
     bound_seconds: int,
@@ -36,7 +41,7 @@ def _scan(
         population_start=BASE,
         population_end=BASE + timedelta(seconds=100),
         completed_at=BASE + timedelta(seconds=completed_seconds),
-        extraction_bound=BASE + timedelta(seconds=bound_seconds),
+        extraction_bound_ns=_timestamp_ns(BASE + timedelta(seconds=bound_seconds)),
         capability_available=capability_available,
     )
 
@@ -54,10 +59,10 @@ def _observation(  # noqa: PLR0913
         observation_id=observation_id,
         scan_id=scan_id,
         cohort=cohort,
-        source_time=BASE + timedelta(seconds=source_seconds),
+        source_time_ns=_timestamp_ns(BASE + timedelta(seconds=source_seconds)),
         current_identity=identity,
-        extraction_bound=(
-            BASE + timedelta(seconds=extraction_bound_seconds)
+        extraction_bound_ns=(
+            _timestamp_ns(BASE + timedelta(seconds=extraction_bound_seconds))
             if extraction_bound_seconds is not None
             else None
         ),
@@ -91,7 +96,7 @@ def test_reducer_selects_per_bound_and_computes_percentiles() -> None:
     assert metric.negative_skew_count == 0
 
 
-def test_negative_skew_remains_accepted_but_excludes_latency_percentiles() -> None:
+def test_negative_skew_is_rejected_from_latency_but_retained_diagnostically() -> None:
     reduction = reduce_source_lag(
         scans=(_scan("positive", 20, 20), _scan("skewed", 30, 30)),
         observations=(
@@ -106,21 +111,22 @@ def test_negative_skew_remains_accepted_but_excludes_latency_percentiles() -> No
     )
 
     metric = reduction.cohorts[0]
-    assert (metric.accepted, metric.n, metric.p50_lag_seconds, metric.p95_lag_seconds) == (
-        2,
+    assert (metric.accepted, metric.rejected, metric.n, metric.p50_lag_seconds) == (
         1,
-        10.0,
+        1,
+        1,
         10.0,
     )
     assert metric.negative_skew_count == 1
     proof = build_source_lag_proof(
         "mixed", EvidenceProvenance.FRESH_REAL, "bounded scan", reduction
     )
+    assert proof.result is ExperimentResult.BLOCKED
     assert proof.metrics["n"] == 1
     assert proof.metrics["negative_skew_count"] == 1
 
 
-def test_reducer_accepts_negative_skew_only_from_its_exact_scan_membership() -> None:
+def test_reducer_rejects_skew_from_exact_scan_membership_but_retains_diagnostic() -> None:
     excluded_start = _scan("excluded-start", 0, 0)
     included_end = _scan("included-end", 10, 100)
     future_only = _scan("future-only", 10, 10)
@@ -139,17 +145,12 @@ def test_reducer_accepts_negative_skew_only_from_its_exact_scan_membership() -> 
         normative_cohorts=(COHORT,),
     )
 
-    assert [row.scan_id for row in reduction.selections] == [
-        "future-only",
-        "included-end",
-        "included-end",
-    ]
     assert [row.disposition for row in reduction.selections] == [
-        SourceLagDisposition.ACCEPTED,
+        SourceLagDisposition.REJECTED,
         SourceLagDisposition.REJECTED,
         SourceLagDisposition.DUPLICATE,
     ]
-    assert reduction.selections[0].lag_seconds == -1.0
+    assert reduction.selections[0].lag_seconds is None
     assert reduction.selections[0].negative_skew is True
     metric = reduction.cohorts[0]
     assert (
@@ -158,9 +159,9 @@ def test_reducer_accepts_negative_skew_only_from_its_exact_scan_membership() -> 
         metric.rejected,
         metric.duplicate,
         metric.negative_skew_count,
-    ) == (1, 0, 1, 1, 1)
+    ) == (0, 0, 2, 1, 1)
     assert metric.population == len(reduction.selections)
-    assert reduction.blocked_boundaries == ("source-observation:omp/terminal/session-end:count=1",)
+    assert reduction.blocked_boundaries == ("source-observation:omp/terminal/session-end:count=2",)
 
 
 def test_capability_absence_is_not_applicable_and_missing_capability_is_blocked() -> None:
@@ -317,4 +318,9 @@ def test_multi_scan_cohort_conserves_population_and_exact_skew_count() -> None:
 
     metric = reduction.cohorts[0]
     assert metric.population == len(reduction.selections) == 2
-    assert (metric.accepted, metric.n, metric.negative_skew_count) == (2, 1, 1)
+    assert (metric.accepted, metric.rejected, metric.n, metric.negative_skew_count) == (
+        1,
+        1,
+        1,
+        1,
+    )

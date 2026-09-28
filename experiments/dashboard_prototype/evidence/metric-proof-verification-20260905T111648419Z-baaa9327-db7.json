@@ -1,0 +1,402 @@
+{
+  "recorded_at": "2026-09-05T11:16:48.420Z",
+  "baseline_commit": "0591154",
+  "scope": "Bounded metric-proof execution; not authoritative closure or production cutover",
+  "evidence_provenance": "Observed command results summarized; retained runtime artifacts are independently checksummed below.",
+  "qualification": {
+    "historical_proven": [
+      "E-Attribution-1"
+    ],
+    "newly_proven": [
+      "E-Pipeline-5"
+    ],
+    "remaining_blocked_experiments": 22,
+    "matrix_results": {
+      "Blocked": 127,
+      "Not applicable": 2
+    },
+    "row_promotions": 0,
+    "matrix_unchanged": true,
+    "matrix_sha256": "6fa21e47650e5ddfc6084f0e5a5ccc6601151867a0287ec1f395f90e88de9aee",
+    "non_null_evidence_bundles": 0
+  },
+  "latest_pipeline": "metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json",
+  "latest_recurrence": "metric-proof-recurrence-final-20260905T104833748Z-7b8b7293-c8e.json",
+  "verification": {
+    "maintained_gate": {
+      "command": "bash scripts/run-ci-quality-gates.sh --fix",
+      "exit_code": 0,
+      "wall_seconds": 43.43,
+      "ruff_format": {
+        "unchanged_files": 172
+      },
+      "ruff_check": "passed",
+      "mypy": {
+        "source_files": 27,
+        "result": "passed"
+      },
+      "pytest": {
+        "passed": 995,
+        "failed": 0,
+        "seconds": 38.68
+      },
+      "typescript": {
+        "tool": "oxlint@1.80.0",
+        "result": "passed"
+      },
+      "markdown": {
+        "tool": "markdownlint-cli2@0.23.2",
+        "files": 34,
+        "issues": 0
+      },
+      "staging_requested": false
+    },
+    "supplemental_new_python": {
+      "files": [
+        "experiments/dashboard_prototype/pipeline_capture.py",
+        "experiments/dashboard_prototype/recurrence_finding_capture.py",
+        "tests/test_pipeline_capture.py",
+        "tests/test_recurrence_finding_capture.py"
+      ],
+      "commands": [
+        "uv run ruff check <listed files>",
+        "uv run ruff format --check <listed files>"
+      ],
+      "exit_code": 0,
+      "formatted_files": 4
+    },
+    "previous_gate_failure": {
+      "pytest_passed": 994,
+      "pytest_failed": 1,
+      "test": "tests/test_pipeline_live_integrity.py::test_extracts_redacted_mapped_rows_at_canonical_boundaries",
+      "cause": "Missing durable-integrity-failure population authority marker",
+      "correction": "Source retains explicit unavailable authority and Blocked status without removing the behavioral assertion",
+      "focused_post_fix_tests_passed": 50
+    }
+  },
+  "reviews": {
+    "ReviewFinalOutboxSQL": "No actionable defects; confidence 0.96",
+    "ReviewFinalNativeEvidence": "Finding withdrawn: independently captured subject drain is correct; default execution remains Blocked without completion authority",
+    "ReviewRecurrenceCorrected": "No findings; confidence 0.9",
+    "ReviewAttributionCorrected": "Private-lineage privacy finding withdrawn"
+  },
+  "isolated_collector": {
+    "supervised_name": "proof-scan-collector",
+    "state": "exited",
+    "exit_code": 0,
+    "docker_context": "orbstack",
+    "container_matches": 0,
+    "auto_remove": true
+  },
+  "preserved_database_clones": [
+    {
+      "path": ".tmp/proof-runtime-20260905T001732794424Z-fac1fd15844d/application.sqlite3",
+      "bytes": 3227439104
+    },
+    {
+      "path": ".tmp/metric-proof-scan-20260905T081245989Z-419a0701-5eb/application.sqlite3",
+      "bytes": 3023683584
+    },
+    {
+      "path": ".tmp/metric-proof-scan-20260905T084842410Z-29b800af-af8/application.sqlite3",
+      "bytes": 3019235328
+    }
+  ],
+  "retained_runtime_artifacts": [
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-recurrence-final-20260905T104833748Z-7b8b7293-c8e.json",
+      "bytes": 20267,
+      "sha256": "b5b55d35ac6e52c5b32374c8cb04a1e63531dcc907ae63f4a7a07e64ac62412c"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037.json",
+      "bytes": 92094,
+      "sha256": "bb809c488dc07e5f058d57d378a587bcdae616a6747c421e9a0cbf74d715216b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T104111835Z-1aa77342-037-inputs.json",
+      "bytes": 9364,
+      "sha256": "f249535ad63e4ad8b46bb587cc993a1706a23f5ade45cdc005cb3aa120cb70b3"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-native-audit-20260905T102950599646Z-aa9a68ca45b1.json",
+      "bytes": 2799,
+      "sha256": "70018d73fd5542fba441441727979994dcd3b02aa8e95d724f773a0915953023"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T102730476Z-6f2c4ccf-06a.json",
+      "bytes": 37273,
+      "sha256": "550596044263dbf1a36c5471f659746419f17632a3e760f881e083dd2e64889f"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-final-20260905T102730476Z-6f2c4ccf-06a-inputs.json",
+      "bytes": 9364,
+      "sha256": "fa45f100c3e8ffa050cf92a8543ac9d733b5989cf9c99703e0f52cd9a8c83695"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T102258487Z-5785ea48-5ba.json",
+      "bytes": 22396,
+      "sha256": "dd970e6fb7b2ae653a42b7fa9f91abcd6e68ce3a48ce401df095633a9a2ed544"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T102258487Z-5785ea48-5ba-inputs.json",
+      "bytes": 23030,
+      "sha256": "6dfc8d172099b66bcbdc366cf2c321938c380650bbeaf7e335a9d4ed4d61fa8c"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T102037021Z-bea38b87-24d-failure.json",
+      "bytes": 10334,
+      "sha256": "0714a9224bce7680120f03bfa5011428429dab977f62cd3807572572ca820925"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T102037021Z-bea38b87-24d-inputs.json",
+      "bytes": 22890,
+      "sha256": "ece01fa52cb785f3fab9357f36cb985f4dd1133bfb8eaf31563a59db2bbafd4b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-native-20260905T101738556Z-1072d14e-ebc-failure.json",
+      "bytes": 369,
+      "sha256": "7fbc0231bd6560327fca16cf5aeb66deb0a67dfc9ca78fe92ef37851a165615a"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T100804457Z-47091274-556-failure.json",
+      "bytes": 449,
+      "sha256": "34c7cc41cd526284a4a5ff2c116e8a701dafe87dd8dc5c6d54b54327186f87d6"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T100804457Z-47091274-556-drain.sqlite3",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T100804457Z-47091274-556-failed-drain.sqlite3",
+      "bytes": 73728,
+      "sha256": "35189e32cc6a4cac71980cf51ddaf14b30d167108c126e8b35af62048e263968"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T095136238910Z-3408e6eb06cf-failure.json",
+      "bytes": 453,
+      "sha256": "80c48ec111deaaa8ec914db3744671dc809631e3b8177b25080ff82d17d87731"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T095136238910Z-3408e6eb06cf-drain.sqlite3",
+      "bytes": 73728,
+      "sha256": "152cf324976e42b3580a7dd1b2e12937220084a18fe9dace051213e220530110"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pending-20260905T095136238910Z-3408e6eb06cf-pre-fix-query.json",
+      "bytes": 5799,
+      "sha256": "dce96fcac177bb4571169a4849489bcd090e72edaa7cfd660378589471c501cb"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-individual-20260905T091325779Z-c6afecca-9d7-E-Attribution-5.json",
+      "bytes": 1818,
+      "sha256": "cb5154bd3688d19aeddb51f7ba1ebfe491842d1060a93a43a3110d538791dff5"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-individual-20260905T091325779Z-c6afecca-9d7-E-Attribution-3.json",
+      "bytes": 1690,
+      "sha256": "f59b73f738fdea1616de09eeedd1446ba8e80585b5cd98783256159b27ae9220"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-individual-20260905T091325779Z-c6afecca-9d7-E-Attribution-2.json",
+      "bytes": 2790,
+      "sha256": "0855dcbef764192fbd8e2952c30d79b7aeaff7ace7fa74d612d241308f815755"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-individual-20260905T091325779Z-c6afecca-9d7-inputs.json",
+      "bytes": 3764323,
+      "sha256": "21be5ac12758870beafee1fb7af36c001f27cdd67574fa72a5d422e066d93a74"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-recurrence-20260905T090743675Z-0e925b9b-aef.json",
+      "bytes": 20225,
+      "sha256": "246bc95890b4a96c208e17c537c4c8219c31b60bca69b78c13479ff92f3bd65b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T090247324Z-d687fdd6-1b6.json",
+      "bytes": 904,
+      "sha256": "75493bbe490ac731201a249d1ad7ff7b6afccf3682e922be89a764f7b157ee55"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/recurrence-finding-20260905T090247729213Z-5dc651da-8d6b-441c-9a65-9619157abcf8.sqlite",
+      "bytes": 32768,
+      "sha256": "caca018659569fba3d7f0c27ccd0358804333fef1e1a68f06c2d36942420a020"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-retention-20260905T085441455Z-37edc7a6-d44.json",
+      "bytes": 256761,
+      "sha256": "44dc9d2ee2ad56f9d57874333d2e8a4eb3d8841e1ab7cbbfb8d51214d7a2edb9"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T084842410Z-29b800af-af8.json",
+      "bytes": 302,
+      "sha256": "2a36ed920a30d25ca84af9a6da6b02348045204ca8c5dcaf1259a2ffff71f40f"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-replay-20260905T083340527Z-c405edc1-855.json",
+      "bytes": 15361,
+      "sha256": "2452f45d8fedab76170e426cc09c20c10d9e7fb988a58dab70ed7ddf41eac9bf"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-replay-20260905T083058951Z-565f7ecc-83c.json",
+      "bytes": 277,
+      "sha256": "d707903c13ecc8ec5fe57d197f5ab048e5a88ea024666fbc09c74a4c6cbfe606"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-replay-20260905T082852694Z-1eb2e1d2-f71.json",
+      "bytes": 277,
+      "sha256": "310c8e4de2231ccced8fc5c8fb9ef0b1aef57dbc5d3ae51de679cd7407f8357d"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T082514235Z-42f61704-f0b.json",
+      "bytes": 723,
+      "sha256": "a55e1e03e428ea368e7f30e4eb6f1859a71da8b7fd037b05bca8d321152e3b1b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T082514235Z-42f61704-f0b-seed.json",
+      "bytes": 900,
+      "sha256": "08f74d81b493e4615a7014320fde3045544ce7d9692c057f6d47b454d55cbdab"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T082514235Z-42f61704-f0b.sqlite3",
+      "bytes": 126976,
+      "sha256": "a8e4f31e914f227ffa07abba703fdfdbaf957218053f1111761da8695fc0c08b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T082514235Z-42f61704-f0b-drain.sqlite3",
+      "bytes": 45056,
+      "sha256": "30da9937f4632c2a61a7b00815e70741c79f503326e2109cb113d4b9aec5deec"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T082514235Z-42f61704-f0b-prelude.sqlite3",
+      "bytes": 77824,
+      "sha256": "a50e97f34655a5c3a2219fb56c55cc77fdaa2e32aa0856b55f094586e536a2b3"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T081914421Z-fcf6c4ff-a30.json",
+      "bytes": 454682,
+      "sha256": "429efa55f8ae395beaca279dbcb3c43ca8b132b2bd032083b93284e5b71cc8af"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T081914421Z-fcf6c4ff-a30-seed.json",
+      "bytes": 454854,
+      "sha256": "0ed8a6399e1203513bfa412b3b294e3eedc365315d99b79191d2c12b8cbdba96"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T081914421Z-fcf6c4ff-a30.sqlite3",
+      "bytes": 27549696,
+      "sha256": "ef5e66e9d3cae98931da7ecd1a994905d5f0c6edb1f77b62e6163469326bcade"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T081914421Z-fcf6c4ff-a30-drain.sqlite3",
+      "bytes": 16900096,
+      "sha256": "d706a2814d0d1e7c9d58aeaf4e94ae606995ca64fca4c45592537e91c40be4f0"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T081914421Z-fcf6c4ff-a30-prelude.sqlite3",
+      "bytes": 10645504,
+      "sha256": "affd14cda94bbc7ac2d3c9bbb96dd379220aebdd8ba8ed35c2738138b3ae7e49"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-recurrence-20260905T081740567Z-052faa4d-afe.json",
+      "bytes": 20225,
+      "sha256": "84d8ff8045a63bb31ee10dcf9aa045236a3e2fea024e1a686d7f5fc1c2cac45d"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T081245989Z-419a0701-5eb.json",
+      "bytes": 775,
+      "sha256": "9442bbb7df4d2de9ffcaecb5fbbf956a1dc052ae54741301ab1932adb43e3535"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-visibility-20260905T081003380049Z-572d8795b80c.json",
+      "bytes": 725152,
+      "sha256": "8e686aa9920068bb80aa815b91c7700fec03fa6b261badd8257f546a1c94ed72"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-20260905T080550620Z-9c9356c8-d8e.json",
+      "bytes": 924163,
+      "sha256": "9147061cb238e177b92cf15111f80df9a43595535d380347385d5c28e79281b2"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-failed-population-20260905T022321908808Z-4ee3d6b3bc0c.json",
+      "bytes": 25858882,
+      "sha256": "02b6dd7ddbf471c9e1865f90c6bf3c1ab97f399b1af818f61c8d327bbcadcd1d"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-transport-query-20260905T014827140035Z-778d8e9b6547.json",
+      "bytes": 624,
+      "sha256": "0490bdeb2efc6fc8fce96a95566f2f5c6f82208ab0163162bd46b8120c76189b"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-20260905T011859943937Z-647d50dc6944.json",
+      "bytes": 227,
+      "sha256": "45a9458eafbe49a9b53827c6047975df3bda6ea442c90bf17bec22f3765bc5cd"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-20260905T011821248719Z-0d04f298ab0f.json",
+      "bytes": 261,
+      "sha256": "c869d37212fa5ae252084f34bace74671c6523202b29f046b7ae7919d0980e06"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-attribution-20260905T011225217501Z-44bc3a48ab39.json",
+      "bytes": 420,
+      "sha256": "2455efca50187f1989ae899c8e9e8ed04010a36c61e98f2929491cf843df3f35"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T005918456772Z-8ded6e24c7f4.json",
+      "bytes": 19735,
+      "sha256": "a260774f1f08f592a450d1ae125b15bcf2a413a83f3dfa1b18b48ce5246f34a4"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T005659358610Z-541346ad76a3.json",
+      "bytes": 437,
+      "sha256": "f7d97974a1054e673efd39a7df4dfb2201e7379442f2c0377961f79ffb115f70"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T005315775581Z-a2a83c83e218.json",
+      "bytes": 1981,
+      "sha256": "8bdd3f73f777e6e30feeab6a365f39682ca402f672715871b4f3a381ee319e3f"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T005229159703Z-8216c23f3090.json",
+      "bytes": 446,
+      "sha256": "6a1813652f88083ff6ab8f48bd1a7edf1ea177a428a0521842d43f1e0e6011d6"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T004502631073Z-1efc97a6eae7.json",
+      "bytes": 3225,
+      "sha256": "7de4bff23891d23c2796a76596b61fc18634506b96a67f70046631d4f0cce3a0"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-pipeline-20260905T004502631073Z-1efc97a6eae7.sqlite3",
+      "bytes": 192512,
+      "sha256": "5e688ca1f42d19909d2b2eb0fff75684d846365de512566a71c77492251a1852"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T002927198973Z-ffd2c8c1245f.json",
+      "bytes": 1388,
+      "sha256": "e3de9625e07f764abc847cc6ba7f42ee4609815725f212e286d43231a01174a2"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T002927198973Z-ffd2c8c1245f-sources.json",
+      "bytes": 334536,
+      "sha256": "de0111659984c80f4988a2cfce4c5b95151d7f961abfe9b39ae752c13fe7533c"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T002346920356Z-5e4401248c54-sources.json",
+      "bytes": 260780,
+      "sha256": "39619074cdd27e57ebf095a7b333b3f76e5bfc4543e26c4d6137c9db2a1b5c89"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-scan-20260905T002346920356Z-5e4401248c54.json",
+      "bytes": 509,
+      "sha256": "2790c55b2bde9973551d75b581fbf63a753adbb696c91425a1c629fad8096141"
+    },
+    {
+      "path": "experiments/dashboard_prototype/evidence/metric-proof-health-20260904T235829827960Z-04b7460d81f0.json",
+      "bytes": 3337,
+      "sha256": "c5e0cc32c0750f5253f2eb6fbccac513bff4a8c486d4332e18197f0b782df520"
+    }
+  ]
+}

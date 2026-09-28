@@ -6,11 +6,16 @@ import json
 import math
 import re
 import subprocess
+import time
+import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from agent_introspection.telemetry import EventQueryClient
 
 _PARAMETER = re.compile(r"\{([a-z][a-z0-9_]*):[^}]+\}")
 _DURATION_MS = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
@@ -27,6 +32,12 @@ CANONICAL_SERVICE_PRODUCERS: Mapping[str, tuple[str, str]] = MappingProxyType(
         "codex-app-server": ("codex-app-server", "codex-app-server"),
         "oh-my-pi": ("omp", "omp"),
     }
+)
+
+_NATIVE_SERVICES_SQL = ", ".join(
+    f"'{service}'"
+    for service, (producer, _) in CANONICAL_SERVICE_PRODUCERS.items()
+    if producer in {"omp", "codex-cli", "codex-app-server"}
 )
 
 LOG_QUERY = r"""
@@ -128,6 +139,10 @@ SELECT
     )) AS legacy_thread_ids,
     arraySort(arrayFilter(
         value -> value != '',
+        groupUniqArray(attributes_string['conversation.id'])
+    )) AS conversation_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
         groupUniqArray(attributes_string['gen_ai.conversation.id'])
     )) AS gen_ai_conversation_ids
 FROM signoz_logs.distributed_logs_v2
@@ -142,8 +157,10 @@ WHERE timestamp >= {start_ns:UInt64}
     (resource.`service.name`::String = 'claude-code'
       AND mapContains(attributes_string, 'session.id'))
     OR (resource.`service.name`::String IN (
-        'codex-cli', 'codex_exec', 'codex_cli_rs', 'codex-app-server'
+        'codex-cli', 'codex_exec', 'codex_cli_rs'
       )
+      AND mapContains(attributes_string, 'conversation.id'))
+    OR (resource.`service.name`::String = 'codex-app-server'
       AND (
         mapContains(attributes_string, 'thread.id')
         OR mapContains(attributes_string, 'thread_id')
@@ -156,11 +173,32 @@ ORDER BY source_timestamp_ns, service_name, source_id
 """.strip()
 
 
+RAW_NATIVE_SOURCE_LOG_QUERY = r"""
+SELECT
+    resource.`service.name`::String AS service_name,
+    id AS source_id,
+    timestamp AS source_timestamp_ns,
+    arrayFilter(value -> value != '', [attributes_string['session.id']]) AS session_ids,
+    arrayFilter(value -> value != '', [attributes_string['thread.id']]) AS thread_ids,
+    arrayFilter(value -> value != '', [attributes_string['thread_id']]) AS legacy_thread_ids,
+    arrayFilter(value -> value != '', [attributes_string['conversation.id']]) AS conversation_ids,
+    arrayFilter(value -> value != '', [
+        attributes_string['gen_ai.conversation.id']
+    ]) AS gen_ai_conversation_ids
+FROM signoz_logs.distributed_logs_v2
+WHERE timestamp > {start_ns:UInt64}
+  AND timestamp <= {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND resource.`service.name`::String IN ({native_services})
+ORDER BY source_timestamp_ns, service_name, source_id
+""".strip().replace("{native_services}", _NATIVE_SERVICES_SQL)
+
+
 RAW_SOURCE_SESSION_TRACE_QUERY = r"""
 SELECT
     serviceName AS service_name,
     spanID AS source_id,
-    min(timestamp) AS source_timestamp,
+    toUnixTimestamp64Nano(min(timestamp)) AS source_timestamp_ns,
     arraySort(arrayFilter(
         value -> value != '',
         groupUniqArray(attributes_string['session.id'])
@@ -173,6 +211,10 @@ SELECT
         value -> value != '',
         groupUniqArray(attributes_string['thread_id'])
     )) AS legacy_thread_ids,
+    arraySort(arrayFilter(
+        value -> value != '',
+        groupUniqArray(attributes_string['conversation.id'])
+    )) AS conversation_ids,
     arraySort(arrayFilter(
         value -> value != '',
         groupUniqArray(attributes_string['gen_ai.conversation.id'])
@@ -198,8 +240,29 @@ WHERE timestamp >= {start:DateTime64(9)}
       AND mapContains(attributes_string, 'gen_ai.conversation.id'))
   )
 GROUP BY service_name, source_id
-ORDER BY source_timestamp, service_name, source_id
+ORDER BY source_timestamp_ns, service_name, source_id
 """.strip()
+
+
+RAW_NATIVE_SOURCE_TRACE_QUERY = r"""
+SELECT
+    serviceName AS service_name,
+    spanID AS source_id,
+    toUnixTimestamp64Nano(timestamp) AS source_timestamp_ns,
+    arrayFilter(value -> value != '', [attributes_string['session.id']]) AS session_ids,
+    arrayFilter(value -> value != '', [attributes_string['thread.id']]) AS thread_ids,
+    arrayFilter(value -> value != '', [attributes_string['thread_id']]) AS legacy_thread_ids,
+    arrayFilter(value -> value != '', [attributes_string['conversation.id']]) AS conversation_ids,
+    arrayFilter(value -> value != '', [
+        attributes_string['gen_ai.conversation.id']
+    ]) AS gen_ai_conversation_ids
+FROM signoz_traces.distributed_signoz_index_v3
+WHERE toUnixTimestamp64Nano(timestamp) > {start_ns:UInt64}
+  AND toUnixTimestamp64Nano(timestamp) <= {end_ns:UInt64}
+  AND ts_bucket_start BETWEEN {start_bucket:UInt64} AND {end_bucket:UInt64}
+  AND serviceName IN ({native_services})
+ORDER BY source_timestamp_ns, service_name, source_id
+""".strip().replace("{native_services}", _NATIVE_SERVICES_SQL)
 
 RAW_SOURCE_SESSION_METRIC_QUERY = r"""
 SELECT
@@ -212,6 +275,7 @@ SELECT
     )) AS session_ids,
     CAST([], 'Array(String)') AS thread_ids,
     CAST([], 'Array(String)') AS legacy_thread_ids,
+    CAST([], 'Array(String)') AS conversation_ids,
     CAST([], 'Array(String)') AS gen_ai_conversation_ids
 FROM signoz_metrics.distributed_time_series_v4
 WHERE inserted_at_unix_milli >= {start_ms:Int64}
@@ -421,18 +485,28 @@ class SourceSessionRow:
     thread_ids: tuple[str, ...]
     legacy_thread_ids: tuple[str, ...]
     gen_ai_conversation_ids: tuple[str, ...]
+    conversation_ids: tuple[str, ...]
+    source_timestamp_ns: int | None
 
     @property
     def native_session_ids(self) -> tuple[str, ...]:
         """Return only the native IDs authorized for this signal/service contract."""
         if self.service_name == "claude-code":
             identifiers = self.session_ids
-        elif self.service_name in {"codex-cli", "codex_exec", "codex_cli_rs", "codex-app-server"}:
+        elif self.service_name in {"codex-cli", "codex_exec", "codex_cli_rs"}:
+            identifiers = (
+                self.conversation_ids
+                if self.source_kind == "log"
+                else (*self.thread_ids, *self.legacy_thread_ids)
+            )
+        elif self.service_name == "codex-app-server":
             identifiers = (*self.thread_ids, *self.legacy_thread_ids)
         elif self.source_kind == "trace" and self.service_name in {"omp", "oh-my-pi"}:
             identifiers = self.gen_ai_conversation_ids
         else:
             identifiers = ()
+        if len(identifiers) < 2:
+            return tuple(identifiers)
         return tuple(sorted(set(identifiers)))
 
     @property
@@ -446,6 +520,7 @@ class SourceSessionRow:
                         self.session_ids,
                         self.thread_ids,
                         self.legacy_thread_ids,
+                        self.conversation_ids,
                         self.gen_ai_conversation_ids,
                     )
                 )
@@ -600,9 +675,15 @@ def _string_array(data: Mapping[str, object], field: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         raise SourceError(f"{field} must be an array of non-empty strings")
     values = tuple(value)
-    if any(not isinstance(item, str) or not item for item in values):
-        raise SourceError(f"{field} must be an array of non-empty strings")
-    if values != tuple(sorted(set(values))):
+    previous: str | None = None
+    ordered = True
+    for item in values:
+        if not isinstance(item, str) or not item:
+            raise SourceError(f"{field} must be an array of non-empty strings")
+        if previous is not None and previous >= item:
+            ordered = False
+        previous = item
+    if not ordered:
         raise SourceError(f"{field} must contain sorted unique identifiers")
     return values
 
@@ -647,21 +728,25 @@ def parse_source_session_row(
     service_name = _optional_text(data.get("service_name"))
     if source_id is None or service_name is None:
         raise SourceError("raw source record requires service name and source ID")
+    timestamp_ns = _optional_int(data.get("source_timestamp_ns"))
     if source_kind == "log":
-        timestamp_ns = _optional_int(data.get("source_timestamp_ns"))
         if timestamp_ns is None or timestamp_ns < 0:
             raise SourceError("raw log source timestamp must be an unsigned integer")
-        source_timestamp = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC)
     elif source_kind == "metric":
         timestamp_ms = _optional_int(data.get("source_timestamp_ms"))
         if timestamp_ms is None or timestamp_ms < 0:
             raise SourceError("raw metric source timestamp must be an unsigned integer")
-        source_timestamp = datetime.fromtimestamp(timestamp_ms / 1_000, tz=UTC)
-    else:
-        parsed_timestamp = _optional_timestamp(data.get("source_timestamp"))
-        if parsed_timestamp is None:
+        timestamp_ns = timestamp_ms * 1_000_000
+    if timestamp_ns is None:
+        source_timestamp = _optional_timestamp(data.get("source_timestamp"))
+        if source_timestamp is None:
             raise SourceError("raw trace source timestamp must be ISO-8601")
-        source_timestamp = parsed_timestamp
+    else:
+        if timestamp_ns < 0:
+            raise SourceError("raw source timestamp must be an unsigned integer")
+        source_timestamp = datetime.fromtimestamp(timestamp_ns // 1_000_000_000, tz=UTC).replace(
+            microsecond=(timestamp_ns % 1_000_000_000) // 1_000
+        )
     return SourceSessionRow(
         source_kind=source_kind,
         source_id=source_id,
@@ -671,6 +756,8 @@ def parse_source_session_row(
         thread_ids=_string_array(data, "thread_ids"),
         legacy_thread_ids=_string_array(data, "legacy_thread_ids"),
         gen_ai_conversation_ids=_string_array(data, "gen_ai_conversation_ids"),
+        conversation_ids=_string_array(data, "conversation_ids"),
+        source_timestamp_ns=timestamp_ns,
     )
 
 
@@ -799,6 +886,43 @@ def _window_buckets(*, start_ns: int, end_ns: int) -> tuple[int, int]:
     return max(0, start_ns // 1_000_000_000 - 1_800), end_ns // 1_000_000_000
 
 
+def _validate_query_parameters(sql: str, parameters: Mapping[str, str | int]) -> None:
+    expected = set(_PARAMETER.findall(sql))
+    supplied = set(parameters)
+    if supplied != expected:
+        raise SourceError(
+            f"query parameter mismatch: missing={sorted(expected - supplied)!r}, "
+            f"extra={sorted(supplied - expected)!r}"
+        )
+
+
+def _query_failure(stderr: str) -> SourceError:
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    diagnostic = next(
+        (line for line in lines if "DB::Exception" in line or line.startswith("Code:")),
+        lines[-1] if lines else "unknown ClickHouse error",
+    )
+    return SourceError(f"ClickHouse query failed: {diagnostic}")
+
+
+def _decode_query_rows(stdout: str) -> Iterator[dict[str, Any]]:
+    for line_number, line in enumerate(stdout.splitlines(), 1):
+        try:
+            decoded = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SourceError(f"invalid JSONEachRow at line {line_number}") from exc
+        if not isinstance(decoded, dict):
+            raise SourceError(f"JSONEachRow line {line_number} is not an object")
+        yield decoded
+
+
+class DashboardCancellation(BaseException):
+    """Interrupt dashboard reductions without letting broad Exception handlers absorb it."""
+
+
+_DASHBOARD_CLEANUP_TIMEOUT_SECONDS = 0.5
+
+
 class ClickHouseClient:
     """Execute fixed queries through the existing ClickHouse container."""
 
@@ -814,13 +938,7 @@ class ClickHouseClient:
         self._prefix = (executable, "--context", docker_context, "exec", "-i", container)
 
     def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
-        expected = set(_PARAMETER.findall(sql))
-        supplied = set(parameters)
-        if supplied != expected:
-            raise SourceError(
-                f"query parameter mismatch: missing={sorted(expected - supplied)!r}, "
-                f"extra={sorted(supplied - expected)!r}"
-            )
+        _validate_query_parameters(sql, parameters)
         argv: list[str] = [*self._prefix, "clickhouse-client", "--format", "JSONEachRow"]
         argv.extend(f"--param_{name}={parameters[name]}" for name in sorted(parameters))
         argv.extend(("--query", sql))
@@ -837,20 +955,8 @@ class ClickHouseClient:
                 f"ClickHouse query exceeded {_QUERY_TIMEOUT_SECONDS:.0f} second timeout"
             ) from exc
         if completed.returncode != 0:
-            lines = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
-            diagnostic = next(
-                (line for line in lines if "DB::Exception" in line or line.startswith("Code:")),
-                lines[-1] if lines else "unknown ClickHouse error",
-            )
-            raise SourceError(f"ClickHouse query failed: {diagnostic}")
-        for line_number, line in enumerate(completed.stdout.splitlines(), 1):
-            try:
-                decoded = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise SourceError(f"invalid JSONEachRow at line {line_number}") from exc
-            if not isinstance(decoded, dict):
-                raise SourceError(f"JSONEachRow line {line_number} is not an object")
-            yield decoded
+            raise _query_failure(completed.stderr)
+        yield from _decode_query_rows(completed.stdout)
 
     def source_sessions(
         self, *, start: datetime, end: datetime, start_ns: int, end_ns: int
@@ -979,6 +1085,169 @@ class ClickHouseClient:
         }
         for row in self.query(HYDRATION_QUERIES[request.identity_kind], parameters):
             yield parse_hydration_row(row)
+
+
+class DashboardClickHouseClient(ClickHouseClient):
+    """Run dashboard-only queries with a request deadline and targeted cleanup.
+
+    Each abort uses at most 0.5 seconds to reap docker and another 0.5 seconds
+    to issue its query-id-specific synchronous KILL QUERY. The caller must reserve
+    that one-second cleanup budget before passing the absolute deadline.
+    """
+
+    def __init__(self, *, deadline_unix_ms: int, **kwargs: str) -> None:
+        super().__init__(**kwargs)
+        self._deadline_unix_ms = deadline_unix_ms
+
+    def _remaining_seconds(self) -> float:
+        return self._deadline_unix_ms / 1_000 - time.time()
+
+    def _kill_query(self, query_id: str) -> None:
+        completed = subprocess.run(
+            [
+                *self._prefix,
+                "clickhouse-client",
+                "--query",
+                f"KILL QUERY WHERE query_id = '{query_id}' SYNC",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=_DASHBOARD_CLEANUP_TIMEOUT_SECONDS,
+        )
+        if completed.returncode != 0:
+            raise _query_failure(completed.stderr)
+
+    def _reap_docker(self, process: subprocess.Popen[str]) -> None:
+        reap_deadline = time.monotonic() + _DASHBOARD_CLEANUP_TIMEOUT_SECONDS
+        process.terminate()
+        try:
+            process.communicate(timeout=_DASHBOARD_CLEANUP_TIMEOUT_SECONDS / 2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=max(0, reap_deadline - time.monotonic()))
+
+    def _cleanup(self, process: subprocess.Popen[str], query_id: str) -> None:
+        cleanup_errors: list[BaseException] = []
+        try:
+            self._reap_docker(process)
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        try:
+            self._kill_query(query_id)
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise SourceError(
+                "dashboard ClickHouse cleanup failed: "
+                + "; ".join(str(error) for error in cleanup_errors)
+            )
+
+    def query(self, sql: str, parameters: Mapping[str, str | int]) -> Iterator[dict[str, Any]]:
+        _validate_query_parameters(sql, parameters)
+        remaining = self._remaining_seconds()
+        if remaining <= 0:
+            raise SourceError("dashboard request deadline elapsed before ClickHouse execution")
+        query_id = f"pipeline-dashboard-{uuid.uuid4().hex}"
+        argv = [
+            *self._prefix,
+            "clickhouse-client",
+            "--format",
+            "JSONEachRow",
+            f"--query_id={query_id}",
+            f"--max_execution_time={max(1, math.ceil(remaining))}",
+        ]
+        argv.extend(f"--param_{name}={parameters[name]}" for name in sorted(parameters))
+        argv.extend(("--query", sql))
+        process = subprocess.Popen(
+            argv,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=remaining)
+        except BaseException as exc:
+            try:
+                self._cleanup(process, query_id)
+            except BaseException as cleanup_error:
+                raise SourceError(f"dashboard ClickHouse cleanup failed: {cleanup_error}") from exc
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise SourceError(
+                    "dashboard request deadline elapsed during ClickHouse execution"
+                ) from exc
+            raise
+        if process.returncode != 0:
+            failure = _query_failure(stderr)
+            try:
+                self._kill_query(query_id)
+            except BaseException as cleanup_error:
+                raise SourceError(
+                    f"{failure}; dashboard ClickHouse cleanup failed: {cleanup_error}"
+                ) from cleanup_error
+            raise failure
+        yield from _decode_query_rows(stdout)
+
+
+def _parse_native_source(
+    data: Mapping[str, Any],
+    source_kind: Literal["log", "trace"],
+) -> SourceSessionRow | None:
+    producer = CANONICAL_SERVICE_PRODUCERS.get(str(data.get("service_name", "")))
+    if producer is None or producer[0] not in {"omp", "codex-cli", "codex-app-server"}:
+        return None
+    if data.get("source_timestamp_ns") is None:
+        raise ValueError("raw native source timestamp must be a positive unsigned integer")
+    try:
+        row = parse_source_session_row(data, source_kind=source_kind)
+    except SourceError as exc:
+        raise ValueError("raw native source record is invalid") from exc
+    if row.source_timestamp_ns is None or row.source_timestamp_ns <= 0:
+        raise ValueError("raw native source timestamp must be a positive unsigned integer")
+    if row.session_status == "conflicting":
+        raise ValueError("raw native source record has conflicting native identities")
+    return row
+
+
+def query_raw_native_sources(
+    client: EventQueryClient, *, start_ns: int, end_ns: int
+) -> list[SourceSessionRow]:
+    """Return every exact native log or trace source in the selected dashboard range."""
+    if not 0 <= start_ns < end_ns:
+        raise ValueError("invalid raw native source bounds")
+    start_bucket, end_bucket = _window_buckets(start_ns=start_ns, end_ns=end_ns)
+    parameters = {
+        "start_ns": start_ns,
+        "end_ns": end_ns,
+        "start_bucket": start_bucket,
+        "end_bucket": end_bucket,
+    }
+    rows: list[SourceSessionRow] = []
+    observed: dict[tuple[str, str, str], SourceSessionRow] = {}
+    queries: tuple[tuple[str, Literal["log", "trace"]], ...] = (
+        (RAW_NATIVE_SOURCE_LOG_QUERY, "log"),
+        (RAW_NATIVE_SOURCE_TRACE_QUERY, "trace"),
+    )
+    for query, source_kind in queries:
+        try:
+            raw_rows = list(client.query(query, parameters))
+        except SourceError:
+            raise
+        except Exception as exc:
+            raise SourceError("raw native source query failed") from exc
+        for data in raw_rows:
+            row = _parse_native_source(data, source_kind)
+            if row is None:
+                continue
+            if row.source_timestamp_ns is None:
+                raise ValueError("raw native source timestamp must be a positive unsigned integer")
+            identity = source_kind, row.service_name, row.source_id
+            previous = observed.setdefault(identity, row)
+            if previous != row:
+                raise ValueError("raw native source record has conflicting native identity")
+            if start_ns < row.source_timestamp_ns <= end_ns and row.native_session_ids:
+                rows.append(row)
+    return rows
 
 
 def query_selected_ids(ids: Sequence[str]) -> tuple[str, Mapping[str, str]]:

@@ -14,6 +14,7 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any, NoReturn
 
+from agent_introspection.canonical_store import check_authority_store, configure_authority_store
 from agent_introspection.capabilities import (
     CapabilityError,
     approve_schema,
@@ -38,6 +39,7 @@ from agent_introspection.database import (
     restore_database,
     weekly_maintenance,
 )
+from agent_introspection.ledger_identity import database_identity
 from agent_introspection.legacy_attribution import (
     LegacyProjectAttributionRequest,
     parse_rfc3339,
@@ -401,6 +403,16 @@ def _telemetry_command(args: argparse.Namespace) -> dict[str, Any]:
         verify_network_perimeter(docker_context=config.signoz.docker_context)
         client = _client(config)
         enforce_approved_schema(connection, discover_source_schema(client))
+        if args.telemetry_command == "authority":
+            operation = (
+                configure_authority_store
+                if args.operation == "configure"
+                else check_authority_store
+            )
+            return operation(
+                client,
+                database_id=database_identity(connection, database_path=config.database.path),
+            )
         with scan_lease(
             connection,
             duration=timedelta(seconds=config.scheduler.lease_seconds),
@@ -465,7 +477,11 @@ def _db_command(args: argparse.Namespace) -> dict[str, Any]:
                     / f"manual-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.sqlite3"
                 )
             )
-            return {"backup_path": str(backup_database(connection, destination))}
+            return {
+                "backup_path": str(
+                    backup_database(connection, destination, operation="manual-backup")
+                )
+            }
         if args.db_command == "maintenance":
             maintenance_result = weekly_maintenance(connection, config.database.path)
             vacuum = manual_vacuum(connection, config.database.path) if args.vacuum else None
@@ -697,6 +713,8 @@ def _add_telemetry_command(commands: argparse._SubParsersAction[argparse.Argumen
     drain.add_argument("--limit", type=int, default=100)
     reconcile = telemetry.add_parser("reconcile-observations")
     reconcile.add_argument("--scan-run-id", action="append", required=True)
+    authority = telemetry.add_parser("authority")
+    authority.add_argument("operation", choices=("configure", "check"))
 
 
 def _add_dashboard_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

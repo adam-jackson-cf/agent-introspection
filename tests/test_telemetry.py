@@ -5,8 +5,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
 
 from agent_introspection.database import connect_database
+from agent_introspection.ledger_identity import (
+    DATABASE_IDENTITY_ATTRIBUTE,
+    database_identity,
+)
 from agent_introspection.telemetry import (
     CANONICAL_ACTIVITY_EVENT_NAME,
     CANONICAL_ACTIVITY_PAYLOAD_SCHEMA_VERSION,
@@ -25,8 +30,8 @@ from agent_introspection.telemetry import (
 )
 
 
-def outbox_database() -> sqlite3.Connection:
-    connection = sqlite3.connect(":memory:")
+def outbox_database(tmp_path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(tmp_path / "outbox.sqlite3")
     connection.execute(
         """
         CREATE TABLE otlp_outbox (
@@ -41,6 +46,18 @@ def outbox_database() -> sqlite3.Connection:
         """
     )
     return connection
+
+
+def backup_outbox_snapshot(connection: sqlite3.Connection) -> tuple[str, str, str]:
+    snapshot = connection.execute(
+        """
+        SELECT event_id, payload_json, status
+        FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."event.scope"') = 'database-backup'
+        """
+    ).fetchone()
+    assert snapshot is not None
+    return snapshot
 
 
 def canonical_activity_database(tmp_path: Path) -> sqlite3.Connection:
@@ -116,6 +133,7 @@ def test_canonical_activity_event_id_hashes_only_contract_fields() -> None:
 
 def test_canonical_activity_enqueue_reuses_identical_identity_and_evidence(tmp_path: Path) -> None:
     connection = canonical_activity_database(tmp_path)
+    backup_snapshot = backup_outbox_snapshot(connection)
     try:
         with pytest.raises(ValueError, match="requires a caller-owned transaction"):
             enqueue_canonical_activity_version(connection, canonical_activity_event())
@@ -129,13 +147,20 @@ def test_canonical_activity_enqueue_reuses_identical_identity_and_evidence(tmp_p
         second = enqueue_canonical_activity_version(connection, canonical_activity_event())
         connection.commit()
         assert first == second
-        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM otlp_outbox WHERE event_id = ?",
+                (first,),
+            ).fetchone()[0]
+            == 1
+        )
         assert (
             connection.execute(
                 "SELECT event_id FROM canonical_activity_outbox_evidence"
             ).fetchone()[0]
             == first
         )
+        assert backup_outbox_snapshot(connection) == backup_snapshot
     finally:
         connection.close()
 
@@ -160,6 +185,7 @@ def test_canonical_activity_enqueue_rejects_conflicting_payload(tmp_path: Path) 
 
 def test_canonical_activity_enqueue_rolls_back_outbox_and_evidence(tmp_path: Path) -> None:
     connection = canonical_activity_database(tmp_path)
+    backup_snapshot = backup_outbox_snapshot(connection)
     try:
         connection.execute("BEGIN")
 
@@ -170,19 +196,28 @@ def test_canonical_activity_enqueue_rolls_back_outbox_and_evidence(tmp_path: Pat
         with pytest.raises(RuntimeError, match="rollback"), connection:
             force_rollback()
         connection.rollback()
-        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                """
+            SELECT COUNT(*) FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.scope"') = 'canonical-activity'
+            """
+            ).fetchone()[0]
+            == 0
+        )
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM canonical_activity_outbox_evidence"
             ).fetchone()[0]
             == 0
         )
+        assert backup_outbox_snapshot(connection) == backup_snapshot
     finally:
         connection.close()
 
 
-def test_duplicate_enqueue_reuses_identical_event_id_and_payload() -> None:
-    connection = outbox_database()
+def test_duplicate_enqueue_reuses_identical_event_id_and_payload(tmp_path: Path) -> None:
+    connection = outbox_database(tmp_path)
     first = enqueue_event(connection, event())
     second = enqueue_event(connection, event())
     rows = connection.execute("SELECT event_id, payload_json FROM otlp_outbox").fetchall()
@@ -192,8 +227,8 @@ def test_duplicate_enqueue_reuses_identical_event_id_and_payload() -> None:
     assert json.loads(rows[0][1])["event.id"] == first
 
 
-def test_conflicting_payload_reports_immutable_identity_and_changed_fields() -> None:
-    connection = outbox_database()
+def test_conflicting_payload_reports_immutable_identity_and_changed_fields(tmp_path: Path) -> None:
+    connection = outbox_database(tmp_path)
     enqueue_event(connection, event())
     conflicting = DerivedEvent(
         scope=OPERATIONAL_SCOPE,
@@ -211,8 +246,8 @@ def test_conflicting_payload_reports_immutable_identity_and_changed_fields() -> 
     assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 1
 
 
-def test_failed_delivery_retains_identical_payload_for_retry() -> None:
-    connection = outbox_database()
+def test_failed_delivery_retains_identical_payload_for_retry(tmp_path: Path) -> None:
+    connection = outbox_database(tmp_path)
     enqueue_event(connection, event())
     before = connection.execute("SELECT payload_json FROM otlp_outbox").fetchone()[0]
     with patch("urllib.request.urlopen", side_effect=TimeoutError):
@@ -224,35 +259,103 @@ def test_failed_delivery_retains_identical_payload_for_retry() -> None:
     assert after == (before, 1, "pending")
 
 
-def test_empty_outbox_drain_is_a_valid_noop() -> None:
-    assert drain_outbox(outbox_database()) == {"selected": 0, "delivered": 0, "pending": 0}
+def test_empty_outbox_drain_is_a_valid_noop(tmp_path: Path) -> None:
+    assert drain_outbox(outbox_database(tmp_path)) == {"selected": 0, "delivered": 0, "pending": 0}
 
 
-def test_exact_outbox_delivery_does_not_select_unrelated_pending_events() -> None:
-    connection = outbox_database()
-    selected_id = enqueue_event(connection, event())
-    unrelated = DerivedEvent(
+def test_exact_outbox_delivery_does_not_select_unrelated_pending_events(tmp_path: Path) -> None:
+    connection = outbox_database(tmp_path)
+    selected = event()
+    selected_id = enqueue_event(connection, selected)
+    second_selected = DerivedEvent(
         scope=OPERATIONAL_SCOPE,
         entity_id="finding-2",
         entity_version=1,
         event_sequence=1,
         event_name="introspection.observation.detected",
-        attributes={"detector.id": "tool_failure"},
+        attributes={
+            "detector.id": "tool_failure",
+            "occurrence.count": 3,
+            "confidence": 0.75,
+            "replayed": True,
+        },
         timestamp_ns=1_700_000_000_000_000_001,
+    )
+    second_selected_id = enqueue_event(connection, second_selected)
+    unrelated = DerivedEvent(
+        scope=OPERATIONAL_SCOPE,
+        entity_id="finding-3",
+        entity_version=1,
+        event_sequence=1,
+        event_name="introspection.observation.detected",
+        attributes={"detector.id": "tool_failure"},
+        timestamp_ns=1_700_000_000_000_000_002,
     )
     unrelated_id = enqueue_event(connection, unrelated)
     response = MagicMock(status=200)
     response.__enter__.return_value = response
-    with patch("urllib.request.urlopen", return_value=response):
-        result = drain_outbox_event_ids(connection, [selected_id])
-    assert result == {"selected": 1, "delivered": 1, "pending": 0}
+    requests: list[bytes] = []
+
+    def capture_request(request: object, *, timeout: float) -> MagicMock:
+        requests.append(request.data)  # type: ignore[attr-defined]
+        return response
+
+    with patch("urllib.request.urlopen", side_effect=capture_request):
+        result = drain_outbox_event_ids(connection, [selected_id, second_selected_id])
+    assert result == {"selected": 2, "delivered": 2, "pending": 0}
+    request = ExportLogsServiceRequest()
+    request.ParseFromString(requests.pop())
+    records = [
+        (resource_log.resource.attributes, log_record)
+        for resource_log in request.resource_logs
+        for scope_log in resource_log.scope_logs
+        for log_record in scope_log.log_records
+    ]
+    assert len(records) == 2
+    actual_identity = database_identity(connection)
+    for resource_attributes, log_record in records:
+        resource = {
+            attribute.key: attribute.value.string_value for attribute in resource_attributes
+        }
+        immutable_payload = json.loads(log_record.body.string_value)
+        expected = next(
+            payload
+            for payload in (selected.payload(), second_selected.payload())
+            if payload["event.id"] == immutable_payload["event.id"]
+        )
+        assert resource["service.name"] == "agent-introspection"
+        assert resource[DATABASE_IDENTITY_ATTRIBUTE] == actual_identity
+        assert immutable_payload == expected
+        assert (
+            log_record.body.string_value
+            == connection.execute(
+                "SELECT payload_json FROM otlp_outbox WHERE event_id = ?", (expected["event.id"],)
+            ).fetchone()[0]
+        )
+        assert log_record.time_unix_nano == expected["timestamp_ns"]
+        assert log_record.observed_time_unix_nano > 0
+        attributes = {
+            attribute.key: (
+                attribute.value.string_value
+                if attribute.value.HasField("string_value")
+                else attribute.value.int_value
+                if attribute.value.HasField("int_value")
+                else attribute.value.double_value
+                if attribute.value.HasField("double_value")
+                else attribute.value.bool_value
+            )
+            for attribute in log_record.attributes
+        }
+        assert attributes == {
+            key: value for key, value in expected.items() if key != "timestamp_ns"
+        }
     assert connection.execute(
         "SELECT status FROM otlp_outbox WHERE event_id = ?", (unrelated_id,)
     ).fetchone() == ("pending",)
 
 
-def test_event_batches_commit_all_deterministic_payloads() -> None:
-    connection = outbox_database()
+def test_event_batches_commit_all_deterministic_payloads(tmp_path: Path) -> None:
+    connection = outbox_database(tmp_path)
     second = DerivedEvent(
         scope=OPERATIONAL_SCOPE,
         entity_id="finding-2",
@@ -271,6 +374,7 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
     tmp_path: Path,
 ) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = backup_outbox_snapshot(connection)
     try:
         connection.execute(
             "INSERT INTO scan_runs (id, status, started_at) VALUES ('failed-scan', 'failed', 'now')"
@@ -349,6 +453,7 @@ def test_observation_reconciliation_preserves_original_ordinals_and_is_idempoten
         assert recovered["agent.project.name"] == "unresolved"
         assert "project.id" not in recovered
         assert "project.name" not in recovered
+        assert backup_outbox_snapshot(connection) == backup_snapshot
     finally:
         connection.close()
 
@@ -399,6 +504,7 @@ def test_event_scope_is_part_of_immutable_event_identity() -> None:
 
 def test_observation_reconciliation_requires_explicit_failed_scan(tmp_path: Path) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = backup_outbox_snapshot(connection)
     try:
         connection.execute(
             "INSERT INTO scan_runs (id, status, started_at) VALUES ('scan-1', 'succeeded', 'now')"
@@ -406,6 +512,16 @@ def test_observation_reconciliation_requires_explicit_failed_scan(tmp_path: Path
         connection.commit()
         with pytest.raises(ValueError, match="not failed"):
             plan_observation_reconciliation(connection, scan_run_ids=("scan-1",))
-        assert connection.execute("SELECT COUNT(*) FROM otlp_outbox").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                """
+            SELECT COUNT(*) FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.name"')
+                = 'introspection.observation.detected'
+            """
+            ).fetchone()[0]
+            == 0
+        )
+        assert backup_outbox_snapshot(connection) == backup_snapshot
     finally:
         connection.close()

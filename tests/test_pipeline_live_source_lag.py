@@ -15,6 +15,11 @@ def _request() -> LiveProofRequest:
     )
 
 
+def _timestamp_ns(timestamp: datetime) -> int:
+    delta = timestamp.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
 def _connection(*, lifecycle_authority: bool = True) -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
     lifecycle_table = (
@@ -26,12 +31,13 @@ def _connection(*, lifecycle_authority: bool = True) -> sqlite3.Connection:
         """
         CREATE TABLE scan_runs (
             id TEXT PRIMARY KEY, status TEXT, started_at TEXT, completed_at TEXT,
-            source_end_ns INTEGER
+            source_start_ns INTEGER, source_end_ns INTEGER
         );
         CREATE TABLE source_session_records (
             scan_run_id TEXT, source_kind TEXT, service_name TEXT, source_id TEXT,
-            source_timestamp TEXT, context_evidence_id TEXT, session_ids_json TEXT,
-            thread_ids_json TEXT, legacy_thread_ids_json TEXT, gen_ai_conversation_ids_json TEXT
+            source_timestamp TEXT, source_timestamp_ns TEXT, context_evidence_id TEXT,
+            session_ids_json TEXT, thread_ids_json TEXT, legacy_thread_ids_json TEXT,
+            gen_ai_conversation_ids_json TEXT
         );
         """
         + lifecycle_table
@@ -43,12 +49,13 @@ def _insert_scan(
     connection: sqlite3.Connection, scan_id: str, completed: datetime, bound: datetime
 ) -> None:
     connection.execute(
-        "INSERT INTO scan_runs VALUES (?, 'succeeded', ?, ?, ?)",
+        "INSERT INTO scan_runs VALUES (?, 'succeeded', ?, ?, ?, ?)",
         (
             scan_id,
             (completed - timedelta(seconds=5)).isoformat(),
             completed.isoformat(),
-            int(bound.timestamp() * 1_000_000_000),
+            _timestamp_ns(_request().start),
+            _timestamp_ns(bound),
         ),
     )
 
@@ -59,19 +66,21 @@ class _Record:
     source: tuple[str, str]
     timestamp: datetime
     kind: str
+    timestamp_ns: int | None = None
     context_evidence_id: str | None = None
 
 
 def _insert_record(connection: sqlite3.Connection, record: _Record) -> None:
     service, source_id = record.source
     connection.execute(
-        "INSERT INTO source_session_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO source_session_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             record.scan_id,
             record.kind,
             service,
             source_id,
             record.timestamp.isoformat(),
+            str(record.timestamp_ns) if record.timestamp_ns is not None else None,
             record.context_evidence_id,
             '["native-id"]',
             '["thread-id"]',
@@ -103,6 +112,7 @@ def _insert_all_authorities(
                     (service, f"{scan_id}-{service}-{kind}"),
                     timestamp,
                     kind,
+                    _timestamp_ns(timestamp),
                     event_id if kind == "log" else None,
                 ),
             )
@@ -113,10 +123,29 @@ def test_extracts_fixed_nine_cohorts_and_timestamps_primitives_at_scan_completio
     connection = _connection()
     completed = datetime(2026, 8, 1, 12, tzinfo=UTC)
     _insert_scan(connection, "scan", completed, completed)
-    stale = _request().start - timedelta(seconds=1)
+    stale = _request().start - timedelta(days=1)
     _insert_all_authorities(connection, "scan", stale)
+    _insert_record(
+        connection,
+        _Record(
+            "scan",
+            ("omp", "nanosecond-eligible"),
+            stale,
+            "log",
+            _timestamp_ns(completed) - 1,
+        ),
+    )
+    _insert_record(
+        connection,
+        _Record(
+            "scan",
+            ("omp", "nanosecond-future"),
+            stale,
+            "log",
+            _timestamp_ns(completed) + 1,
+        ),
+    )
     _insert_record(connection, _Record("scan", ("claude-code", "excluded"), completed, "log"))
-
     evidence = extract(connection, _request())
 
     assert evidence.proof.result is ExperimentResult.PROVEN
@@ -126,12 +155,15 @@ def test_extracts_fixed_nine_cohorts_and_timestamps_primitives_at_scan_completio
     assert all(row.source_time == completed for row in evidence.primitives)
     assert all(len(str(row.dimensions["cohort"])) == 64 for row in evidence.primitives)
     assert len({row.dimensions["cohort"] for row in evidence.primitives}) == 9
-    assert "native-id" not in evidence.proof.canonical_json()
+    assert sorted(row.measures["lag_seconds"] for row in evidence.primitives) == [
+        1 / 1_000_000_000,
+        *[(completed - stale).total_seconds()] * 8,
+    ]
     assert "claude" not in evidence.proof.canonical_json()
     assert len(evidence.remote_oracle) == 9
 
 
-def test_extracts_negative_skew_and_ignores_unreferenced_lifecycle_events() -> None:
+def test_clock_skew_is_recorded_without_selecting_post_bound_sources() -> None:
     connection = _connection()
     completed = datetime(2026, 8, 1, 12, tzinfo=UTC)
     _insert_scan(connection, "scan", completed, completed)
@@ -141,12 +173,19 @@ def test_extracts_negative_skew_and_ignores_unreferenced_lifecycle_events() -> N
 
     evidence = extract(connection, _request())
 
-    assert evidence.proof.result is ExperimentResult.PROVEN
-    assert all(metrics["n"] == 0 for metrics in evidence.remote_oracle.values())
+    assert evidence.proof.result is ExperimentResult.BLOCKED
+    assert len(evidence.primitives) == 9
+    assert evidence.proof.metrics["accepted"] == 0
     assert evidence.proof.metrics["negative_skew_count"] == 9
     assert all(row.measures["negative_skew"] == 1 for row in evidence.primitives)
-    assert all(row.measures["lag_seconds"] == -1.0 for row in evidence.primitives)
-    assert all(metrics["negative_skew_count"] == 1 for metrics in evidence.remote_oracle.values())
+    assert all("lag_seconds" not in row.measures for row in evidence.primitives)
+    assert all(
+        metrics["n"] == 0
+        and metrics["negative_skew_count"] == 1
+        and "p50_lag_seconds" not in metrics
+        and "p95_lag_seconds" not in metrics
+        for metrics in evidence.remote_oracle.values()
+    )
 
 
 def test_missing_trace_or_lifecycle_observation_blocks_and_conserves_nine_cohorts() -> None:
@@ -160,7 +199,6 @@ def test_missing_trace_or_lifecycle_observation_blocks_and_conserves_nine_cohort
     connection.execute("DELETE FROM session_context_events WHERE producer = 'codex-cli'")
 
     evidence = extract(connection, _request())
-
     assert evidence.proof.result is ExperimentResult.BLOCKED
     assert len(evidence.primitives) == 9
     assert evidence.proof.metrics["population"] == 9
@@ -171,6 +209,28 @@ def test_missing_trace_or_lifecycle_observation_blocks_and_conserves_nine_cohort
     assert any(
         "source-observation:codex-cli/codex-cli/lifecycle" in item
         for item in evidence.proof.blocked_boundaries
+    )
+
+
+def test_datetime_only_raw_source_rows_remain_unavailable() -> None:
+    connection = _connection()
+    completed = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    _insert_scan(connection, "scan", completed, completed)
+    _insert_all_authorities(connection, "scan", completed - timedelta(seconds=1))
+    connection.execute(
+        """
+        UPDATE source_session_records
+        SET source_timestamp_ns = NULL
+        WHERE service_name = 'omp' AND source_kind = 'log'
+        """
+    )
+
+    evidence = extract(connection, _request())
+
+    assert evidence.proof.result is ExperimentResult.BLOCKED
+    assert any(
+        boundary.startswith("source-lag.raw-authority:")
+        for boundary in evidence.proof.blocked_boundaries
     )
 
 

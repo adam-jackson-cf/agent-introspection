@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -60,6 +61,13 @@ class LifecycleConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PipelineConfig:
+    """Pipeline measurement cutover policy."""
+
+    measurement_start: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LegacyProjectAttributionConfig:
     """Explicit roots and maximum manual attribution range in hours."""
 
@@ -75,11 +83,19 @@ class AppConfig:
     signoz: SigNozConfig = SigNozConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     lifecycle: LifecycleConfig = LifecycleConfig()
+    pipeline: PipelineConfig = PipelineConfig()
     legacy_project_attribution: LegacyProjectAttributionConfig = LegacyProjectAttributionConfig()
 
 
 _ROOT_KEYS = frozenset(
-    {"database", "signoz", "scheduler", "lifecycle", "legacy_project_attribution"}
+    {
+        "database",
+        "signoz",
+        "scheduler",
+        "lifecycle",
+        "pipeline",
+        "legacy_project_attribution",
+    }
 )
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _SIGNOZ_KEYS = frozenset(
@@ -95,6 +111,7 @@ _SIGNOZ_KEYS = frozenset(
 )
 _SCHEDULER_KEYS = frozenset({"timezone", "interval_seconds", "lease_seconds"})
 _LIFECYCLE_KEYS = frozenset({"clock_skew_seconds"})
+_PIPELINE_KEYS = frozenset({"measurement_start"})
 _LEGACY_PROJECT_ATTRIBUTION_KEYS = frozenset({"project_roots", "maximum_range_hours"})
 
 
@@ -116,6 +133,19 @@ def _five_minute_interval(value: object, *, field: str) -> int:
     if interval != 300:
         raise ConfigurationError(f"{field} must be exactly 300 seconds")
     return interval
+
+
+def _measurement_start(value: object, *, field: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"{field} must be an RFC3339 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ConfigurationError(f"{field} must be an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ConfigurationError(f"{field} must include a timezone offset")
+    normalized = parsed.astimezone(UTC)
+    return normalized.replace(microsecond=(normalized.microsecond // 1_000) * 1_000)
 
 
 def _non_empty_string(value: object, *, field: str) -> str:
@@ -153,10 +183,12 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     signoz = _table(data, "signoz")
     scheduler = _table(data, "scheduler")
     lifecycle = _table(data, "lifecycle")
+    pipeline = _table(data, "pipeline")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(scheduler), _SCHEDULER_KEYS, location="scheduler")
     _reject_unknown(set(lifecycle), _LIFECYCLE_KEYS, location="lifecycle")
+    _reject_unknown(set(pipeline), _PIPELINE_KEYS, location="pipeline")
     legacy_project_attribution = _table(data, "legacy_project_attribution")
     _reject_unknown(
         set(legacy_project_attribution),
@@ -238,6 +270,13 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else defaults.lifecycle.clock_skew_seconds
         )
     )
+    pipeline_config = PipelineConfig(
+        measurement_start=(
+            _measurement_start(pipeline["measurement_start"], field="pipeline.measurement_start")
+            if "measurement_start" in pipeline
+            else defaults.pipeline.measurement_start
+        )
+    )
     roots_value = legacy_project_attribution.get("project_roots", ())
     if not isinstance(roots_value, (list, tuple)) or any(
         not isinstance(root, str) or not root.strip() for root in roots_value
@@ -269,6 +308,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         signoz=signoz_config,
         scheduler=scheduler_config,
         lifecycle=lifecycle_config,
+        pipeline=pipeline_config,
         legacy_project_attribution=legacy_project_attribution_config,
     )
 

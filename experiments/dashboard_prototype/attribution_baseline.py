@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
+from itertools import chain
 from typing import Final
 
 from experiments.dashboard_prototype.attribution_common import (
@@ -15,7 +16,6 @@ from experiments.dashboard_prototype.attribution_common import (
 from experiments.dashboard_prototype.contracts import (
     EvidenceProvenance,
     ExperimentResult,
-    derive_event_id,
 )
 
 _SUPPORTED: Final = frozenset(("omp", "codex-cli"))
@@ -60,11 +60,11 @@ class ProducerAuthority:
 
 @dataclass(frozen=True, slots=True)
 class CanonicalActivityVersion:
-    """One immutable-source-time version; identities are already short hashes."""
+    """One immutable native source-time version with exact private identities."""
 
     activity_id: str
     version: int
-    source_time: datetime
+    source_time_ns: int
     producer: str
     surface: str
     native_session_id: str
@@ -74,7 +74,12 @@ class CanonicalActivityVersion:
     attribution_method: str = "none"
 
     def validate(self) -> None:
-        if not self.activity_id or self.version < 1 or self.source_time.tzinfo is None:
+        if (
+            not self.activity_id
+            or self.version < 1
+            or type(self.source_time_ns) is not int
+            or self.source_time_ns < 0
+        ):
             raise ValueError("activity version lacks immutable identity, version, or source time")
         if self.producer not in _SUPPORTED or not self.surface or not self.native_session_id:
             raise ValueError("activity has an unsupported or incomplete native identity")
@@ -112,7 +117,8 @@ class SourceSessionObservation:
     producer: str
     surface: str
     native_session_id: str
-    source_time: datetime
+    source_time_ns: int
+    source_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,9 +126,10 @@ class LifecycleSessionObservation:
     producer: str
     surface: str
     native_session_id: str
-    interval_start: datetime
+    interval_start: datetime | None
     interval_end: datetime | None
-    accepted_event_times: tuple[datetime, ...] = ()
+    accepted_events: tuple[tuple[datetime, str], ...] = ()
+    lifecycle_event_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +151,100 @@ class P5Cohort:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class P5SessionMembership:
+    producer: str
+    surface: str
+    native_session_id: str
+    direction: str
+    source_time_ns: int
+    matched: bool
+    source: SourceSessionObservation | None
+    intervals: tuple[LifecycleSessionObservation, ...]
+
+
+def _containing_interval(
+    source: SourceSessionObservation, intervals: Sequence[LifecycleSessionObservation]
+) -> LifecycleSessionObservation | None:
+    matched = tuple(
+        interval
+        for interval in intervals
+        if interval.interval_start is not None
+        and _epoch_ns(interval.interval_start) <= source.source_time_ns
+        and (
+            interval.interval_end is None
+            or source.source_time_ns < _epoch_ns(interval.interval_end)
+        )
+    )
+    if len(matched) > 1:
+        raise ValueError("ambiguous accepted lifecycle intervals")
+    return matched[0] if matched else None
+
+
+def p5_session_members(
+    sources: Sequence[SourceSessionObservation],
+    lifecycles: Sequence[LifecycleSessionObservation],
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[P5SessionMembership, ...]:
+    """Select first-source and any-containing-source directional session cohorts."""
+    start_ns, end_ns = _epoch_ns(start), _epoch_ns(end)
+    source_groups: dict[tuple[str, str, str], list[SourceSessionObservation]] = {}
+    lifecycle_groups: dict[tuple[str, str, str], list[LifecycleSessionObservation]] = {}
+    for source in sources:
+        if start_ns < source.source_time_ns <= end_ns:
+            source_groups.setdefault(
+                (source.producer, source.surface, source.native_session_id), []
+            ).append(source)
+    for interval in lifecycles:
+        lifecycle_groups.setdefault(
+            (interval.producer, interval.surface, interval.native_session_id), []
+        ).append(interval)
+    members: list[P5SessionMembership] = []
+    for key in sorted(source_groups.keys() | lifecycle_groups.keys()):
+        raw_sources = source_groups.get(key, ())
+        intervals = tuple(lifecycle_groups.get(key, ()))
+        if raw_sources:
+            first = min(raw_sources, key=lambda row: (row.source_time_ns, row.source_id or ""))
+            members.append(
+                P5SessionMembership(
+                    *key,
+                    "source_to_lifecycle",
+                    first.source_time_ns,
+                    _containing_interval(first, intervals) is not None,
+                    first,
+                    intervals,
+                )
+            )
+        event_times = {
+            instant
+            for interval in intervals
+            for instant, _ in interval.accepted_events
+            if start < instant <= end
+        }
+        if event_times:
+            witnesses = (
+                source
+                for source in raw_sources
+                if _containing_interval(source, intervals) is not None
+            )
+            witness = min(
+                witnesses, key=lambda row: (row.source_time_ns, row.source_id or ""), default=None
+            )
+            members.append(
+                P5SessionMembership(
+                    *key,
+                    "lifecycle_to_source",
+                    _epoch_ns(min(event_times)),
+                    witness is not None,
+                    witness,
+                    intervals,
+                )
+            )
+    return tuple(members)
+
+
 def reduce_p5_directional_cohorts(
     sources: Sequence[SourceSessionObservation],
     lifecycles: Sequence[LifecycleSessionObservation],
@@ -152,51 +253,19 @@ def reduce_p5_directional_cohorts(
     end: datetime,
 ) -> Mapping[str, P5Cohort]:
     """Reconcile exact producer/surface/native-session membership in a bounded range."""
-    cohorts: dict[str, P5Cohort] = {}
-    keys = {(row.producer, row.surface) for row in sources} | {
-        (row.producer, row.surface) for row in lifecycles
+    observations: chain[SourceSessionObservation | LifecycleSessionObservation] = chain(
+        sources, lifecycles
+    )
+    counts = {(row.producer, row.surface): [0, 0, 0, 0] for row in observations}
+    for member in p5_session_members(sources, lifecycles, start=start, end=end):
+        index = 0 if member.direction == "source_to_lifecycle" else 2
+        cohort = counts[(member.producer, member.surface)]
+        cohort[index] += 1
+        cohort[index + 1] += int(member.matched)
+    return {
+        f"{producer}.{surface}": P5Cohort(*cohort)
+        for (producer, surface), cohort in sorted(counts.items())
     }
-    for producer, surface in sorted(keys):
-        relevant_sources = [
-            row
-            for row in sources
-            if (row.producer, row.surface) == (producer, surface) and start < row.source_time <= end
-        ]
-        relevant_lifecycles = [
-            row
-            for row in lifecycles
-            if (row.producer, row.surface) == (producer, surface)
-            and any(start < event_time <= end for event_time in row.accepted_event_times)
-        ]
-        containing = {
-            source.native_session_id
-            for source in relevant_sources
-            if any(
-                lifecycle.native_session_id == source.native_session_id
-                and lifecycle.interval_start <= source.source_time
-                and (lifecycle.interval_end is None or source.source_time < lifecycle.interval_end)
-                for lifecycle in lifecycles
-            )
-        }
-        source_ids = {row.native_session_id for row in relevant_sources}
-        lifecycle_ids = {row.native_session_id for row in relevant_lifecycles}
-        lifecycle_with_source = {
-            lifecycle.native_session_id
-            for lifecycle in relevant_lifecycles
-            if any(
-                source.native_session_id == lifecycle.native_session_id
-                and lifecycle.interval_start <= source.source_time
-                and (lifecycle.interval_end is None or source.source_time < lifecycle.interval_end)
-                for source in relevant_sources
-            )
-        }
-        cohorts[f"{producer}.{surface}"] = P5Cohort(
-            len(source_ids),
-            len(containing),
-            len(lifecycle_ids),
-            len(lifecycle_with_source),
-        )
-    return cohorts
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,218 +276,6 @@ class AttributionBaselineProofInput:
     lifecycles: Sequence[LifecycleSessionObservation] | None
     start: datetime | None
     end: datetime | None
-
-
-RowScalar = str | int | bool | None
-_ROW_IDS: Final = frozenset(("A07", "A08", "A09"))
-_ROW_EVENT_STAGES: Final = ("source", "reducer", "delivery")
-
-
-@dataclass(frozen=True, slots=True)
-class AttributionRowEvidenceInput:
-    """One independently promotable A07--A09 producer/session evidence candidate."""
-
-    row_id: str
-    producer: str
-    native_session_id: str
-    event_id_inputs: Mapping[str, Mapping[str, object]]
-    direct_query_parameters: Mapping[str, RowScalar]
-    direct_query_parameter_types: Mapping[str, str]
-    direct_result: Mapping[str, RowScalar]
-    direct_result_types: Mapping[str, str]
-    oracle_parameters: Mapping[str, RowScalar]
-    oracle_parameter_types: Mapping[str, str]
-    oracle_result: Mapping[str, RowScalar]
-    oracle_result_types: Mapping[str, str]
-
-    @property
-    def event_ids(self) -> Mapping[str, str]:
-        return {stage: derive_event_id(self.event_id_inputs[stage]) for stage in _ROW_EVENT_STAGES}
-
-    def validate(self) -> None:
-        if self.row_id not in _ROW_IDS or self.producer not in _SUPPORTED:
-            raise ValueError("row evidence must target a supported A07--A09 obligation")
-        if not isinstance(self.native_session_id, str) or not self.native_session_id:
-            raise ValueError("row evidence requires a native session identity")
-        if set(self.event_id_inputs) != set(_ROW_EVENT_STAGES):
-            raise ValueError("row evidence requires source, reducer, and delivery inputs")
-        for ordinal, stage in enumerate(_ROW_EVENT_STAGES):
-            event_input = self.event_id_inputs[stage]
-            if set(event_input) != {
-                "experiment_id",
-                "producer",
-                "native_session_id",
-                "event_id_ordinal",
-            }:
-                raise ValueError("row event input must have the deterministic identity keys")
-            if (
-                event_input["experiment_id"] != AttributionExperimentId.BASELINE.value
-                or event_input["producer"] != self.producer
-                or event_input["native_session_id"] != self.native_session_id
-                or not isinstance(event_input["event_id_ordinal"], int)
-                or isinstance(event_input["event_id_ordinal"], bool)
-                or event_input["event_id_ordinal"] != ordinal
-            ):
-                raise ValueError("row event input does not bind its exact lineage")
-        _validate_row_scalars(
-            self.direct_query_parameters, self.direct_query_parameter_types, "direct query"
-        )
-        _validate_row_scalars(self.direct_result, self.direct_result_types, "direct result")
-        _validate_row_scalars(
-            self.oracle_parameters, self.oracle_parameter_types, "oracle parameters"
-        )
-        _validate_row_scalars(self.oracle_result, self.oracle_result_types, "oracle result")
-
-
-def _validate_row_scalars(
-    values: Mapping[str, RowScalar], declared_types: Mapping[str, str], label: str
-) -> None:
-    if not values or set(values) != set(declared_types):
-        raise ValueError(f"{label} requires values and exact scalar types")
-    for key, value in values.items():
-        actual = (
-            "null"
-            if value is None
-            else "boolean"
-            if isinstance(value, bool)
-            else "integer"
-            if isinstance(value, int)
-            else "string"
-            if isinstance(value, str)
-            else None
-        )
-        if actual is None or declared_types[key] != actual:
-            raise ValueError(f"{label} scalar type does not match {key}")
-
-
-def row_event_id_inputs(
-    producer: str, native_session_id: str
-) -> Mapping[str, Mapping[str, object]]:
-    """Return the fixed source/reducer/delivery identities for one row bundle."""
-    return {
-        stage: {
-            "experiment_id": AttributionExperimentId.BASELINE.value,
-            "producer": producer,
-            "native_session_id": native_session_id,
-            "event_id_ordinal": ordinal,
-        }
-        for ordinal, stage in enumerate(_ROW_EVENT_STAGES)
-    }
-
-
-def build_row_evidence_inputs(
-    activities: Sequence[CanonicalActivityVersion] | None,
-    sources: Sequence[SourceSessionObservation] | None,
-    lifecycles: Sequence[LifecycleSessionObservation] | None,
-    *,
-    start: datetime,
-    end: datetime,
-) -> tuple[AttributionRowEvidenceInput, ...]:
-    """Build only independently authoritative row candidates; absent inputs yield no rows."""
-    rows: list[AttributionRowEvidenceInput] = []
-    if sources is not None and lifecycles is not None:
-        for source in sources:
-            if not start < source.source_time <= end:
-                continue
-            matched = any(
-                lifecycle.producer == source.producer
-                and lifecycle.surface == source.surface
-                and lifecycle.native_session_id == source.native_session_id
-                and lifecycle.interval_start <= source.source_time
-                and (lifecycle.interval_end is None or source.source_time < lifecycle.interval_end)
-                for lifecycle in lifecycles
-            )
-            if matched:
-                rows.append(
-                    _row_evidence(
-                        "A07",
-                        source.producer,
-                        source.native_session_id,
-                        {"source_time": source.source_time.isoformat()},
-                        {
-                            "source_sessions": 1,
-                            "source_with_lifecycle": 1,
-                            "lifecycle_sessions": 1,
-                            "lifecycle_with_source": 1,
-                        },
-                    )
-                )
-    if activities is not None:
-        for activity in _latest_activities(activities, start, end):
-            query = {"source_time": activity.source_time.isoformat()}
-            rows.append(
-                _row_evidence(
-                    "A08",
-                    activity.producer,
-                    activity.native_session_id,
-                    query,
-                    {
-                        "eligible": 1,
-                        "attributed": int(activity.state == "attributed"),
-                        "unresolved": int(activity.state == "unresolved"),
-                        "distinct_projects": int(activity.project_id is not None),
-                    },
-                )
-            )
-            rows.append(
-                _row_evidence(
-                    "A09",
-                    activity.producer,
-                    activity.native_session_id,
-                    query,
-                    {
-                        "eligible": 1,
-                        "unresolved": int(activity.state == "unresolved"),
-                        "diagnostic_count": int(activity.state == "unresolved"),
-                        "diagnostic": activity.reason_code,
-                    },
-                )
-            )
-    return tuple(rows)
-
-
-def _row_evidence(
-    row_id: str,
-    producer: str,
-    native_session_id: str,
-    query: Mapping[str, RowScalar],
-    result: Mapping[str, RowScalar],
-) -> AttributionRowEvidenceInput:
-    parameters = {
-        "producer": producer,
-        "native_session_id": native_session_id,
-        **query,
-    }
-    types = {key: _row_scalar_type(value) for key, value in parameters.items()}
-    result_types = {key: _row_scalar_type(value) for key, value in result.items()}
-    row = AttributionRowEvidenceInput(
-        row_id,
-        producer,
-        native_session_id,
-        row_event_id_inputs(producer, native_session_id),
-        parameters,
-        types,
-        dict(result),
-        result_types,
-        dict(parameters),
-        dict(types),
-        dict(result),
-        dict(result_types),
-    )
-    row.validate()
-    return row
-
-
-def _row_scalar_type(value: RowScalar) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int):
-        return "integer"
-    if isinstance(value, str):
-        return "string"
-    raise ValueError("row values must be scalar")
 
 
 def _validated_authorities(
@@ -442,12 +299,18 @@ def _latest_activities(
     for activity in activities:
         activity.validate()
         previous = latest.get(activity.activity_id)
-        if start < activity.source_time <= end:
-            if previous is not None and previous.source_time != activity.source_time:
-                raise ValueError("activity versions must retain one immutable source time")
-            if previous is None or activity.version > previous.version:
-                latest[activity.activity_id] = activity
-    return tuple(sorted(latest.values(), key=lambda row: (row.source_time, row.activity_id)))
+        if previous is not None and previous.source_time_ns != activity.source_time_ns:
+            raise ValueError("activity versions must retain one immutable source time")
+        if previous is None or activity.version > previous.version:
+            latest[activity.activity_id] = activity
+    start_ns, end_ns = _epoch_ns(start), _epoch_ns(end)
+    selected = (row for row in latest.values() if start_ns < row.source_time_ns <= end_ns)
+    return tuple(sorted(selected, key=lambda row: (row.source_time_ns, row.activity_id)))
+
+
+def _epoch_ns(value: datetime) -> int:
+    delta = value - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _population(

@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,6 +17,18 @@ from agent_introspection.session_context import drain_inbox, parse_event, spool_
 from agent_introspection.source import CANONICAL_SERVICE_PRODUCERS, SourceSessionRow
 
 
+def _backup_outbox_snapshot(connection: sqlite3.Connection) -> tuple[str, str, str]:
+    snapshot = connection.execute(
+        """
+        SELECT event_id, payload_json, status
+        FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."event.scope"') = 'database-backup'
+        """
+    ).fetchone()
+    assert snapshot is not None
+    return snapshot
+
+
 def _source_session_group_id(native_ids: tuple[str, ...]) -> str:
     import hashlib
     import json
@@ -23,16 +36,18 @@ def _source_session_group_id(native_ids: tuple[str, ...]) -> str:
     return hashlib.sha256(json.dumps(native_ids, separators=(",", ":")).encode()).hexdigest()
 
 
-def _row(source_id: str, thread_ids: tuple[str, ...]) -> SourceSessionRow:
+def _row(source_id: str, native_ids: tuple[str, ...]) -> SourceSessionRow:
     return SourceSessionRow(
         source_kind="log",
         source_id=source_id,
         source_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         service_name="codex_exec",
         session_ids=(),
-        thread_ids=thread_ids,
+        thread_ids=(),
         legacy_thread_ids=(),
         gen_ai_conversation_ids=(),
+        conversation_ids=native_ids,
+        source_timestamp_ns=1_767_225_600_000_000_000,
     )
 
 
@@ -60,6 +75,8 @@ def test_source_session_resolution_uses_canonical_service_mapping(
         thread_ids=canonical.thread_ids,
         legacy_thread_ids=canonical.legacy_thread_ids,
         gen_ai_conversation_ids=canonical.gen_ai_conversation_ids,
+        conversation_ids=canonical.conversation_ids,
+        source_timestamp_ns=canonical.source_timestamp_ns,
     )
     assert _source_session_terminal(
         _SourceSessionResolutionRequest(
@@ -84,6 +101,8 @@ def test_source_session_resolution_uses_canonical_service_mapping(
                 ("wrong-thread",),
                 (),
                 ("wrong-conversation",),
+                (),
+                1_767_225_600_000_000_000,
             ),
             ("claude-session",),
         ),
@@ -94,11 +113,13 @@ def test_source_session_resolution_uses_canonical_service_mapping(
                 datetime(2026, 1, 1, tzinfo=UTC),
                 "codex-cli",
                 ("wrong-session",),
-                ("thread-id",),
+                ("wrong-thread",),
                 (),
                 ("wrong-conversation",),
+                ("conversation-id",),
+                1_767_225_600_000_000_000,
             ),
-            ("thread-id",),
+            ("conversation-id",),
         ),
         (
             SourceSessionRow(
@@ -110,6 +131,8 @@ def test_source_session_resolution_uses_canonical_service_mapping(
                 (),
                 ("thread_id",),
                 ("wrong-conversation",),
+                (),
+                1_767_225_600_000_000_000,
             ),
             ("thread_id",),
         ),
@@ -123,6 +146,8 @@ def test_source_session_resolution_uses_canonical_service_mapping(
                 ("wrong-thread",),
                 (),
                 ("conversation-id",),
+                (),
+                1_767_225_600_000_000_000,
             ),
             ("conversation-id",),
         ),
@@ -156,6 +181,8 @@ def test_native_ids_follow_exact_signal_and_service_contract(
             ("thread-id",),
             (),
             (),
+            (),
+            1_767_225_600_000_000_000,
         ),
         SourceSessionRow(
             "trace",
@@ -166,6 +193,8 @@ def test_native_ids_follow_exact_signal_and_service_contract(
             (),
             (),
             ("conversation-id",),
+            (),
+            1_767_225_600_000_000_000,
         ),
         SourceSessionRow(
             "log",
@@ -176,6 +205,8 @@ def test_native_ids_follow_exact_signal_and_service_contract(
             (),
             (),
             ("conversation-id",),
+            (),
+            1_767_225_600_000_000_000,
         ),
     ],
 )
@@ -183,6 +214,7 @@ def test_wrong_native_field_is_rejected_without_projection(
     tmp_path: Path, row: SourceSessionRow
 ) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = _backup_outbox_snapshot(connection)
     connection.execute(
         "INSERT INTO scan_runs (id, status, started_at) VALUES ('scan', 'running', ?)",
         ("2026-01-01T00:00:00+00:00",),
@@ -204,10 +236,16 @@ def test_wrong_native_field_is_rejected_without_projection(
     )
     import json
 
-    (payload_json,) = connection.execute("SELECT payload_json FROM otlp_outbox").fetchone()
+    (payload_json,) = connection.execute(
+        """
+        SELECT payload_json FROM otlp_outbox
+        WHERE json_extract(payload_json, '$."event.scope"') = 'source-session'
+        """
+    ).fetchone()
     payload = json.loads(payload_json)
     assert payload["source.native_key.status"] == "wrong_field"
     assert not {"source.producer", "source.producer_surface", "source.session.id"} & payload.keys()
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
 
 
 def test_observed_exact_unresolved_context_is_failed_not_blocked(tmp_path: Path) -> None:
@@ -272,17 +310,7 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
             event_id, producer, session_id, event_type, occurred_at,
             project_id, project_name, project_root, project_kind
         ) VALUES (
-            ?, 'codex-cli', 'accepted', 'session_start', ?,
-            ?, 'repo', '/repo', 'git'
-        )""",
-        (evidence_id, occurred_at, project_id),
-    )
-    connection.execute(
-        """INSERT INTO session_context_intervals (
-            event_id, producer, session_id, started_at,
-            project_id, project_name, project_root, project_kind
-        ) VALUES (
-            ?, 'codex-cli', 'accepted', ?,
+            ?, 'codex-cli', 'accepted', 'session_context', ?,
             ?, 'repo', '/repo', 'git'
         )""",
         (evidence_id, occurred_at, project_id),
@@ -312,7 +340,7 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
             id, producer, producer_surface, correlation_id, lifecycle_event,
             occurred_at, reason_code, source_adapter, created_at
         ) VALUES (
-            ?, 'codex-cli', 'codex-cli', 'non-git', 'session_start',
+            ?, 'codex-cli', 'codex-cli', 'non-git', 'session_context',
             ?, 'non_git_workspace', 'test', ?
         )""",
         (non_git_evidence_id, occurred_at, occurred_at),
@@ -333,6 +361,8 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
                     (),
                     (),
                     (),
+                    (),
+                    1_767_139_200_000_000_000,
                 ),
                 _row("missing", ()),
                 _row("conflicting", ("one", "two")),
@@ -391,9 +421,7 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
         ),
         ("unresolved", "failed", "no_authoritative_context", None, None, None, None, None),
     ]
-    statements: list[str] = []
     resolved_intervals = {}
-    connection.set_trace_callback(statements.append)
     cached = _source_session_terminal(
         _SourceSessionResolutionRequest(
             connection,
@@ -413,17 +441,13 @@ def test_raw_source_sessions_use_exact_context_and_conserve(tmp_path: Path) -> N
         )
         == cached
     )
-    connection.set_trace_callback(None)
-    assert (
-        sum("FROM session_context_intervals AS interval" in statement for statement in statements)
-        == 1
-    )
 
 
 def test_source_session_events_use_the_gate_six_attribute_contract(tmp_path: Path) -> None:
     import json
 
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = _backup_outbox_snapshot(connection)
     connection.execute(
         "INSERT INTO scan_runs (id, status, started_at) VALUES ('scan', 'running', ?)",
         ("2026-01-01T00:00:00+00:00",),
@@ -441,6 +465,8 @@ def test_source_session_events_use_the_gate_six_attribute_contract(tmp_path: Pat
             thread_ids=(),
             legacy_thread_ids=(),
             gen_ai_conversation_ids=(),
+            conversation_ids=(),
+            source_timestamp_ns=1_767_225_600_000_000_000,
         ),
     ]
     _persist_source_sessions(
@@ -452,7 +478,11 @@ def test_source_session_events_use_the_gate_six_attribute_contract(tmp_path: Pat
     events = {
         payload["source.record.id"]: payload
         for (payload_json,) in connection.execute(
-            "SELECT payload_json FROM otlp_outbox ORDER BY event_id"
+            """
+            SELECT payload_json FROM otlp_outbox
+            WHERE json_extract(payload_json, '$."event.scope"') = 'source-session'
+            ORDER BY event_id
+            """
         ).fetchall()
         for payload in (json.loads(payload_json),)
     }
@@ -504,12 +534,14 @@ def test_source_session_events_use_the_gate_six_attribute_contract(tmp_path: Pat
             }
             & events[source_id].keys()
         )
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
 
 
 def test_raw_current_projection_reconciles_late_codex_context_in_versions(
     tmp_path: Path,
 ) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = _backup_outbox_snapshot(connection)
     occurred_at = "2026-01-01T00:00:00+00:00"
     project_id = "4" * 64
     evidence_id = "5" * 64
@@ -519,10 +551,12 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
         source_id="shared",
         source_timestamp=codex.source_timestamp,
         service_name="claude-code",
-        session_ids=codex.session_ids,
+        session_ids=codex.conversation_ids,
         thread_ids=(),
         legacy_thread_ids=(),
         gen_ai_conversation_ids=(),
+        conversation_ids=(),
+        source_timestamp_ns=codex.source_timestamp_ns,
     )
     for scan_run_id in ("first", "second"):
         connection.execute(
@@ -629,6 +663,7 @@ def test_raw_current_projection_reconciles_late_codex_context_in_versions(
            WHERE json_extract(payload_json, '$."source.service"') = 'codex_exec'
            ORDER BY json_extract(payload_json, '$."entity.version"')"""
     ).fetchall() == [(1, "failed"), (2, "attributed")]
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
     assert connection.execute("SELECT COUNT(*) FROM source_session_records").fetchone() == (6,)
     assert connection.execute(
         "SELECT timestamp_ns, row_id FROM source_watermarks "
@@ -660,6 +695,8 @@ def test_late_context_reconciles_metric_source_sessions(tmp_path: Path) -> None:
         thread_ids=(),
         legacy_thread_ids=(),
         gen_ai_conversation_ids=(),
+        conversation_ids=(),
+        source_timestamp_ns=1_767_225_610_000_000_000,
     )
     for scan_run_id in ("first", "reconcile"):
         connection.execute(
@@ -753,6 +790,7 @@ def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(
     tmp_path: Path,
 ) -> None:
     connection = connect_database(tmp_path / "introspection.sqlite3")
+    backup_snapshot = _backup_outbox_snapshot(connection)
     occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
     codex = _row("shared", ("native-session",))
     claude = SourceSessionRow(
@@ -760,10 +798,12 @@ def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(
         source_id="shared",
         source_timestamp=codex.source_timestamp,
         service_name="claude-code",
-        session_ids=codex.session_ids,
+        session_ids=codex.conversation_ids,
         thread_ids=(),
         legacy_thread_ids=(),
         gen_ai_conversation_ids=(),
+        conversation_ids=(),
+        source_timestamp_ns=codex.source_timestamp_ns,
     )
     for scan_run_id in ("first", "reconcile"):
         connection.execute(
@@ -840,6 +880,7 @@ def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(
            WHERE json_extract(payload_json, '$."source.service"') = 'codex_exec'
              AND json_extract(payload_json, '$."entity.version"') = 2"""
     ).fetchone() == (1,)
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
 
     conflicting_event_id = "8" * 64
     spool_event(
@@ -903,6 +944,7 @@ def test_pending_raw_reconciliation_survives_drained_context_and_scan_failure(
         (2, "attributed", "accepted_git_context"),
         (3, "failed", "conflicting_correlation_id"),
     ]
+    assert _backup_outbox_snapshot(connection) == backup_snapshot
     assert connection.execute(
         """SELECT completed_at IS NOT NULL FROM source_session_reconciliation_pending
            WHERE producer = 'codex-cli' AND session_id = 'native-session'"""

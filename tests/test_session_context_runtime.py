@@ -18,12 +18,20 @@ RUNTIME = (
 def make_repository(tmp_path: Path, name: str = "project") -> Path:
     workspace = tmp_path / name
     workspace.mkdir()
-    subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+    subprocess.run(
+        ["git", "init", "--quiet", str(workspace)], check=True, env=isolated_environment()
+    )
     return workspace
 
 
+def isolated_environment() -> dict[str, str]:
+    # Git hooks export GIT_DIR and related variables; inheriting them would
+    # resolve the fixture workspace to the repository running the hook.
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
 def run_runtime(home: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    environment = os.environ | {"HOME": str(home)}
+    environment = isolated_environment() | {"HOME": str(home)}
     return subprocess.run(
         [str(RUNTIME), *arguments],
         check=False,
@@ -225,7 +233,7 @@ def test_runtime_spools_git_resolution_failure(tmp_path: Path) -> None:
         "exit 1\n"
     )
     shim.chmod(0o755)
-    environment = os.environ | {
+    environment = isolated_environment() | {
         "HOME": str(home),
         "PATH": f"{shim_directory}{os.pathsep}{os.environ['PATH']}",
     }

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_introspection.config import DEFAULT_DATABASE_PATH
-from agent_introspection.migrations import MIGRATIONS, apply_migrations
+from agent_introspection.ledger_identity import database_identity
+from agent_introspection.migrations import MIGRATIONS, AppliedMigration, apply_migrations
 
 
 class FreshStartError(RuntimeError):
@@ -24,6 +25,14 @@ class FreshStartManifest:
     approved_source_snapshots: tuple[tuple[Any, ...], ...]
     canonical_schema_identity: tuple[tuple[str, str, str], ...]
     checksum: str
+
+
+@dataclass(frozen=True, slots=True)
+class _FreshOperationalSeed:
+    """The backup fact created while migrating this otherwise empty target."""
+
+    migrations: tuple[AppliedMigration, ...]
+    database_identity: str
 
 
 def _json_value(value: object) -> object:
@@ -156,15 +165,64 @@ def _runtime_tables(connection: sqlite3.Connection) -> tuple[str, ...]:
         str(row[0])
         for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name NOT IN ('migrations', 'source_schema_snapshots', 'source_watermarks') "
-            "ORDER BY name"
+            "AND name NOT IN ("
+            "'migrations', 'source_schema_snapshots', 'source_watermarks', "
+            "'backup_observations', 'otlp_outbox'"
+            ") ORDER BY name"
         )
     )
 
 
+def _validate_operational_seed(connection: sqlite3.Connection, seed: _FreshOperationalSeed) -> None:
+    expected_migrations = tuple(
+        (migration.version, migration.name, migration.checksum) for migration in MIGRATIONS
+    )
+    actual_migrations = tuple(
+        (migration.version, migration.name, migration.checksum) for migration in seed.migrations
+    )
+    if actual_migrations != expected_migrations:
+        raise FreshStartError("fresh-start copy did not apply canonical target migrations")
+    if database_identity(connection) != seed.database_identity:
+        raise FreshStartError("fresh-start copy target database identity changed")
+    observations = connection.execute(
+        """
+        SELECT event_id, database_identity, operation, state, verification, failure_class
+        FROM backup_observations
+        """
+    ).fetchall()
+    expected_operations = {
+        f"pre-migration-v{migration.version}"
+        for migration in seed.migrations
+        if migration.version >= 18
+    }
+    if (
+        len(observations) != len(expected_operations)
+        or {row[2] for row in observations} != expected_operations
+    ):
+        raise FreshStartError("fresh-start copy retains unowned backup observations")
+    for _, identity, _, state, verification, failure_class in observations:
+        if (identity, state, verification, failure_class) != (
+            seed.database_identity,
+            "succeeded",
+            "ok",
+            None,
+        ):
+            raise FreshStartError("fresh-start copy backup observation is not target-owned")
+    if {row[0] for row in connection.execute("SELECT event_id FROM otlp_outbox")} != {
+        row[0] for row in observations
+    }:
+        raise FreshStartError("fresh-start copy retains unowned operational outbox events")
+
+
 def _validate_target(
-    connection: sqlite3.Connection, manifest: FreshStartManifest, cutoff: str, cutoff_ns: int
+    connection: sqlite3.Connection,
+    manifest: FreshStartManifest,
+    cutoff: str,
+    cutoff_ns: int,
+    seed: _FreshOperationalSeed,
 ) -> None:
+
+    _validate_operational_seed(connection, seed)
     if _schema_identity(connection) != manifest.canonical_schema_identity:
         raise FreshStartError("fresh-start copy schema does not match the canonical migration")
     if any(
@@ -214,7 +272,10 @@ def rehearse_fresh_start_copy(
         connection = sqlite3.connect(target_path)
         try:
             connection.execute("PRAGMA foreign_keys = ON")
-            apply_migrations(connection, target_path)
+            applied_migrations = apply_migrations(connection, target_path)
+            seed = _FreshOperationalSeed(
+                applied_migrations, database_identity(connection, database_path=target_path)
+            )
             connection.execute("BEGIN IMMEDIATE")
             connection.executemany(
                 "INSERT INTO source_schema_snapshots "
@@ -229,7 +290,7 @@ def rehearse_fresh_start_copy(
             )
             connection.commit()
             _validate_source(source_connection, manifest)
-            _validate_target(connection, manifest, cutoff, cutoff_ns)
+            _validate_target(connection, manifest, cutoff, cutoff_ns, seed)
             return manifest
         except BaseException:
             if connection.in_transaction:

@@ -78,6 +78,7 @@ class RunEnvelope:
     remote_result: Mapping[str, Mapping[str, Mapping[str, int | float]]]
     transport_query: Mapping[str, object]
     finding_evidence_bundle: Mapping[str, object] | None
+    finding_capture: Mapping[str, str]
     drain: Mapping[str, int]
 
     def payload(self) -> dict[str, object]:
@@ -106,6 +107,7 @@ class RunEnvelope:
             "finding_evidence_bundle": _plain(self.finding_evidence_bundle)
             if self.finding_evidence_bundle is not None
             else None,
+            "finding_capture": dict(self.finding_capture),
             "drain": dict(self.drain),
             "cleanup_selector": {
                 "namespace": self.namespace,
@@ -162,9 +164,11 @@ def _epoch_ns(value: datetime) -> int:
 
 
 def extract_live(
-    connection: sqlite3.Connection, request: LiveProofRequest
+    connection: sqlite3.Connection,
+    request: LiveProofRequest,
+    finding_capture_path: Path,
 ) -> tuple[RecurrenceLiveEvidence, ...]:
-    from experiments.dashboard_prototype.recurrence_live_finding import extract as finding
+    from experiments.dashboard_prototype.recurrence_live_finding import extract_capture as finding
     from experiments.dashboard_prototype.recurrence_live_intervention import extract as intervention
     from experiments.dashboard_prototype.recurrence_live_practice import extract as practice
     from experiments.dashboard_prototype.recurrence_live_rule import extract as rule
@@ -172,7 +176,7 @@ def extract_live(
 
     evidence = (
         wave_a(connection, request),
-        finding(connection, request),
+        finding(finding_capture_path, request),
         practice(connection, request),
         rule(connection, request),
         intervention(connection, request),
@@ -424,8 +428,8 @@ def remote_calculations(
     )
     sql = (
         "SELECT experiment_id, dimension_json, pair.1 AS measure, "
-        "sum(toFloat64(pair.2)) AS value, "
-        "toTypeName(sum(toFloat64(pair.2))) AS value_type FROM ("
+        "sum(JSONExtract(pair.2, 'Float64')) AS value, "
+        "toTypeName(sum(JSONExtract(pair.2, 'Float64'))) AS value_type FROM ("
         "SELECT attributes_string['event.id'] AS event_id, "
         "any(attributes_string['dashboard.experiment_id']) AS experiment_id, "
         "any(attributes_string['dashboard.dimension_json']) AS dimension_json, "
@@ -439,8 +443,9 @@ def remote_calculations(
         "AND attributes_string['event.id'] IN (" + placeholders + ") GROUP BY event_id "
         "HAVING uniqExact(tuple(attributes_string['dashboard.experiment_id'], "
         "attributes_string['dashboard.dimension_json'], "
-        "attributes_string['dashboard.measure_json'])) = 1"
+        "attributes_string['dashboard.measure_json'], timestamp)) = 1"
         ") ARRAY JOIN JSONExtractKeysAndValuesRaw(measure_json) AS pair "
+        "WHERE match(pair.2, '^-?(0|[1-9][0-9]*)\\.[0-9]+([eE][+-]?[0-9]+)?$') "
         "GROUP BY experiment_id, dimension_json, measure"
     )
     remote: dict[str, dict[str, dict[str, int | float]]] = {
@@ -675,19 +680,43 @@ def _reject_unsafe(value: object) -> None:
         raise RecurrenceExecutionError("non-JSON evidence value")
 
 
+def _capture_binding(path: Path) -> Mapping[str, str]:
+    capture = path.resolve(strict=True)
+    if capture.suffix != ".sqlite" or not capture.is_file():
+        raise RecurrenceExecutionError("finding capture must be an existing SQLite file")
+    digest = hashlib.sha256()
+    with capture.open("rb") as source:
+        for chunk in iter(lambda: source.read(1_048_576), b""):
+            digest.update(chunk)
+    return {"filename": capture.name, "sha256": digest.hexdigest()}
+
+
 def run(
-    *, run_id: str, start: datetime, end: datetime, output: Path, config: AppConfig | None = None
+    *,
+    run_id: str,
+    window: ExtractionWindow,
+    output: Path,
+    finding_capture_path: Path,
+    config: AppConfig | None = None,
 ) -> RunEnvelope:
     validate_run_id(run_id)
     output = validate_output_path(output)
-    window = ExtractionWindow(start, end)
-    _epoch_ns(start)
-    _epoch_ns(end)
+    if output.exists():
+        raise FileExistsError("recurrence output path already exists")
+    finding_capture = _capture_binding(finding_capture_path)
+    _epoch_ns(window.start)
+    _epoch_ns(window.end)
     config = config or load_config()
     endpoint = validate_loopback_endpoint(config.signoz.otlp_http_endpoint)
     connection = sqlite3.connect(f"file:{config.database.path}?mode=rw", uri=True)
     try:
-        evidence = extract_live(connection, LiveProofRequest(run_id, start, end))
+        connection.execute("BEGIN")
+        evidence = extract_live(
+            connection, LiveProofRequest(run_id, window.start, window.end), finding_capture_path
+        )
+        connection.execute("COMMIT")
+        if finding_capture != _capture_binding(finding_capture_path):
+            raise RecurrenceExecutionError("finding capture changed during extraction")
         primitives = primitive_events(evidence, run_id, window)
         client = ClickHouseClient(
             docker_context=config.signoz.docker_context,
@@ -725,6 +754,7 @@ def run(
                     transport_query=transport_query,
                 )
             ),
+            finding_capture,
             {
                 "primitive_selected": primitive_drain["selected"],
                 "primitive_delivered": primitive_drain["delivered"],
@@ -733,7 +763,8 @@ def run(
             },
         )
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(envelope.canonical_json() + "\n", encoding="utf-8")
+        with output.open("x", encoding="utf-8") as destination:
+            destination.write(envelope.canonical_json() + "\n")
         return envelope
     finally:
         connection.close()
@@ -745,12 +776,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--finding-capture-path", required=True)
     args = parser.parse_args(argv)
     run(
         run_id=args.run_id,
-        start=datetime.fromisoformat(args.start.replace("Z", "+00:00")),
-        end=datetime.fromisoformat(args.end.replace("Z", "+00:00")),
+        window=ExtractionWindow(
+            datetime.fromisoformat(args.start.replace("Z", "+00:00")),
+            datetime.fromisoformat(args.end.replace("Z", "+00:00")),
+        ),
         output=Path(args.output),
+        finding_capture_path=Path(args.finding_capture_path),
     )
     return 0
 
