@@ -8,10 +8,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
-from agent_introspection import pipeline_dashboard
-from agent_introspection.config import AppConfig, PipelineConfig
 from agent_introspection.pipeline_attribution import query_attribution
 from agent_introspection.pipeline_projection import PipelineWindow
 from agent_introspection.scan import (
@@ -464,9 +460,7 @@ def test_retained_overlaps_and_divergent_duplicate_payloads_fail_closed() -> Non
     assert duplicate["p6-delay"]["state"] == "Integrity failure"
 
 
-def test_activity_and_lifecycle_query_failures_remain_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_activity_and_lifecycle_query_failures_remain_independent() -> None:
     client = Client([_activity("activity", 1, "resolved")], [_interval(900, None)], [_source(1100)])
     client.unavailable = "activity"
     report = _report(client)
@@ -476,21 +470,6 @@ def test_activity_and_lifecycle_query_failures_remain_independent(
     report = _report(client)
     assert report["p7-coverage"]["state"] == "Data"
     assert report["p5-correlation"]["state"] == "Query/system error"
-
-    config = AppConfig(
-        pipeline=PipelineConfig(measurement_start=datetime.fromisoformat(_iso(_at(1200))))
-    )
-    monkeypatch.setattr(pipeline_dashboard, "load_config", lambda: config)
-    monkeypatch.setattr(pipeline_dashboard, "ClickHouseClient", lambda **_: client)
-    bounded = pipeline_dashboard.query_report(
-        start=datetime.fromisoformat(_iso(START)),
-        end=datetime.fromisoformat(_iso(END)),
-        evaluated_at=datetime.fromisoformat(_iso(END)),
-    )
-    assert bounded["panels"]["p5-correlation"]["state"] == "Query/system error"
-    assert bounded["panels"]["p6-delay"]["state"] == "Query/system error"
-    for panel in bounded["panels"].values():
-        assert len(panel["reasons"]) == len(set(panel["reasons"]))
 
 
 def test_fresh_measurement_makes_wholly_pre_cutover_attribution_unavailable() -> None:

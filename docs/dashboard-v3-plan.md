@@ -52,14 +52,34 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
                 └─> introspection.spans / introspection.logs
                     (ReplacingMergeTree, no TTL, Codex plumbing spans dropped,
                      raw text and identity keys removed, normalized x.* fields added)
-                      └─> views: usage_events · task_outcomes · tool_calls · user_signals
-                            └─> Bun server runs small aggregate queries → React views
+                      └─> views: usage_events · task_outcomes · tool_calls · user_signals · model_calls
+                            └─> <view>_snapshot tables, refreshed right after each minute load
+                                  └─> Bun server: small aggregate queries over ClickHouse HTTP → React views
+signal_support.toml ─ facts install ─> introspection.signals · signal_routes · signal_support · signal_strays
 SQLite keeps only app workflow state (findings, proposals, interventions).
 ```
 
 The source is [`facts.py`](../src/agent_introspection/facts.py) and
 [`facts_sql/`](../src/agent_introspection/facts_sql/). Operate it with
 `agent-introspection facts install | backfill --days N | status`.
+
+Serving (phase 2):
+
+- **Transport.** ClickHouse HTTP at `http://signoz-clickhouse.orb.local:8123`, the
+  address OrbStack gives the container on this Mac only. No port is published and the
+  SigNoz stack is untouched. A call costs about 20 ms, against about 400 ms for
+  `docker exec`. Statements run with `readonly=2`, and the window and harness are bound
+  as query parameters.
+- **Snapshots.** Each fact view has a `<view>_snapshot` table. A non-append
+  refreshable view rebuilds it every minute, `DEPENDS ON` both minute loaders. The
+  view SQL, and so its parity with agent-observability, is unchanged; views read the
+  snapshots in 30–40 ms instead of 0.3–0.8 s.
+- **Registry tables.** `facts install` validates `signal_support.toml` (every
+  harness-scoped signal covers every harness, `differs` and `not emitted` carry a
+  note, routes exist) and runs every route predicate through ClickHouse before
+  loading four tables: `signals` (definitions), `signal_routes` (per-harness
+  predicates, `expect` rows or events), `signal_support` (signal, harness, route,
+  unit, alignment, note), and `signal_strays` (explained stray rows).
 
 Window design:
 
@@ -85,6 +105,11 @@ For Codex `codex.tool_result`, the loader derives the following fields and disca
 
 Prompt text (`prompt`, `user_prompt`) and identity keys (`user.email`, account,
 organization, and user IDs) are dropped from spans and logs; `prompt_length` is kept.
+omp tool intent text (`pi.gen_ai.tool.call.intent`) is dropped. Span status messages
+keep only the first error-like line, normalized like `x.failure_signature`, and span
+names have home directories shown as `~`. Codex spans are kept by allowlist
+(`session_task.*`, `*sampling_request`, `turn/start|interrupt|steer`, and
+`handle_responses` with usage); everything else Codex emits is plumbing.
 
 ## Verification discipline
 
@@ -111,7 +136,7 @@ The inventory was taken on 2026-09-28 over 7 days. Legend: ✅ native field,
 | Capability | omp | Codex | Claude Code |
 | --- | --- | --- | --- |
 | Session identity | ✅ `gen_ai.conversation.id` | ✅ logs `conversation.id`; turns `thread.id` | ✅ `session.id` |
-| Tokens and cache | ✅ incl. reasoning | ✅ incl. reasoning | ✅ no reasoning |
+| Tokens and cache | ✅ incl. reasoning and cache creation | ✅ incl. reasoning; cache writes always 0 | ✅ no reasoning |
 | Reasoning effort | ✅ | ✅ | ◐ `effort`, rarely set |
 | Model call latency | ✅ span duration, first chunk | ✅ `ttft_ms`, turn/sampling spans | ✅ `ttft_ms`, `duration_ms` |
 | Call errors | ✅ span status | ◐ `/responses` attempts only | ✅ HTTP `status_code`, `attempt` |
@@ -191,8 +216,9 @@ Known alignment notes to carry into the registry:
   reason, or an aborted tool call. Claude Code: not emitted.
 - **Task error.** omp: the run's error stop reason. Claude Code: any LLM request
   with an error or status ≥ 400. Codex: not emitted.
-- **Input tokens.** These include cache reads for all producers. Claude Code also
-  includes cache creation; omp has no separate cache-creation field.
+- **Input tokens.** These include cache reads for all producers, and cache creation
+  for Claude Code (summed) and omp (inside `gen_ai.usage.input_tokens`, split out as
+  `gen_ai.usage.cache_creation.input_tokens`).
 - **Model operation outcome.** Codex: `/responses` attempt. Claude Code: LLM
   request. omp: chat span.
 
@@ -221,12 +247,65 @@ note generated from the signal support registry.
 | --- | --- | --- | --- |
 | 0 | Archive the proof-gated work | Commit and tag `archive/proof-gated-dashboard` | Done 2026-09-28 |
 | 1 | ClickHouse facts: tables, loaders, views, backfill | Parity and invariants pass; loaders refresh every minute | Done 2026-09-28 |
-| 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Next |
-| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | |
+| 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s |
+| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Next |
 | 4 | V5 Friction, V6 Guardrails | Same | |
 | 5 | V7 Provider | Same | |
 | 6 | V8 Recurrence, then V9 Interventions | Same | |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
+
+## Findings log
+
+Each anomaly is recorded as finding → evidence → fix → validated result.
+
+**F1. The fact store looked deleted after an OrbStack restart (2026-09-28).**
+Evidence: at 11:43Z OrbStack restarted with `data_dir ~/.orbstack-recovery-20260928`.
+That snapshot's traces ended on 2026-09-05, and it had no `introspection`
+database. The agent-observability project, which was normalizing SigNoz retention to
+90 days, caused the switch. Fix: none in this repo. OrbStack is back on
+`/Volumes/UGreen-External/Docker`, where raw data now runs from 2026-08-24; 2026-09-06
+to 09-12 is unrecoverable. Validated: all databases present, traces and logs TTL 90
+days, `facts backfill --days 90` re-projected 2026-08-24 onward.
+
+**F2. Old Codex builds emitted h2/tokio frame spans.** Evidence: after the backfill,
+`introspection.spans` held 37.4M rows, mostly `codex_cli_rs` and app-server
+`try_reclaim_frame`, `poll_ready`, and `FramedRead::*` from 08-24 to 09-05. Fix: Codex
+spans are selected by allowlist, and the stored plumbing rows were deleted (projection
+rows only; all re-derivable from SigNoz). Validated: 335k spans after re-backfill;
+view parity unchanged.
+
+**F3. Raw tool output was stored in omp span status messages (D4).** Evidence: 1,084
+`execute_tool` spans held `status_message` up to 51,390 characters, and 22,598 held
+`pi.gen_ai.tool.call.intent` text. Fix: the span loader keeps a normalized first error
+line (≤ 160 characters) and drops the intent key. Backfill, then `OPTIMIZE … FINAL`,
+purged the old versions. Validated: Pipeline sanitization shows 0 dropped keys, 0
+status > 160, 0 home paths in both tables.
+
+**F4. omp does emit cache creation.** Evidence: `gen_ai.usage.cache_creation.input_tokens`
+is present on every omp chat span (71 non-zero, 164K tokens); input ≥ cache read +
+creation on all rows. Codex emits `cache_write_token_count`, always 0. Fix:
+`usage_events.cache_creation_input` reads both; registry `usage.cache_creation` is
+aligned for omp, and differs for Codex with the always-0 note. Validated: token,
+cached, and output parity with the raw source unchanged.
+
+**F5. Claude Code sessions mislabelled `oh-my-pi` on five days, not one.** Evidence:
+the coverage grid flagged 11–36 unexplained stray cells for omp after the 08-24 history
+arrived. Claude-style spans and logs under `oh-my-pi` appear on 2026-08-24, 08-28,
+09-01, 09-02, and 09-13. Fix: the registered strays cover any Claude-style event or
+`claude_code.*` span under omp, with the inferred cause (Claude Code launched from an
+omp shell inherits `OTEL_SERVICE_NAME`). The rows are counted neither as omp nor as
+Claude Code. Validated: 0 unexplained cells; 3 explained stray cells.
+
+**F6. Rare-event routes read as possible breaks.** Evidence: Codex CLI and exec
+emitted no `turn/interrupt` or `turn/steer` in 90 days while otherwise active. Fix:
+routes for rare events carry `expect = "events"`, and the grid reports "no events"
+for them; boundary routes (usage, tasks, tools) still report a possible break.
+Validated: 3 "no events" cells, 0 possible breaks.
+
+**F7. A raw-source parity recount over 90 days took 2.35 s.** Fix: parity covers the
+last 7 days of the selected window, ending 10 minutes before now; the panel states the
+window. Validated: operations and input, cached, and output tokens match exactly for
+all five harnesses; Pipeline 90-day 0.36 s warm.
 
 ## Operations
 

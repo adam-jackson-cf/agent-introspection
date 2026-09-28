@@ -35,28 +35,32 @@ the same check-only quality suite, including the independent dashboard package:
 bash scripts/run-ci-quality-gates.sh
 ```
 
-## Dashboard facts (v3)
+## Dashboard facts
 
-The dashboard is moving to ClickHouse-materialized facts; see the
+The dashboard reads ClickHouse-materialized facts; see the
 [Dashboard v3 Plan](docs/dashboard-v3-plan.md). Refreshable materialized views copy
 curated producer spans and logs from SigNoz into the durable `introspection`
-database every minute, with raw prompt/command text and identity keys removed.
-The views `usage_events`, `task_outcomes`, `tool_calls`, and `user_signals`
-normalize omp, Codex, and Claude Code telemetry.
+database every minute, with raw prompt, command, argument, and output text and
+identity keys removed. The views `usage_events`, `task_outcomes`, `tool_calls`,
+`user_signals`, and `model_calls` normalize omp, Codex, and Claude Code telemetry;
+a snapshot table of each view is refreshed right after every minute load.
+
+The signal support registry,
+[`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml),
+defines each dashboard signal once and records, per harness, the route that
+reaches it, whether that route is aligned or differs, or why it is not emitted.
+`facts install` validates it and loads it into `introspection.signal_*` tables;
+every panel's info note is rendered from those tables.
 
 ```sh
-uv run agent-introspection facts install          # create/refresh tables, loaders, views
-uv run agent-introspection facts backfill --days 40  # copy retained SigNoz history
-uv run agent-introspection facts status           # loader state and per-harness freshness
+uv run agent-introspection facts install           # tables, loaders, views, snapshots, registry
+uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
+uv run agent-introspection facts status            # loader state and per-harness freshness
 ```
-
-The companion and pipeline sections below describe the proof-gated approach
-archived at tag `archive/proof-gated-dashboard`; they are replaced phase by phase.
 
 ## Dashboard companion
 
-The repository-owned React companion is an independent Bun package in
-`dashboard/`; it is not managed by the root package manifest. Its package
+The React companion is an independent Bun package in `dashboard/`. Its package
 commands, which are included in the canonical quality suite, are:
 
 ```sh
@@ -69,66 +73,19 @@ bun run --cwd dashboard build
 bun run --cwd dashboard start
 ```
 
-The server binds only to `127.0.0.1:4173` and serves the five direct routes:
-`/pipeline`, `/provider`, `/usage`, `/tools`, and `/recurrence`. It requires
-OrbStack running with the existing SigNoz deployment stored at
-`/Volumes/UGreen-External/Docker`, a healthy loopback UI at `127.0.0.1:8080`,
-and collector listeners at `127.0.0.1:4317` and `127.0.0.1:4318`.
+The server binds only to `127.0.0.1:4173`. It queries ClickHouse over HTTP at
+`http://signoz-clickhouse.orb.local:8123`, the address OrbStack gives the SigNoz
+container on this Mac only (no published port; override with
+`INTROSPECTION_CLICKHOUSE_URL`). Every statement runs read-only with the window
+and harness bound as query parameters. The Interventions view also reads findings
+and proposals from the workflow SQLite store (`INTROSPECTION_WORKFLOW_DB`).
 
-For each dashboard request, the Bun backend prepares the registry once and
-uses a bounded 14.5-second application deadline with a 15-second transport
-deadline. It launches the worktree's `.venv/bin/python` directly; that development
-environment must already be available. On cancellation or deadline it
-cooperatively terminates Python, cancels its owned ClickHouse query, and reaps
-the process group. Noncooperative descendants are killed; cleanup failures remain
-observable.
-
-Every route deliberately retains its designed measurement, control, and
-evidence-table places. Until authoritative production measurement/control data
-and its proof gate are available, the companion shows its missing-data image and
-`Missing data` there; it does not show a fake metric, zero, `No data`, or
-`Unavailable`. `Unavailable` is reserved for a deployed contract that later
-becomes incomplete or unqueryable, and static unsupported producer capabilities
-remain `Not applicable`.
-
-The primary sections follow
-[`show-me-signoz-dashboard-mocks.html`](docs/mock/show-me-signoz-dashboard-mocks.html):
-32 primary panels retain the mock's titles, order, spans, and desktop dimensions.
-The remaining 23 widget positions follow under `Additional measurements`, keeping
-all 55 canonical positions. Each panel's information button (`View contract details`)
-opens its canonical title, contract, blockers, and producer proofs.
-
-When the existing twelve central application bindings for P1–P4, P10–P12, and
-Canonical scan evidence are qualified through `application_evidence.bindings`,
-Pipeline health renders their real metrics in the existing mock-derived layout.
-P5–P9 and the other four routes retain native qualification. A failed refresh
-removes the previous result and shows `Query failed — outcome unknown`.
-
-Calculation semantics and canonical signals are fixed. Authorized Python work may
-only remove redundant execution work and must prove exact complete-report outcome
-equivalence on identical captured inputs, filters, evaluation time, and
-qualification context. A changed Python fingerprint requires genuine renewal of
-central application-binding evidence for those same twelve bindings; it does not
-authorize promotion of any of the 129 native rows, weakened gates, proof-policy
-changes, installed production-emitter changes, or metric-definition edits.
-
-The recovery diagnosed stopped OrbStack with an unchanged qualified fingerprint.
-Restarting the existing backend restored transport, but current calculations also
-needed redundant execution work removed to finish within the unchanged deadline.
-The refined calculator and genuinely renewed evidence now restore all twelve
-central attachments: eleven displayed measurements and P11's legitimate
-`Unavailable` state for incomplete immutable observations. Current HTTP and
-browser verification, including failed-refresh clearing and recovery, is recorded
-in the [performance plan](docs/retired/dashboard-performance-improvement-plan.md#executed-python-scope-and-current-recovery).
-The Completion time section remains unchanged.
-
-Populated Pipeline health panels use value-first cards, compact counts, scaled
-durations and byte units, and charts of the supplied series. The duration chart
-shows `bucketed mean scan duration`; it does not invent p50/p95 history.
-Exact values, nanosecond identities, range basis, measurement reasons, and
-provenance remain available through `View contract details`. Tables use bounded
-scroll regions and 20-row pages; `Previous` and `Next` retain access to every
-returned row.
+Each view answers one question, outcome first: KPI tiles, daily trends,
+breakdowns, exemplar tables, and a session drill-down. The harness selector shows
+All or one harness. All is the union of every harness's rows for the same signal,
+and ratios are aggregated before division. A harness that does not emit a signal
+shows the registry's reason, never zero. Harnesses are never ranked against each
+other.
 
 ## CLI
 

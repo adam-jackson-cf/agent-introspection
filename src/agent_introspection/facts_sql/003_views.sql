@@ -14,7 +14,7 @@ SELECT
     if(attrs_string['model_reasoning_effort'] = '', 'unset', attrs_string['model_reasoning_effort']) AS effort,
     if(mapContains(attrs_number, 'input_token_count'), attrs_number['input_token_count'], toFloat64OrZero(attrs_string['input_token_count'])) AS input_tokens,
     if(mapContains(attrs_number, 'cached_token_count'), attrs_number['cached_token_count'], toFloat64OrZero(attrs_string['cached_token_count'])) AS cached_input,
-    toNullable(toFloat64(0)) AS cache_creation_input,
+    toNullable(if(mapContains(attrs_number, 'cache_write_token_count'), attrs_number['cache_write_token_count'], toFloat64OrZero(attrs_string['cache_write_token_count']))) AS cache_creation_input,
     if(mapContains(attrs_number, 'output_token_count'), attrs_number['output_token_count'], toFloat64OrZero(attrs_string['output_token_count'])) AS output_tokens,
     toNullable(if(mapContains(attrs_number, 'reasoning_token_count'), attrs_number['reasoning_token_count'], toFloat64OrZero(attrs_string['reasoning_token_count']))) AS reasoning_tokens,
     log_id AS source_id
@@ -59,7 +59,7 @@ SELECT
     if(attrs_string['pi.gen_ai.request.reasoning.effort'] = '', 'unset', attrs_string['pi.gen_ai.request.reasoning.effort']),
     attrs_number['gen_ai.usage.input_tokens'],
     if(mapContains(attrs_number, 'gen_ai.usage.cache_read.input_tokens'), attrs_number['gen_ai.usage.cache_read.input_tokens'], 0),
-    CAST(NULL, 'Nullable(Float64)'),
+    toNullable(if(mapContains(attrs_number, 'gen_ai.usage.cache_creation.input_tokens'), attrs_number['gen_ai.usage.cache_creation.input_tokens'], 0)),
     attrs_number['gen_ai.usage.output_tokens'],
     toNullable(if(mapContains(attrs_number, 'gen_ai.usage.reasoning.output_tokens'), attrs_number['gen_ai.usage.reasoning.output_tokens'], 0)),
     span_id
@@ -73,6 +73,8 @@ WHERE harness = 'oh-my-pi'
 
 -- One row per user-initiated task: a Codex turn, an OMP root agent run, or a
 -- Claude Code interaction. Outcome flags are friction proxies, not quality scores.
+-- `friction_observed` lists the clean-completion components the producer could
+-- observe for the row; a NULL component is one the producer does not emit.
 CREATE OR REPLACE VIEW introspection.task_outcomes AS
 WITH
     codex_steps AS (
@@ -87,6 +89,12 @@ WITH
         FROM introspection.spans FINAL
         WHERE harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs')
             AND name = 'turn/interrupt' AND attrs_string['turn.id'] != ''
+    ),
+    codex_steers AS (
+        SELECT DISTINCT attrs_string['turn.id'] AS task_id
+        FROM introspection.spans FINAL
+        WHERE harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs')
+            AND name = 'turn/steer' AND attrs_string['turn.id'] != ''
     ),
     codex_tasks AS (
         SELECT
@@ -104,7 +112,8 @@ WITH
             toUInt64(s.model_steps) AS model_steps,
             toUInt64(0) AS delegations,
             toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_interrupts))) AS interrupted,
-            CAST(NULL, 'Nullable(UInt8)') AS errored
+            CAST(NULL, 'Nullable(UInt8)') AS errored,
+            toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_steers))) AS steered
         FROM introspection.spans AS t FINAL
         LEFT JOIN codex_steps AS s ON s.task_id = t.attrs_string['turn.id']
         WHERE t.harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs')
@@ -157,7 +166,8 @@ WITH
             toUInt64(u.model_steps) AS model_steps,
             toUInt64(d.delegations) AS delegations,
             toNullable(toUInt8(r.attrs_number['pi.gen_ai.agent.chats.stop_reason.aborted.count'] > 0)) AS interrupted,
-            toNullable(toUInt8(r.attrs_number['pi.gen_ai.agent.chats.stop_reason.error.count'] > 0)) AS errored
+            toNullable(toUInt8(r.attrs_number['pi.gen_ai.agent.chats.stop_reason.error.count'] > 0)) AS errored,
+            CAST(NULL, 'Nullable(UInt8)') AS steered
         FROM introspection.spans AS r FINAL
         LEFT JOIN omp_trace_usage AS u ON u.trace_id = r.trace_id
         LEFT JOIN omp_run_effort AS e ON e.trace_id = r.trace_id AND e.parent_span_id = r.span_id
@@ -196,7 +206,8 @@ WITH
             toUInt64(c.model_steps) AS model_steps,
             toUInt64(0) AS delegations,
             CAST(NULL, 'Nullable(UInt8)') AS interrupted,
-            toNullable(c.errored) AS errored
+            toNullable(c.errored) AS errored,
+            CAST(NULL, 'Nullable(UInt8)') AS steered
         FROM introspection.spans AS i FINAL
         INNER JOIN claude_requests AS c ON c.trace_id = i.trace_id
         WHERE i.harness = 'claude-code'
@@ -219,7 +230,15 @@ SELECT
         harness = 'codex_exec',
         NULL,
         toUInt8(coalesce(interrupted, 0) = 0 AND coalesce(errored, 0) = 0 AND quick_follow_up = 0)
-    ) AS clean_completion
+    ) AS clean_completion,
+    arrayFilter(
+        c -> c != '',
+        [
+            if(interrupted IS NULL, '', 'interrupt'),
+            if(errored IS NULL, '', 'error'),
+            if(quick_follow_up IS NULL, '', 'follow_up')
+        ]
+    ) AS friction_observed
 FROM (
     SELECT
         *,
@@ -230,8 +249,88 @@ FROM (
     FROM tasks
 );
 
+-- One row per terminal model call. Boundaries differ by producer: a Codex response
+-- stream (`codex.sse_event` `response.completed`, which carries `error.message` when
+-- the stream fails), an OMP chat span, and a Claude Code LLM request span. NULL
+-- means the producer has no such field. Outcome is `unknown` without explicit evidence.
+CREATE OR REPLACE VIEW introspection.model_calls AS
+SELECT
+    ts,
+    harness,
+    attrs_string['conversation.id'] AS session_id,
+    'OpenAI' AS provider,
+    attrs_string['model'] AS model,
+    '' AS response_model,
+    if(attrs_string['error.message'] = '', 'succeeded', 'failed') AS outcome,
+    multiIf(
+        attrs_string['error.message'] = '', '',
+        startsWith(attrs_string['error.message'], 'stream disconnected before completion'), 'stream_disconnect',
+        'error'
+    ) AS error_class,
+    CAST(NULL, 'Nullable(Float64)') AS duration_seconds,
+    if(mapContains(attrs_number, 'ttft_ms'), toNullable(attrs_number['ttft_ms'] / 1000), NULL) AS ttft_seconds,
+    if(mapContains(attrs_number, 'output_token_count'), toNullable(attrs_number['output_token_count']), toFloat64OrNull(attrs_string['output_token_count'])) AS output_tokens,
+    CAST(NULL, 'Nullable(UInt16)') AS attempt,
+    toNullable(toUInt8(startsWith(attrs_string['error.message'], 'stream disconnected before completion'))) AS stream_disconnect,
+    log_id AS source_id
+FROM introspection.logs FINAL
+WHERE harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs')
+    AND event_name = 'codex.sse_event'
+    AND attrs_string['event.kind'] = 'response.completed'
+UNION ALL
+SELECT
+    ts,
+    harness,
+    attrs_string['gen_ai.conversation.id'],
+    multiIf(
+        lower(attrs_string['gen_ai.provider.name']) LIKE '%anthropic%', 'Anthropic',
+        lower(attrs_string['gen_ai.provider.name']) LIKE '%openai%', 'OpenAI',
+        attrs_string['gen_ai.provider.name']
+    ),
+    attrs_string['gen_ai.request.model'],
+    attrs_string['gen_ai.response.model'],
+    multiIf(has_error, 'failed', attrs_string['gen_ai.response.finish_reasons'] IN ('', '[]'), 'unknown', 'succeeded'),
+    if(has_error, if(attrs_string['error.type'] = '', 'error', attrs_string['error.type']), ''),
+    toNullable(duration_ns / 1e9),
+    if(mapContains(attrs_number, 'gen_ai.response.time_to_first_chunk'), toNullable(attrs_number['gen_ai.response.time_to_first_chunk']), NULL),
+    toNullable(attrs_number['gen_ai.usage.output_tokens']),
+    CAST(NULL, 'Nullable(UInt16)'),
+    CAST(NULL, 'Nullable(UInt8)'),
+    span_id
+FROM introspection.spans FINAL
+WHERE harness = 'oh-my-pi' AND attrs_string['gen_ai.operation.name'] = 'chat'
+UNION ALL
+SELECT
+    ts,
+    harness,
+    attrs_string['session.id'],
+    'Anthropic',
+    attrs_string['model'],
+    '',
+    multiIf(
+        has_error OR attrs_number['status_code'] >= 400 OR (mapContains(attrs_bool, 'success') AND NOT attrs_bool['success']), 'failed',
+        NOT mapContains(attrs_bool, 'success'), 'unknown',
+        'succeeded'
+    ),
+    multiIf(
+        attrs_number['status_code'] >= 400, concat('http_', toString(toUInt16(attrs_number['status_code']))),
+        has_error OR (mapContains(attrs_bool, 'success') AND NOT attrs_bool['success']), 'error',
+        ''
+    ),
+    toNullable(duration_ns / 1e9),
+    if(mapContains(attrs_number, 'ttft_ms'), toNullable(attrs_number['ttft_ms'] / 1000), NULL),
+    toNullable(attrs_number['output_tokens']),
+    toNullable(toUInt16(attrs_number['attempt'])),
+    CAST(NULL, 'Nullable(UInt8)'),
+    span_id
+FROM introspection.spans FINAL
+WHERE harness = 'claude-code' AND name = 'claude_code.llm_request';
+
 -- One row per tool invocation with an explicit outcome where the producer has one.
 -- Codex reports success=true for commands that exit non-zero; the exit code wins.
+-- `task_id` joins task_outcomes: a Codex call belongs to the user turn of its
+-- session whose span contains the call time; an OMP call to the root run of its
+-- trace; a Claude Code call to the interaction of its trace. '' when unattributed.
 CREATE OR REPLACE VIEW introspection.tool_calls AS
 SELECT
     ts,
@@ -253,9 +352,24 @@ SELECT
     JSONExtract(if(attrs_string['x.targets'] = '', '[]', attrs_string['x.targets']), 'Array(String)') AS targets,
     attrs_string['x.failure_signature'] AS failure_signature,
     attrs_string['x.arguments_hash'] AS arguments_hash,
-    attrs_string['mcp_server'] AS mcp_server
-FROM introspection.logs FINAL
-WHERE harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs') AND event_name = 'codex.tool_result'
+    attrs_string['mcp_server'] AS mcp_server,
+    if(l.ts <= t.turn_end, t.turn_id, '') AS task_id,
+    attrs_string['x.workdir'] AS workdir
+FROM introspection.logs AS l FINAL
+ASOF LEFT JOIN (
+    SELECT
+        harness AS turn_harness,
+        attrs_string['thread.id'] AS turn_session,
+        ts AS turn_start,
+        ts + toIntervalNanosecond(duration_ns) AS turn_end,
+        attrs_string['turn.id'] AS turn_id
+    FROM introspection.spans FINAL
+    WHERE harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs')
+        AND name = 'session_task.turn'
+        AND attrs_string['turn.id'] != ''
+        AND attrs_string['model'] NOT IN ('', 'codex-auto-review')
+) AS t ON t.turn_harness = l.harness AND t.turn_session = l.attrs_string['conversation.id'] AND l.ts >= t.turn_start
+WHERE l.harness IN ('codex-app-server', 'codex_exec', 'codex_cli_rs') AND l.event_name = 'codex.tool_result'
 UNION ALL
 SELECT
     ts,
@@ -282,8 +396,16 @@ SELECT
         ''
     ),
     '',
+    '',
+    r.root_span,
     ''
 FROM introspection.spans FINAL
+LEFT JOIN (
+    SELECT trace_id AS root_trace, any(span_id) AS root_span
+    FROM introspection.spans FINAL
+    WHERE harness = 'oh-my-pi' AND name = 'invoke_agent' AND parent_span_id = ''
+    GROUP BY trace_id
+) AS r ON r.root_trace = trace_id
 WHERE harness = 'oh-my-pi' AND name LIKE 'execute_tool %'
 UNION ALL
 SELECT
@@ -301,6 +423,8 @@ SELECT
     CAST([], 'Array(String)'),
     l.attrs_string['error_type'],
     '',
+    '',
+    i.interaction_span,
     ''
 FROM introspection.logs AS l FINAL
 LEFT JOIN (
@@ -312,6 +436,12 @@ LEFT JOIN (
     WHERE harness = 'claude-code' AND name = 'claude_code.tool'
     GROUP BY tool_use_id
 ) AS s ON s.tool_use_id = l.attrs_string['tool_use_id']
+LEFT JOIN (
+    SELECT trace_id AS interaction_trace, any(span_id) AS interaction_span
+    FROM introspection.spans FINAL
+    WHERE harness = 'claude-code' AND name = 'claude_code.interaction'
+    GROUP BY trace_id
+) AS i ON i.interaction_trace = l.trace_id
 WHERE l.harness = 'claude-code' AND l.event_name = 'tool_result';
 
 -- Explicit user and policy friction signals. Codex interrupt/steer RPC spans

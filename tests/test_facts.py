@@ -28,15 +28,155 @@ def test_span_loaders_select_by_end_time_and_log_loader_by_ingest_time() -> None
     assert windows["load_logs"].startswith("observed_timestamp")
 
 
-def test_install_creates_tables_before_loaders_and_views() -> None:
+def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> None:
     statements = facts.install_statements()
 
+    def first(fragment: str) -> int:
+        return next(i for i, s in enumerate(statements) if fragment in s)
+
     assert "CREATE TABLE IF NOT EXISTS introspection.spans" in statements[0]
-    drops = [s for s in statements if s.startswith("DROP VIEW")]
-    creates = [s for s in statements if "MATERIALIZED VIEW" in s]
-    assert len(drops) == len(creates) == len(facts.LOADERS)
-    assert statements.index(drops[-1]) < statements.index(creates[0])
-    assert "CREATE OR REPLACE VIEW introspection.usage_events" in statements[-1]
+    assert "CREATE OR REPLACE TABLE introspection.signal_support" in statements[1]
+    loaders = [s for s in statements if "APPEND TO" in s]
+    assert len(loaders) == len(facts.LOADERS)
+    views = first("CREATE OR REPLACE VIEW introspection.usage_events")
+    assert first("APPEND TO") < views < first("CREATE MATERIALIZED VIEW introspection.refresh_")
+    # Snapshot refreshers are dropped before loaders because they depend on them.
+    assert first("DROP VIEW IF EXISTS introspection.refresh_") < first(
+        "DROP VIEW IF EXISTS introspection.load_spans"
+    )
+    assert statements[-1].startswith("INSERT INTO introspection.signal_strays")
+
+
+def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() -> None:
+    for snapshot in facts.SNAPSHOTS:
+        create_table, refresher = facts.snapshot_statements(snapshot)[2:]
+
+        assert f"introspection.{snapshot.view}_snapshot" in create_table
+        assert "EMPTY AS SELECT" in create_table
+        assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
+        assert "APPEND" not in refresher
+    views = facts._sql("003_views.sql")
+    assert {s.view for s in facts.SNAPSHOTS} == {
+        name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
+    }
+
+
+def _document(**support: dict[str, str]) -> dict[str, Any]:
+    harnesses = {
+        h: h for h in ("oh-my-pi", "codex-app-server", "codex_cli_rs", "codex_exec", "claude-code")
+    }
+    return {
+        "harnesses": harnesses,
+        "views": {"cache": "Cache efficiency"},
+        "route": [
+            {
+                "id": "omp.chat",
+                "harnesses": ["oh-my-pi"],
+                "source": "spans",
+                "match": "1",
+                "description": "d",
+            },
+            {
+                "id": "codex.usage",
+                "harnesses": ["codex-app-server", "codex_cli_rs", "codex_exec"],
+                "source": "logs",
+                "match": "1",
+                "description": "d",
+            },
+        ],
+        "signal": [
+            {
+                "id": "s",
+                "view": "cache",
+                "title": "t",
+                "question": "q",
+                "unit": "u",
+                "formula": "f",
+                "support": support,
+            }
+        ],
+    }
+
+
+def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> None:
+    registry = facts.parse_registry(
+        _document(
+            codex={"route": "codex.usage", "alignment": "aligned"},
+            codex_exec={"alignment": "not emitted", "note": "headless"},
+            **{
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not emitted", "note": "no field"},
+            },
+        )
+    )
+
+    by_harness = {row["harness"]: row for row in registry.support}
+    assert by_harness["codex_cli_rs"]["route"] == "codex.usage"
+    assert by_harness["codex_exec"] == {
+        **by_harness["codex_exec"],
+        "route": "",
+        "alignment": "not emitted",
+    }
+    assert len(registry.routes) == 4
+
+
+@pytest.mark.parametrize(
+    ("support", "message"),
+    [
+        ({"codex": {"route": "codex.usage", "alignment": "aligned"}}, "every harness"),
+        (
+            {
+                "codex": {"route": "omp.chat", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not emitted", "note": "n"},
+            },
+            "bad route",
+        ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "differs"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not emitted", "note": "n"},
+            },
+            "needs a note",
+        ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not emitted"},
+            },
+            "needs a note",
+        ),
+    ],
+)
+def test_registry_rejects_incomplete_or_undisclosed_support(
+    support: dict[str, dict[str, str]], message: str
+) -> None:
+    with pytest.raises(facts.RegistryError, match=message):
+        facts.parse_registry(_document(**support))
+
+
+def test_repo_registry_gives_every_harness_signal_a_record_for_every_harness() -> None:
+    registry = facts.load_registry()
+
+    harness_signals = [s["signal"] for s in registry.signals if s["scope"] == "harness"]
+    assert len(registry.support) == 5 * len(harness_signals)
+    views = {s["view"] for s in registry.signals}
+    assert views == set(facts.tomllib.loads(facts._sql(facts.REGISTRY_FILE))["views"])
+
+
+def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
+    registry = facts.Registry(
+        signals=[], routes=[], support=[], strays=[{"stray": "x", "match": "name = 'a\\b'"}]
+    )
+
+    (statement,) = facts.registry_statements(registry)
+
+    assert statement.startswith(
+        "INSERT INTO introspection.signal_strays SELECT * FROM format(JSONEachRow, '"
+    )
+    assert "\\'a" in statement
 
 
 def test_backfill_splits_the_range_into_utc_days_ending_at_now() -> None:
@@ -59,12 +199,27 @@ def test_log_projection_drops_raw_text_and_identity_keys(key: str) -> None:
     assert key in filtered_keys
 
 
-def test_span_projection_drops_prompt_text() -> None:
+def test_span_projection_drops_prompt_and_intent_text_and_normalizes_status() -> None:
     select = facts.render_select("select_spans.sql", "1")
     filtered_keys = select.split("mapFilter")[1].split("attributes_string")[0]
 
     assert "'user_prompt'" in filtered_keys
     assert "'gen_ai.tool.description'" in filtered_keys
+    assert "'pi.gen_ai.tool.call.intent'" in filtered_keys
+    status = select.split("AS status_message")[0].rsplit("substring(", 1)[1]
+    assert "'~'" in status
+    assert "'N'" in status
+    assert "160" in status
+
+
+def test_span_projection_keeps_only_the_codex_spans_the_facts_use() -> None:
+    select = facts.render_select("select_spans.sql", "1")
+    allowlist = select.split("serviceName NOT LIKE 'codex%'")[1].split("AND (1)")[0]
+    views = facts._sql("003_views.sql")
+
+    for name in ("session_task.turn", "run_sampling_request", "turn/interrupt", "turn/steer"):
+        assert f"'{name}'" in allowlist
+        assert f"'{name}'" in views
 
 
 def test_docker_runner_sends_sql_on_stdin_and_surfaces_the_last_error_line(

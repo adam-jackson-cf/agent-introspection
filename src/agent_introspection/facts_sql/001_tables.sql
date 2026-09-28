@@ -1,5 +1,5 @@
--- Durable, curated copies of producer telemetry. SigNoz expires traces after
--- 15 days; these tables have no TTL. ReplacingMergeTree collapses the rows that
+-- Durable, curated copies of producer telemetry. SigNoz expires traces and logs
+-- after 90 days; these tables have no TTL. ReplacingMergeTree collapses the rows that
 -- overlapping loader windows insert more than once, so reads use FINAL.
 
 CREATE DATABASE IF NOT EXISTS introspection;
