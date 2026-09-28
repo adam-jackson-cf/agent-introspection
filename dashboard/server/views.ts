@@ -211,7 +211,7 @@ ORDER BY commands DESC, calls DESC LIMIT 25`,
   },
   provider: {
     kpi: `SELECT harness, count() AS calls, countIf(outcome = 'failed') AS failed,
-    countIf(outcome = 'unknown') AS unknown,
+    countIf(outcome = 'cancelled') AS cancelled, countIf(outcome = 'unknown') AS unknown,
     countIf(stream_disconnect = 1) AS disconnects, count(stream_disconnect) AS disconnect_den,
     countIf(response_model != '' AND response_model != model) AS mismatched,
     countIf(response_model != '') AS with_response_model,
@@ -231,7 +231,7 @@ FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness, model ORDER BY calls DESC LI
 FROM introspection.spans FINAL
 WHERE ${inWindow("ts")} AND harness LIKE 'codex%' AND name IN ('run_sampling_request', 'try_run_sampling_request')
 GROUP BY harness, model ORDER BY steps DESC`,
-    daily: `SELECT toString(toDate(ts)) AS day, harness, count() AS calls,
+    daily: `SELECT toString(toDate(ts)) AS day, harness, countIf(outcome != 'cancelled') AS calls,
     countIf(outcome = 'failed') AS failed, quantileExact(0.5)(ttft_seconds) AS ttft_p50
 FROM ${M} WHERE ${inWindow("ts")} GROUP BY day, harness ORDER BY day, harness`,
     errors: `SELECT harness, model, error_class, count() AS n, toString(max(ts)) AS last_seen

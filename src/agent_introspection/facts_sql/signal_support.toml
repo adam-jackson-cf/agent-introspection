@@ -730,10 +730,10 @@ view = "provider"
 title = "Call error rate"
 question = "What share of model calls failed?"
 unit = "%"
-formula = "100 × failed calls / calls."
+formula = "100 × failed calls / calls not cancelled by the user. A user cancellation is not a provider failure."
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "differs", note = "Stream level: a non-empty `error.message` on `response.completed`." }
-oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Span error status." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Span error status; `error.type = aborted` is a user cancellation and is excluded." }
 claude-code = { route = "claude.llm_request", alignment = "aligned", note = "Span error or `success=false`." }
 
 [[signal]]

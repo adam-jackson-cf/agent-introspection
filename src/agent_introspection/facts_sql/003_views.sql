@@ -252,7 +252,8 @@ FROM (
 -- One row per terminal model call. Boundaries differ by producer: a Codex response
 -- stream (`codex.sse_event` `response.completed`, which carries `error.message` when
 -- the stream fails), an OMP chat span, and a Claude Code LLM request span. NULL
--- means the producer has no such field. Outcome is `unknown` without explicit evidence.
+-- means the producer has no such field. Outcome is `unknown` without explicit evidence,
+-- and `cancelled` when the user aborted the call (OMP `error.type = 'aborted'`).
 CREATE OR REPLACE VIEW introspection.model_calls AS
 SELECT
     ts,
@@ -289,7 +290,12 @@ SELECT
     ),
     attrs_string['gen_ai.request.model'],
     attrs_string['gen_ai.response.model'],
-    multiIf(has_error, 'failed', attrs_string['gen_ai.response.finish_reasons'] IN ('', '[]'), 'unknown', 'succeeded'),
+    multiIf(
+        has_error AND attrs_string['error.type'] = 'aborted', 'cancelled',
+        has_error, 'failed',
+        attrs_string['gen_ai.response.finish_reasons'] IN ('', '[]'), 'unknown',
+        'succeeded'
+    ),
     if(has_error, if(attrs_string['error.type'] = '', 'error', attrs_string['error.type']), ''),
     toNullable(duration_ns / 1e9),
     if(mapContains(attrs_number, 'gen_ai.response.time_to_first_chunk'), toNullable(attrs_number['gen_ai.response.time_to_first_chunk']), NULL),

@@ -21,6 +21,7 @@ import Effort from "./views/Effort";
 import Friction from "./views/Friction";
 import Guardrails from "./views/Guardrails";
 import Pipeline from "./views/Pipeline";
+import Provider from "./views/Provider";
 import Session from "./views/Session";
 import Tools from "./views/Tools";
 
@@ -80,6 +81,14 @@ export const VIEWS: ViewSpec[] = [
     question:
       "How often do approvals, sandboxes, and quality gates block or get bypassed?",
     component: Guardrails,
+  },
+  {
+    id: "provider",
+    number: "V7",
+    title: "Provider",
+    question:
+      "Are model calls failing, slow, disconnecting, retried, or served by a different model?",
+    component: Provider,
   },
 ];
 

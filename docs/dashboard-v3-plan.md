@@ -250,8 +250,8 @@ note generated from the signal support registry.
 | 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s |
 | 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view |
 | 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
-| 5 | V7 Provider | Same | Next |
-| 6 | V8 Recurrence, then V9 Interventions | Same | |
+| 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
+| 6 | V8 Recurrence, then V9 Interventions | Same | Next |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
 
 ## Findings log
@@ -349,6 +349,13 @@ so no task is marked steered; only 54% of CLI tool calls fall inside a turn span
 Impact: CLI task counts and task-attributed tool signals are undercounts. Fix: none in
 this repo (producer behaviour); the registry notes CLI TUI turns omitting token usage,
 and the coverage grid shows the route as healthy because other turns arrive.
+
+**F14. User-aborted omp chats counted as provider failures.** Evidence: 168 of the 280
+omp chat spans with an error have `error.type = aborted`, the user stopping the run.
+Measure v2 R1 keeps client cancellation separate from provider failure. Fix:
+`model_calls.outcome` is `cancelled` for them, and the call error rate is failed /
+calls not cancelled. Validated: omp 112 failed, 168 cancelled; Codex CLI's 32 failures
+are all stream disconnects; totals reconcile.
 
 ## Operations
 
