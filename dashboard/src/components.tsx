@@ -37,13 +37,19 @@ const supportFor = (registry: Registry, signal: string, harness: Harness) =>
     (entry) => entry.signal === signal && entry.harness === harness,
   );
 
-/** True when every listed signal is not emitted by every selected harness. */
+/**
+ * The panel's measured signal is listed first; the rest only describe it (for
+ * example the effort dimension). Returns the registry entries when no selected
+ * harness emits the measured signal.
+ */
 export function notEmitted(
   context: ViewContextValue,
   signals: string[],
 ): SignalSupport[] | null {
-  const entries = selectedHarnesses(context.filters).flatMap((harness) =>
-    signals.map((signal) => supportFor(context.registry, signal, harness)),
+  const measured = signals[0];
+  if (!measured) return null;
+  const entries = selectedHarnesses(context.filters).map((harness) =>
+    supportFor(context.registry, measured, harness),
   );
   return entries.length > 0 &&
     entries.every((entry) => entry?.alignment === "not emitted")
@@ -91,7 +97,7 @@ export function Contributors({ signals }: { signals: string[] }) {
         return (
           <li
             key={harness}
-            className={`contributor ${state.replace(" ", "-")}`}
+            className={`contributor contributor-${state.replace(" ", "-")}`}
             title={
               state === "rows"
                 ? `${HARNESS_LABEL[harness]}: ${fmtCount(rows)} rows on its route`

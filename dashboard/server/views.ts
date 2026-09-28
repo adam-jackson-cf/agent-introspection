@@ -24,6 +24,9 @@ export const inWindow = (ts: string): string =>
   `${ts} >= ${START} AND ${ts} < ${END} AND ${HARNESS_FILTER}`;
 
 const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
+/** Waiting and status-polling tools repeat identical calls by design (registry: tools.repeats). */
+const NOT_POLLING =
+  "tool NOT IN ('wait', 'write_stdin', 'wait_agent', 'wait_threads', 'collaborationwait_agent', 'sleep', 'get_goal', 'get_usage_limits')";
 const APPROVALS = "('approved', 'approved_with_amendment', 'accept')";
 const OPERATION =
   "trimBoth(multiIf(harness LIKE 'codex%', concat(tool, ' ', command_head, ' ', command_sub), harness = 'claude-code', concat(tool, ' ', command_head), tool))";
@@ -110,12 +113,12 @@ GROUP BY harness, tool, signature ORDER BY occurrences DESC LIMIT 30`,
     sumIf(attempts, attempts >= 2) AS repeated_attempts
 FROM (
     SELECT harness, task_id, arguments_hash, count() AS attempts
-    FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != ''
+    FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
     GROUP BY harness, task_id, arguments_hash
 ) GROUP BY harness ORDER BY harness`,
     repeats: `SELECT harness, session_id, task_id, tool, any(command_head) AS command, count() AS attempts,
     countIf(outcome = 'failed') AS failed
-FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != ''
+FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
 GROUP BY harness, session_id, task_id, tool, arguments_hash HAVING attempts >= 2
 ORDER BY attempts DESC LIMIT 25`,
     loops: `WITH
@@ -124,7 +127,7 @@ ORDER BY attempts DESC LIMIT 25`,
             lagInFrame(arguments_hash, 1, '') OVER (
                 PARTITION BY harness, task_id ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
             ) AS previous
-        FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != ''
+        FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
     ),
     runs AS (
         SELECT *, sum(toUInt32(arguments_hash != previous)) OVER (

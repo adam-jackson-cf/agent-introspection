@@ -339,13 +339,13 @@ a {
   border: 1px solid #4a505d;
   border-radius: 50%;
 }
-.contributor.rows i {
+.contributor-rows i {
   border: 0;
 }
 .contributor small {
   color: var(--muted);
 }
-.contributor.not-emitted {
+.contributor-not-emitted {
   color: var(--muted);
 }
 

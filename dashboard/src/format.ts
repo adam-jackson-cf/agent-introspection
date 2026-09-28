@@ -114,3 +114,31 @@ export function groupSum(
 
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";
+
+/**
+ * Pivots long daily rows into one row per day with a column per series. The
+ * value function receives the summed numeric fields of that day and series.
+ */
+export function pivotDaily(
+  rows: Row[],
+  seriesOf: (row: Row) => string,
+  fields: string[],
+  value: (sums: Record<string, number>) => number | null,
+): Row[] {
+  const days = new Map<string, Map<string, Row[]>>();
+  for (const row of rows) {
+    const day = String(row.day);
+    const bySeries = days.get(day) ?? new Map<string, Row[]>();
+    const series = seriesOf(row);
+    bySeries.set(series, [...(bySeries.get(series) ?? []), row]);
+    days.set(day, bySeries);
+  }
+  return [...days.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, bySeries]) => {
+      const out: Row = { day };
+      for (const [series, members] of bySeries)
+        out[series] = value(sumRows(members, fields));
+      return out;
+    });
+}

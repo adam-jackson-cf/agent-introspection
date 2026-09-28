@@ -414,7 +414,7 @@ formula = "Producer-requested effort; `unset` means the provider default, not no
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned", note = "Task: `codex.turn.reasoning_effort`. Usage: `model_reasoning_effort`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`pi.gen_ai.request.reasoning.effort` on the chats directly under the root run." }
-claude-code = { route = "claude.llm_request", alignment = "differs", note = "`effort` is rarely set, so most Claude Code tasks are `unset`." }
+claude-code = { route = "claude.llm_request", alignment = "differs", note = "`effort` on LLM requests: set on nearly every request from 2026-09-28, occasionally before, so older tasks are mostly `unset`." }
 
 [[signal]]
 id = "task.count"
@@ -438,7 +438,7 @@ formula = "100 × countIf(effort IN ('high', 'xhigh')) / count() over tasks; `mi
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned" }
 oh-my-pi = { route = "omp.run", alignment = "aligned" }
-claude-code = { route = "claude.interaction", alignment = "differs", note = "Effort is rarely set; unset tasks count as not heavy." }
+claude-code = { route = "claude.interaction", alignment = "differs", note = "Effort is mostly unset before 2026-09-28; unset tasks count as not heavy." }
 
 [[signal]]
 id = "task.duration"
@@ -546,7 +546,7 @@ view = "tools"
 title = "Repeated attempts"
 question = "Which operations run with identical arguments more than once in a task?"
 unit = "tasks"
-formula = "Tasks where the same tool and argument hash appears ≥2 times; attempts per affected task."
+formula = "Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.arguments_hash` over the raw arguments." }
 oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no argument identity." }
@@ -558,7 +558,7 @@ view = "tools"
 title = "Tool loops"
 question = "Which tasks repeat the same operation back-to-back?"
 unit = "tasks"
-formula = "Tasks with a run of ≥3 consecutive calls sharing tool and argument hash."
+formula = "Tasks with a run of ≥3 consecutive calls sharing tool and argument hash, excluding waiting and status-polling tools."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "Ordered by call time within the task." }
 oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no argument identity." }

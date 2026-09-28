@@ -50,6 +50,39 @@ export function Legend({ series }: { series: Series[] }) {
   );
 }
 
+/** Fills every UTC day between the first and last row so gaps stay visible. */
+function continuousDays(rows: Row[]): Row[] {
+  if (rows.length === 0) return rows;
+  const byDay = new Map(rows.map((row) => [String(row.day), row]));
+  const days = [...byDay.keys()].sort();
+  const out: Row[] = [];
+  for (
+    let day = Date.parse(`${days[0]}T00:00:00Z`);
+    day <= Date.parse(`${days[days.length - 1]}T00:00:00Z`);
+    day += 86_400_000
+  ) {
+    const key = new Date(day).toISOString().slice(0, 10);
+    out.push(byDay.get(key) ?? { day: key });
+  }
+  return out;
+}
+
+/** Splits a line into runs of consecutive days with values; missing days break it. */
+function runs(
+  points: (readonly [number, number | null])[],
+): [number, number][][] {
+  const result: [number, number][][] = [];
+  let current: [number, number][] = [];
+  for (const [index, amount] of points) {
+    if (amount === null) {
+      if (current.length) result.push(current);
+      current = [];
+    } else current.push([index, amount]);
+  }
+  if (current.length) result.push(current);
+  return result;
+}
+
 /** Column path with a 4px rounded data end and a square baseline. */
 const column = (x: number, y: number, width: number, height: number) => {
   const r = Math.min(4, width / 2, height);
@@ -62,7 +95,7 @@ const column = (x: number, y: number, width: number, height: number) => {
  * series value for that day.
  */
 export function DailyChart({
-  rows,
+  rows: sparse,
   series,
   kind,
   format,
@@ -77,6 +110,7 @@ export function DailyChart({
   const ref = useRef<HTMLDivElement>(null);
   const width = useWidth(ref);
   const [hover, setHover] = useState<number | null>(null);
+  const rows = continuousDays(sparse);
   const value = (row: Row, key: string) => {
     const raw = row[key];
     return raw === null || raw === undefined || Array.isArray(raw)
@@ -102,8 +136,11 @@ export function DailyChart({
   );
   return (
     <div className="chart" ref={ref}>
-      <Legend series={series} />
-      {width > 0 && (
+      {rows.length === 0 && (
+        <p className="empty">No rows for the selected range.</p>
+      )}
+      {rows.length > 0 && <Legend series={series} />}
+      {width > 0 && rows.length > 0 && (
         <svg
           width={width}
           height={HEIGHT}
@@ -172,39 +209,42 @@ export function DailyChart({
                 });
               })
             : series.map((entry) => {
-                const points = rows
-                  .map((row, index) => [index, value(row, entry.key)] as const)
-                  .filter(([, amount]) => amount !== null);
+                const points = rows.map(
+                  (row, index) => [index, value(row, entry.key)] as const,
+                );
                 return (
                   <g key={entry.key}>
-                    <polyline
-                      className="series-line"
-                      stroke={entry.color}
-                      points={points
-                        .map(([index, amount]) => `${x(index)},${y(amount!)}`)
-                        .join(" ")}
-                    />
-                    {points.length === 1 && (
+                    {runs(points).map((run) =>
+                      run.length === 1 ? (
+                        <circle
+                          key={run[0]![0]}
+                          cx={x(run[0]![0])}
+                          cy={y(run[0]![1])}
+                          r={4}
+                          fill={entry.color}
+                        />
+                      ) : (
+                        <polyline
+                          key={run[0]![0]}
+                          className="series-line"
+                          stroke={entry.color}
+                          points={run
+                            .map(
+                              ([index, amount]) => `${x(index)},${y(amount)}`,
+                            )
+                            .join(" ")}
+                        />
+                      ),
+                    )}
+                    {hover !== null && points[hover]?.[1] != null && (
                       <circle
-                        cx={x(points[0]![0])}
-                        cy={y(points[0]![1]!)}
+                        className="marker"
+                        cx={x(hover)}
+                        cy={y(points[hover]![1]!)}
                         r={4}
                         fill={entry.color}
                       />
                     )}
-                    {hover !== null &&
-                      points
-                        .filter(([index]) => index === hover)
-                        .map(([index, amount]) => (
-                          <circle
-                            key={index}
-                            className="marker"
-                            cx={x(index)}
-                            cy={y(amount!)}
-                            r={4}
-                            fill={entry.color}
-                          />
-                        ))}
                   </g>
                 );
               })}

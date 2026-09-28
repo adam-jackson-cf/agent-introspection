@@ -248,8 +248,8 @@ note generated from the signal support registry.
 | 0 | Archive the proof-gated work | Commit and tag `archive/proof-gated-dashboard` | Done 2026-09-28 |
 | 1 | ClickHouse facts: tables, loaders, views, backfill | Parity and invariants pass; loaders refresh every minute | Done 2026-09-28 |
 | 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s |
-| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Next |
-| 4 | V5 Friction, V6 Guardrails | Same | |
+| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view |
+| 4 | V5 Friction, V6 Guardrails | Same | Next |
 | 5 | V7 Provider | Same | |
 | 6 | V8 Recurrence, then V9 Interventions | Same | |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
@@ -306,6 +306,26 @@ Validated: 3 "no events" cells, 0 possible breaks.
 last 7 days of the selected window, ending 10 minutes before now; the panel states the
 window. Validated: operations and input, cached, and output tokens match exactly for
 all five harnesses; Pipeline 90-day 0.36 s warm.
+
+**F8. Polling tools dominated repeated attempts and loops.** Evidence: the top
+repeated-attempt rows were Codex `wait_agent`, `write_stdin`, and `wait` with identical
+arguments (e.g. `wait_agent` 121 calls with 8 distinct arguments); every loop was
+`wait_agent`. Fix: `tools.repeats` and `tools.loops` exclude waiting and
+status-polling tools, stated in the registry formula. Validated: the remaining repeats
+are `exec`, `exec_command`, and similar work calls.
+
+**F9. Claude Code started sending `effort` on 2026-09-28.** Evidence: Claude Code
+`api_request` effort was `high` on 120 requests across 08-24 to 09-13, then `medium`
+on 2,608 requests on 09-28; the registry said effort was rarely set. Fix: registry
+notes for `effort.level` and `effort.heavy_share` state the change. Validated: the
+V3 info note for Claude Code shows the dated note.
+
+**F10. Two recurring failures worth acting on (observations, not pipeline defects).**
+omp `read` failed 474 times in 13 tasks on "Memory file not found:
+memory://root/memory_summary.md". Codex exec `cat` failed 98 times, once in each of
+98 tasks, on ".agents/by-request/verifcation-tests/SKILL.md: No such file"; the path
+misspells "verification". Both appear in V4 failure signatures and are candidates
+for V8 actionable repeats.
 
 ## Operations
 
