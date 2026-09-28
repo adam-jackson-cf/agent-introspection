@@ -133,11 +133,75 @@ Known boundaries:
 - `codex_exec` runs are headless, so follow-up and clean completion are NULL.
 - No producer emits cost comparably. Spend is measured in tokens.
 
+## Signal alignment across producers
+
+This is not a benchmark across harnesses. Harnesses are never ranked or
+compared against each other. The goal is to surface **the same signal** from
+every producer that has it, so that viewing one harness or all harnesses means
+looking at the same thing. Producers reach a signal by different routes; that is
+expected. agent-observability follows the same approach: align the definition as
+closely as the data allows, and say in the panel's info note where a producer's
+route differs.
+
+Rules:
+
+1. **One definition per signal, one route per producer.** Measures v3 defines
+   each signal once (question, unit, formula). Per producer, it records:
+   - the route (exact source fields and boundary);
+   - `aligned` or `differs`, with a one-line note of how it differs;
+   - or `not emitted`.
+   A producer that doesn't emit a signal is shown as not emitted, never as zero.
+2. **Signal support registry.** The per-signal, per-producer records live in a
+   repo-owned file. `facts install` loads it into `introspection.signal_support`
+   (signal, harness, route, unit, alignment, note). Panels read it to render
+   their info notes and to label which harnesses contribute. Notes are never
+   hand-written in the UI.
+3. **Keep the aligned definition; disclose the gaps.** Where a composite signal
+   depends on components some producers can't observe, keep the shared
+   definition and record which components were observable. Don't drop the
+   producer.
+   - Example: clean completion means "no observed friction". Claude Code cannot
+     report interrupts; Codex cannot report task errors.
+   - Rows carry the observable components (for example
+     `friction_observed = ['interrupt','follow_up']`), and the info note states them.
+4. **All = the union of each.** "All harnesses" aggregates the per-harness rows
+   of the same signal. Each panel shows which harnesses contributed data in the
+   selected window. A parity check confirms that per-harness values recombine to
+   the All value: sums for counts, weighted numerators and denominators for ratios.
+5. **Coverage grid.** The Pipeline view compares the registry with the data for
+   the selected window:
+
+   | Registry says | Data shows | Flag |
+   | --- | --- | --- |
+   | emitted | rows present | healthy |
+   | emitted | no rows | possible producer or loader break |
+   | not emitted | rows present | registry is stale, or the rows are mislabelled |
+
+   - Example of mislabelled rows: 58 Claude-style events tagged `oh-my-pi` on
+     2026-09-13, which are not a live omp route.
+   - The grid must distinguish a real route from stray rows, so the registry
+     names routes rather than just "has data".
+
+Known alignment notes to carry into the registry:
+
+- **Task.** A Codex turn, an omp root agent run (includes subagents and
+  advisors), and a Claude Code interaction with model calls. Codex subagent
+  threads appear as separate tasks.
+- **Interrupt.** Codex: the user interrupts a turn. omp: the run's aborted stop
+  reason, or an aborted tool call. Claude Code: not emitted.
+- **Task error.** omp: the run's error stop reason. Claude Code: any LLM request
+  with an error or status ≥ 400. Codex: not emitted.
+- **Input tokens.** These include cache reads for all producers. Claude Code also
+  includes cache creation; omp has no separate cache-creation field.
+- **Model operation outcome.** Codex: `/responses` attempt. Claude Code: LLM
+  request. omp: chat span.
+
 ## Views
 
 Each view answers one question, in outcome-first order: KPI tiles → daily
 trends → breakdowns by harness and model → exemplar tables → drill-down to
-session. Every panel carries an info note with producer boundaries.
+session. Every panel has a harness selector (All or one harness) and an info
+note generated from the signal support registry.
 
 | # | View | Questions (v2 IDs) | Data |
 | --- | --- | --- | --- |
@@ -157,8 +221,8 @@ session. Every panel carries an info note with producer boundaries.
 | --- | --- | --- | --- |
 | 0 | Archive the proof-gated work | Commit and tag `archive/proof-gated-dashboard` | Done 2026-09-28 |
 | 1 | ClickHouse facts: tables, loaders, views, backfill | Parity and invariants pass; loaders refresh every minute | Done 2026-09-28 |
-| 2 | Serving: Bun queries `introspection` directly; V1 Pipeline view; remove the Python-per-request path and registry dependency on the proof register | 90-day views < 1 s; data < 2 min old | Next |
-| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data with info notes | |
+| 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Next |
+| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | |
 | 4 | V5 Friction, V6 Guardrails | Same | |
 | 5 | V7 Provider | Same | |
 | 6 | V8 Recurrence, then V9 Interventions | Same | |
