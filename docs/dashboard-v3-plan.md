@@ -44,7 +44,7 @@ production:
 
 ```text
 Producers: omp · Codex (app-server, CLI, exec) · Claude Code
-  └─> SigNoz ClickHouse raw tables (traces kept 15 days, logs ~35 days)
+  └─> SigNoz ClickHouse raw tables (90-day retention from 2026-09-28; was 15 days for traces)
         └─> refreshable materialized views in `introspection`
               load_spans   every 1 min  spans that ended in the last 30 min (1-day lookback)
               sweep_spans  every 1 h    all spans from the last 3 days (late exports)
@@ -166,9 +166,13 @@ session. Every panel carries an info note with producer boundaries.
 
 ## Operations
 
-- **Backups:** the `introspection` tables live in the SigNoz ClickHouse volume
-  under `/Volumes/UGreen-External/Docker`. Back them up before any SigNoz upgrade or
-  stack recreation. The `sweep_spans` loader can only restore the last 3 days.
+- **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`
+  tables have no TTL and hold history beyond that. Trace history before
+  2026-09-10 had already expired under the earlier 15-day TTL and cannot be recovered.
 - **Rebuild:** `facts install` recreates loaders and views without touching data.
-  Re-running `facts backfill` overwrites rows with the current projection, but
-  only within SigNoz retention.
+  `facts backfill --days 90` rebuilds or re-projects everything still in SigNoz,
+  so a projection change applies to the full 90-day window.
+- **Backups:** the `introspection` tables live in the SigNoz ClickHouse volume
+  under `/Volumes/UGreen-External/Docker`. Only history older than 90 days is
+  irreplaceable. Back it up before any SigNoz upgrade or stack recreation once the
+  store holds more than 90 days.
