@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Registry, Row } from "./src/contracts";
 import { createApp, parseFilters } from "./server";
-import type { Query } from "./server/clickhouse";
-import { clickhouse } from "./server/clickhouse";
+import { batch, clickhouse, type Query } from "./server/clickhouse";
 import {
   contributions,
+  countsFromRows,
   coverageGrid,
-  recombination,
-  routeCounts,
+  recombine,
 } from "./server/pipeline";
 
 const HOST = { host: "127.0.0.1:4173" };
@@ -104,15 +103,15 @@ const registry = (): Registry =>
     ],
   }) as Registry;
 
-/** Route count results keyed by the SQL's source table. */
-const countingQuery =
-  (spans: Row[], logs: Row[]): Query =>
-  async (sql) =>
-    sql.includes("introspection.spans")
-      ? spans
-      : sql.includes("introspection.logs")
-        ? logs
-        : [];
+/** Route counts as `routeCountQueries` would return them per source table. */
+const counting = (spans: Row[], logs: Row[], reg: Registry = registry()) =>
+  countsFromRows(reg, { spans, logs });
+
+/** Rows as a batched ClickHouse request returns them: tagged and JSON-encoded. */
+const batched = (results: Row[][]): Row[] =>
+  results.flatMap((rows, index) =>
+    rows.map((row) => ({ __q: index, __row: JSON.stringify(row) })),
+  );
 
 describe("request handling", () => {
   test("rejects untrusted hosts and non-GET methods", async () => {
@@ -159,15 +158,14 @@ describe("request handling", () => {
     const seen: { sql: string; params?: Record<string, string> }[] = [];
     const query: Query = async (sql, params) => {
       seen.push({ sql, params });
-      if (sql.includes("FROM introspection.signals"))
-        return registry().signals as unknown as Row[];
-      if (sql.includes("FROM introspection.signal_support"))
-        return registry().support as unknown as Row[];
-      if (sql.includes("FROM introspection.signal_routes"))
-        return registry().routes as unknown as Row[];
-      if (sql.includes("FROM introspection.signal_strays"))
-        return registry().strays as unknown as Row[];
-      return [];
+      const reg = registry();
+      return sql.includes("FROM introspection.signals")
+        ? batched(
+            [reg.signals, reg.support, reg.routes, reg.strays].map(
+              (rows) => rows as unknown as Row[],
+            ),
+          )
+        : [];
     };
     const app = createApp({ query, workflow: () => ({}) });
     const response = await app(
@@ -229,19 +227,15 @@ describe("ClickHouse client", () => {
 
 describe("coverage grid", () => {
   test("distinguishes healthy, idle, possible break, not emitted, and strays", async () => {
-    const counts = await routeCounts(
-      countingQuery(
-        [
-          { harness: "oh-my-pi", t0: 10, u0: 10 },
-          { harness: "claude-code", t0: 3, u0: 0 },
-        ],
-        [
-          { harness: "codex-app-server", t0: 5, u0: 5 },
-          { harness: "codex_cli_rs", t0: 0, u0: 0 },
-        ],
-      ),
-      registry(),
-      {},
+    const counts = counting(
+      [
+        { harness: "oh-my-pi", t0: 10, u0: 10 },
+        { harness: "claude-code", t0: 3, u0: 0 },
+      ],
+      [
+        { harness: "codex-app-server", t0: 5, u0: 5 },
+        { harness: "codex_cli_rs", t0: 0, u0: 0 },
+      ],
     );
     const cells = Object.fromEntries(
       coverageGrid(registry(), counts).map((row) => [row.harness, row.state]),
@@ -256,11 +250,7 @@ describe("coverage grid", () => {
   });
 
   test("flags rows on another harness's route that no stray explains", async () => {
-    const counts = await routeCounts(
-      countingQuery([{ harness: "claude-code", t0: 3, u0: 2 }], []),
-      registry(),
-      {},
-    );
+    const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
     const claude = coverageGrid(registry(), counts).find(
       (row) => row.harness === "claude-code",
     );
@@ -295,13 +285,10 @@ describe("coverage grid", () => {
         ),
       ],
     };
-    const counts = await routeCounts(
-      countingQuery(
-        [{ harness: "codex_exec", t0: 0, u0: 0, t1: 0, u1: 0 }],
-        [{ harness: "codex_exec", t0: 4, u0: 4 }],
-      ),
+    const counts = counting(
+      [{ harness: "codex_exec", t0: 0, u0: 0, t1: 0, u1: 0 }],
+      [{ harness: "codex_exec", t0: 4, u0: 4 }],
       withTasks,
-      {},
     );
     const exec = coverageGrid(withTasks, counts).find(
       (row) => row.harness === "codex_exec" && row.signal === "task.count",
@@ -310,13 +297,9 @@ describe("coverage grid", () => {
   });
 
   test("contributions count each harness's own route and omit harnesses that do not emit", async () => {
-    const counts = await routeCounts(
-      countingQuery(
-        [{ harness: "oh-my-pi", t0: 10, u0: 10 }],
-        [{ harness: "codex_exec", t0: 2, u0: 2 }],
-      ),
-      registry(),
-      {},
+    const counts = counting(
+      [{ harness: "oh-my-pi", t0: 10, u0: 10 }],
+      [{ harness: "codex_exec", t0: 2, u0: 2 }],
     );
     expect(contributions(registry(), counts, "cache")).toEqual({
       "usage.input_tokens": {
@@ -330,61 +313,65 @@ describe("coverage grid", () => {
 });
 
 describe("recombination", () => {
-  test("compares the direct All aggregate with the sum of per-harness aggregates", async () => {
-    const query: Query = async (sql) =>
-      sql.includes("GROUP BY harness")
-        ? [
-            {
-              harness: "a",
-              operations: 2,
-              input: 5,
-              cached: 1,
-              output: 1,
-              sessions: 1,
-              tasks: 1,
-              clean_n: 1,
-              clean_den: 1,
-              interrupted_n: 0,
-              interrupted_den: 1,
-              calls: 1,
-              failed: 0,
-              explicit: 1,
-            },
-            {
-              harness: "b",
-              operations: 3,
-              input: 5,
-              cached: 2,
-              output: 1,
-              sessions: 2,
-              tasks: 1,
-              clean_n: 0,
-              clean_den: 1,
-              interrupted_n: 1,
-              interrupted_den: 1,
-              calls: 1,
-              failed: 1,
-              explicit: 1,
-            },
-          ]
-        : [
-            {
-              operations: 5,
-              input: 10,
-              cached: 3,
-              output: 2,
-              sessions: 4,
-              tasks: 2,
-              clean_n: 1,
-              clean_den: 2,
-              interrupted_n: 1,
-              interrupted_den: 2,
-              calls: 2,
-              failed: 1,
-              explicit: 2,
-            },
-          ];
-    const rows = await recombination(query, {});
+  test("compares the direct All aggregate with the sum of per-harness aggregates", () => {
+    const perHarness: Row[] = [
+      {
+        harness: "a",
+        operations: 2,
+        input: 5,
+        cached: 1,
+        output: 1,
+        sessions: 1,
+        tasks: 1,
+        clean_n: 1,
+        clean_den: 1,
+        interrupted_n: 0,
+        interrupted_den: 1,
+        calls: 1,
+        failed: 0,
+        explicit: 1,
+      },
+      {
+        harness: "b",
+        operations: 3,
+        input: 5,
+        cached: 2,
+        output: 1,
+        sessions: 2,
+        tasks: 1,
+        clean_n: 0,
+        clean_den: 1,
+        interrupted_n: 1,
+        interrupted_den: 1,
+        calls: 1,
+        failed: 1,
+        explicit: 1,
+      },
+    ];
+    const all: Row[] = [
+      {
+        operations: 5,
+        input: 10,
+        cached: 3,
+        output: 2,
+        sessions: 4,
+        tasks: 2,
+        clean_n: 1,
+        clean_den: 2,
+        interrupted_n: 1,
+        interrupted_den: 2,
+        calls: 2,
+        failed: 1,
+        explicit: 2,
+      },
+    ];
+    const results = Object.fromEntries(
+      ["usage", "tasks", "tools", "provider"].flatMap((check) => [
+        [`${check}:all`, all],
+        [`${check}:harness`, perHarness],
+      ]),
+    );
+    const rows = recombine(results);
     expect(rows.find((row) => row.measure === "sessions")).toMatchObject({
       all: 4,
       sum_of_harnesses: 3,
@@ -393,5 +380,27 @@ describe("recombination", () => {
     expect(
       rows.filter((row) => row.measure !== "sessions").every((row) => row.ok),
     ).toBe(true);
+  });
+});
+
+describe("batch", () => {
+  test("sends named queries as one request and returns each result in order", async () => {
+    const sent: string[] = [];
+    const query: Query = async (sql) => {
+      sent.push(sql);
+      return batched([[{ n: 1 }, { n: 2 }], [], [{ day: "2026-09-28" }]]);
+    };
+    const results = await batch(query, {
+      first: "SELECT 1 AS n",
+      empty: "SELECT 1 WHERE 0",
+      third: "SELECT today() AS day",
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("formatRowNoNewline('JSONEachRow', *)");
+    expect(results).toEqual({
+      first: [{ n: 1 }, { n: 2 }],
+      empty: [],
+      third: [{ day: "2026-09-28" }],
+    });
   });
 });

@@ -46,3 +46,35 @@ export function clickhouse(baseUrl: string, fetchFn: Fetch = fetch): Query {
     return (JSON.parse(text) as { data: Row[] }).data;
   };
 }
+
+/**
+ * Runs several named read-only queries as one HTTP request. Each query becomes
+ * a UNION ALL branch that tags its rows with the query name and renders each
+ * row as a JSON object, so result schemas can differ. One request per view
+ * avoids opening many connections at once: Bun's HTTP client on this machine
+ * stalls about one second on some new connections to OrbStack.
+ */
+export async function batch(
+  query: Query,
+  named: Record<string, string>,
+  params: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<Record<string, Row[]>> {
+  const names = Object.keys(named);
+  const result: Record<string, Row[]> = Object.fromEntries(
+    names.map((name) => [name, []]),
+  );
+  if (names.length === 0) return result;
+  const branches = names.map(
+    (name, index) =>
+      `SELECT ${index} AS __q, rowNumberInAllBlocks() AS __n, formatRowNoNewline('JSONEachRow', *) AS __row FROM (\n${named[name]}\n)`,
+  );
+  const rows = await query(
+    `SELECT __q, __row FROM (\n${branches.join("\nUNION ALL\n")}\n) ORDER BY __q, __n`,
+    params,
+    signal,
+  );
+  for (const row of rows)
+    result[names[Number(row.__q)]!]!.push(JSON.parse(String(row.__row)) as Row);
+  return result;
+}

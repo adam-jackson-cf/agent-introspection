@@ -147,6 +147,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
 
     The refresher depends on both minute loaders, so each snapshot replaces its
     content right after new rows land. Non-append refreshes swap atomically.
+    Refreshers run with two threads so dashboard queries keep the CPU.
     """
     table = f"{DATABASE}.{snapshot.view}_snapshot"
     return [
@@ -156,7 +157,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         f" EMPTY AS SELECT * FROM {DATABASE}.{snapshot.view}",
         f"CREATE MATERIALIZED VIEW {DATABASE}.refresh_{snapshot.view}\n"
         f"REFRESH EVERY 1 MINUTE DEPENDS ON {DATABASE}.load_spans, {DATABASE}.load_logs\n"
-        f"TO {table}\nAS SELECT * FROM {DATABASE}.{snapshot.view}",
+        f"TO {table}\nAS SELECT * FROM {DATABASE}.{snapshot.view} SETTINGS max_threads = 2",
     ]
 
 

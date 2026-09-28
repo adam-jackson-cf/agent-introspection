@@ -6,7 +6,7 @@ import type {
   SignalRoute,
 } from "../src/contracts";
 import { HARNESSES } from "../src/contracts";
-import type { Query } from "./clickhouse";
+import { batch, type Query } from "./clickhouse";
 import { inWindow } from "./views";
 
 type Params = Record<string, string>;
@@ -50,39 +50,52 @@ const strayCondition = (registry: Registry, source: Source): string => {
  * part of each count not explained by a registered stray. Predicates come from
  * the registry tables that `facts install` loaded from the repo-owned file.
  */
+export function routeCountQueries(registry: Registry): Record<string, string> {
+  const queries: Record<string, string> = {};
+  for (const source of SOURCES) {
+    const predicates = routePredicates(registry, source);
+    if (predicates.length === 0) continue;
+    const stray = strayCondition(registry, source);
+    const columns = predicates.flatMap(([, match], index) => [
+      `countIf(${match}) AS t${index}`,
+      `countIf((${match}) AND NOT (${stray})) AS u${index}`,
+    ]);
+    queries[source] =
+      `SELECT harness, ${columns.join(", ")} FROM introspection.${source} FINAL WHERE ${WINDOW} GROUP BY harness`;
+  }
+  return queries;
+}
+
+/** Interprets the per-source count rows of `routeCountQueries`. */
+export function countsFromRows(
+  registry: Registry,
+  rows: Record<string, Row[]>,
+): RouteCounts {
+  const total = new Map<string, Map<string, number>>();
+  const unexplained = new Map<string, Map<string, number>>();
+  for (const source of SOURCES)
+    routePredicates(registry, source).forEach(([route], index) => {
+      const totals = new Map<string, number>();
+      const rest = new Map<string, number>();
+      for (const row of rows[source] ?? []) {
+        totals.set(String(row.harness), Number(row[`t${index}`]));
+        rest.set(String(row.harness), Number(row[`u${index}`]));
+      }
+      total.set(route, totals);
+      unexplained.set(route, rest);
+    });
+  return { total, unexplained };
+}
+
 export async function routeCounts(
   query: Query,
   registry: Registry,
   params: Params,
 ): Promise<RouteCounts> {
-  const total = new Map<string, Map<string, number>>();
-  const unexplained = new Map<string, Map<string, number>>();
-  await Promise.all(
-    SOURCES.map(async (source) => {
-      const predicates = routePredicates(registry, source);
-      if (predicates.length === 0) return;
-      const stray = strayCondition(registry, source);
-      const columns = predicates.flatMap(([, match], index) => [
-        `countIf(${match}) AS t${index}`,
-        `countIf((${match}) AND NOT (${stray})) AS u${index}`,
-      ]);
-      const rows = await query(
-        `SELECT harness, ${columns.join(", ")} FROM introspection.${source} FINAL WHERE ${WINDOW} GROUP BY harness`,
-        params,
-      );
-      predicates.forEach(([route], index) => {
-        const totals = new Map<string, number>();
-        const rest = new Map<string, number>();
-        for (const row of rows) {
-          totals.set(String(row.harness), Number(row[`t${index}`]));
-          rest.set(String(row.harness), Number(row[`u${index}`]));
-        }
-        total.set(route, totals);
-        unexplained.set(route, rest);
-      });
-    }),
+  return countsFromRows(
+    registry,
+    await batch(query, routeCountQueries(registry), params),
   );
-  return { total, unexplained };
 }
 
 const routeOf = (registry: Registry, signal: string, harness: string) =>
@@ -201,11 +214,7 @@ export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
 }
 
 /** Rows no route or registered stray claims, by harness and name. */
-export async function unrouted(
-  query: Query,
-  registry: Registry,
-  params: Params,
-): Promise<Row[]> {
+export function unroutedQuery(registry: Registry): string {
   const parts = SOURCES.map((source) => {
     const claimed = registry.routes
       .filter((route) => route.source === source)
@@ -216,10 +225,7 @@ FROM introspection.${source} FINAL
 WHERE ${WINDOW} AND NOT (${claimed.join(" OR ") || "0"}) AND NOT (${strayCondition(registry, source)})
 GROUP BY harness, name`;
   });
-  return query(
-    `SELECT * FROM (${parts.join(" UNION ALL ")}) ORDER BY n DESC LIMIT 40`,
-    params,
-  );
+  return `SELECT * FROM (${parts.join(" UNION ALL ")}) ORDER BY n DESC LIMIT 40`;
 }
 
 const LOADERS = `SELECT view, toString(status) AS status, toString(last_success_time) AS last_success,
@@ -371,42 +377,43 @@ const RECOMBINATION: Record<
   },
 };
 
-export async function recombination(
-  query: Query,
-  params: Params,
-): Promise<Row[]> {
+const measureNames = (measures: string[]) =>
+  measures.map((measure) => measure.split(" AS ")[1]!);
+
+export function recombinationQueries(): Record<string, string> {
+  const queries: Record<string, string> = {};
+  for (const [check, spec] of Object.entries(RECOMBINATION)) {
+    const where = `${spec.ts} >= {start:DateTime64(3, 'UTC')} AND ${spec.ts} < {end:DateTime64(3, 'UTC')}`;
+    queries[`${check}:all`] =
+      `SELECT ${spec.measures.join(", ")} FROM ${spec.table} WHERE ${where}`;
+    queries[`${check}:harness`] =
+      `SELECT harness, ${spec.measures.join(", ")} FROM ${spec.table} WHERE ${where} GROUP BY harness`;
+  }
+  return queries;
+}
+
+/** Compares each direct All aggregate with the sum of its per-harness rows. */
+export function recombine(results: Record<string, Row[]>): Row[] {
   const rows: Row[] = [];
-  await Promise.all(
-    Object.entries(RECOMBINATION).map(async ([check, spec]) => {
-      const where = `${spec.ts} >= {start:DateTime64(3, 'UTC')} AND ${spec.ts} < {end:DateTime64(3, 'UTC')}`;
-      const names = spec.measures.map((measure) => measure.split(" AS ")[1]!);
-      const [all, grouped] = await Promise.all([
-        query(
-          `SELECT ${spec.measures.join(", ")} FROM ${spec.table} WHERE ${where}`,
-          params,
-        ),
-        query(
-          `SELECT harness, ${spec.measures.join(", ")} FROM ${spec.table} WHERE ${where} GROUP BY harness`,
-          params,
-        ),
-      ]);
-      for (const name of names) {
-        const direct = Number(all[0]?.[name] ?? 0);
-        const summed = grouped.reduce(
-          (total, row) => total + Number(row[name] ?? 0),
-          0,
-        );
-        rows.push({
-          check,
-          measure: name,
-          all: direct,
-          sum_of_harnesses: summed,
-          harnesses: grouped.length,
-          ok: Math.abs(direct - summed) < 1e-6,
-        });
-      }
-    }),
-  );
+  for (const [check, spec] of Object.entries(RECOMBINATION)) {
+    const all = results[`${check}:all`] ?? [];
+    const grouped = results[`${check}:harness`] ?? [];
+    for (const name of measureNames(spec.measures)) {
+      const direct = Number(all[0]?.[name] ?? 0);
+      const summed = grouped.reduce(
+        (total, row) => total + Number(row[name] ?? 0),
+        0,
+      );
+      rows.push({
+        check,
+        measure: name,
+        all: direct,
+        sum_of_harnesses: summed,
+        harnesses: grouped.length,
+        ok: Math.abs(direct - summed) < 1e-6,
+      });
+    }
+  }
   return rows.sort((a, b) =>
     `${a.check}${a.measure}`.localeCompare(`${b.check}${b.measure}`),
   );
@@ -435,25 +442,28 @@ export async function pipelineData(
   params: Params,
   counts: RouteCounts,
 ): Promise<Record<string, Row[]>> {
-  const [loaders, freshness, parity, recombined, sanitization, daily, stray] =
-    await Promise.all([
-      query(LOADERS),
-      query(FRESHNESS),
-      query(PARITY, params),
-      recombination(query, params),
-      query(SANITIZATION),
-      query(DAILY_ROWS, params),
-      unrouted(query, registry, params),
-    ]);
+  const results = await batch(
+    query,
+    {
+      loaders: LOADERS,
+      freshness: FRESHNESS,
+      parity: PARITY,
+      sanitization: SANITIZATION,
+      daily_rows: DAILY_ROWS,
+      unrouted: unroutedQuery(registry),
+      ...recombinationQueries(),
+    },
+    params,
+  );
   return {
-    loaders,
-    freshness,
-    parity,
-    recombination: recombined,
-    sanitization,
-    daily_rows: daily,
+    loaders: results.loaders!,
+    freshness: results.freshness!,
+    parity: results.parity!,
+    recombination: recombine(results),
+    sanitization: results.sanitization!,
+    daily_rows: results.daily_rows!,
     coverage: coverageGrid(registry, counts),
-    unrouted: stray,
+    unrouted: results.unrouted!,
     strays: registry.strays.map((entry) => ({ ...entry })),
   };
 }

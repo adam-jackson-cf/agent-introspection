@@ -20,8 +20,10 @@ import Cache from "./views/Cache";
 import Effort from "./views/Effort";
 import Friction from "./views/Friction";
 import Guardrails from "./views/Guardrails";
+import Interventions from "./views/Interventions";
 import Pipeline from "./views/Pipeline";
 import Provider from "./views/Provider";
+import Recurrence from "./views/Recurrence";
 import Session from "./views/Session";
 import Tools from "./views/Tools";
 
@@ -89,6 +91,22 @@ export const VIEWS: ViewSpec[] = [
     question:
       "Are model calls failing, slow, disconnecting, retried, or served by a different model?",
     component: Provider,
+  },
+  {
+    id: "recurrence",
+    number: "V8",
+    title: "Recurrence",
+    question:
+      "Which files and failures recur across tasks, and which cross the threshold for intervention?",
+    component: Recurrence,
+  },
+  {
+    id: "interventions",
+    number: "V9",
+    title: "Interventions",
+    question:
+      "Which findings became interventions, and did applied interventions reduce what they targeted?",
+    component: Interventions,
   },
 ];
 

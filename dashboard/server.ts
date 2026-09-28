@@ -13,7 +13,7 @@ import {
   type ViewId,
   type ViewResponse,
 } from "./src/contracts";
-import { clickhouse, type Query } from "./server/clickhouse";
+import { batch, clickhouse, type Query } from "./server/clickhouse";
 import { contributions, pipelineData, routeCounts } from "./server/pipeline";
 import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 
@@ -27,6 +27,9 @@ const WORKFLOW_DB =
   join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
+/** Route counts feed coverage and contributor chips; loaders add rows once a minute. */
+const ROUTE_COUNT_TTL_MS = 60_000;
+const ROUTE_COUNT_ENTRIES = 32;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CSP =
   "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self'; img-src 'self'; script-src 'self'; style-src 'self';";
@@ -99,21 +102,17 @@ const params = (filters: Filters): Record<string, string> => ({
 });
 
 async function loadRegistry(query: Query): Promise<Registry> {
-  const [signals, support, routes, strays] = await Promise.all([
-    query(
+  const { signals, support, routes, strays } = await batch(query, {
+    signals:
       "SELECT signal, view, view_title, title, question, unit, formula, scope FROM introspection.signals ORDER BY sort",
-    ),
-    query(
+    support:
       "SELECT signal, harness, harness_label, route, alignment, note FROM introspection.signal_support ORDER BY signal, harness",
-    ),
-    query(
+    routes:
       "SELECT route, harness, harness_label, source, match, expect, description FROM introspection.signal_routes ORDER BY route, harness",
-    ),
-    query(
+    strays:
       "SELECT stray, harness, source, match, reason FROM introspection.signal_strays ORDER BY stray",
-    ),
-  ]);
-  if (signals.length === 0)
+  });
+  if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
   return { signals, support, routes, strays } as unknown as Registry;
 }
@@ -193,21 +192,40 @@ export function createApp(
     return cached.registry;
   };
 
+  const countCache = new Map<
+    string,
+    { at: number; counts: ReturnType<typeof routeCounts> }
+  >();
+  const cachedRouteCounts = (
+    reg: Registry,
+    bound: Record<string, string>,
+  ): ReturnType<typeof routeCounts> => {
+    const now = dependencies.now().getTime();
+    const key = `${bound.start}|${bound.end}`;
+    const hit = countCache.get(key);
+    if (hit && now - hit.at <= ROUTE_COUNT_TTL_MS) return hit.counts;
+    const counts = routeCounts(query, reg, bound);
+    countCache.set(key, { at: now, counts });
+    counts.catch(() => countCache.delete(key));
+    for (const [entry, value] of countCache)
+      if (
+        countCache.size > ROUTE_COUNT_ENTRIES ||
+        now - value.at > ROUTE_COUNT_TTL_MS
+      )
+        countCache.delete(entry);
+    return counts;
+  };
+
   async function view(id: ViewId, filters: Filters): Promise<ViewResponse> {
     const started = performance.now();
     const bound = params(filters);
     const reg = await registry();
-    const counts = await routeCounts(query, reg, bound);
+    const counts = await cachedRouteCounts(reg, bound);
     let data: Record<string, Row[]>;
     if (id === "pipeline") {
       data = await pipelineData(query, reg, bound, counts);
     } else {
-      const entries = await Promise.all(
-        Object.entries(VIEW_QUERIES[id]).map(
-          async ([name, sql]) => [name, await query(sql, bound)] as const,
-        ),
-      );
-      data = Object.fromEntries(entries);
+      data = await batch(query, VIEW_QUERIES[id], bound);
       if (id === "interventions") Object.assign(data, dependencies.workflow());
     }
     return {
@@ -241,17 +259,11 @@ export function createApp(
         const session = url.searchParams.get("session") ?? "";
         if (!isHarness(harness) || session === "" || session.length > 256)
           return badRequest("harness and session are required");
-        const entries = await Promise.all(
-          Object.entries(SESSION_QUERIES).map(
-            async ([name, sql]) =>
-              [name, await query(sql, { harness, session })] as const,
-          ),
-        );
         const response: SessionResponse = {
           harness,
           session,
           queriedAt: dependencies.now().toISOString(),
-          data: Object.fromEntries(entries),
+          data: await batch(query, SESSION_QUERIES, { harness, session }),
         };
         return json(response);
       }
@@ -281,10 +293,13 @@ export function createApp(
 
 if (import.meta.main) {
   const assets = await loadAssets();
-  Bun.serve({
-    hostname: ADDRESS,
-    port: PORT,
-    fetch: createApp({ assets }),
-  });
+  const app = createApp({ assets });
+  Bun.serve({ hostname: ADDRESS, port: PORT, fetch: app });
+  // Load the registry before the first view request needs it.
+  void app(
+    new Request(`http://${ADDRESS}:${PORT}/api/registry`, {
+      headers: { host: `${ADDRESS}:${PORT}` },
+    }),
+  );
   console.log(`Dashboard listening on http://${ADDRESS}:${PORT}`);
 }

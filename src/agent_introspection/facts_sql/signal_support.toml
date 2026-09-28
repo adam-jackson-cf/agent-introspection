@@ -904,6 +904,15 @@ formula = "Unsupported: needs a versioned rule registry with deterministic trigg
 scope = "system"
 
 [[signal]]
+id = "intervene.practice_recurrence"
+view = "interventions"
+title = "Uncodified practice recurrence"
+question = "Which successful operation sequences recur often enough to codify?"
+unit = "sequences"
+formula = "Unsupported: needs ordered operations with an explicit successful task outcome. No producer emits explicit task success, and clean completion is a friction proxy, not success."
+scope = "system"
+
+[[signal]]
 id = "intervene.tier_audit"
 view = "interventions"
 title = "Enforcement-tier audit"

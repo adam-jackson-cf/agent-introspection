@@ -69,7 +69,9 @@ Serving (phase 2):
   address OrbStack gives the container on this Mac only. No port is published and the
   SigNoz stack is untouched. A call costs about 20 ms, against about 400 ms for
   `docker exec`. Statements run with `readonly=2`, and the window and harness are bound
-  as query parameters.
+  as query parameters. Each view's named queries go as one request: every query is a
+  `UNION ALL` branch that tags its rows and renders them with
+  `formatRowNoNewline('JSONEachRow', *)` (see F15).
 - **Snapshots.** Each fact view has a `<view>_snapshot` table. A non-append
   refreshable view rebuilds it every minute, `DEPENDS ON` both minute loaders. The
   view SQL, and so its parity with agent-observability, is unchanged; views read the
@@ -251,7 +253,7 @@ note generated from the signal support registry.
 | 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view |
 | 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
 | 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
-| 6 | V8 Recurrence, then V9 Interventions | Same | Next |
+| 6 | V8 Recurrence, then V9 Interventions | Same | Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s) |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
 
 ## Findings log
@@ -356,6 +358,22 @@ Measure v2 R1 keeps client cancellation separate from provider failure. Fix:
 `model_calls.outcome` is `cancelled` for them, and the call error rate is failed /
 calls not cancelled. Validated: omp 112 failed, 168 cancelled; Codex CLI's 32 failures
 are all stream disconnects; totals reconcile.
+
+**F15. Bun stalled about one second on some new connections to OrbStack.** Evidence:
+view p95 was 1.0–2.5 s while ClickHouse's query log showed no query over 900 ms. In
+isolation, 8 parallel Bun `fetch` (and `node:http`) requests repeated 12 times stalled
+3–11 times at 1,023–1,239 ms, by name or IP, with or without keep-alive; curl with the
+same pattern never stalled. Fix: one HTTP request per view (batched `UNION ALL`), route
+counts cached per window for 60 s, registry loaded at server start, snapshot refreshers
+limited to 2 threads. Validated: nine views p50 0.06–0.54 s and p95 ≤ 0.65 s over 90
+days, except the first Pipeline request after a restart.
+
+**F16. V9 has little to show yet.** Evidence: the workflow store holds 6 findings
+from 2026-08-06, all `emerging`, and no proposals or interventions; no producer emits
+rule triggers or explicit task success. Fix: V9 shows the records that exist, a
+recurrence baseline for future comparisons, and registry-sourced "unsupported" notes
+for rule adherence (M12) and practice recurrence (M17). Validated: baseline task
+counts reconcile; post-intervention comparison activates when a proposal is applied.
 
 ## Operations
 

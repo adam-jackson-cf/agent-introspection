@@ -261,6 +261,11 @@ FROM (
     toString(min(ts)) AS first_seen, toString(max(ts)) AS last_seen
 FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
 GROUP BY harness, tool, signature HAVING tasks >= 2 ORDER BY tasks DESC, occurrences DESC LIMIT 30`,
+    signature_summary: `SELECT harness, count() AS signatures, countIf(tasks >= 2) AS recurring FROM (
+    SELECT harness, tool, failure_signature, uniqExact(task_id) AS tasks
+    FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
+    GROUP BY harness, tool, failure_signature
+) GROUP BY harness ORDER BY harness`,
     actionable: `SELECT harness, tool, failure_signature AS signature, count() AS occurrences,
     uniqExact(task_id) AS tasks, uniqExact(toDate(ts, 'Europe/London')) AS days,
     toString(max(ts)) AS last_seen
@@ -274,7 +279,7 @@ FROM (
     FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != ''
     GROUP BY harness, signature, workdir
 ) GROUP BY harness, signature HAVING attributed > 0 AND occurrences >= 3
-ORDER BY occurrences DESC LIMIT 25`,
+ORDER BY occurrences DESC LIMIT 200`,
     daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, count() AS failures,
     uniqExact(failure_signature) AS signatures
 FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != ''
