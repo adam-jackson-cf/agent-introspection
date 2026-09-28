@@ -692,7 +692,7 @@ question = "How often did a command bypass a quality gate?"
 unit = "calls"
 formula = "Tool calls whose command contains --no-verify, HUSKY=0, SKIP=, or --no-gpg-sign."
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.gate_bypass` from the command before it is discarded." }
+codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered." }
 oh-my-pi = { alignment = "not emitted", note = "Command text is not emitted in a normalized form." }
 claude-code = { alignment = "not emitted", note = "Only `bash_argv0` is emitted, not flags." }
 
@@ -704,7 +704,7 @@ question = "Where do agents try ≥3 distinct commands against the same file in 
 unit = "tasks"
 formula = "Task × target pairs with ≥3 distinct command head + subcommand values."
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned", note = "Targets are `apply_patch` files and `path` arguments." }
+codex = { route = "codex.tool_result", alignment = "differs", note = "Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension)." }
 oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no target." }
 claude-code = { alignment = "not emitted", note = "Tool results carry no target." }
 
@@ -832,7 +832,7 @@ question = "Which files recur across tasks?"
 unit = "tasks"
 formula = "Targets touched in ≥2 tasks, with task, day, and failure counts."
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.targets`: `apply_patch` files and `path` arguments, home as ~." }
+codex = { route = "codex.tool_result", alignment = "differs", note = "`x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~." }
 oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no target." }
 claude-code = { alignment = "not emitted", note = "Tool results carry no target." }
 

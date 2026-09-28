@@ -18,6 +18,8 @@ import { HarnessSelector, ViewContext } from "./components";
 import { isRecord } from "./type-guards";
 import Cache from "./views/Cache";
 import Effort from "./views/Effort";
+import Friction from "./views/Friction";
+import Guardrails from "./views/Guardrails";
 import Pipeline from "./views/Pipeline";
 import Session from "./views/Session";
 import Tools from "./views/Tools";
@@ -62,6 +64,22 @@ export const VIEWS: ViewSpec[] = [
     question:
       "Which tools fail, how often, in which tasks, and do they repeat or loop?",
     component: Tools,
+  },
+  {
+    id: "friction",
+    number: "V5",
+    title: "Friction",
+    question:
+      "How often do users interrupt, steer, or follow up quickly, and do tasks finish cleanly?",
+    component: Friction,
+  },
+  {
+    id: "guardrails",
+    number: "V6",
+    title: "Guardrails",
+    question:
+      "How often do approvals, sandboxes, and quality gates block or get bypassed?",
+    component: Guardrails,
   },
 ];
 

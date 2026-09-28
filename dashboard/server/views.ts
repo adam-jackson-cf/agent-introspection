@@ -170,9 +170,6 @@ FROM ops GROUP BY harness ORDER BY harness`,
 SELECT harness, operation, count() AS failed_ops,
     countIf(arrayExists(t -> t > first_failure, successes)) AS recovered
 FROM ops GROUP BY harness, operation ORDER BY failed_ops DESC LIMIT 25`,
-    signals_daily: `SELECT toString(toDate(ts)) AS day, harness, signal, count() AS n
-FROM ${S} WHERE ${inWindow("ts")} AND signal IN ('interrupt', 'steer')
-GROUP BY day, harness, signal ORDER BY day`,
     tasks: `SELECT harness, session_id, task_id, model, toString(start_ts) AS started, duration_seconds,
     interrupted, steered, errored, quick_follow_up
 FROM ${T} WHERE ${inWindow("start_ts")} AND (interrupted = 1 OR steered = 1 OR errored = 1)

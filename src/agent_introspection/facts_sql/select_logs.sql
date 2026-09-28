@@ -3,12 +3,16 @@
 -- Raw prompt, tool argument, and tool output text is never stored. For Codex
 -- tool results, normalized `x.*` fields are derived from that text instead:
 -- command head/subcommand, gate-bypass flag, home-redacted targets, argument
--- hash, exit code, and a digit-normalized failure signature.
+-- hash, exit code, and a digit-normalized failure signature. The command comes
+-- from the `cmd` argument, or for the JavaScript `exec` tool from the first
+-- nested `cmd` it passes to `exec_command`. Targets are patch file headers,
+-- `path` arguments, and path-like command arguments.
 WITH
     attributes_string['event.name'] AS event,
     attributes_string['arguments'] AS args,
     attributes_string['output'] AS out,
-    JSONExtractString(args, 'cmd') AS cmd,
+    JSONExtractString(args, 'cmd') AS json_cmd,
+    if(json_cmd != '', json_cmd, extract(args, '["'']?cmd["'']?\\s*:\\s*["''`]([^"''`]+)')) AS cmd,
     arrayFilter(
         t -> t != '' AND NOT match(t, '^[A-Za-z_][A-Za-z0-9_]*='),
         splitByRegexp('\\s+', cmd)
@@ -19,13 +23,30 @@ WITH
         cmd_tokens[2],
         ''
     ) AS command_sub,
-    arrayMap(
-        p -> substring(replaceRegexpOne(trimBoth(p), '^/Users/[^/]+', '~'), 1, 300),
-        arrayConcat(
-            -- Patches arrive with real or JSON-escaped newlines; stop at either.
-            extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),
-            if(JSONExtractString(args, 'path') != '', [JSONExtractString(args, 'path')], [])
-        )
+    arrayFilter(
+        t -> NOT startsWith(t, '-')
+            AND match(t, '^[~.]{0,2}/?[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*/?$')
+            AND (
+                position(t, '/') > 0
+                OR match(t, '\\.(md|py|ts|tsx|js|mjs|json|jsonl|toml|ya?ml|sh|sql|txt|lock|css|html|rs|go|sqlite3?|cfg|ini|csv|xml|plist|log)$')
+            )
+            AND NOT match(t, '^[0-9.]+$'),
+        arrayMap(t -> replaceRegexpAll(t, '^["'']+|["'';,)]+$', ''), arraySlice(cmd_tokens, 2))
+    ) AS command_paths,
+    arraySlice(
+        arrayDistinct(
+            arrayMap(
+                p -> substring(replaceRegexpOne(trimBoth(p), '^/Users/[^/]+', '~'), 1, 300),
+                arrayConcat(
+                    -- Patches arrive with real or JSON-escaped newlines; stop at either.
+                    extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),
+                    if(JSONExtractString(args, 'path') != '', [JSONExtractString(args, 'path')], []),
+                    command_paths
+                )
+            )
+        ),
+        1,
+        20
     ) AS targets,
     coalesce(
         nullIf(extract(out, 'Process exited with code (-?\\d+)'), ''),
@@ -77,7 +98,7 @@ SELECT
                 map(
                     'x.command_head', command_head,
                     'x.command_sub', command_sub,
-                    'x.gate_bypass', toString(match(cmd, '(--no-verify|(^|\\s)HUSKY=0|(^|\\s)SKIP=|--no-gpg-sign)')),
+                    'x.gate_bypass', toString(match(args, '(--no-verify|(^|\\s)HUSKY=0|(^|\\s)SKIP=|--no-gpg-sign)')),
                     'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^/Users/[^/]+', '~'),
                     'x.targets', toJSONString(targets),
                     'x.arguments_hash', toString(cityHash64(args)),

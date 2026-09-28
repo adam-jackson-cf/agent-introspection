@@ -252,3 +252,16 @@ def test_backfill_reports_final_row_counts() -> None:
     assert result["rows"] == {"spans": 7, "logs": 7}
     assert result["start"] == "2026-09-27T00:00:00+00:00"
     assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4
+
+
+def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_arguments() -> None:
+    select = facts.render_select("select_logs.sql", "1")
+
+    command = select.split("AS cmd,")[0].rsplit("AS json_cmd,", 1)[1]
+    assert "json_cmd != ''" in command
+    assert "cmd" in command.split("extract(args,")[1]
+    bypass = select.split("'x.gate_bypass', toString(match(")[1]
+    assert bypass.startswith("args,")
+    targets = select.split("AS targets,")[0].rsplit("AS command_paths,", 1)[1]
+    assert "command_paths" in targets
+    assert "'~'" in targets

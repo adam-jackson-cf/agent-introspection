@@ -95,9 +95,9 @@ For Codex `codex.tool_result`, the loader derives the following fields and disca
 
 | Field | Meaning |
 | --- | --- |
-| `x.command_head`, `x.command_sub` | First command token (env assignments skipped) and a lowercase subcommand, e.g. `git` `commit`. |
-| `x.gate_bypass` | `1` when the command contains `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign`. |
-| `x.targets` | Files from `apply_patch` headers and `path` arguments, with the home directory shown as `~`. |
+| `x.command_head`, `x.command_sub` | First command token (env assignments skipped) and a lowercase subcommand, e.g. `git` `commit`. The command is the `cmd` argument, or for the JavaScript `exec` tool the first nested `cmd` it passes to `exec_command`. |
+| `x.gate_bypass` | `1` when the arguments contain `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign`. |
+| `x.targets` | Files from `apply_patch` headers, `path` arguments, and path-like command arguments (a slash or a known file extension; inferred), with the home directory shown as `~`; at most 20. |
 | `x.workdir` | Working directory, with the home directory shown as `~`. |
 | `x.exit_code` | Parsed from `Process exited with code N` / `Exit code: N`. Codex reports `success=true` for non-zero exits. |
 | `x.failure_signature` | For failed calls: the first error-like output line, with digits and hex runs replaced by `N`, capped at 160 characters. |
@@ -249,8 +249,8 @@ note generated from the signal support registry.
 | 1 | ClickHouse facts: tables, loaders, views, backfill | Parity and invariants pass; loaders refresh every minute | Done 2026-09-28 |
 | 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s |
 | 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view |
-| 4 | V5 Friction, V6 Guardrails | Same | Next |
-| 5 | V7 Provider | Same | |
+| 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
+| 5 | V7 Provider | Same | Next |
 | 6 | V8 Recurrence, then V9 Interventions | Same | |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
 
@@ -326,6 +326,29 @@ memory://root/memory_summary.md". Codex exec `cat` failed 98 times, once in each
 98 tasks, on ".agents/by-request/verifcation-tests/SKILL.md: No such file"; the path
 misspells "verification". Both appear in V4 failure signatures and are candidates
 for V8 actionable repeats.
+
+**F11. Codex's JavaScript `exec` tool hid shell commands.** Evidence: 4,708 Codex `exec`
+calls carry JavaScript code (`const …`, `text(await tools.exec_command(…))`) rather
+than JSON, so no `x.command_head` was derived; 3,492 of them call `exec_command`. Gate
+bypass looked only at `cmd`. Fix: the command is the `cmd` argument, or the first
+nested `cmd` in `exec` code; gate bypass matches the whole argument text. Validated:
+3,460 `exec` calls now have a command head, and gate bypass is still 0 across all
+Codex arguments.
+
+**F12. Command churn was structurally unobservable.** Evidence: shell commands carried
+no file targets, only `apply_patch` headers and `path` arguments did, so no file could
+reach three distinct commands; V6 showed 0. Fix: path-like command arguments (a slash
+or a known file extension, home as `~`, at most 20) join `x.targets`, and the registry
+marks `guard.command_churn` and `recur.targets` as `differs` (inferred). Validated:
+5,669 Codex calls carry targets, and churn surfaces real cases (e.g. 11 distinct
+commands against one app bundle in a task).
+
+**F13. Some Codex CLI turns have no turn span.** Evidence: both `codex_cli_rs`
+`turn/steer` spans point to turn `01a0cf0a-…`, which has no `session_task.turn` span,
+so no task is marked steered; only 54% of CLI tool calls fall inside a turn span.
+Impact: CLI task counts and task-attributed tool signals are undercounts. Fix: none in
+this repo (producer behaviour); the registry notes CLI TUI turns omitting token usage,
+and the coverage grid shows the route as healthy because other turns arrive.
 
 ## Operations
 
