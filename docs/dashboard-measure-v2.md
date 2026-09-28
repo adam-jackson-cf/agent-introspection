@@ -6,7 +6,11 @@ Define the measures needed to distinguish pipeline/process health, model-provide
 
 ## Delivery and proof references
 
-- [React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md)
+> **Superseded delivery approach.** The [Dashboard v3 Plan](dashboard-v3-plan.md) now
+> governs delivery. The questions below remain the source for its views until
+> Measures v3 replaces this document; the proof references are archived.
+
+- [React and SigNoz Companion Implementation Plan](retired/react-signoz-companion-implementation-plan.md)
   is the active, gated route from the approved measurements and mock design to
   the five production React routes.
 - [Dashboard Metric-to-Proof Register](dashboard-metric-proof-register.md) is
@@ -1059,7 +1063,7 @@ retains the historical experiments that tested those closures. Machine-readable
 Appendix row outcomes remain in
 [`dashboard-prototype-proof-matrix.json`](dashboard-prototype-proof-matrix.json).
 No historical experiment table opens an implementation gate; the active
-[React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md)
+[React and SigNoz Companion Implementation Plan](retired/react-signoz-companion-implementation-plan.md)
 remains gated by the applicable row-level proof.
 
 This appendix inventories every measurement-bearing panel and data filter in

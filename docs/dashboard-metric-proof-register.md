@@ -1,5 +1,9 @@
 # Dashboard Metric-to-Proof Register
 
+> **Retired 2026-09-28.** Superseded by the [Dashboard v3 Plan](dashboard-v3-plan.md).
+> Kept in place only because the current React registry reads it; it moves to
+> `retired/` when phase 2 removes that dependency.
+
 ## Status and scope
 
 This is the sole current human-readable status/action register for the dashboard. [Dashboard Measure v2](dashboard-measure-v2.md) remains the normative authority for every title, formula, cohort, timestamp domain, availability state, widget contract, and missing-data/`Unavailable` behavior. [Prototype Proof Matrix](dashboard-prototype-proof-matrix.json) remains the machine-readable Appendix classification authority. This register does not replace either authority or create an evidence-bundle schema.
@@ -219,7 +223,7 @@ A row can change only when its applicable producer has a bounded fresh-real, row
 
 ## Plan lifecycle and updates
 
-As of the retained 2026-09-05 execution, this register supersedes the [Authoritative Proof Closure Plan](retired/authoritative-proof-closure-plan.md) and [Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md) as the active proof/action queue. Both are retired execution records, not declarations that their blocked objectives succeeded. The [React and SigNoz Companion Implementation Plan](react-signoz-companion-implementation-plan.md) remains active and gated.
+As of the retained 2026-09-05 execution, this register supersedes the [Authoritative Proof Closure Plan](retired/authoritative-proof-closure-plan.md) and [Gap-Closure Prototype Experiment Plan](retired/gap-closure-prototype-experiment-plan.md) as the active proof/action queue. Both are retired execution records, not declarations that their blocked objectives succeeded. The [React and SigNoz Companion Implementation Plan](retired/react-signoz-companion-implementation-plan.md) remains active and gated.
 
 Update this register when a new bounded proof or an authoritative native contract changes. Promote an Appendix producer row only after its individual gate passes and update the machine matrix together with its bound evidence; otherwise retain Blocked and record the exact missing owner/boundary. Do not re-audit unchanged Request/Task contracts, change installed producer/runtime configuration, rebase historical failed populations, or deploy production projections to make a row appear complete. Retain all historical evidence and record forward-validity rather than implying historical coverage.
 

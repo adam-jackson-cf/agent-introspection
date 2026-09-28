@@ -35,6 +35,24 @@ the same check-only quality suite, including the independent dashboard package:
 bash scripts/run-ci-quality-gates.sh
 ```
 
+## Dashboard facts (v3)
+
+The dashboard is moving to ClickHouse-materialized facts; see the
+[Dashboard v3 Plan](docs/dashboard-v3-plan.md). Refreshable materialized views copy
+curated producer spans and logs from SigNoz into the durable `introspection`
+database every minute, with raw prompt/command text and identity keys removed.
+The views `usage_events`, `task_outcomes`, `tool_calls`, and `user_signals`
+normalize omp, Codex, and Claude Code telemetry.
+
+```sh
+uv run agent-introspection facts install          # create/refresh tables, loaders, views
+uv run agent-introspection facts backfill --days 40  # copy retained SigNoz history
+uv run agent-introspection facts status           # loader state and per-harness freshness
+```
+
+The companion and pipeline sections below describe the proof-gated approach
+archived at tag `archive/proof-gated-dashboard`; they are replaced phase by phase.
+
 ## Dashboard companion
 
 The repository-owned React companion is an independent Bun package in
@@ -101,7 +119,7 @@ The refined calculator and genuinely renewed evidence now restore all twelve
 central attachments: eleven displayed measurements and P11's legitimate
 `Unavailable` state for incomplete immutable observations. Current HTTP and
 browser verification, including failed-refresh clearing and recovery, is recorded
-in the [performance plan](docs/dashboard-performance-improvement-plan.md#executed-python-scope-and-current-recovery).
+in the [performance plan](docs/retired/dashboard-performance-improvement-plan.md#executed-python-scope-and-current-recovery).
 The Completion time section remains unchanged.
 
 Populated Pipeline health panels use value-first cards, compact counts, scaled

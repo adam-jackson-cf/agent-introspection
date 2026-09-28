@@ -14,6 +14,7 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any, NoReturn
 
+from agent_introspection import facts
 from agent_introspection.canonical_store import check_authority_store, configure_authority_store
 from agent_introspection.capabilities import (
     CapabilityError,
@@ -735,6 +736,23 @@ def _add_database_command(commands: argparse._SubParsersAction[argparse.Argument
     restore.add_argument("backup_path")
 
 
+def _facts_command(args: argparse.Namespace) -> dict[str, Any]:
+    run = facts.docker_runner(load_config(_config_path(args.config)))
+    if args.facts_command == "install":
+        return facts.install(run)
+    if args.facts_command == "backfill":
+        return facts.backfill(run, days=args.days)
+    return facts.status(run)
+
+
+def _add_facts_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    facts_parser = commands.add_parser("facts").add_subparsers(dest="facts_command", required=True)
+    facts_parser.add_parser("install")
+    backfill = facts_parser.add_parser("backfill")
+    backfill.add_argument("--days", type=int, default=40)
+    facts_parser.add_parser("status")
+
+
 def _add_schedule_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     schedule = commands.add_parser("schedule").add_subparsers(
         dest="schedule_command", required=True
@@ -762,6 +780,7 @@ def _parser() -> argparse.ArgumentParser:
     _add_dashboard_command(commands)
     _add_database_command(commands)
     _add_schedule_command(commands)
+    _add_facts_command(commands)
     return parser
 
 
@@ -814,6 +833,7 @@ def _command_handler(args: argparse.Namespace) -> Callable[[argparse.Namespace],
         "dashboard": _dashboard_verify,
         "db": _db_command,
         "schedule": _schedule_command,
+        "facts": _facts_command,
     }
     try:
         return handlers[args.command]
