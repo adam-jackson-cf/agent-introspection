@@ -413,8 +413,9 @@ ClickHouse insert-path fsync enabled on 2026-09-28 at 21:50 UTC pushed trace ins
 the collector's 9 s timeout, so the collector retried batches that had already landed;
 the smaller 16:00 UTC bump matches ClickHouse restarts during recovery. Fixed there at
 15:07 UTC on 2026-09-29 (insert fsync off, merge fsync kept). Validated: omp parity exact
-(14,083 operations); omp spans after 15:07 have one row per span. Duplicates already in
-SigNoz (spans from 2026-09-28 16:00) remain until that session deduplicates them.
+(14,083 operations); omp spans after 15:07 have one row per span. The existing duplicates
+were removed there on 2026-09-29 with the user's approval; omp spans on 2026-09-28 and
+09-29 now have one row per (trace, span), and parity is exact for all five harnesses.
 
 **F20. The log loader missed rows inserted late into SigNoz.** Evidence: 3 Claude Code
 `api_request` logs from 2026-09-28 17:53–18:10 UTC were in SigNoz but not in the facts;

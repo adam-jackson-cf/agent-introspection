@@ -239,11 +239,6 @@ These signals are emitted, but not for every row.
   `attempt` number. Provider measures are per call, not per logical request.
 - **No comparable cost.** omp's estimated cost is always 0 and Codex reports none, so
   spend is measured in tokens.
-- **Duplicate omp spans in SigNoz, 2026-09-28 16:00 to 2026-09-29 15:07 UTC.** SigNoz
-  holds 2–7 identical copies of omp chat spans from that period: ClickHouse insert
-  fsync made the collector retry batches that had already landed (F19). The facts keep
-  one per span, but anything reading raw SigNoz spans over-counts omp for that period
-  until the existing duplicates are removed. New spans are no longer duplicated.
 - **Mislabelled sessions.** Claude Code sessions exported as `oh-my-pi` on 2026-08-24,
   08-28, 09-01, 09-02, and 09-13, and Docker build spans under `oh-my-pi`, count for
   neither harness (F5).
