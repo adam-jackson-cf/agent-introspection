@@ -6,7 +6,7 @@ import type {
   SignalRoute,
 } from "../src/contracts";
 import { HARNESSES } from "../src/contracts";
-import { batch, type Query } from "./clickhouse";
+import { batch, live, type Query } from "./clickhouse";
 import { inWindow } from "./views";
 
 type Params = Record<string, string>;
@@ -459,21 +459,23 @@ export async function pipelineData(
   registry: Registry,
   params: Params,
   counts: RouteCounts,
+  withinSnapshots = true,
 ): Promise<Record<string, Row[]>> {
+  const queries: Record<string, string> = {
+    loaders: LOADERS,
+    freshness: FRESHNESS,
+    parity: PARITY,
+    sanitization: SANITIZATION,
+    daily_rows: DAILY_ROWS,
+    unrouted: unroutedQuery(registry),
+    project_coverage: PROJECT_COVERAGE,
+    project_rejections: PROJECT_REJECTIONS,
+    project_sync: PROJECT_SYNC,
+    ...recombinationQueries(),
+  };
   const results = await batch(
     query,
-    {
-      loaders: LOADERS,
-      freshness: FRESHNESS,
-      parity: PARITY,
-      sanitization: SANITIZATION,
-      daily_rows: DAILY_ROWS,
-      unrouted: unroutedQuery(registry),
-      project_coverage: PROJECT_COVERAGE,
-      project_rejections: PROJECT_REJECTIONS,
-      project_sync: PROJECT_SYNC,
-      ...recombinationQueries(),
-    },
+    withinSnapshots ? queries : live(queries),
     params,
   );
   return {

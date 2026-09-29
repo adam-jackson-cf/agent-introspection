@@ -47,6 +47,21 @@ export function clickhouse(baseUrl: string, fetchFn: Fetch = fetch): Query {
   };
 }
 
+/** Snapshot tables hold the last 90 days (facts.SNAPSHOT_DAYS). */
+export const SNAPSHOT_DAYS = 90;
+
+/**
+ * Points queries at the live fact views instead of their 90-day snapshots, for
+ * windows that start before the snapshot horizon or rows of any age.
+ */
+export const live = (queries: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(queries).map(([name, sql]) => [
+      name,
+      sql.replace(/introspection\.(\w+)_snapshot\b/g, "introspection.$1"),
+    ]),
+  );
+
 /**
  * Runs several named read-only queries as one HTTP request. Each query becomes
  * a UNION ALL branch that tags its rows with the query name and renders each

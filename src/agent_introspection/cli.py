@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
-from agent_introspection import facts, projects
+from agent_introspection import facts, findings, projects
 from agent_introspection.config import AppConfig, ConfigurationError, load_config
 from agent_introspection.proposals import (
     ProposalInput,
@@ -70,7 +70,7 @@ def _candidates_export(args: argparse.Namespace) -> dict[str, Any]:
     try:
         rows = connection.execute(
             """
-            SELECT f.id, f.category, f.trend_state, f.fingerprint
+            SELECT f.id, f.category, f.trend_state, f.fingerprint, f.subject
             FROM findings f
             LEFT JOIN proposals p ON p.finding_id = f.id
             WHERE f.trend_state = 'actionable' AND p.id IS NULL
@@ -237,6 +237,14 @@ def _facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "sync-projects":
         ledger = Path(args.ledger).expanduser() if args.ledger is not None else None
         return projects.sync(run, ledger=ledger)
+    if args.facts_command in ("findings", "sync"):
+        synced = projects.sync(run) if args.facts_command == "sync" else None
+        connection = _open(args)
+        try:
+            refreshed = findings.refresh(run, connection)
+        finally:
+            connection.close()
+        return refreshed if synced is None else {"projects": synced, "findings": refreshed}
     return facts.status(run)
 
 
@@ -252,6 +260,8 @@ def _parser() -> argparse.ArgumentParser:
     facts_parser.add_parser("status")
     sync = facts_parser.add_parser("sync-projects")
     sync.add_argument("--ledger", help="import session-context history from a retired ledger")
+    facts_parser.add_parser("findings")
+    facts_parser.add_parser("sync")
     schedule = facts_parser.add_parser("schedule").add_subparsers(
         dest="schedule_command", required=True
     )

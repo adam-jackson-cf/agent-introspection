@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS findings (
     is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     replaced_by_finding_id TEXT REFERENCES findings(id),
     updated_at TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '' CHECK (subject = '' OR json_valid(subject)),
     CHECK (
         (is_active = 1 AND replaced_by_finding_id IS NULL)
         OR (is_active = 0 AND replaced_by_finding_id IS NOT NULL)

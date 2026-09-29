@@ -28,4 +28,11 @@ def connect_workflow(path: Path | str, *, busy_timeout_ms: int = 5000) -> sqlite
     # dashboard, which cannot create a WAL shared-memory file.
     connection.execute("PRAGMA journal_mode = DELETE")
     connection.executescript(schema())
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(findings)")}
+    if "subject" not in columns:
+        # Stores created before findings carried a subject gain the column in place.
+        connection.execute(
+            "ALTER TABLE findings ADD COLUMN subject TEXT NOT NULL DEFAULT '' "
+            "CHECK (subject = '' OR json_valid(subject))"
+        )
     return connection

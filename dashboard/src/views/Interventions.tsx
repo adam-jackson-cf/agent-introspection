@@ -1,6 +1,6 @@
 import { DailyChart, DataTable, TableView } from "../charts";
 import type { Row } from "../contracts";
-import { Kpi, Panel, Section, useView } from "../components";
+import { HarnessName, Kpi, Panel, Section, useView } from "../components";
 import { fmtCount, groupSum, num, ratio, SERIES, shortTime } from "../format";
 
 const DAY = 86_400_000;
@@ -36,10 +36,15 @@ function prePost(
       return day >= from && day < to;
     };
     const occurrences = signatures
-      .filter((row) => row.signature === proposal.target && inRange(row))
+      .filter(
+        (row) =>
+          row.harness === proposal.harness &&
+          row.signature === proposal.signature &&
+          inRange(row),
+      )
       .reduce((total, row) => total + num(row.occurrences), 0);
     const taskCount = tasks
-      .filter(inRange)
+      .filter((row) => row.harness === proposal.harness && inRange(row))
       .reduce((total, row) => total + num(row.tasks), 0);
     return {
       occurrences,
@@ -70,7 +75,10 @@ export default function Interventions({
   data: Record<string, Row[]>;
 }) {
   const { filters } = useView();
-  const findings = data.findings ?? [];
+  // Findings promoted from the facts carry a harness; older findings are shown under All.
+  const findings = (data.findings ?? []).filter(
+    (row) => filters.harness === "" || row.harness === filters.harness,
+  );
   const proposals = data.proposals ?? [];
   const applied = proposals.filter((row) => row.applied_at);
   const signatures = data.signature_daily ?? [];
@@ -193,12 +201,28 @@ export default function Interventions({
       <Section title="Findings and proposals">
         <Panel
           title="Active findings"
-          subtitle="From the local workflow store"
+          subtitle="Promoted every minute from recurring failure signatures (7 Europe/London days)"
           signals={["intervene.findings"]}
+          span={12}
         >
           <DataTable
             columns={[
-              { key: "category", label: "Category" },
+              {
+                key: "harness",
+                label: "Harness",
+                render: (row) =>
+                  row.harness ? <HarnessName value={row.harness} /> : "—",
+              },
+              {
+                key: "tool",
+                label: "Tool",
+                render: (row) => String(row.tool ?? row.category),
+              },
+              {
+                key: "signature",
+                label: "Signature",
+                render: (row) => String(row.signature ?? "—"),
+              },
               { key: "state", label: "State" },
               { key: "occurrences", label: "Count", numeric: true },
               { key: "tasks", label: "Tasks", numeric: true },
@@ -217,6 +241,7 @@ export default function Interventions({
           title="Enforcement-tier audit"
           subtitle="Proposals by selected tier"
           signals={["intervene.tier_audit"]}
+          span={12}
         >
           <DataTable
             columns={[
@@ -224,7 +249,7 @@ export default function Interventions({
               { key: "proposals", label: "Proposals", numeric: true },
             ]}
             rows={tiers}
-            empty="No proposals recorded; findings become proposals only once actionable."
+            empty="No proposals yet; `agent-introspection candidates export` drafts one for the next actionable finding."
           />
         </Panel>
       </Section>

@@ -118,7 +118,7 @@ def test_launchd_job_runs_the_sync_every_minute_with_docker_on_path() -> None:
     assert document["ProgramArguments"] == [
         "/venv/bin/agent-introspection",
         "facts",
-        "sync-projects",
+        "sync",
     ]
     assert document["StartInterval"] == 60
     assert document["EnvironmentVariables"]["PATH"] == "/opt/docker/bin:/usr/bin"

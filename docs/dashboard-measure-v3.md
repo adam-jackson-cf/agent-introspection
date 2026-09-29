@@ -7,7 +7,7 @@ loaded by `agent-introspection facts install` into `introspection.signals`,
 and 4 are generated from the registry by `scripts/render_measures.py`; a test fails
 when they drift. The design and phase history are in the
 [Dashboard v3 Plan](dashboard-v3-plan.md). This document supersedes
-[Measure v2](retired/dashboard-measure-v2.md).
+Measure v2, kept in git at the tag `archive/proof-gated-dashboard`.
 
 This document records the producer routes and calculations behind every dashboard
 signal. Use the exact routes and fields below when building or changing a view;
@@ -41,8 +41,10 @@ Harnesses: omp (`oh-my-pi`), Codex app-server (`codex-app-server`), Codex CLI
 
 ## 2. Normalized fact rows
 
-Every view reads snapshot tables (`<view>_snapshot`) of these fact views, refreshed
-right after each minute load.
+Views whose window starts within the last 90 days read snapshot tables
+(`<view>_snapshot`) of these fact views, rebuilt over the last 91 days right after each
+minute load; earlier windows and session drill-downs read the live views, which cover
+all history.
 
 ### 2.1 `usage_events`: one row per accepted model usage record
 
@@ -905,7 +907,7 @@ Scope: system (not per harness).
 
 - **Question:** Which findings and intervention proposals exist, and in what state?
 - **Unit:** records
-- **Formula:** Findings by state and detector; proposals by state and tier, from the local workflow store.
+- **Formula:** Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each (harness, tool, failure signature) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring.
 
 Scope: system (not per harness).
 

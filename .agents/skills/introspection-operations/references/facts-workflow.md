@@ -10,7 +10,9 @@ Change the facts projection, views, or signal support registry without losing hi
 2. Run `agent-introspection facts install`; it recreates loaders, views, snapshots, and registry tables, and validates every route predicate in ClickHouse.
 3. When the span or log projection changed, run `agent-introspection facts backfill --days 90` so the change applies to everything SigNoz still retains.
 4. Never drop `introspection.spans`, `introspection.logs`, or `introspection.session_projects`: history older than 90 days, and all synced hook history, exists only there.
-5. Verify in the Pipeline view that parity, recombination, sanitization, and the coverage grid still pass.
+5. After changing the Python package, run `uv tool install --force --reinstall .`; the launchd job runs that standalone copy.
+6. After changing the registry, run `uv run python scripts/render_measures.py` to regenerate Measure v3 and the data-gaps document.
+7. Verify in the Pipeline view that parity, recombination, sanitization, and the coverage grid still pass.
 
 ## Done when
 

@@ -1,15 +1,15 @@
 # Dashboard v3 Plan
 
-Status: **active** from 2026-09-28. This plan replaces the proof-gated approach
-recorded in [`retired/`](retired/) and tagged in git as
+Status: **active** from 2026-09-28. This plan replaces the proof-gated approach,
+whose plans, proof register, and Measure v2 remain in git at the tag
 `archive/proof-gated-dashboard`.
 
 ## Objective
 
 Surface every measure the producers actually support, so that one person can
 explore model usage and agent process on this machine and find problems and
-improvements. The questions come from [Dashboard Measure v2](retired/dashboard-measure-v2.md)
-and are extended with cache efficiency and reasoning-effort effectiveness.
+improvements. The questions come from Dashboard Measure v2 (at the archive tag) and are now
+defined in [Dashboard Measure v3](dashboard-measure-v3.md), extended with cache efficiency and reasoning-effort effectiveness.
 
 Completion means each question-led view below ships with real data, and each
 measure the producers cannot support is recorded as unsupported with its reason.
@@ -54,7 +54,7 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
                     (ReplacingMergeTree, no TTL, Codex plumbing spans dropped,
                      raw text and identity keys removed, normalized x.* fields added)
                       └─> views: usage_events · task_outcomes · tool_calls · user_signals · model_calls
-                            └─> <view>_snapshot tables, refreshed right after each minute load
+                            └─> <view>_snapshot tables: last 91 days, rebuilt right after each minute load
                                   └─> Bun server: small aggregate queries over ClickHouse HTTP → React views
 signal_support.toml ─ facts install ─> introspection.signals · signal_routes · signal_support · signal_strays
 Harness session-context hooks ─> inbox JSON ─ facts sync-projects (launchd, every minute)
@@ -77,7 +77,10 @@ Serving (phase 2):
   `UNION ALL` branch that tags its rows and renders them with
   `formatRowNoNewline('JSONEachRow', *)` (see F15).
 - **Snapshots.** Each fact view has a `<view>_snapshot` table. A non-append
-  refreshable view rebuilds it every minute, `DEPENDS ON` both minute loaders. The
+  refreshable view rebuilds it every minute, `DEPENDS ON` both minute loaders, over
+  the last 91 days only (`additional_table_filters` bounds every span and log read), so
+  its cost stays bounded however long the durable history grows. The server reads the
+  snapshots for windows that start within 90 days and the live views otherwise. The
   view SQL, and so its parity with agent-observability, is unchanged; views read the
   snapshots in 30–40 ms instead of 0.3–0.8 s.
 - **Registry tables.** `facts install` validates `signal_support.toml` (every
@@ -258,7 +261,7 @@ note generated from the signal support registry.
 | 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
 | 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
 | 6 | V8 Recurrence, then V9 Interventions | Same | Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s) |
-| 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks in `retired/`; [Measure v3](dashboard-measure-v3.md) generated from the registry |
+| 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks moved to `docs/retired/`, then deleted on 2026-09-29 (kept at the archive tag); [Measure v3](dashboard-measure-v3.md) generated from the registry |
 
 ## Findings log
 
@@ -415,14 +418,47 @@ minutes after observation and fell outside `load_logs`'s window. Fix: an hourly
 `sweep_logs` re-reads three days by event time, like `sweep_spans`. Validated: after a
 3-day backfill, Claude Code parity is exact (5,160 operations).
 
+**F21. Nothing produced new workflow findings after the scan retired.** Evidence: V9
+held the 6 findings from 2026-08-06 and `candidates export` found no actionable
+candidate. Fix: `facts sync` promotes each (harness, tool, failure signature) seen in
+≥ 2 tasks over the last 7 Europe/London days into a finding with a JSON `subject`:
+actionable under the V8 rule, emerging otherwise, dormant once it stops recurring; V9
+shows the subject and compares interventions against the finding's own harness and
+signature. Validated: 55 findings created, 27 actionable (e.g. omp `bash` "Blocked: Use
+the `read` tool instead of cat/head/tail" in 46 tasks); reruns report them unchanged.
+
+**F22. Snapshot rebuild cost grew with the durable history (C3).** Fix (the user chose a
+90-day bound to match retention, keeping 1-minute freshness): each snapshot refresh
+applies `additional_table_filters` so every span and log read is bounded to the last
+91 days; the view SQL is unchanged. The server reads live views for windows that start
+more than 90 days ago and for session drill-downs. A first attempt that wrapped each
+scan in a bounded subquery was 2–5× slower (filters cannot pass below `FINAL`) and was
+dropped. Validated: live views and snapshots return identical row counts for all five
+facts; a 30-day window reads snapshots in 236 ms, a 92-day-old window reads live views
+in 604 ms.
+
+**F23. ClickHouse load rose about fourfold from 2026-09-28 21:00 UTC.** Evidence:
+snapshot refreshes averaged 0.75–1.1 s per hour until 17:00, then 2.5–4.5 s; SigNoz
+trace INSERTs account for about 1,260 s per 10 minutes; VM load average about 17. This
+coincides with the duplicate omp spans (F19). Fix: none in this repo; reported to the
+agent-observability session. The 90-day bound keeps our share from growing further.
+
+**F24. Uncommitted 5-minute snapshot edits from an unidentified session.** Evidence: on
+2026-09-29 `facts.py`, the README, the plan, Measure v3, `views.ts`, and a test in this
+worktree changed to refresh snapshots every 5 minutes; the other known session on this
+repository said they were not its edits. Fix: replaced by the 90-day bound (F22) at the
+user's choice, keeping data under 2 minutes old.
+
 ## Operations
 
 - **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`
   tables have no TTL and hold history beyond that. Trace history before
   2026-09-10 had already expired under the earlier 15-day TTL and cannot be recovered.
-- **Project sync:** `agent-introspection facts schedule install|status|remove` manages the
-  `com.adamjackson.agent-introspection.projects` LaunchAgent (runs `facts sync-projects`
-  every minute from this checkout's `.venv`; reinstall it from the checkout you keep).
+- **Project sync and findings:** `agent-introspection facts schedule install|status|remove`
+  manages the `com.adamjackson.agent-introspection.projects` LaunchAgent, which runs
+  `facts sync` (project sync, then findings promotion) every minute from the standalone
+  tool install at `~/.local/share/uv/tools/agent-introspection`. After changing the
+  Python package, run `uv tool install --force --reinstall .` from the repo.
   `session_projects` is the only copy of synced hook history; never drop it.
 - **Rebuild:** `facts install` recreates loaders and views without touching data.
   `facts backfill --days 90` rebuilds or re-projects everything still in SigNoz,

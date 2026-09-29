@@ -4,7 +4,8 @@ The hooks installed in Claude Code, Codex, and omp write one JSON file per
 session event into the inbox: the session ID and the git project it runs in,
 or a rejection with its reason. ``sync`` copies those files into
 ``introspection.session_projects`` / ``session_project_rejections`` and removes
-each file once ClickHouse has it. A launchd job runs the sync every minute.
+each file once ClickHouse has it. A launchd job runs ``facts sync`` every minute,
+which syncs projects and then refreshes workflow findings.
 """
 
 from __future__ import annotations
@@ -142,11 +143,11 @@ def sync(run: SqlRunner, *, inbox: Path = INBOX, ledger: Path | None = None) -> 
 
 
 def plist(executable: Path, path_dirs: Iterable[str]) -> bytes:
-    """Return the launchd job that runs ``facts sync-projects`` every minute."""
+    """Return the launchd job that runs ``facts sync`` (projects, then findings) every minute."""
     return plistlib.dumps(
         {
             "Label": LABEL,
-            "ProgramArguments": [str(executable), "facts", "sync-projects"],
+            "ProgramArguments": [str(executable), "facts", "sync"],
             "StartInterval": INTERVAL_SECONDS,
             "RunAtLoad": True,
             "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},

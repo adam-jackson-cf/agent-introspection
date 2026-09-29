@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { Registry, Row } from "./src/contracts";
 import { createApp, parseFilters } from "./server";
-import { batch, clickhouse, type Query } from "./server/clickhouse";
+import {
+  batch,
+  clickhouse,
+  live,
+  SNAPSHOT_DAYS,
+  type Query,
+} from "./server/clickhouse";
 import {
   contributions,
   countsFromRows,
@@ -402,5 +408,17 @@ describe("batch", () => {
       empty: [],
       third: [{ day: "2026-09-28" }],
     });
+  });
+});
+
+describe("snapshot horizon", () => {
+  test("live queries read the fact views and the horizon matches facts.py", async () => {
+    expect(
+      live({ q: "SELECT 1 FROM introspection.tool_calls_snapshot AS c" }),
+    ).toEqual({ q: "SELECT 1 FROM introspection.tool_calls AS c" });
+    const facts = await Bun.file(
+      `${import.meta.dir}/../src/agent_introspection/facts.py`,
+    ).text();
+    expect(facts).toContain(`SNAPSHOT_DAYS = ${SNAPSHOT_DAYS}\n`);
   });
 });

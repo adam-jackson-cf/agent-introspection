@@ -43,7 +43,8 @@ curated producer spans and logs from SigNoz into the durable `introspection`
 database every minute, with raw prompt, command, argument, and output text and
 identity keys removed. The views `usage_events`, `task_outcomes`, `tool_calls`,
 `user_signals`, and `model_calls` normalize omp, Codex, and Claude Code telemetry;
-a snapshot table of each view is refreshed right after every minute load.
+a snapshot table of each view holds its last 91 days, rebuilt right after every minute
+load; windows starting more than 90 days ago read the live views.
 
 The signal support registry,
 [`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml),
@@ -94,7 +95,10 @@ uv run agent-introspection facts install             # tables, loaders, views, s
 uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
 uv run agent-introspection facts status              # loader state and per-harness freshness
 uv run agent-introspection facts sync-projects       # hook inbox -> introspection.session_projects
-uv run agent-introspection facts schedule install    # run the project sync every minute (launchd)
+uv run agent-introspection facts findings            # promote recurring failures into findings
+uv run agent-introspection facts sync                # both of the above
+uv tool install --force --reinstall .                # standalone copy the launchd job runs
+agent-introspection facts schedule install           # run `facts sync` every minute (launchd)
 uv run agent-introspection facts schedule status
 uv run agent-introspection candidates export --reserved-model-budget <tokens>
 uv run agent-introspection proposal list
@@ -108,8 +112,9 @@ The session-context hooks installed in Claude Code, Codex, and omp write one JSO
 record per session event into `~/.local/share/agent-introspection/session-context-inbox`:
 the native session ID and the Git project it runs in, or a rejection such as a
 non-Git workspace. The `com.adamjackson.agent-introspection.projects` LaunchAgent runs
-`facts sync-projects` every minute: it inserts the records into
-`introspection.session_projects` and removes each file once ClickHouse has it. The
+`facts sync` every minute from the standalone `uv tool` install: it inserts the records
+into `introspection.session_projects`, removes each file once ClickHouse has it, and then
+promotes recurring failure signatures into workflow findings. The
 dashboard joins facts to `introspection.session_project` (the latest project per
 session) by session ID; the Pipeline view shows the attributed share of tasks per
 harness, rejections, and the inbox backlog.
@@ -117,6 +122,9 @@ harness, rejections, and the inbox backlog.
 Findings, proposals, and review sessions live in the SQLite workflow store at
 `~/.local/share/agent-introspection/introspection.sqlite3`. The retired scan ledger is
 archived at `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`.
+
+What the dashboard cannot show, per harness and per signal, is listed in
+[Dashboard Data Gaps](docs/dashboard-data-gaps.md).
 
 ## Codex Desktop Attribution
 

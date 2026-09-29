@@ -267,3 +267,12 @@ def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_a
     targets = select.split("AS targets,")[0].rsplit("AS command_paths,", 1)[1]
     assert "command_paths" in targets
     assert "'~'" in targets
+
+
+def test_snapshots_bound_span_and_log_reads_to_the_horizon() -> None:
+    for snapshot in facts.SNAPSHOTS:
+        refresher = facts.snapshot_statements(snapshot)[-1]
+
+        assert "additional_table_filters = {'introspection.spans': " in refresher
+        assert f"INTERVAL {facts.SNAPSHOT_DAYS + 1} DAY" in refresher
+        assert "'introspection.logs': " in refresher

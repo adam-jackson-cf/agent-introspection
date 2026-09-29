@@ -894,7 +894,7 @@ view = "interventions"
 title = "Findings and proposals"
 question = "Which findings and intervention proposals exist, and in what state?"
 unit = "records"
-formula = "Findings by state and detector; proposals by state and tier, from the local workflow store."
+formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each (harness, tool, failure signature) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring."
 scope = "system"
 
 [[signal]]

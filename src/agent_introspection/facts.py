@@ -2,8 +2,8 @@
 
 Refreshable materialized views copy curated producer spans and logs from the
 SigNoz tables into the durable ``introspection`` database every minute. Fact
-views normalize them, snapshot tables hold each view's result refreshed after
-every load, and the signal support registry records how each producer reaches
+views normalize them, snapshot tables hold the last 90 days of each view's result
+refreshed after every load, and the signal support registry records how each producer reaches
 each dashboard signal. The dashboard reads small aggregates from the snapshots.
 """
 
@@ -98,6 +98,18 @@ _BACKFILL_WINDOWS = {
 _SELECT_FILES = {"spans": "select_spans.sql", "logs": "select_logs.sql"}
 
 
+# Snapshots serve windows that start within the last 90 days (SigNoz's retention),
+# so each refresh rebuilds a bounded window however long the durable history grows.
+# They keep one extra day so a window starting exactly 90 days ago is fully covered.
+# The dashboard reads the live views, which cover all history, for earlier windows.
+SNAPSHOT_DAYS = 90
+_SNAPSHOT_BOUND = f"ts >= now64(9) - INTERVAL {SNAPSHOT_DAYS + 1} DAY"
+SNAPSHOT_FILTERS = (
+    f"additional_table_filters = {{'{DATABASE}.spans': '{_SNAPSHOT_BOUND}', "
+    f"'{DATABASE}.logs': '{_SNAPSHOT_BOUND}'}}"
+)
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """A table holding one fact view's result, replaced after each minute load."""
@@ -158,8 +170,10 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
     """Return statements that recreate one snapshot table and its refresher.
 
     The refresher depends on both minute loaders, so each snapshot replaces its
-    content right after new rows land. Non-append refreshes swap atomically.
-    Refreshers run with two threads so dashboard queries keep the CPU.
+    content right after new rows land. ``additional_table_filters`` bounds every
+    span and log read inside the view to the snapshot horizon, leaving the view
+    SQL unchanged. Non-append refreshes swap atomically. Refreshers run with two
+    threads so dashboard queries keep the CPU.
     """
     table = f"{DATABASE}.{snapshot.view}_snapshot"
     return [
@@ -169,7 +183,8 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         f" EMPTY AS SELECT * FROM {DATABASE}.{snapshot.view}",
         f"CREATE MATERIALIZED VIEW {DATABASE}.refresh_{snapshot.view}\n"
         f"REFRESH EVERY 1 MINUTE DEPENDS ON {DATABASE}.load_spans, {DATABASE}.load_logs\n"
-        f"TO {table}\nAS SELECT * FROM {DATABASE}.{snapshot.view} SETTINGS max_threads = 2",
+        f"TO {table}\nAS SELECT * FROM {DATABASE}.{snapshot.view}\n"
+        f"SETTINGS max_threads = 2, {SNAPSHOT_FILTERS}",
     ]
 
 

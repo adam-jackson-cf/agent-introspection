@@ -14,7 +14,13 @@ import {
   type ViewId,
   type ViewResponse,
 } from "./src/contracts";
-import { batch, clickhouse, type Query } from "./server/clickhouse";
+import {
+  batch,
+  clickhouse,
+  live,
+  SNAPSHOT_DAYS,
+  type Query,
+} from "./server/clickhouse";
 import { contributions, pipelineData, routeCounts } from "./server/pipeline";
 import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 
@@ -136,6 +142,15 @@ async function loadRegistry(query: Query): Promise<Registry> {
   return { signals, support, routes, strays } as unknown as Registry;
 }
 
+/** A finding's harness, tool, and failure signature; NULL for findings without a subject. */
+const SUBJECT = (table: string) =>
+  ["harness", "tool", "signature"]
+    .map(
+      (field) =>
+        `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${field}') END AS ${field}`,
+    )
+    .join(", ");
+
 /** Opens the SQLite workflow store read-only for each request. */
 export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
   return () => {
@@ -145,13 +160,16 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
       return {
         findings:
           all(`SELECT category, detector_id AS detector, trend_state AS state,
+            ${SUBJECT("findings")},
             occurrence_count AS occurrences, canonical_task_count AS tasks, local_day_count AS days,
             strftime('%Y-%m-%dT%H:%M:%SZ', first_seen_ns / 1e9, 'unixepoch') AS first_seen,
             strftime('%Y-%m-%dT%H:%M:%SZ', last_seen_ns / 1e9, 'unixepoch') AS last_seen
-          FROM findings WHERE is_active = 1 ORDER BY last_seen_ns DESC`),
+          FROM findings WHERE is_active = 1
+          ORDER BY trend_state = 'actionable' DESC, occurrence_count DESC, last_seen_ns DESC`),
         proposals:
           all(`SELECT p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
             json_extract(p.payload_json, '$.target') AS target, f.category, p.created_at,
+            ${SUBJECT("f")},
             CASE WHEN p.state = 'applied' THEN p.updated_at END AS applied_at
           FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`),
       };
@@ -241,15 +259,23 @@ export function createApp(
     const bound = params(filters);
     const reg = await registry();
     const counts = await cachedRouteCounts(reg, bound);
+    const withinSnapshots =
+      Date.parse(filters.start) >=
+      dependencies.now().getTime() - SNAPSHOT_DAYS * 86_400_000;
     let data: Record<string, Row[]>;
     if (id === "pipeline") {
-      data = await pipelineData(query, reg, bound, counts);
+      data = await pipelineData(query, reg, bound, counts, withinSnapshots);
       data.project_sync = (data.project_sync ?? []).map((row) => ({
         ...row,
         inbox_backlog: dependencies.inbox(),
       }));
     } else {
-      data = await batch(query, VIEW_QUERIES[id], bound);
+      const queries = VIEW_QUERIES[id];
+      data = await batch(
+        query,
+        withinSnapshots ? queries : live(queries),
+        bound,
+      );
       if (id === "interventions") Object.assign(data, dependencies.workflow());
     }
     return {
@@ -287,7 +313,8 @@ export function createApp(
           harness,
           session,
           queriedAt: dependencies.now().toISOString(),
-          data: await batch(query, SESSION_QUERIES, { harness, session }),
+          // A session can be older than the snapshot horizon.
+          data: await batch(query, live(SESSION_QUERIES), { harness, session }),
         };
         return json(response);
       }
