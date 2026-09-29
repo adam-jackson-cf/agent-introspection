@@ -299,11 +299,12 @@ const PARITY = `WITH
             AND attributes_string['event.name'] = 'api_request'
             AND attributes_string['session.id'] != '' AND attributes_string['model'] != ''
         UNION ALL
-        SELECT 'oh-my-pi', count(), sum(attributes_number['gen_ai.usage.input_tokens']),
-            sum(if(mapContains(attributes_number, 'gen_ai.usage.cache_read.input_tokens'), attributes_number['gen_ai.usage.cache_read.input_tokens'], 0)),
-            sum(attributes_number['gen_ai.usage.output_tokens'])
+        SELECT 'oh-my-pi', count(), sum(numbers['gen_ai.usage.input_tokens']),
+            sum(if(mapContains(numbers, 'gen_ai.usage.cache_read.input_tokens'), numbers['gen_ai.usage.cache_read.input_tokens'], 0)),
+            sum(numbers['gen_ai.usage.output_tokens'])
         FROM (
-            SELECT DISTINCT spanID, attributes_number
+            -- SigNoz can hold several identical copies of one span; the facts keep one.
+            SELECT spanID, any(attributes_number) AS numbers
             FROM signoz_traces.distributed_signoz_index_v3
             WHERE timestamp >= ${PARITY_WINDOW_START} AND timestamp < ${PARITY_WINDOW_END}
                 AND serviceName = 'oh-my-pi'
@@ -312,6 +313,7 @@ const PARITY = `WITH
                 AND attributes_string['gen_ai.request.model'] != ''
                 AND mapContains(attributes_number, 'gen_ai.usage.input_tokens')
                 AND (attributes_number['gen_ai.usage.input_tokens'] > 0 OR attributes_number['gen_ai.usage.output_tokens'] > 0)
+            GROUP BY spanID
         )
     ),
     facts AS (

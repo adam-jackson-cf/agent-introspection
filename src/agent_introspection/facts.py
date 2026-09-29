@@ -42,9 +42,11 @@ class Loader:
 
 
 # Spans are exported when they end, and turns can run for more than a day, so the
-# minute loader selects spans that ended recently. The hourly sweep re-reads three
-# days to catch late exports. Logs carry an ingest time, which can trail the event
-# time by days, so their loader keys on `observed_timestamp`.
+# minute loader selects spans that ended recently. Logs carry an ingest time, which
+# can trail the event time by days, so their loader keys on `observed_timestamp`.
+# Rows can still reach SigNoz's tables after the minute loaders' 30-minute window
+# (a delayed collector export keeps its original observed time), so an hourly sweep
+# re-reads three days of each source.
 LOADERS = (
     Loader(
         name="load_spans",
@@ -62,6 +64,13 @@ LOADERS = (
         select_file="select_spans.sql",
         schedule="EVERY 1 HOUR",
         window="timestamp > now() - INTERVAL 3 DAY",
+    ),
+    Loader(
+        name="sweep_logs",
+        target="logs",
+        select_file="select_logs.sql",
+        schedule="EVERY 1 HOUR",
+        window="timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 3 DAY)) * 1000000000",
     ),
     Loader(
         name="load_logs",

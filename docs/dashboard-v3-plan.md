@@ -49,6 +49,7 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
               load_spans   every 1 min  spans that ended in the last 30 min (1-day lookback)
               sweep_spans  every 1 h    all spans from the last 3 days (late exports)
               load_logs    every 1 min  logs ingested in the last 30 min (by observed_timestamp)
+              sweep_logs   every 1 h    all logs from the last 3 days (late inserts, F20)
                 └─> introspection.spans / introspection.logs
                     (ReplacingMergeTree, no TTL, Codex plumbing spans dropped,
                      raw text and identity keys removed, normalized x.* fields added)
@@ -397,6 +398,22 @@ it read-only, and a proposal-only review flow (classification read retired
 observations). The user's config file dropped the retired `[scheduler]`, `[pipeline]`,
 and OTLP keys (backup kept). Validated: 6 findings copied; `proposal list`,
 `candidates export`, and V9 read the new store.
+
+**F19. SigNoz holds duplicate omp chat spans since 2026-09-28 about 16:00 UTC.**
+Evidence: on 2026-09-29, `signoz_index_v3` held 8,332 omp chat rows for 1,447 span IDs
+(up to 10 identical copies in one part); copies agree on every token field, duration,
+and error flag. Impact: the facts are unaffected (one row per trace and span), but
+anything summing raw SigNoz spans over-counts omp 2–7× from then on, including
+agent-observability's dashboards. Fix here: the parity recount deduplicates raw spans by
+span ID, like the loader. The duplication itself (omp exporter retries or a collector
+pipeline change) is outside this repo. Validated: omp parity exact (14,083 operations).
+
+**F20. The log loader missed rows inserted late into SigNoz.** Evidence: 3 Claude Code
+`api_request` logs from 2026-09-28 17:53–18:10 UTC were in SigNoz but not in the facts;
+their observed time equals their event time, so they reached the table more than 30
+minutes after observation and fell outside `load_logs`'s window. Fix: an hourly
+`sweep_logs` re-reads three days by event time, like `sweep_spans`. Validated: after a
+3-day backfill, Claude Code parity is exact (5,160 operations).
 
 ## Operations
 
