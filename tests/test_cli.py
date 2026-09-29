@@ -1,152 +1,68 @@
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from agent_introspection import cli
-from agent_introspection.cli import EXIT_CAPABILITY, EXIT_CONFIG, main
-from agent_introspection.database import connect_database
+from agent_introspection.cli import EXIT_CONFIG, EXIT_FACTS, EXIT_VALIDATION, main
+from agent_introspection.facts import FactsError
 
 
 def config_file(tmp_path: Path) -> Path:
     path = tmp_path / "config.toml"
-    path.write_text(
-        f'[database]\npath = "{tmp_path / "introspection.sqlite3"}"\nbusy_timeout_ms = 5000\n'
-    )
+    path.write_text(f'[database]\npath = "{tmp_path / "workflow.sqlite3"}"\n')
     return path
 
 
-def test_cli_emits_structured_json_on_stdout(
+def test_cli_emits_structured_json_and_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    result = main(["--config", str(config_file(tmp_path)), "db", "check"])
+    assert main(["--config", str(config_file(tmp_path)), "proposal", "list"]) == 0
+
     captured = capsys.readouterr()
-    assert result == 0
-    assert json.loads(captured.out) == {"quick_check": ["ok"]}
+    assert json.loads(captured.out) == {"proposals": []}
     assert captured.err == ""
+    assert (tmp_path / "workflow.sqlite3").exists()
 
 
-def test_cli_emits_diagnostics_on_stderr_and_stable_exit_code(
+def test_cli_emits_diagnostics_on_stderr_with_stable_exit_codes(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    invalid = tmp_path / "invalid.toml"
-    invalid.write_text("unsupported = true\n")
+    retired = tmp_path / "retired.toml"
+    retired.write_text("[scheduler]\ninterval_seconds = 300\n")
     with pytest.raises(SystemExit) as raised:
-        main(["--config", str(invalid), "db", "check"])
-    captured = capsys.readouterr()
+        main(["--config", str(retired), "proposal", "list"])
     assert raised.value.code == EXIT_CONFIG
-    assert captured.out == ""
-    assert "ConfigurationError" in captured.err
-
-
-def test_doctor_requires_and_verifies_the_current_source_contract(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    config = config_file(tmp_path)
-    inventory = {
-        "contract": {"logs": {"columns": ["timestamp"]}},
-        "diagnostics": {"server_timezone": "UTC"},
-    }
-    monkeypatch.setattr(cli, "ensure_health", lambda **_kwargs: {})
-    monkeypatch.setattr(cli, "verify_network_perimeter", lambda **_kwargs: {})
-    monkeypatch.setattr(cli, "_client", lambda _config: object())
-    monkeypatch.setattr(cli, "discover_source_schema", lambda _client: inventory)
+    assert "ConfigurationError" in capsys.readouterr().err
 
     with pytest.raises(SystemExit) as raised:
-        main(["--config", str(config), "doctor"])
+        main(["--config", str(config_file(tmp_path)), "proposal", "show", "missing"])
     captured = capsys.readouterr()
-    assert raised.value.code == EXIT_CAPABILITY
+    assert raised.value.code == EXIT_VALIDATION
     assert captured.out == ""
-    assert "schema drift" in captured.err
-
-    assert main(["--config", str(config), "doctor", "--approve-schema"]) == 0
-    approved = json.loads(capsys.readouterr().out)
-    assert approved["schema_approved"] is True
-
-    assert main(["--config", str(config), "doctor"]) == 0
-    verified = json.loads(capsys.readouterr().out)
-    assert verified["schema_approved"] is True
-    assert verified["schema_fingerprint"] == approved["schema_fingerprint"]
+    assert "KeyError" in captured.err
 
 
-def test_scheduled_cli_suppresses_only_a_qualifying_current_utc_slot(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_facts_failures_exit_with_the_facts_code(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    config = config_file(tmp_path)
-    connection = connect_database(tmp_path / "introspection.sqlite3")
-    connection.executemany(
-        """
-        INSERT INTO scan_runs (id, status, started_at, details_json)
-        VALUES (?, ?, ?, '{}')
-        """,
-        [
-            ("success-current", "succeeded", "2026-07-10T12:05:00+00:00"),
-            ("failed-next", "failed", "2026-07-10T13:05:00+00:00"),
-        ],
-    )
-    connection.commit()
-    connection.close()
+    def failing(_statement: str) -> str:
+        raise FactsError("Code: 81. DB::Exception: Database introspection does not exist")
 
-    class ControlledClock:
-        current = datetime(2026, 7, 10, 12, 9, tzinfo=UTC)
+    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: failing)
 
-        @classmethod
-        def now(cls, tz: object = None) -> datetime:
-            return cls.current
+    with pytest.raises(SystemExit) as raised:
+        main(["--config", str(config_file(tmp_path)), "facts", "status"])
 
-    calls: list[str] = []
-
-    def execute_scan(_connection: object, _config: object) -> dict[str, str]:
-        calls.append("run")
-        return {"status": "executed"}
-
-    monkeypatch.setattr(cli, "datetime", ControlledClock)
-    monkeypatch.setattr(cli, "run_scan", execute_scan)
-
-    assert main(["--config", str(config), "scan", "--scheduled"]) == 0
-    skipped = json.loads(capsys.readouterr().out)
-    assert skipped == {
-        "interval_seconds": 300,
-        "qualifying_run_id": "success-current",
-        "qualifying_run_started_at": "2026-07-10T12:05:00+00:00",
-        "slot_start": "2026-07-10T12:05:00+00:00",
-        "status": "already_completed_in_slot",
-    }
-    assert calls == []
-
-    ControlledClock.current = datetime(2026, 7, 10, 12, 10, tzinfo=UTC)
-    assert main(["--config", str(config), "scan", "--scheduled"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "executed"}
-
-    ControlledClock.current = datetime(2026, 7, 10, 12, 15, tzinfo=UTC)
-    assert main(["--config", str(config), "scan", "--scheduled"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "executed"}
-
-    ControlledClock.current = datetime(2026, 7, 10, 12, 20, tzinfo=UTC)
-    assert main(["--config", str(config), "scan", "--scheduled"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "executed"}
-    assert calls == ["run", "run", "run"]
+    assert raised.value.code == EXIT_FACTS
+    assert "does not exist" in capsys.readouterr().err
 
 
-def test_cli_help_exposes_only_canonical_commands() -> None:
-    help_text = cli._parser().format_help()
+def test_candidates_export_reports_no_candidates_without_actionable_findings(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    config = str(config_file(tmp_path))
 
-    for command in (
-        "doctor",
-        "health",
-        "scan",
-        "session-context",
-        "candidates",
-        "classification",
-        "proposal",
-        "telemetry",
-        "dashboard",
-        "db",
-        "schedule",
-    ):
-        assert command in help_text
+    assert main(["--config", config, "candidates", "export", "--reserved-model-budget", "10"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "no_candidates"}

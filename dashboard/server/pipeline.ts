@@ -430,6 +430,22 @@ SELECT 'logs', count(), countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})
         OR position(attrs_string['x.failure_signature'], '/Users/') > 0)
 FROM introspection.logs`;
 
+/** Share of tasks whose session has a hook-recorded project, per harness. */
+const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks, countIf(p.project != '') AS attributed
+FROM introspection.task_outcomes_snapshot AS t
+LEFT JOIN introspection.session_project AS p ON p.session_id = t.session_id
+WHERE t.start_ts >= {start:DateTime64(3, 'UTC')} AND t.start_ts < {end:DateTime64(3, 'UTC')}
+GROUP BY harness ORDER BY harness`;
+
+const PROJECT_REJECTIONS = `SELECT producer, reason_code, count() AS n
+FROM introspection.session_project_rejections FINAL
+WHERE occurred_at >= {start:DateTime64(3, 'UTC')} AND occurred_at < {end:DateTime64(3, 'UTC')}
+GROUP BY producer, reason_code ORDER BY n DESC`;
+
+const PROJECT_SYNC = `SELECT toString(max(loaded_at)) AS last_load,
+    dateDiff('second', max(loaded_at), now64(3)) AS age_seconds, count() AS events
+FROM introspection.session_projects`;
+
 const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, source, count() AS n FROM (
     SELECT ts, harness, 'spans' AS source FROM introspection.spans FINAL WHERE ${inWindow("ts")}
     UNION ALL
@@ -451,6 +467,9 @@ export async function pipelineData(
       sanitization: SANITIZATION,
       daily_rows: DAILY_ROWS,
       unrouted: unroutedQuery(registry),
+      project_coverage: PROJECT_COVERAGE,
+      project_rejections: PROJECT_REJECTIONS,
+      project_sync: PROJECT_SYNC,
       ...recombinationQueries(),
     },
     params,
@@ -464,6 +483,9 @@ export async function pipelineData(
     daily_rows: results.daily_rows!,
     coverage: coverageGrid(registry, counts),
     unrouted: results.unrouted!,
+    project_coverage: results.project_coverage!,
+    project_rejections: results.project_rejections!,
+    project_sync: results.project_sync!,
     strays: registry.strays.map((entry) => ({ ...entry })),
   };
 }

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative } from "node:path";
 import {
@@ -25,6 +26,10 @@ const CLICKHOUSE_URL =
 const WORKFLOW_DB =
   process.env.INTROSPECTION_WORKFLOW_DB ??
   join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
+/** Hook files waiting for `facts sync-projects` (a backlog means the job is not running). */
+const PROJECT_INBOX =
+  process.env.INTROSPECTION_PROJECT_INBOX ??
+  join(homedir(), ".local/share/agent-introspection/session-context-inbox");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
 /** Route counts feed coverage and contributor chips; loaders add rows once a minute. */
@@ -47,10 +52,24 @@ const securityHeaders = {
 
 /** Reads the workflow store's findings and proposals for the Interventions view. */
 export type WorkflowReader = () => Record<string, Row[]>;
+/** Counts hook files not yet synced into ClickHouse. */
+export type InboxReader = () => number;
+
+const countInbox: InboxReader = () => {
+  try {
+    return readdirSync(PROJECT_INBOX).filter((name) => name.endsWith(".json"))
+      .length;
+  } catch (error) {
+    // The hooks create the inbox on their first write; until then nothing waits.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+};
 
 type Dependencies = {
   query: Query;
   workflow: WorkflowReader;
+  inbox: InboxReader;
   assets: Map<string, Response>;
   now: () => Date;
 };
@@ -174,6 +193,7 @@ export function createApp(
   const dependencies: Dependencies = {
     query: clickhouse(CLICKHOUSE_URL),
     workflow: sqliteWorkflow(),
+    inbox: countInbox,
     assets: new Map(),
     now: () => new Date(),
     ...overrides,
@@ -224,6 +244,10 @@ export function createApp(
     let data: Record<string, Row[]>;
     if (id === "pipeline") {
       data = await pipelineData(query, reg, bound, counts);
+      data.project_sync = (data.project_sync ?? []).map((row) => ({
+        ...row,
+        inbox_backlog: dependencies.inbox(),
+      }));
     } else {
       data = await batch(query, VIEW_QUERIES[id], bound);
       if (id === "interventions") Object.assign(data, dependencies.workflow());

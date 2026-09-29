@@ -42,3 +42,34 @@ CREATE TABLE IF NOT EXISTS introspection.logs
 ENGINE = ReplacingMergeTree(loaded_at)
 PARTITION BY toYYYYMM(ts)
 ORDER BY (harness, log_id);
+
+-- Session-to-project events from the harness session-context hooks. The sync
+-- removes each inbox file once its row is here, so this table is the only copy.
+CREATE TABLE IF NOT EXISTS introspection.session_projects
+(
+    event_id String,
+    producer LowCardinality(String),
+    session_id String,
+    event_type LowCardinality(String),
+    occurred_at DateTime64(6, 'UTC'),
+    project_id String,
+    project_name String,
+    project_root String,
+    loaded_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(loaded_at)
+ORDER BY (session_id, event_id);
+
+-- Hook events that could not name a project (for example a non-git workspace).
+CREATE TABLE IF NOT EXISTS introspection.session_project_rejections
+(
+    rejection_id String,
+    producer LowCardinality(String),
+    correlation_id String,
+    lifecycle_event LowCardinality(String),
+    occurred_at DateTime64(6, 'UTC'),
+    reason_code LowCardinality(String),
+    loaded_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(loaded_at)
+ORDER BY rejection_id;

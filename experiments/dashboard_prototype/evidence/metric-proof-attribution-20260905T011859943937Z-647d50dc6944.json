@@ -1,7 +1,0 @@
-{
-  "status": "failed",
-  "observed_at": "2026-09-05T01:29:00.296289+00:00",
-  "run_id": "metric-proof-attribution-20260905T011859943937Z-647d50dc6944",
-  "error_class": "OperationalError",
-  "error": "too many SQL variables"
-}

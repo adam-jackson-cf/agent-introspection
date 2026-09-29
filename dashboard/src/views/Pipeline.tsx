@@ -3,10 +3,12 @@ import { HARNESSES, type Harness, type Row } from "../contracts";
 import { HarnessName, Kpi, Panel, Section, useView } from "../components";
 import {
   fmtCount,
+  fmtPct,
   fmtSeconds,
   HARNESS_COLOR,
   HARNESS_LABEL,
   num,
+  ratio,
 } from "../format";
 
 const STATE_MARK: Record<string, { mark: string; tone: string }> = {
@@ -338,6 +340,58 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               { key: "home_paths", label: "Home paths", numeric: true },
             ]}
             rows={sanitization}
+          />
+        </Panel>
+        <Panel
+          title="Project attribution"
+          subtitle="Tasks whose session has a project from the session-context hooks"
+          signals={["pipeline.project_attribution"]}
+        >
+          <DataTable
+            columns={[
+              {
+                key: "harness",
+                label: "Harness",
+                render: (row) => <HarnessName value={row.harness} />,
+              },
+              { key: "tasks", label: "Tasks", numeric: true },
+              { key: "attributed", label: "With project", numeric: true },
+              {
+                key: "share",
+                label: "Share",
+                numeric: true,
+                render: (row) =>
+                  fmtPct(ratio(num(row.attributed), num(row.tasks)), 0),
+              },
+            ]}
+            rows={(data.project_coverage ?? []).filter(inScope)}
+          />
+          <DataTable
+            columns={[
+              {
+                key: "last_load",
+                label: "Last sync (UTC)",
+                render: (row) => String(row.last_load).slice(0, 19),
+              },
+              {
+                key: "age_seconds",
+                label: "Age",
+                numeric: true,
+                render: (row) => fmtSeconds(num(row.age_seconds)),
+              },
+              { key: "inbox_backlog", label: "Inbox backlog", numeric: true },
+              { key: "events", label: "Hook events", numeric: true },
+            ]}
+            rows={data.project_sync ?? []}
+          />
+          <DataTable
+            columns={[
+              { key: "producer", label: "Hook" },
+              { key: "reason_code", label: "Rejected because" },
+              { key: "n", label: "Events", numeric: true },
+            ]}
+            rows={data.project_rejections ?? []}
+            empty="No hook rejections in the selected range."
           />
         </Panel>
         <Panel

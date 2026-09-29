@@ -13,6 +13,8 @@ const T = "introspection.task_outcomes_snapshot";
 const C = "introspection.tool_calls_snapshot";
 const S = "introspection.user_signals_snapshot";
 const M = "introspection.model_calls_snapshot";
+/** Session → project from the harness session-context hooks. */
+export const P = "introspection.session_project";
 
 const START = "{start:DateTime64(3, 'UTC')}";
 const END = "{end:DateTime64(3, 'UTC')}";
@@ -22,6 +24,9 @@ export const HARNESS_FILTER =
 /** Selected window and harness over one timestamp column. */
 export const inWindow = (ts: string): string =>
   `${ts} >= ${START} AND ${ts} < ${END} AND ${HARNESS_FILTER}`;
+/** The same window for a joined table's alias. */
+const inWindowOf = (alias: string, ts: string): string =>
+  `${alias}.${ts} >= ${START} AND ${alias}.${ts} < ${END} AND ({harness:String} = '' OR ${alias}.harness = {harness:String})`;
 
 const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
 /** Waiting and status-polling tools repeat identical calls by design (registry: tools.repeats). */
@@ -271,13 +276,14 @@ GROUP BY harness, tool, signature HAVING tasks >= 2 ORDER BY tasks DESC, occurre
     toString(max(ts)) AS last_seen
 FROM ${C} WHERE ${LONDON_WEEK} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
 GROUP BY harness, tool, signature HAVING ${ACTIONABLE} ORDER BY occurrences DESC LIMIT 30`,
-    concentration: `SELECT harness, signature, sum(n) AS occurrences, sumIf(n, workdir != '') AS attributed,
-    maxIf(n, workdir != '') AS top_count, argMaxIf(workdir, n, workdir != '') AS top_workdir,
-    uniqExactIf(workdir, workdir != '') AS workdirs
+    concentration: `SELECT harness, signature, sum(n) AS occurrences, sumIf(n, project != '') AS attributed,
+    maxIf(n, project != '') AS top_count, argMaxIf(project, n, project != '') AS top_project,
+    uniqExactIf(project, project != '') AS projects
 FROM (
-    SELECT harness, failure_signature AS signature, workdir, count() AS n
-    FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != ''
-    GROUP BY harness, signature, workdir
+    SELECT c.harness AS harness, c.failure_signature AS signature, p.project AS project, count() AS n
+    FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
+    WHERE ${inWindowOf("c", "ts")} AND c.outcome = 'failed' AND c.failure_signature != ''
+    GROUP BY harness, signature, project
 ) GROUP BY harness, signature HAVING attributed > 0 AND occurrences >= 3
 ORDER BY occurrences DESC LIMIT 200`,
     daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, count() AS failures,

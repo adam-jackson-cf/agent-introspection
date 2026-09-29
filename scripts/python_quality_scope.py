@@ -18,7 +18,7 @@ _EXCLUDED_PREFIXES = (
     "node_modules/",
     "venv/",
 )
-_MAINTAINED_PREFIXES = ("experiments/", "scripts/", "src/", "tests/")
+_MAINTAINED_PREFIXES = ("scripts/", "src/", "tests/")
 
 
 def is_excluded_python_path(path: str) -> bool:

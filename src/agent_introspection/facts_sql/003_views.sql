@@ -506,3 +506,15 @@ SELECT
 FROM introspection.spans FINAL
 WHERE harness = 'oh-my-pi'
     AND (attrs_string['pi.gen_ai.tool.status'] = 'aborted' OR status_message = 'Interrupted by user');
+
+-- One project per session: the latest the hooks reported. Session IDs are
+-- producer-native UUIDs, so they join facts without the harness; 3 of about 7,100
+-- sessions ever changed project.
+CREATE OR REPLACE VIEW introspection.session_project AS
+SELECT
+    session_id,
+    argMax(project_name, occurred_at) AS project,
+    argMax(project_id, occurred_at) AS project_id,
+    argMax(producer, occurred_at) AS producer
+FROM introspection.session_projects FINAL
+GROUP BY session_id;

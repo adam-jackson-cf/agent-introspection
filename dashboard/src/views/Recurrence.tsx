@@ -165,7 +165,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Project concentration"
-          subtitle="Where each repeated signature occurs (working directory as project)"
+          subtitle="Where each repeated signature occurs; project from the session-context hooks"
           signals={["recur.project_concentration"]}
           span={12}
         >
@@ -178,8 +178,8 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
               },
               { key: "signature", label: "Signature" },
               { key: "occurrences", label: "Count", numeric: true },
-              { key: "workdirs", label: "Projects", numeric: true },
-              { key: "top_workdir", label: "Top project" },
+              { key: "projects", label: "Projects", numeric: true },
+              { key: "top_project", label: "Top project" },
               {
                 key: "share",
                 label: "Top share",

@@ -1,7 +1,0 @@
-{
-  "status": "failed",
-  "recorded_at": "2026-09-05T08:30:59.839256+00:00",
-  "run_id": "metric-proof-pipeline-20260905T082514235Z-42f61704-f0b",
-  "error_type": "PipelineExecutionError",
-  "replayed_capture": "metric-proof-pipeline-20260905T082514235Z-42f61704-f0b.sqlite3"
-}

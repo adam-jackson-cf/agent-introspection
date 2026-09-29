@@ -10,30 +10,21 @@ from agent_introspection.proposals import (
     create_proposal,
     transition_proposal,
 )
+from agent_introspection.workflow import connect_workflow
 
 
 def proposal_database(state: str = "actionable") -> sqlite3.Connection:
-    connection = sqlite3.connect(":memory:")
-    connection.executescript(
+    connection = connect_workflow(":memory:")
+    connection.execute(
         """
-        CREATE TABLE findings (
-          id TEXT PRIMARY KEY, trend_state TEXT NOT NULL, detector_id TEXT NOT NULL
-        );
-        CREATE TABLE proposals (
-          id TEXT PRIMARY KEY, finding_id TEXT, state TEXT, payload_json TEXT,
-          created_at TEXT, updated_at TEXT, entity_version INTEGER
-        );
-        CREATE TABLE proposal_events (
-          id TEXT PRIMARY KEY, proposal_id TEXT, sequence INTEGER, event_type TEXT,
-          payload_json TEXT, created_at TEXT
-        );
-        CREATE TABLE otlp_outbox (
-          event_id TEXT PRIMARY KEY, payload_json TEXT, status TEXT, attempt_count INTEGER,
-          next_attempt_at TEXT, created_at TEXT, delivered_at TEXT
-        );
-        """
+        INSERT INTO findings (
+            id, fingerprint, category, trend_state, detector_id, detector_version,
+            first_seen_ns, last_seen_ns, occurrence_count, canonical_task_count,
+            local_day_count, entity_version, updated_at
+        ) VALUES ('finding-1', ?, 'tool_failure', ?, 'tool_failure', 1, 1, 2, 3, 2, 2, 1, 'now')
+        """,
+        ("f" * 64, state),
     )
-    connection.execute("INSERT INTO findings VALUES ('finding-1', ?, 'tool_failure')", (state,))
     connection.commit()
     return connection
 

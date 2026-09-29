@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from agent_introspection.telemetry import REVIEW_SCOPE, DerivedEvent, enqueue_event
-
 
 class ProposalState(StrEnum):
     PENDING = "pending"
@@ -93,7 +91,7 @@ def _now() -> str:
 def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> str:
     """Persist a pending proposal and its immutable creation event."""
     finding = connection.execute(
-        "SELECT trend_state, detector_id FROM findings WHERE id = ?", (proposal.finding_id,)
+        "SELECT trend_state FROM findings WHERE id = ?", (proposal.finding_id,)
     ).fetchone()
     if finding is None:
         raise KeyError(proposal.finding_id)
@@ -119,24 +117,6 @@ def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> 
             """,
             (str(uuid.uuid4()), proposal_id, payload, now),
         )
-    enqueue_event(
-        connection,
-        DerivedEvent(
-            scope=REVIEW_SCOPE,
-            entity_id=proposal_id,
-            entity_version=1,
-            event_sequence=1,
-            event_name="introspection.proposal.state_changed",
-            attributes={
-                "proposal.state": "pending",
-                "proposal.scope": proposal.scope,
-                "intervention.type": proposal.intervention_type,
-                "finding.id": proposal.finding_id,
-                "detector.id": str(finding[1]),
-            },
-            timestamp_ns=int(datetime.fromisoformat(now).timestamp() * 1_000_000_000),
-        ),
-    )
     return proposal_id
 
 
@@ -144,8 +124,7 @@ def transition_proposal(connection: sqlite3.Connection, request: TransitionPropo
     """Apply a valid transition while retaining an immutable event history."""
     row = connection.execute(
         """
-        SELECT p.state, p.entity_version, p.finding_id, p.payload_json, f.detector_id
-        FROM proposals p JOIN findings f ON f.id = p.finding_id WHERE p.id = ?
+        SELECT state, entity_version FROM proposals WHERE id = ?
         """,
         (request.proposal_id,),
     ).fetchone()
@@ -194,22 +173,3 @@ def transition_proposal(connection: sqlite3.Connection, request: TransitionPropo
                 now,
             ),
         )
-    proposal_payload = json.loads(row[3])
-    enqueue_event(
-        connection,
-        DerivedEvent(
-            scope=REVIEW_SCOPE,
-            entity_id=request.proposal_id,
-            entity_version=version,
-            event_sequence=version,
-            event_name="introspection.proposal.state_changed",
-            attributes={
-                "proposal.state": str(request.target_state),
-                "proposal.scope": str(proposal_payload["scope"]),
-                "intervention.type": str(proposal_payload["intervention_type"]),
-                "finding.id": str(row[2]),
-                "detector.id": str(row[4]),
-            },
-            timestamp_ns=int(datetime.fromisoformat(now).timestamp() * 1_000_000_000),
-        ),
-    )

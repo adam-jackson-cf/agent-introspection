@@ -8,7 +8,7 @@ recorded in [`retired/`](retired/) and tagged in git as
 
 Surface every measure the producers actually support, so that one person can
 explore model usage and agent process on this machine and find problems and
-improvements. The questions come from [Dashboard Measure v2](dashboard-measure-v2.md)
+improvements. The questions come from [Dashboard Measure v2](retired/dashboard-measure-v2.md)
 and are extended with cache efficiency and reasoning-effort effectiveness.
 
 Completion means each question-led view below ships with real data, and each
@@ -56,12 +56,15 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
                             └─> <view>_snapshot tables, refreshed right after each minute load
                                   └─> Bun server: small aggregate queries over ClickHouse HTTP → React views
 signal_support.toml ─ facts install ─> introspection.signals · signal_routes · signal_support · signal_strays
-SQLite keeps only app workflow state (findings, proposals, interventions).
+Harness session-context hooks ─> inbox JSON ─ facts sync-projects (launchd, every minute)
+  └─> introspection.session_projects ─> session_project (latest project per session, joined by session ID)
+SQLite workflow store (findings, proposals, review sessions): ~/.local/share/agent-introspection/introspection.sqlite3
 ```
 
 The source is [`facts.py`](../src/agent_introspection/facts.py) and
 [`facts_sql/`](../src/agent_introspection/facts_sql/). Operate it with
-`agent-introspection facts install | backfill --days N | status`.
+`agent-introspection facts install | backfill --days N | status | sync-projects | schedule`.
+The human-readable catalog of every signal is [Dashboard Measure v3](dashboard-measure-v3.md).
 
 Serving (phase 2):
 
@@ -254,7 +257,7 @@ note generated from the signal support registry.
 | 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
 | 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
 | 6 | V8 Recurrence, then V9 Interventions | Same | Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s) |
-| 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | |
+| 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks in `retired/`; [Measure v3](dashboard-measure-v3.md) generated from the registry |
 
 ## Findings log
 
@@ -375,11 +378,35 @@ recurrence baseline for future comparisons, and registry-sourced "unsupported" n
 for rule adherence (M12) and practice recurrence (M17). Validated: baseline task
 counts reconcile; post-intervention comparison activates when a proposal is applied.
 
+**F17. Project attribution lived in the retired pipeline's capture half.** Evidence:
+the session-context hooks recorded 13.5K events (57 omp, 16 Codex CLI, 9 Claude Code
+projects) into an inbox the scan ingested; the scan's correlation and re-emission
+produced only 17 attributed activities. Fix (decided with the user): keep the hooks,
+retire the scan, and sync the inbox into `introspection.session_projects` every minute;
+V8 project concentration and the Pipeline project attribution use it for every
+harness. Validated: ledger history (13,545 events), inbox (179 events, 10 rejections)
+loaded with 0 home paths; 72% Claude Code, 82% Codex app-server, 97% Codex CLI, 98%
+Codex exec, 54% omp of 90-day tasks attributed.
+
+**F18. The workflow store could not survive a clean cut on the ledger schema.**
+Evidence: proposals emitted outbox events and migrations imported the delivery
+pipeline; the ledger held 54 tables for 6 workflow rows. Fix: a small workflow schema
+(findings, proposals, proposal events, review sessions, model runs, budget ledger,
+drafts) with the same immutability guards, a rollback journal so the dashboard can open
+it read-only, and a proposal-only review flow (classification read retired
+observations). The user's config file dropped the retired `[scheduler]`, `[pipeline]`,
+and OTLP keys (backup kept). Validated: 6 findings copied; `proposal list`,
+`candidates export`, and V9 read the new store.
+
 ## Operations
 
 - **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`
   tables have no TTL and hold history beyond that. Trace history before
   2026-09-10 had already expired under the earlier 15-day TTL and cannot be recovered.
+- **Project sync:** `agent-introspection facts schedule install|status|remove` manages the
+  `com.adamjackson.agent-introspection.projects` LaunchAgent (runs `facts sync-projects`
+  every minute from this checkout's `.venv`; reinstall it from the checkout you keep).
+  `session_projects` is the only copy of synced hook history; never drop it.
 - **Rebuild:** `facts install` recreates loaders and views without touching data.
   `facts backfill --days 90` rebuilds or re-projects everything still in SigNoz,
   so a projection change applies to the full 90-day window.

@@ -19,12 +19,15 @@ from importlib.resources import files
 from typing import Any, cast
 
 from agent_introspection.config import AppConfig
-from agent_introspection.source import SourceError
 
 DATABASE = "introspection"
 _QUERY_TIMEOUT_SECONDS = 600.0
 
 type SqlRunner = Callable[[str], str]
+
+
+class FactsError(RuntimeError):
+    """A ClickHouse statement for the facts store failed."""
 
 
 @dataclass(frozen=True)
@@ -318,7 +321,8 @@ def load_registry() -> Registry:
     return parse_registry(tomllib.loads(_sql(REGISTRY_FILE)))
 
 
-def _sql_string(value: str) -> str:
+def sql_string(value: str) -> str:
+    """Quote a value as a ClickHouse string literal."""
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
@@ -332,7 +336,7 @@ def registry_statements(registry: Registry) -> list[str]:
     }
     return [
         f"INSERT INTO {DATABASE}.{table} SELECT * FROM format(JSONEachRow, "
-        + _sql_string("\n".join(json.dumps(row, ensure_ascii=False) for row in rows))
+        + sql_string("\n".join(json.dumps(row, ensure_ascii=False) for row in rows))
         + ")"
         for table, rows in tables.items()
         if rows
@@ -408,9 +412,14 @@ def docker_runner(config: AppConfig) -> SqlRunner:
                 timeout=_QUERY_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SourceError("ClickHouse statement timed out") from exc
+            raise FactsError("ClickHouse statement timed out") from exc
         if completed.returncode != 0:
-            raise SourceError(completed.stderr.strip().splitlines()[-1])
+            lines = completed.stderr.strip().splitlines()
+            raise FactsError(
+                next(
+                    (line for line in lines if "DB::Exception" in line), lines[-1] if lines else ""
+                )
+            )
         return completed.stdout
 
     return run

@@ -26,13 +26,9 @@ description: "Configure and validate canonical Agent Introspection project attri
 - [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned managed runtime used by supported producers.
 - [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
 
-### Fresh-start cutover
-
-- [Fresh-start cutover](references/fresh-start-cutover-workflow.md): retire approved historical telemetry only after every retained producer passes canonical end-to-end verification.
-
 ### Verification and escalation
 
-- [End-to-end validation](references/end-to-end-validation-workflow.md): verify producer, ledger, source telemetry, and dashboard-facing identity correlation.
+- [End-to-end validation](references/end-to-end-validation-workflow.md): verify producer, inbox, `session_projects`, and dashboard-facing project attribution.
 - [Unresolved producer escalation](references/upstream-escalation-workflow.md): record missing native capabilities without adding inferred attribution.
 
 ## Output
@@ -40,6 +36,6 @@ description: "Configure and validate canonical Agent Introspection project attri
 - Selected workflows and producer capability classifications
 - Baseline window, denominator, unmatched cohorts, and evidence provenance
 - Accepted and rejected attribution counts with rejection reasons
-- Managed runtime, canonical scan, activity-version outbox, scheduler, and dashboard verification evidence
+- Managed runtime, project sync job, `session_projects` rows, and dashboard verification evidence
 - Before-and-after attribution percentages using the same denominator
 - Unsupported boundaries and unresolved risks

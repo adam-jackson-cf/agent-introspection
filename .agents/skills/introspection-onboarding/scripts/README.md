@@ -15,7 +15,7 @@ scripts/
     └── omp/                           # OMP extension adapter
 ```
 
-## From native surface to SigNoz
+## From native surface to the dashboard facts
 
 ```mermaid
 flowchart LR
@@ -24,14 +24,13 @@ flowchart LR
     runtime --> git[Explicit workspace Git resolver]
     git --> record[Immutable canonical session-context record]
     record --> inbox[Local context inbox]
-    otel[SigNoz source OTEL data\nproducer + correlation_id] --> scan[Bounded scanner]
-    inbox --> scan
-    scan --> activity[Canonical activity version]
-    activity --> outbox[Immutable OTLP outbox]
-    outbox --> signoz[SigNoz canonical activity event]
+    inbox --> sync[agent-introspection facts sync-projects\nlaunchd, every minute]
+    sync --> table[introspection.session_projects]
+    table --> view[introspection.session_project\nlatest project per session]
+    facts[introspection facts\nusage, tasks, tool calls] --> view
 ```
 
-The scanner joins accepted context to source telemetry by the exact `(producer, correlation_id)` pair. `correlation_id` must equal the native session identifier proven for that surface; the runtime never derives it from prompts, telemetry content, CWD, process state, or local artifacts.
+`facts sync-projects` inserts each inbox record into ClickHouse and removes the file once it is stored. The dashboard joins facts to `session_project` by session ID, which is the producer-native session identifier (`session.id`, Codex thread/conversation ID, `gen_ai.conversation.id`). `correlation_id` must equal the native session identifier proven for that surface; the runtime never derives it from prompts, telemetry content, CWD, process state, or local artifacts.
 
 ## Central record schema
 

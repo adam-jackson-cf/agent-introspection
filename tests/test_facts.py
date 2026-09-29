@@ -8,7 +8,7 @@ import pytest
 
 from agent_introspection import facts
 from agent_introspection.config import AppConfig
-from agent_introspection.source import SourceError
+from agent_introspection.facts import FactsError
 
 
 def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
@@ -56,9 +56,11 @@ def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() ->
         assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
         assert "APPEND" not in refresher
     views = facts._sql("003_views.sql")
-    assert {s.view for s in facts.SNAPSHOTS} == {
+    fact_views = {
         name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
     }
+    # session_project is a small lookup joined at query time, not a fact view.
+    assert {s.view for s in facts.SNAPSHOTS} == fact_views - {"session_project"}
 
 
 def _document(**support: dict[str, str]) -> dict[str, Any]:
@@ -233,7 +235,7 @@ def test_docker_runner_sends_sql_on_stdin_and_surfaces_the_last_error_line(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(SourceError, match="Code: 62"):
+    with pytest.raises(FactsError, match="Code: 62"):
         facts.docker_runner(AppConfig())("SELECT 1")
 
     assert calls[0]["input"] == "SELECT 1"

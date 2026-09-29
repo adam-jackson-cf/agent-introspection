@@ -250,6 +250,18 @@ oh-my-pi = { route = "omp.chat", alignment = "aligned" }
 claude-code = { route = "claude.usage", alignment = "aligned" }
 
 [[signal]]
+id = "pipeline.project_attribution"
+view = "pipeline"
+title = "Project attribution"
+question = "Which share of each harness's tasks has a project from the session-context hooks?"
+unit = "%"
+formula = "Per harness: 100 × tasks whose session the hooks recorded with a git project / tasks. The session takes its latest recorded project. Hook rejections (e.g. non-git workspace) and the unsynced inbox backlog are shown alongside."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned", note = "Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter." }
+oh-my-pi = { route = "omp.run", alignment = "aligned" }
+claude-code = { route = "claude.interaction", alignment = "aligned" }
+
+[[signal]]
 id = "pipeline.recombination"
 view = "pipeline"
 title = "All = Σ harnesses"
@@ -866,11 +878,11 @@ view = "recurrence"
 title = "Project concentration"
 question = "Is a repeated failure localized to one project?"
 unit = "%"
-formula = "Per signature: 100 × occurrences in the top working directory / occurrences with a working directory."
+formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the git repository the session-context hooks recorded for the session."
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "differs", note = "Project = `x.workdir` of the call (home as ~), not a canonical project." }
-oh-my-pi = { alignment = "not emitted", note = "No working directory." }
-claude-code = { alignment = "not emitted", note = "No working directory." }
+codex = { route = "codex.tool_result", alignment = "aligned", note = "Session → project from the `codex-cli` / app-server hooks." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "Session → project from the omp hook." }
+claude-code = { route = "claude.tool_result", alignment = "aligned", note = "Session → project from the Claude Code hook; interactions in a non-git workspace have none." }
 
 # ---------------------------------------------------------------------------
 # V9 Interventions (workflow records in the local SQLite store)

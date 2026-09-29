@@ -1,6 +1,6 @@
 # Agent Introspection
 
-Agent Introspection mines existing Codex telemetry from the local SigNoz instance, applies deterministic reduction and detectors, and retains observations, trends, proposals, approval history, model provenance, and derived-telemetry delivery state in SQLite.
+Agent Introspection surfaces the same signals from every agent harness on this machine (omp, Codex app-server/CLI/exec, and Claude Code) so one person can explore model usage and agent process and find problems and improvements. Producer telemetry in the local SigNoz instance is materialized into ClickHouse facts, and a React companion shows question-led views over them. Findings and intervention proposals, with their approval history, live in a small SQLite workflow store.
 
 It never applies a proposal. Approval records a decision only; entering `applying` requires a separate explicit user request.
 
@@ -9,7 +9,7 @@ It never applies a proposal. Approval records a decision only; entering `applyin
 - Python 3.12 or newer and `uv`
 - OrbStack with the existing SigNoz Compose project
 - `docker --context orbstack` access to `signoz-clickhouse`
-- OTLP protobuf over HTTP on `localhost:4318`
+- Bun, for the dashboard companion
 
 ## Development
 
@@ -90,47 +90,33 @@ other.
 ## CLI
 
 ```sh
-uv run agent-introspection doctor
-uv run agent-introspection health
-uv run agent-introspection scan
-uv run agent-introspection candidates export
-uv run agent-introspection classification import --input-json -
+uv run agent-introspection facts install             # tables, loaders, views, snapshots, registry
+uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
+uv run agent-introspection facts status              # loader state and per-harness freshness
+uv run agent-introspection facts sync-projects       # hook inbox -> introspection.session_projects
+uv run agent-introspection facts schedule install    # run the project sync every minute (launchd)
+uv run agent-introspection facts schedule status
+uv run agent-introspection candidates export --reserved-model-budget <tokens>
 uv run agent-introspection proposal list
-uv run agent-introspection telemetry drain
-uv run agent-introspection telemetry reconcile-observations --scan-run-id <failed-scan-id>
-uv run agent-introspection dashboard verify
-uv run agent-introspection db check
-uv run agent-introspection schedule status
 ```
 
 All command results are structured JSON on stdout. Diagnostics are written to stderr and failures use stable non-zero exit codes.
 
-The installed user LaunchAgent runs at minute zero of each hour and once at user-session load. Missed hour boundaries coalesce into one run after wake. Scheduled mode permits one successful or no-data scan per UTC hourly slot, terminalizes interrupted runs before recovery, and uses a shared lease to prevent overlap. Each ClickHouse query has a ten-minute limit and each scan has a fifteen-minute deadline, so a stalled source produces a terminal failure instead of blocking later hourly slots.
+## Project attribution
 
-Normal scans persist canonical activities and monotonic attribution versions, reconcile
-session context at source-event time, and deliver deterministic activity events to SigNoz.
-The insight dashboard selects the latest activity version within its source-time range.
+The session-context hooks installed in Claude Code, Codex, and omp write one JSON
+record per session event into `~/.local/share/agent-introspection/session-context-inbox`:
+the native session ID and the Git project it runs in, or a rejection such as a
+non-Git workspace. The `com.adamjackson.agent-introspection.projects` LaunchAgent runs
+`facts sync-projects` every minute: it inserts the records into
+`introspection.session_projects` and removes each file once ClickHouse has it. The
+dashboard joins facts to `introspection.session_project` (the latest project per
+session) by session ID; the Pipeline view shows the attributed share of tasks per
+harness, rejections, and the inbox backlog.
 
-## Pipeline measurement cutover
-
-`[pipeline].measurement_start` accepts a quoted RFC3339 timestamp with an explicit
-UTC offset, normalized to UTC millisecond precision. The authorized production
-boundary is active:
-
-```toml
-[pipeline]
-measurement_start = "2026-09-08T08:32:42.802Z"
-```
-
-An active boundary selects `measurement_start < cohort_time <= end` in the existing
-central remote authority. Requested report bounds remain unchanged; crossing
-ranges disclose the effective lower bound, and wholly pre-cutover backend reports
-are `Unavailable`. The companion retains `Missing data` when no deployment qualifies.
-Complete immutable histories of admitted identities and required
-pre-display-range ownership remain available for validation. Historical records,
-native SigNoz retention, production scheduling, and the authority store are not reset.
-See the [proof register](docs/dashboard-metric-proof-register.md#current-production-acquisition-and-verification)
-for the retained acquisition, independent oracle, and application verification.
+Findings, proposals, and review sessions live in the SQLite workflow store at
+`~/.local/share/agent-introspection/introspection.sqlite3`. The retired scan ledger is
+archived at `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`.
 
 ## Codex Desktop Attribution
 
@@ -144,8 +130,8 @@ Codex's active configuration root is `$CODEX_HOME` when it is set to a non-empty
 
 **Producer boundary is not qualified.** These global hooks also run in Codex CLI,
 and their documented native envelope does not distinguish CLI from Desktop.
-A real CLI run emitted a `codex-app-server` end record; the normal scanner
-quarantined it. The two newly added global Desktop registrations were rolled back,
+A real CLI run emitted a `codex-app-server` end record, which the retired scanner
+quarantined. The two newly added global Desktop registrations were rolled back,
 preserving unrelated hooks, trust settings, runtime bytes, and evidence.
 Do not install the Desktop adapter into a configuration root shared with Codex CLI
 until an authoritative producer boundary is available.

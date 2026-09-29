@@ -1,28 +1,25 @@
 ---
 name: "introspection-operations"
-description: "Operate local Agent Introspection workflows safely; USE WHEN you need health checks, scans, proposal persistence, or approval recording."
+description: "Operate local Agent Introspection workflows safely; USE WHEN you need facts health checks, facts maintenance, proposal persistence, or approval recording."
 ---
 
 # Workflow
 
-### Step 1: Verify system health
+### Step 1: Verify facts health
 
-- **Purpose**: Confirm the local system is safe and ready before reading or changing persisted state.
-- **When**: Before scans, proposal operations, or approval recording.
-- Verify SigNoz health, loopback-only network bindings, and disabled OrbStack LAN exposure.
-- Check the approved source-schema fingerprint and stop on unapproved drift.
-- Check SQLite integrity, dashboard validity, telemetry outbox state, and scheduler status.
-- Report failed capabilities without bypassing or weakening any gate.
+- **Purpose**: Confirm the ClickHouse facts store and project sync are current before reading or changing persisted state.
+- **When**: Before facts maintenance, proposal operations, or approval recording.
+- Run `agent-introspection facts status` and `agent-introspection facts schedule status`.
+- Open the dashboard Pipeline view and read loaders, freshness, parity, sanitization, the coverage grid, and project attribution.
+- Report stale loaders, possible breaks, unexplained strays, parity mismatches, sanitization violations, or an inbox backlog without bypassing or weakening any check.
 - Workflow: [Health workflow](references/health-workflow.md)
 
-### Step 2: Run deterministic scans
+### Step 2: Maintain the facts store
 
-- **Purpose**: Convert bounded source telemetry and accepted session context into deterministic canonical activities, activity versions, findings, and trends.
-- Run the health workflow before scanning.
-- Use scheduler leases, source watermarks, bounded ClickHouse reads, ordered context replay, and idempotent canonical persistence.
-- Resolve each source activity through exactly one accepted producer/correlation/project interval, except Codex CLI `session_context`, which requires exactly one accepted context record, or retain an explicit unresolved attribution.
-- Drain deterministic canonical activity-version events and report scan, activity, version, finding, trend, and delivery evidence.
-- Workflow: [Scan workflow](references/scan-workflow.md)
+- **Purpose**: Apply projection, view, or registry changes and keep project attribution flowing.
+- Run `facts install` after any change under `facts_sql/`, then `facts backfill --days 90` when the span or log projection changed.
+- Keep `session_projects` intact: it is the only copy of hook history once inbox files are synced.
+- Workflow: [Facts workflow](references/facts-workflow.md)
 
 ### Step 3: Persist and inspect proposals
 
@@ -50,5 +47,5 @@ description: "Operate local Agent Introspection workflows safely; USE WHEN you n
 
 - Report the selected operation and final status.
 - List persisted evidence, identifiers, counts, and verified provenance.
-- List deferred candidates, failed capabilities, unresolved risks, and required user actions.
+- List failed checks, unresolved risks, and required user actions.
 - Confirm whether any target repository was mutated; proposal and approval workflows must report no mutation.
