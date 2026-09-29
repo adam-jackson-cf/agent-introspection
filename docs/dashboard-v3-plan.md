@@ -408,8 +408,13 @@ Evidence: on 2026-09-29, `signoz_index_v3` held 8,332 omp chat rows for 1,447 sp
 and error flag. Impact: the facts are unaffected (one row per trace and span), but
 anything summing raw SigNoz spans over-counts omp 2–7× from then on, including
 agent-observability's dashboards. Fix here: the parity recount deduplicates raw spans by
-span ID, like the loader. The duplication itself (omp exporter retries or a collector
-pipeline change) is outside this repo. Validated: omp parity exact (14,083 operations).
+span ID, like the loader. Cause (confirmed by the agent-observability session):
+ClickHouse insert-path fsync enabled on 2026-09-28 at 21:50 UTC pushed trace inserts past
+the collector's 9 s timeout, so the collector retried batches that had already landed;
+the smaller 16:00 UTC bump matches ClickHouse restarts during recovery. Fixed there at
+15:07 UTC on 2026-09-29 (insert fsync off, merge fsync kept). Validated: omp parity exact
+(14,083 operations); omp spans after 15:07 have one row per span. Duplicates already in
+SigNoz (spans from 2026-09-28 16:00) remain until that session deduplicates them.
 
 **F20. The log loader missed rows inserted late into SigNoz.** Evidence: 3 Claude Code
 `api_request` logs from 2026-09-28 17:53–18:10 UTC were in SigNoz but not in the facts;
@@ -440,8 +445,10 @@ in 604 ms.
 **F23. ClickHouse load rose about fourfold from 2026-09-28 21:00 UTC.** Evidence:
 snapshot refreshes averaged 0.75–1.1 s per hour until 17:00, then 2.5–4.5 s; SigNoz
 trace INSERTs account for about 1,260 s per 10 minutes; VM load average about 17. This
-coincides with the duplicate omp spans (F19). Fix: none in this repo; reported to the
-agent-observability session. The 90-day bound keeps our share from growing further.
+came from the same insert-path fsync and retry storm as F19. Fix: in the SigNoz
+configuration, by the agent-observability session (see F19). Validated: after 15:07 UTC
+on 2026-09-29, snapshot refreshes averaged 0.66–0.81 s per minute (max 0.95 s) and the VM
+load average fell to about 8.
 
 **F24. Uncommitted 5-minute snapshot edits from an unidentified session.** Evidence: on
 2026-09-29 `facts.py`, the README, the plan, Measure v3, `views.ts`, and a test in this
