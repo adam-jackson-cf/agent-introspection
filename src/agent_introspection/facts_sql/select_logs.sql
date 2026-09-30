@@ -65,6 +65,13 @@ WITH
         l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         output_lines
     ) AS error_line,
+    -- The signature is capped at 160 characters. When the keyword lies past the cap,
+    -- keep the line from the keyword on, so the signature is always diagnostic.
+    if(
+        match(substring(error_line, 1, 160), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        error_line,
+        extract(error_line, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
+    ) AS error_window,
     event = 'codex.tool_result' AS is_codex_tool_result,
     is_codex_tool_result AND (
         attributes_string['success'] = 'false' OR (exit_code IS NOT NULL AND exit_code != '0')
@@ -102,7 +109,7 @@ SELECT
                         failed,
                         substring(
                             replaceRegexpAll(
-                                replaceRegexpAll(error_line, '/Users/[^/ ]+', '~'),
+                                replaceRegexpAll(error_window, '/Users/[^/ ]+', '~'),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'
                             ),

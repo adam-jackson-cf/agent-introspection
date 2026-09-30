@@ -353,7 +353,7 @@ def test_failure_signature_never_falls_back_to_an_arbitrary_output_line() -> Non
 
     assert "output_lines[1]" not in select
     signature = select.split("'x.failure_signature', if(")[1].split("'x.")[0]
-    assert "error_line" in signature
+    assert "error_window" in signature
     error_line = select.split("AS error_line,")[0].rsplit("arrayFirst(", 1)[1]
     assert "(?i)(error|fail" in error_line
 
@@ -373,3 +373,27 @@ def test_span_sweep_keys_on_end_time_so_long_spans_are_loaded() -> None:
         sweep.window
     )
     assert "timestamp > now() - INTERVAL 3 DAY" not in sweep.window
+
+
+@pytest.mark.parametrize(
+    ("select_file", "line", "window", "stored"),
+    [
+        ("select_spans.sql", "status_line", "status_window", "AS status_message"),
+        ("select_logs.sql", "error_line", "error_window", "'x.failure_signature'"),
+    ],
+)
+def test_capped_text_starts_at_the_keyword_when_it_lies_past_the_cap(
+    select_file: str, line: str, window: str, stored: str
+) -> None:
+    select = facts.render_select(select_file, "1")
+
+    chosen = select.split(f"AS {window}")[0].rsplit("if(", 1)[1]
+    assert f"match(substring({line}, 1, 160), '(?i)(error|fail" in chosen
+    assert f"extract({line}, '(?i)((error|fail" in chosen
+    assert ".*)')" in chosen
+    if stored.startswith("AS"):
+        capped = select.split(stored)[0].rsplit("substring(", 1)[1]
+    else:
+        capped = select.split(stored)[1].split("'x.")[0]
+    assert window in capped
+    assert f"({line}," not in capped
