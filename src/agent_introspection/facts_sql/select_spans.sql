@@ -13,7 +13,14 @@ WITH
     arrayFirst(
         l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         status_lines
-    ) AS status_line
+    ) AS status_line,
+    -- The stored text is capped at 160 characters. When the keyword lies past the cap,
+    -- keep the line from the keyword on, so the stored text is always diagnostic.
+    if(
+        match(substring(status_line, 1, 160), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        status_line,
+        extract(status_line, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
+    ) AS status_window
 SELECT
     serviceName AS harness,
     timestamp AS ts,
@@ -25,7 +32,7 @@ SELECT
     has_error,
     status_code_string AS status_code,
     substring(
-        replaceRegexpAll(replaceRegexpAll(status_line, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'),
+        replaceRegexpAll(replaceRegexpAll(status_window, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'),
         1,
         160
     ) AS status_message,
