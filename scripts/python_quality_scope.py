@@ -28,7 +28,7 @@ def is_excluded_python_path(path: str) -> bool:
 
 
 def is_maintained_python_path(path: str) -> bool:
-    """Return whether a tracked Python path belongs to this project's source surface."""
+    """Return whether a tracked Python path belongs to a maintained quality surface."""
     normalized = path.removeprefix("./")
     if not normalized.endswith(".py") or is_excluded_python_path(normalized):
         return False

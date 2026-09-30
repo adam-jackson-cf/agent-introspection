@@ -1,0 +1,934 @@
+# Signal support registry.
+#
+# One definition per signal, one route per producer. `facts install` loads this
+# file into `introspection.signals`, `introspection.signal_routes`,
+# `introspection.signal_support`, and `introspection.signal_strays`. The
+# dashboard renders every info note from those tables; notes are never written
+# in the UI.
+#
+# Support keys are harness names, or `codex` for all three Codex surfaces. A
+# harness-specific entry overrides the `codex` entry. Alignment is one of:
+#   aligned      the producer reaches the shared definition directly
+#   differs      the producer reaches it by a different route; `note` says how
+#   not emitted  the producer has no route; `note` says why (shown, never zero)
+#
+# Route `match` predicates run against `introspection.<source>` rows of one
+# harness. `expect = "events"` marks a route for rare events (interrupts,
+# steers, sandbox denials, API errors, delegations) where zero rows while the
+# harness is active is a valid observation, not a possible break. The Pipeline coverage grid applies every route of a signal to every
+# harness, so a predicate must name the producer-specific event or span, not
+# just "has data".
+
+[harnesses]
+oh-my-pi = "omp"
+codex-app-server = "Codex app-server"
+codex_cli_rs = "Codex CLI"
+codex_exec = "Codex exec"
+claude-code = "Claude Code"
+
+[views]
+pipeline = "Pipeline"
+cache = "Cache efficiency"
+effort = "Reasoning effort"
+tools = "Tool failures"
+friction = "Friction"
+guardrails = "Guardrails"
+provider = "Provider"
+recurrence = "Recurrence"
+interventions = "Interventions"
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+[[route]]
+id = "codex.usage"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.sse_event' AND (mapContains(attrs_number, 'input_token_count') OR mapContains(attrs_string, 'input_token_count'))"
+description = "Token-bearing `codex.sse_event` log (`response.completed`), one per completed response."
+
+[[route]]
+id = "claude.usage"
+harnesses = ["claude-code"]
+source = "logs"
+match = "event_name = 'api_request'"
+description = "`api_request` log, one per completed API request."
+
+[[route]]
+id = "omp.chat"
+harnesses = ["oh-my-pi"]
+source = "spans"
+match = "attrs_string['gen_ai.operation.name'] = 'chat'"
+description = "`chat` span (`gen_ai.operation.name = 'chat'`), one per model call, including subagents and advisors."
+
+[[route]]
+id = "codex.turn"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "spans"
+match = "name = 'session_task.turn'"
+description = "`session_task.turn` span, one per turn; `codex-auto-review` turns are the automated approval reviewer."
+
+[[route]]
+id = "omp.run"
+harnesses = ["oh-my-pi"]
+source = "spans"
+match = "name = 'invoke_agent' AND parent_span_id = ''"
+description = "Root `invoke_agent` span, one per user-initiated agent run."
+
+[[route]]
+id = "claude.interaction"
+harnesses = ["claude-code"]
+source = "spans"
+match = "name = 'claude_code.interaction'"
+description = "`claude_code.interaction` span; a task only when its trace has `claude_code.llm_request` spans (otherwise a slash command)."
+
+[[route]]
+id = "claude.llm_request"
+harnesses = ["claude-code"]
+source = "spans"
+match = "name = 'claude_code.llm_request'"
+description = "`claude_code.llm_request` span, one per terminal LLM request."
+
+[[route]]
+id = "codex.interrupt"
+expect = "events"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "spans"
+match = "name = 'turn/interrupt'"
+description = "`turn/interrupt` RPC span carrying the interrupted `turn.id`."
+
+[[route]]
+id = "codex.steer"
+expect = "events"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "spans"
+match = "name = 'turn/steer'"
+description = "`turn/steer` RPC span carrying the steered `turn.id`."
+
+[[route]]
+id = "omp.subagent"
+expect = "events"
+harnesses = ["oh-my-pi"]
+source = "spans"
+match = "name LIKE 'invoke_agent %' AND name NOT LIKE 'invoke_agent Advisor:%'"
+description = "`invoke_agent <agent>` span for a delegated subagent run (advisors excluded)."
+
+[[route]]
+id = "codex.tool_result"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.tool_result'"
+description = "`codex.tool_result` log with normalized `x.*` command fields; raw arguments and output are not stored."
+
+[[route]]
+id = "omp.execute_tool"
+harnesses = ["oh-my-pi"]
+source = "spans"
+match = "name LIKE 'execute_tool %'"
+description = "`execute_tool <tool>` span with `pi.gen_ai.tool.status` ok/error/aborted."
+
+[[route]]
+id = "claude.tool_result"
+harnesses = ["claude-code"]
+source = "logs"
+match = "event_name = 'tool_result'"
+description = "`tool_result` log with `success` and `error_type`."
+
+[[route]]
+id = "codex.tool_decision"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.tool_decision'"
+description = "`codex.tool_decision` log with `decision` and `source` (config or user)."
+
+[[route]]
+id = "claude.tool_decision"
+harnesses = ["claude-code"]
+source = "logs"
+match = "event_name = 'tool_decision'"
+description = "`tool_decision` log with `decision` and `source`."
+
+[[route]]
+id = "codex.sandbox_outcome"
+expect = "events"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.sandbox_outcome'"
+description = "`codex.sandbox_outcome` log with `outcome` for a sandboxed command."
+
+[[route]]
+id = "codex.sampling"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "spans"
+match = "name = 'run_sampling_request'"
+description = "`run_sampling_request` span: one sampling step including retries, response processing, and in-flight tool draining."
+
+[[route]]
+id = "codex.try_sampling"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "spans"
+match = "name = 'try_run_sampling_request'"
+description = "`try_run_sampling_request` span: one attempt inside a sampling step."
+
+[[route]]
+id = "codex.response_completed"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.sse_event' AND attrs_string['event.kind'] = 'response.completed'"
+description = "`codex.sse_event` with `event.kind = 'response.completed'`: one per response stream, carrying `ttft_ms`, output tokens, and `error.message` when the stream fails."
+
+[[route]]
+id = "claude.api_error"
+expect = "events"
+harnesses = ["claude-code"]
+source = "logs"
+match = "event_name IN ('api_error', 'api_retries_exhausted')"
+description = "`api_error` (one per failed attempt) and `api_retries_exhausted` logs."
+
+# ---------------------------------------------------------------------------
+# Known stray rows: rows that match another producer's route or no route, and
+# are explained rather than a live route of the harness they are labelled with.
+# ---------------------------------------------------------------------------
+
+[[stray]]
+id = "omp.claude_mislabel_logs"
+harness = "oh-my-pi"
+source = "logs"
+match = "event_name IN ('api_request', 'tool_result', 'tool_decision', 'user_prompt', 'assistant_response', 'hook_registered', 'hook_execution_start', 'hook_execution_complete', 'mcp_server_connection', 'retention_sweep')"
+reason = "Claude Code sessions exported with service.name oh-my-pi (seen 2026-08-24, 08-28, 09-01, 09-02, 09-13). Inferred: Claude Code launched from an omp shell inherits OTEL_SERVICE_NAME. The rows are Claude-style events, not an omp route, and are not counted as Claude Code either."
+
+[[stray]]
+id = "omp.claude_mislabel_spans"
+harness = "oh-my-pi"
+source = "spans"
+match = "startsWith(name, 'claude_code.')"
+reason = "Spans from the same mislabelled Claude Code sessions."
+
+[[stray]]
+id = "omp.docker_build"
+harness = "oh-my-pi"
+source = "spans"
+match = "name LIKE 'moby.%' OR name LIKE 'build%' OR name LIKE 'load %' OR name LIKE 'remotes.docker.%' OR name IN ('HEAD /_ping', 'GET /v1.54/version', 'HTTP POST')"
+reason = "Inferred: Docker buildx spans inherit OTEL_SERVICE_NAME=oh-my-pi when omp runs docker builds. They are not agent telemetry."
+
+# ---------------------------------------------------------------------------
+# V1 Pipeline
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "pipeline.loader_refresh"
+view = "pipeline"
+title = "Loader refresh"
+question = "Are the refreshable loaders and snapshots running without errors?"
+unit = "status"
+formula = "system.view_refreshes status, last success time, and exception for every view in the introspection database."
+scope = "system"
+
+[[signal]]
+id = "pipeline.freshness"
+view = "pipeline"
+title = "Fact freshness"
+question = "How far behind SigNoz is each harness's fact data?"
+unit = "seconds"
+formula = "Per harness and source: max(ts) in SigNoz minus max(ts) in introspection over the last day. Rows for idle harnesses report their last activity."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned" }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { route = "claude.llm_request", alignment = "aligned" }
+
+[[signal]]
+id = "pipeline.parity"
+view = "pipeline"
+title = "Source parity"
+question = "Does usage_events equal a direct recount of the raw SigNoz source for the window?"
+unit = "tokens"
+formula = "Per harness: Σ input, cached, output tokens and operations from usage_events versus the same fields summed directly from signoz_logs / signoz_traces with the producer's usage route."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned" }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { route = "claude.usage", alignment = "aligned" }
+
+[[signal]]
+id = "pipeline.project_attribution"
+view = "pipeline"
+title = "Project attribution"
+question = "Which share of each harness's tasks has a project from the session-context hooks?"
+unit = "%"
+formula = "Per harness: 100 × tasks whose session the hooks recorded with a git project / tasks. The session takes its latest recorded project. Hook rejections (e.g. non-git workspace) and the unsynced inbox backlog are shown alongside."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned", note = "Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter." }
+oh-my-pi = { route = "omp.run", alignment = "aligned" }
+claude-code = { route = "claude.interaction", alignment = "aligned" }
+
+[[signal]]
+id = "pipeline.recombination"
+view = "pipeline"
+title = "All = Σ harnesses"
+question = "Do per-harness values recombine to the All value?"
+unit = "check"
+formula = "For counts: Σ per-harness = All. For ratios: Σ per-harness numerators and denominators = All numerator and denominator, then divide."
+scope = "system"
+
+[[signal]]
+id = "pipeline.sanitization"
+view = "pipeline"
+title = "Sanitization"
+question = "Is any raw prompt, command, argument, output, or identity text stored?"
+unit = "rows"
+formula = "Count of fact rows holding a dropped key (prompt, user_prompt, arguments, output, content, tool intent, identity keys), a status message over 160 characters, or a home-directory path. Expected 0."
+scope = "system"
+
+[[signal]]
+id = "pipeline.coverage"
+view = "pipeline"
+title = "Coverage grid"
+question = "Does the data match what the registry says each harness emits?"
+unit = "state"
+formula = "Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, stray (explained or not), or not emitted."
+scope = "system"
+
+# ---------------------------------------------------------------------------
+# V2 Cache efficiency
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "usage.input_tokens"
+view = "cache"
+title = "Input tokens"
+question = "How many input tokens were processed?"
+unit = "tokens"
+formula = "Σ input_tokens. Input includes cache reads for every producer."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned", note = "`input_token_count`, including cached input." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.input_tokens`, including cache read and cache creation." }
+claude-code = { route = "claude.usage", alignment = "differs", note = "`input_tokens + cache_creation_tokens + cache_read_tokens`; the direct field excludes cache, so the three are summed." }
+
+[[signal]]
+id = "usage.cached_input"
+view = "cache"
+title = "Cached input"
+question = "How many input tokens were served from cache?"
+unit = "tokens"
+formula = "Σ cached_input (cache reads only; cache creation is not reuse)."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned", note = "`cached_token_count`; a missing string value counts as 0." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.cache_read.input_tokens`, 0 when absent." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "`cache_read_tokens`." }
+
+[[signal]]
+id = "usage.uncached_input"
+view = "cache"
+title = "Uncached input"
+question = "How much input had to be processed without cache?"
+unit = "tokens"
+formula = "Σ input_tokens − Σ cached_input."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned" }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Includes cache-creation input." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "Includes cache-creation input." }
+
+[[signal]]
+id = "usage.cache_creation"
+view = "cache"
+title = "Cache creation"
+question = "How much input was written to cache?"
+unit = "tokens"
+formula = "Σ cache_creation_input. Part of input and uncached input, never of cached input."
+[signal.support]
+codex = { route = "codex.usage", alignment = "differs", note = "`cache_write_token_count` is reported but has been 0 on every event since 2026-08-24." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.cache_creation.input_tokens`; non-zero only on Anthropic chats." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "`cache_creation_tokens`." }
+
+[[signal]]
+id = "usage.output_tokens"
+view = "cache"
+title = "Output tokens"
+question = "How many tokens were generated?"
+unit = "tokens"
+formula = "Σ output_tokens (includes reasoning output)."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned", note = "`output_token_count`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.output_tokens`." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "`output_tokens`." }
+
+[[signal]]
+id = "usage.cache_utilization"
+view = "cache"
+title = "Input cache utilization"
+question = "What share of input was served from cache?"
+unit = "%"
+formula = "100 × Σ cached_input / Σ input_tokens, aggregated before division (token-weighted; no input gives no value, not 0)."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned" }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "The denominator includes cache-creation input." }
+
+[[signal]]
+id = "usage.operations"
+view = "cache"
+title = "Completed operations"
+question = "How many producer-native usage records were accepted?"
+unit = "operations"
+formula = "count() of accepted usage records. A producer-native boundary, not a shared request ID."
+[signal.support]
+codex = { route = "codex.usage", alignment = "differs", note = "One per token-bearing `response.completed` event." }
+oh-my-pi = { route = "omp.chat", alignment = "differs", note = "One per token-bearing chat span, including subagents and advisors." }
+claude-code = { route = "claude.usage", alignment = "differs", note = "One per `api_request` log." }
+
+[[signal]]
+id = "usage.active_sessions"
+view = "cache"
+title = "Usage-active sessions"
+question = "How many sessions consumed tokens?"
+unit = "sessions"
+formula = "uniqExact(harness, session_id) over usage records. Harness-scoped identity."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned", note = "`conversation.id`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.conversation.id`." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "`session.id`." }
+
+# ---------------------------------------------------------------------------
+# V3 Reasoning effort
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "effort.reasoning_tokens"
+view = "effort"
+title = "Reasoning tokens"
+question = "How many output tokens were spent reasoning?"
+unit = "tokens"
+formula = "Σ reasoning_tokens over usage records (a subset of output)."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned", note = "`reasoning_token_count`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.reasoning.output_tokens`, 0 when absent." }
+claude-code = { alignment = "not emitted", note = "Claude Code emits no separate thinking-token count; thinking is inside output_tokens." }
+
+[[signal]]
+id = "effort.reasoning_share"
+view = "effort"
+title = "Reasoning share of output"
+question = "What share of output tokens was reasoning?"
+unit = "%"
+formula = "100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division."
+[signal.support]
+codex = { route = "codex.usage", alignment = "aligned" }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { alignment = "not emitted", note = "No reasoning-token field." }
+
+[[signal]]
+id = "effort.level"
+view = "effort"
+title = "Requested effort"
+question = "Which reasoning effort was requested?"
+unit = "level"
+formula = "Producer-requested effort; `unset` means the provider default, not no reasoning. Tasks with more than one effort are `mixed`."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned", note = "Task: `codex.turn.reasoning_effort`. Usage: `model_reasoning_effort`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`pi.gen_ai.request.reasoning.effort` on the chats directly under the root run." }
+claude-code = { route = "claude.llm_request", alignment = "differs", note = "`effort` on LLM requests: set on nearly every request from 2026-09-28, occasionally before, so older tasks are mostly `unset`." }
+
+[[signal]]
+id = "task.count"
+view = "effort"
+title = "Tasks"
+question = "How many user-initiated tasks ran?"
+unit = "tasks"
+formula = "count() of task_outcomes rows."
+[signal.support]
+codex = { route = "codex.turn", alignment = "differs", note = "A turn. `codex-auto-review` turns are excluded; subagent threads appear as separate tasks." }
+oh-my-pi = { route = "omp.run", alignment = "differs", note = "A root agent run, including its subagents and advisors." }
+claude-code = { route = "claude.interaction", alignment = "differs", note = "An interaction with model calls; interactions without model calls are slash commands and are excluded." }
+
+[[signal]]
+id = "effort.heavy_share"
+view = "effort"
+title = "Heavy-effort task share"
+question = "What share of tasks requested high or xhigh effort?"
+unit = "%"
+formula = "100 × countIf(effort IN ('high', 'xhigh')) / count() over tasks; `mixed` is not heavy."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned" }
+oh-my-pi = { route = "omp.run", alignment = "aligned" }
+claude-code = { route = "claude.interaction", alignment = "differs", note = "Effort is mostly unset before 2026-09-28; unset tasks count as not heavy." }
+
+[[signal]]
+id = "task.duration"
+view = "effort"
+title = "Task duration"
+question = "How long do tasks take?"
+unit = "seconds"
+formula = "P50 / P90 of the task span duration in seconds."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned" }
+oh-my-pi = { route = "omp.run", alignment = "aligned" }
+claude-code = { route = "claude.interaction", alignment = "aligned" }
+
+[[signal]]
+id = "task.model_steps"
+view = "effort"
+title = "Model steps per task"
+question = "How many model round-trips does a task take?"
+unit = "steps"
+formula = "Average model_steps per task."
+[signal.support]
+codex = { route = "codex.sampling", alignment = "differs", note = "`run_sampling_request` spans whose `turn_id` is the task." }
+oh-my-pi = { route = "omp.chat", alignment = "differs", note = "Every chat span in the run's trace, including subagents and advisors." }
+claude-code = { route = "claude.llm_request", alignment = "differs", note = "`claude_code.llm_request` spans in the interaction's trace." }
+
+[[signal]]
+id = "task.reasoning_tokens"
+view = "effort"
+title = "Reasoning tokens per task"
+question = "How much reasoning does a task consume?"
+unit = "tokens"
+formula = "Σ task reasoning_tokens / tasks; task totals are below usage totals by design (calls outside a task)."
+[signal.support]
+codex = { route = "codex.turn", alignment = "differs", note = "`codex.turn.token_usage.reasoning_output_tokens`; Codex CLI TUI turns often omit token usage." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Summed over every chat in the run's trace." }
+claude-code = { alignment = "not emitted", note = "No reasoning-token field." }
+
+[[signal]]
+id = "task.delegations"
+view = "effort"
+title = "Delegations per task"
+question = "How many subagent runs does a task start?"
+unit = "runs"
+formula = "Average delegations per task."
+[signal.support]
+codex = { alignment = "not emitted", note = "Codex subagents run as separate threads and appear as separate tasks." }
+oh-my-pi = { route = "omp.subagent", alignment = "aligned", note = "`invoke_agent <agent>` spans in the trace, advisors excluded." }
+claude-code = { alignment = "not emitted", note = "Subagent completions are logged without a task link." }
+
+# ---------------------------------------------------------------------------
+# V4 Tool failures
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "tools.calls"
+view = "tools"
+title = "Tool calls"
+question = "How many tool calls ran?"
+unit = "calls"
+formula = "count() of tool_calls rows."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned" }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+claude-code = { route = "claude.tool_result", alignment = "aligned" }
+
+[[signal]]
+id = "tools.failure_rate"
+view = "tools"
+title = "Tool failure rate"
+question = "What share of tool calls with an explicit outcome failed?"
+unit = "%"
+formula = "100 × failed calls / calls with an explicit outcome (succeeded, failed, or aborted). Unknown outcomes stay out of the denominator."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "`success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "`pi.gen_ai.tool.status` error; aborted calls count in the denominator only." }
+claude-code = { route = "claude.tool_result", alignment = "aligned", note = "`success=false`." }
+
+[[signal]]
+id = "tools.failure_signature"
+view = "tools"
+title = "Failure signature"
+question = "Which normalized failures repeat?"
+unit = "signature"
+formula = "Failed calls grouped by tool and normalized failure signature (home → ~, digit and hex runs → N, 160 characters)."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: first error-like output line." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "First error-like line of the span status message." }
+claude-code = { route = "claude.tool_result", alignment = "differs", note = "`error_type` only: an error class, not the message." }
+
+[[signal]]
+id = "tools.tasks_affected"
+view = "tools"
+title = "Tasks affected by failures"
+question = "What share of tool-using tasks hit a failed call?"
+unit = "%"
+formula = "100 × tasks with ≥1 failed call / tasks with ≥1 attributed tool call."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "Call → task by session and the turn span that contains the call time; calls outside a user turn are unattributed." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "Call → root run of the same trace." }
+claude-code = { route = "claude.tool_result", alignment = "aligned", note = "Call → interaction of the same trace." }
+
+[[signal]]
+id = "tools.repeats"
+view = "tools"
+title = "Repeated attempts"
+question = "Which operations run with identical arguments more than once in a task?"
+unit = "tasks"
+formula = "Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.arguments_hash` over the raw arguments." }
+oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no argument identity." }
+claude-code = { alignment = "not emitted", note = "Tool results carry sizes, not argument identity." }
+
+[[signal]]
+id = "tools.loops"
+view = "tools"
+title = "Tool loops"
+question = "Which tasks repeat the same operation back-to-back?"
+unit = "tasks"
+formula = "Tasks with a run of ≥3 consecutive calls sharing tool and argument hash, excluding waiting and status-polling tools."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned", note = "Ordered by call time within the task." }
+oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no argument identity." }
+claude-code = { alignment = "not emitted", note = "Tool results carry no argument identity." }
+
+# ---------------------------------------------------------------------------
+# V5 Friction
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "friction.interrupt"
+view = "friction"
+title = "Interrupted tasks"
+question = "How often did the user stop a task?"
+unit = "%"
+formula = "100 × Σ interrupted / tasks with an interrupt signal."
+[signal.support]
+codex = { route = "codex.interrupt", alignment = "aligned", note = "The turn's `turn.id` appears on a `turn/interrupt` span." }
+codex_exec = { route = "codex.interrupt", alignment = "differs", note = "Headless: no user can interrupt, so the value is always 0." }
+oh-my-pi = { route = "omp.run", alignment = "differs", note = "The run has an aborted chat stop reason (`stop_reason.aborted.count > 0`)." }
+claude-code = { alignment = "not emitted", note = "Claude Code emits no interrupt event." }
+
+[[signal]]
+id = "friction.steer"
+view = "friction"
+title = "Steered tasks"
+question = "How often did the user redirect a running task?"
+unit = "%"
+formula = "100 × Σ steered / tasks with a steer signal."
+[signal.support]
+codex = { route = "codex.steer", alignment = "aligned", note = "The turn's `turn.id` appears on a `turn/steer` span." }
+codex_exec = { route = "codex.steer", alignment = "differs", note = "Headless: no user can steer, so the value is always 0." }
+oh-my-pi = { alignment = "not emitted", note = "omp emits no steer event." }
+claude-code = { alignment = "not emitted", note = "Claude Code emits no steer event; queued prompts are separate interactions." }
+
+[[signal]]
+id = "friction.error"
+view = "friction"
+title = "Errored tasks"
+question = "How often did a task end on an error?"
+unit = "%"
+formula = "100 × Σ errored / tasks with an error signal."
+[signal.support]
+codex = { alignment = "not emitted", note = "Turn spans carry no terminal error status." }
+oh-my-pi = { route = "omp.run", alignment = "aligned", note = "The run has an error chat stop reason." }
+claude-code = { route = "claude.llm_request", alignment = "differs", note = "Any LLM request in the interaction with an error or status ≥ 400." }
+
+[[signal]]
+id = "friction.quick_follow_up"
+view = "friction"
+title = "Quick follow-up"
+question = "How often did the next task in the same session start within 10 minutes?"
+unit = "%"
+formula = "100 × Σ quick_follow_up / tasks with a follow-up signal. A proxy: a follow-up can be the next planned step."
+[signal.support]
+codex = { route = "codex.turn", alignment = "aligned" }
+codex_exec = { alignment = "not emitted", note = "Headless one-shot runs: nobody can follow up." }
+oh-my-pi = { route = "omp.run", alignment = "aligned" }
+claude-code = { route = "claude.interaction", alignment = "aligned" }
+
+[[signal]]
+id = "friction.clean_completion"
+view = "friction"
+title = "Clean completion"
+question = "How often did a task finish with no observed friction?"
+unit = "%"
+formula = "100 × Σ clean_completion / tasks with a value. Clean = no interrupt, no error, no quick follow-up among the components the producer observes (row field `friction_observed`)."
+[signal.support]
+codex = { route = "codex.turn", alignment = "differs", note = "Observes interrupt and follow-up; task errors are not emitted." }
+codex_exec = { alignment = "not emitted", note = "Headless: follow-up is unobservable, so clean completion is NULL." }
+oh-my-pi = { route = "omp.run", alignment = "aligned", note = "Observes interrupt, error, and follow-up." }
+claude-code = { route = "claude.interaction", alignment = "differs", note = "Observes error and follow-up; interrupts are not emitted." }
+
+[[signal]]
+id = "friction.recovery"
+view = "friction"
+title = "Recovery after failure"
+question = "After a failed tool call, does the same operation later succeed in the task?"
+unit = "%"
+formula = "Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "Operation = tool + command head + subcommand." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "differs", note = "Operation = tool name only (no argument identity)." }
+claude-code = { route = "claude.tool_result", alignment = "differs", note = "Operation = tool name + bash argv0." }
+
+# ---------------------------------------------------------------------------
+# V6 Guardrails
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "guard.decisions"
+view = "guardrails"
+title = "Tool approval decisions"
+question = "How are tool calls approved, and by whom?"
+unit = "decisions"
+formula = "count() of tool decisions by decision and source."
+[signal.support]
+codex = { route = "codex.tool_decision", alignment = "aligned", note = "`decision`, `source` (config or user)." }
+oh-my-pi = { alignment = "not emitted", note = "omp emits no approval decisions." }
+claude-code = { route = "claude.tool_decision", alignment = "aligned", note = "`decision`, `source`." }
+
+[[signal]]
+id = "guard.rejections"
+view = "guardrails"
+title = "Rejected tool calls"
+question = "How often was a tool call rejected?"
+unit = "%"
+formula = "100 × decisions that are not an approval (`approved`, `approved_with_amendment`, `accept`) / all decisions."
+[signal.support]
+codex = { route = "codex.tool_decision", alignment = "aligned", note = "Sources are Config, User, and AutomatedReviewer (the approval reviewer model)." }
+oh-my-pi = { alignment = "not emitted", note = "omp emits no approval decisions." }
+claude-code = { route = "claude.tool_decision", alignment = "aligned", note = "Sources are config and user_reject." }
+
+[[signal]]
+id = "guard.sandbox"
+view = "guardrails"
+title = "Sandbox outcomes"
+question = "How often do sandboxed commands get denied?"
+unit = "outcomes"
+formula = "count() of sandbox outcomes by outcome."
+[signal.support]
+codex = { route = "codex.sandbox_outcome", alignment = "aligned" }
+oh-my-pi = { alignment = "not emitted", note = "omp has no sandbox." }
+claude-code = { alignment = "not emitted", note = "Claude Code emits no sandbox outcome." }
+
+[[signal]]
+id = "guard.gate_bypass"
+view = "guardrails"
+title = "Quality-gate bypass"
+question = "How often did a command bypass a quality gate?"
+unit = "calls"
+formula = "Tool calls whose command contains --no-verify, HUSKY=0, SKIP=, or --no-gpg-sign."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered." }
+oh-my-pi = { alignment = "not emitted", note = "Command text is not emitted in a normalized form." }
+claude-code = { alignment = "not emitted", note = "Only `bash_argv0` is emitted, not flags." }
+
+[[signal]]
+id = "guard.command_churn"
+view = "guardrails"
+title = "Command churn"
+question = "Where do agents try ≥3 distinct commands against the same file in one task?"
+unit = "tasks"
+formula = "Task × target pairs with ≥3 distinct command head + subcommand values."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension)." }
+oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no target." }
+claude-code = { alignment = "not emitted", note = "Tool results carry no target." }
+
+# ---------------------------------------------------------------------------
+# V7 Provider
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "provider.calls"
+view = "provider"
+title = "Model calls"
+question = "How many model calls reached a terminal state?"
+unit = "calls"
+formula = "count() of producer-native model call records."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "differs", note = "One per response stream (`response.completed`), including failed streams; not a logical request." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Chat spans." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "LLM request spans." }
+
+[[signal]]
+id = "provider.error_rate"
+view = "provider"
+title = "Call error rate"
+question = "What share of model calls failed?"
+unit = "%"
+formula = "100 × failed calls / calls not cancelled by the user. A user cancellation is not a provider failure."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "differs", note = "Stream level: a non-empty `error.message` on `response.completed`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Span error status; `error.type = aborted` is a user cancellation and is excluded." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "Span error or `success=false`." }
+
+[[signal]]
+id = "provider.stream_disconnects"
+view = "provider"
+title = "Stream disconnects"
+question = "How often does a response stream break before completion?"
+unit = "calls"
+formula = "Completed-response records whose error says the stream disconnected before completion."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "aligned", note = "`error.message` starting 'stream disconnected before completion'." }
+oh-my-pi = { alignment = "not emitted", note = "Chat spans record errors but not stream state." }
+claude-code = { alignment = "not emitted", note = "No stream-state field." }
+
+[[signal]]
+id = "provider.latency"
+view = "provider"
+title = "Model call latency"
+question = "How long does a model call take?"
+unit = "seconds"
+formula = "P50 / P95 of the model call duration."
+[signal.support]
+codex = { route = "codex.sampling", alignment = "differs", note = "`run_sampling_request` span, which includes retries, response processing, and in-flight tool draining." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Chat span duration." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "LLM request span duration." }
+
+[[signal]]
+id = "provider.ttft"
+view = "provider"
+title = "Time to first token"
+question = "How long until the first token arrives?"
+unit = "seconds"
+formula = "P50 / P95 of time to first token."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "aligned", note = "`ttft_ms` on `response.completed`." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.response.time_to_first_chunk` (seconds)." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "`ttft_ms`." }
+
+[[signal]]
+id = "provider.throughput"
+view = "provider"
+title = "Output throughput"
+question = "Is generation speed degraded independently of response size?"
+unit = "tokens/s"
+formula = "P50 of output tokens / (duration − time to first token) for calls with both timings and positive generation time."
+[signal.support]
+codex = { alignment = "not emitted", note = "Completed responses carry TTFT but no call duration." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { route = "claude.llm_request", alignment = "aligned" }
+
+[[signal]]
+id = "provider.retries"
+view = "provider"
+title = "Retries"
+question = "How much extra traffic do retries create?"
+unit = "attempts"
+formula = "Attempts beyond the first per logical call."
+[signal.support]
+codex = { route = "codex.try_sampling", alignment = "differs", note = "`try_run_sampling_request` spans beyond one per `run_sampling_request`." }
+oh-my-pi = { alignment = "not emitted", note = "No attempt or retry identity." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "`attempt` > 1 on LLM requests, plus `api_retries_exhausted`." }
+
+[[signal]]
+id = "provider.unknown_outcomes"
+view = "provider"
+title = "Unknown outcomes"
+question = "How many model calls lack an explicit outcome?"
+unit = "calls"
+formula = "Calls with no success flag, error, or finish reason."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "differs", note = "Every response stream has an outcome (error message or completion), so Codex has no unknown calls." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "No `gen_ai.response.finish_reasons`." }
+claude-code = { route = "claude.llm_request", alignment = "aligned", note = "No `success` attribute." }
+
+[[signal]]
+id = "provider.model_conformance"
+view = "provider"
+title = "Model conformance"
+question = "Did the provider serve the requested model?"
+unit = "calls"
+formula = "Calls whose response model is set and differs from the requested model."
+[signal.support]
+codex = { alignment = "not emitted", note = "No response model." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.request.model` vs `gen_ai.response.model`." }
+claude-code = { alignment = "not emitted", note = "No response model." }
+
+# ---------------------------------------------------------------------------
+# V8 Recurrence
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "recur.targets"
+view = "recurrence"
+title = "Recurring targets"
+question = "Which files recur across tasks?"
+unit = "tasks"
+formula = "Targets touched in ≥2 tasks, with task, day, and failure counts."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "`x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~." }
+oh-my-pi = { alignment = "not emitted", note = "Tool spans carry no target." }
+claude-code = { alignment = "not emitted", note = "Tool results carry no target." }
+
+[[signal]]
+id = "recur.signatures"
+view = "recurrence"
+title = "Recurring failure signatures"
+question = "Which failure signatures recur across tasks and days?"
+unit = "tasks"
+formula = "Failure signatures seen in ≥2 tasks, with occurrences, tasks, and days."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned" }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+claude-code = { route = "claude.tool_result", alignment = "differs", note = "Signature is the `error_type` class only." }
+
+[[signal]]
+id = "recur.actionable"
+view = "recurrence"
+title = "Actionable repeats"
+question = "Which repeated failures cross the evidence threshold for intervention?"
+unit = "signatures"
+formula = "Over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned" }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+claude-code = { route = "claude.tool_result", alignment = "differs", note = "Signature is the `error_type` class only." }
+
+[[signal]]
+id = "recur.project_concentration"
+view = "recurrence"
+title = "Project concentration"
+question = "Is a repeated failure localized to one project?"
+unit = "%"
+formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the git repository the session-context hooks recorded for the session."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "aligned", note = "Session → project from the `codex-cli` / app-server hooks." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "Session → project from the omp hook." }
+claude-code = { route = "claude.tool_result", alignment = "aligned", note = "Session → project from the Claude Code hook; interactions in a non-git workspace have none." }
+
+# ---------------------------------------------------------------------------
+# V9 Interventions (workflow records in the local SQLite store)
+# ---------------------------------------------------------------------------
+
+[[signal]]
+id = "intervene.findings"
+view = "interventions"
+title = "Findings and proposals"
+question = "Which findings and intervention proposals exist, and in what state?"
+unit = "records"
+formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each (harness, tool, failure signature) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring."
+scope = "system"
+
+[[signal]]
+id = "intervene.post_recurrence"
+view = "interventions"
+title = "Post-intervention recurrence"
+question = "Did an applied intervention reduce the failure signature it targeted?"
+unit = "per task"
+formula = "For each applied intervention: occurrences / attributed tasks in equal pre and post windows around its application time. Needs applied interventions."
+scope = "system"
+
+[[signal]]
+id = "intervene.rule_adherence"
+view = "interventions"
+title = "Rule adherence"
+question = "Are skill and workflow rules followed when their trigger is present?"
+unit = "%"
+formula = "Unsupported: needs a versioned rule registry with deterministic triggers and observable required actions. No producer emits rule triggers."
+scope = "system"
+
+[[signal]]
+id = "intervene.practice_recurrence"
+view = "interventions"
+title = "Uncodified practice recurrence"
+question = "Which successful operation sequences recur often enough to codify?"
+unit = "sequences"
+formula = "Unsupported: needs ordered operations with an explicit successful task outcome. No producer emits explicit task success, and clean completion is a friction proxy, not success."
+scope = "system"
+
+[[signal]]
+id = "intervene.tier_audit"
+view = "interventions"
+title = "Enforcement-tier audit"
+question = "Are repeats addressed at the strongest deterministic tier?"
+unit = "proposals"
+formula = "Proposals by selected tier (tool, script, skill, guidance) and approval state."
+scope = "system"

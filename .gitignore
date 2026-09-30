@@ -13,3 +13,5 @@ __pycache__/
 *.sqlite3-wal
 build/
 dist/
+dashboard/node_modules/
+.clawpatch/

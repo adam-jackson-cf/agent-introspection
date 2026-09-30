@@ -1,0 +1,24 @@
+{
+  "name": "agent-introspection-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "bunx --bun oxlint@1.80.0 --config ../oxlint.config.ts src server server.ts build.ts server.test.ts",
+    "format": "bunx --bun prettier@3.6.2 --write \"src/**/*.{ts,tsx,css}\" \"server/**/*.ts\" server.ts server.test.ts build.ts package.json tsconfig.json index.html && bunx --bun prettier@3.6.2 --write --parser html \"public/**/*.svg\"",
+    "format:check": "bunx --bun prettier@3.6.2 --check \"src/**/*.{ts,tsx,css}\" \"server/**/*.ts\" server.ts server.test.ts build.ts package.json tsconfig.json index.html && bunx --bun prettier@3.6.2 --check --parser html \"public/**/*.svg\"",
+    "build": "bun build.ts",
+    "start": "bun server.ts"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.2.22",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,4 +1,4 @@
-"""Bounded, provenance-checked model review sessions."""
+"""Bounded, provenance-checked model review sessions that draft proposals."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import json
 import secrets
 import sqlite3
 import uuid
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-LUNA_MODEL = "gpt-5.6-luna"
-LUNA_EFFORT = "medium"
+PURPOSE = "proposal"
 PROPOSAL_MODEL = "gpt-5.5"
 PROPOSAL_EFFORT = "high"
 SCHEMA_VERSION = 1
@@ -27,9 +27,7 @@ class ReviewLimits:
     max_output_characters: int
 
 
-LUNA_LIMITS = ReviewLimits(40, 4, 10, 24_000, 8_000)
 PROPOSAL_LIMITS = ReviewLimits(8, 8, 1, 48_000, 16_000)
-COMBINED_CALL_LIMIT = 12
 
 
 @dataclass(frozen=True)
@@ -127,22 +125,18 @@ def _token_usage(provenance: dict[str, Any]) -> TokenUsage:
 def create_review_session(
     connection: sqlite3.Connection,
     *,
-    kind: Literal["classification", "proposal"],
     candidates: list[dict[str, Any]],
     reserved_model_budget: int,
     batch_id: str | None = None,
 ) -> ReviewEnvelope:
-    """Create and reserve one bounded review session."""
-    purpose = kind
-    limits = LUNA_LIMITS if purpose == "classification" else PROPOSAL_LIMITS
-    model = LUNA_MODEL if purpose == "classification" else PROPOSAL_MODEL
-    effort = LUNA_EFFORT if purpose == "classification" else PROPOSAL_EFFORT
+    """Create and reserve one bounded proposal review session."""
+    limits = PROPOSAL_LIMITS
     if not 0 < len(candidates) <= limits.items_per_call:
         raise ValueError(f"candidate count per call must be between 1 and {limits.items_per_call}")
     ids = tuple(str(candidate["id"]) for candidate in candidates)
     if len(set(ids)) != len(ids):
         raise ValueError("candidate IDs must be unique")
-    payload = {"purpose": purpose, "candidates": candidates}
+    payload = {"purpose": PURPOSE, "candidates": candidates}
     raw = _canonical_bytes(payload)
     if len(raw.decode()) > limits.max_input_characters:
         raise ValueError("review payload exceeds input character limit")
@@ -153,8 +147,8 @@ def create_review_session(
         batch_id=batch_id or str(uuid.uuid4()),
         nonce=secrets.token_urlsafe(32),
         schema_version=SCHEMA_VERSION,
-        requested_model=model,
-        requested_effort=effort,
+        requested_model=PROPOSAL_MODEL,
+        requested_effort=PROPOSAL_EFFORT,
         ordered_candidate_ids=ids,
         payload_hash=hashlib.sha256(raw).hexdigest(),
         byte_count=len(raw),
@@ -164,20 +158,14 @@ def create_review_session(
     now = datetime.now(UTC).isoformat()
     with connection:
         prior_rows = connection.execute(
-            """
-            SELECT purpose, ordered_candidate_ids_json
-            FROM review_sessions WHERE batch_id = ?
-            """,
+            "SELECT ordered_candidate_ids_json FROM review_sessions WHERE batch_id = ?",
             (envelope.batch_id,),
         ).fetchall()
-        if len(prior_rows) >= COMBINED_CALL_LIMIT:
-            raise RuntimeError("combined model call limit exhausted")
-        same_kind = [row for row in prior_rows if row[0] == purpose]
-        if len(same_kind) >= limits.max_calls:
-            raise RuntimeError(f"{purpose} model call limit exhausted")
-        prior_candidate_count = sum(len(json.loads(row[1])) for row in same_kind)
+        if len(prior_rows) >= limits.max_calls:
+            raise RuntimeError("proposal model call limit exhausted")
+        prior_candidate_count = sum(len(json.loads(row[0])) for row in prior_rows)
         if prior_candidate_count + len(candidates) > limits.max_items:
-            raise RuntimeError(f"{kind} candidate limit exhausted")
+            raise RuntimeError("proposal candidate limit exhausted")
         connection.execute(
             """
             INSERT INTO review_sessions (
@@ -191,9 +179,9 @@ def create_review_session(
                 envelope.batch_id,
                 envelope.nonce,
                 envelope.schema_version,
-                purpose,
-                model,
-                effort,
+                PURPOSE,
+                PROPOSAL_MODEL,
+                PROPOSAL_EFFORT,
                 json.dumps(ids),
                 envelope.payload_hash,
                 envelope.byte_count,
@@ -259,10 +247,21 @@ def _validate_output_identity(document: dict[str, Any], row: sqlite3.Row) -> Non
 def _validate_model_provenance(provenance: dict[str, Any], row: sqlite3.Row) -> None:
     if provenance.get("model") != row[2] or provenance.get("effort") != row[3]:
         raise ValueError("model provenance mismatch")
-    if not provenance.get("trace_id") or not provenance.get("token_count"):
+    if not provenance.get("trace_id") or provenance.get("token_count") is None:
         raise ValueError("model provenance is incomplete")
-    if int(provenance["token_count"]) > int(row[8]):
+    token_count = provenance["token_count"]
+    if isinstance(token_count, bool) or not isinstance(token_count, int) or token_count <= 0:
+        raise ValueError("model provenance token_count must be a positive integer")
+    if _charged_tokens(provenance) > int(row[8]):
         raise ValueError("model token budget exceeded")
+
+
+def _charged_tokens(provenance: dict[str, Any]) -> int:
+    """Charge the larger of token_count and the complete component total.
+
+    A low token_count must not hide components that already exceed it.
+    """
+    return max(int(provenance["token_count"]), _token_usage(provenance).total_tokens or 0)
 
 
 def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list[dict[str, Any]]:
@@ -273,11 +272,9 @@ def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list
     actual_ids = [result.get("candidate_id") for result in results]
     if actual_ids != expected_ids:
         raise ValueError("model output candidate IDs or ordering mismatch")
-    purpose = row[6]
-    if purpose not in {"classification", "proposal"}:
+    if row[6] != PURPOSE:
         raise ValueError("review session purpose cannot import results")
-    limits = LUNA_LIMITS if purpose == "classification" else PROPOSAL_LIMITS
-    if len(_canonical_bytes(document).decode()) > limits.max_output_characters:
+    if len(_canonical_bytes(document).decode()) > PROPOSAL_LIMITS.max_output_characters:
         raise ValueError("model output exceeds accepted character limit")
     return results
 
@@ -287,14 +284,13 @@ def validate_model_output(
     document: dict[str, Any],
     *,
     provenance: dict[str, Any],
-) -> tuple[str, list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     """Validate response envelope and recorded SigNoz model provenance."""
     _required_output_fields(document)
     row = _review_session_row(connection, document["session_id"])
     _validate_output_identity(document, row)
     _validate_model_provenance(provenance, row)
-    results = _validated_model_results(document, row)
-    return str(row[6]), results
+    return _validated_model_results(document, row)
 
 
 def import_model_output(
@@ -302,12 +298,20 @@ def import_model_output(
     document: dict[str, Any],
     *,
     provenance: dict[str, Any],
+    outer_transaction: bool = False,
 ) -> None:
-    """Persist validated model output and consume its reserved budget."""
-    purpose, results = validate_model_output(connection, document, provenance=provenance)
+    """Persist validated model output and consume its reserved budget.
+
+    With ``outer_transaction`` the caller's open transaction owns commit and rollback,
+    so the import can share one atomic unit with the proposals it drafts.
+    """
+    if outer_transaction and not connection.in_transaction:
+        raise RuntimeError("outer_transaction requires an open transaction on the connection")
+    results = validate_model_output(connection, document, provenance=provenance)
     token_usage = _token_usage(provenance)
     now = datetime.now(UTC).isoformat()
-    with connection:
+    transaction: AbstractContextManager[object] = nullcontext() if outer_transaction else connection
+    with transaction:
         run_id = str(uuid.uuid4())
         connection.execute(
             """
@@ -331,10 +335,9 @@ def import_model_output(
                 now,
             ),
         )
-        table = "semantic_classifications" if purpose == "classification" else "proposal_drafts"
         for result in results:
             connection.execute(
-                f"INSERT INTO {table} "
+                "INSERT INTO proposal_drafts "
                 "(id, review_session_id, candidate_id, payload_json, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (
@@ -359,5 +362,5 @@ def import_model_output(
                 id, review_session_id, entry_type, amount, created_at
             ) VALUES (?, ?, 'consumed', ?, ?)
             """,
-            (str(uuid.uuid4()), document["session_id"], -int(provenance["token_count"]), now),
+            (str(uuid.uuid4()), document["session_id"], -_charged_tokens(provenance), now),
         )

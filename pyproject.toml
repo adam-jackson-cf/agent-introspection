@@ -5,14 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-introspection"
 version = "0.1.0"
-description = "Deterministic Codex telemetry introspection with approval-gated proposals"
+description = "ClickHouse-materialized agent telemetry facts and approval-gated intervention proposals"
 requires-python = ">=3.12"
-dependencies = [
-  "opentelemetry-api>=1.39.0",
-  "opentelemetry-exporter-otlp-proto-http>=1.39.0",
-  "opentelemetry-proto>=1.39.0",
-  "opentelemetry-sdk>=1.39.0",
-]
+dependencies = []
 
 [project.scripts]
 agent-introspection = "agent_introspection.cli:main"
@@ -31,11 +26,7 @@ packages = ["src/agent_introspection"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-markers = [
-  "frozen_gate2_replay: replay frozen Gate-2 evidence",
-  "clickhouse_integration: run ClickHouse-backed evidence integration",
-  "gate6_installed: verify Gate-6 installed-surface contracts",
-]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 100

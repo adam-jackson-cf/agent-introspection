@@ -2,16 +2,14 @@
 
 ## Objective
 
-Verify that one fresh supported producer session-context event or lifecycle boundary remains correlated and correctly attributed from the managed adapter through the canonical dashboard query.
+Verify that one fresh supported producer session-context event reaches the dashboard's project attribution through the managed adapter, the inbox, and `introspection.session_projects`.
 
 ## Guidance
 
 - Load the canonical session-context contract before validating fields or tuple completeness.
-- Start a fresh supported producer session-context event or lifecycle boundary only when runtime validation is part of the request.
-- Query source telemetry and the configured destination through the exact canonical `(producer, correlation_id)` pair. The correlation ID must equal the native session identifier established by the current capability proof.
-- Compare the managed inbox record, immutable context ledger, accepted project evidence, source activity bounds, canonical activity ID, latest activity version, canonical outbox event ID, and resulting agent-project tuple. Project evidence is an accepted interval, except Codex CLI `session_context`, which is an accepted context record.
-- Require every correlated source activity to match exactly one accepted project interval, except Codex CLI `session_context`, which must match exactly one accepted context record, for the same producer and correlation ID.
-- Reject missing, duplicate, partial, conflicting, inferred, static, or uncorrelated results. An open interval is valid only when its source time precedes any recorded end.
-- Verify the dashboard source-time query selects the same latest canonical activity version and paired project ID and project name.
-- Record the producer, session-context or lifecycle boundary, correlation key, queried fields, activity ID, activity version, outbox event ID, project tuple, and dashboard result.
-- Complete this workflow only when the managed adapter, shared session-context runtime, ledger, source telemetry, canonical activity version, remote event, and dashboard query satisfy one contract end to end.
+- Start a fresh supported producer session only when runtime validation is part of the request.
+- Confirm the managed adapter wrote the inbox record, then that `agent-introspection facts schedule status` shows the sync job loaded with no backlog after the next minute.
+- Query `introspection.session_projects FINAL` by `event_id` and confirm the producer, session ID, event type, project ID, project name, and home-redacted root match the inbox record.
+- Confirm the session's facts (usage, tasks, or tool calls with the same `session_id`) join `introspection.session_project` to that project, and that the Pipeline view's project attribution counts the session's tasks as attributed.
+- Reject missing, duplicate, conflicting, inferred, or uncorrelated results; a non-Git workspace must appear only as a rejection in `session_project_rejections`.
+- Record the producer, session ID, event ID, project tuple, fact rows joined, and dashboard result.

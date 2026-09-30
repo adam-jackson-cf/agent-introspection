@@ -2,17 +2,16 @@
 
 ## Objective
 
-Establish verified readiness without bypassing failed capabilities.
+Establish verified readiness of the facts store without bypassing failed checks.
 
 ## Required actions
 
-1. Run health, source-schema, database, dashboard, canonical outbox, and scheduler checks.
-2. Verify the network perimeter remains loopback-only.
-3. Verify the managed runtime and configured producer adapters are present before a scan or fresh-session proof.
-4. Record context inbox counts, canonical activity/version counts, pending and failed outbox rows, and the scheduler's latest terminal state.
-5. Stop on source-schema drift, database failure, unsafe exposure, missing runtime configuration, unresolved required producer support, or unavailable services.
+1. Run `agent-introspection facts status`: every loader and snapshot refresher is `Scheduled` with no exception, and per-harness freshness is current.
+2. Run `agent-introspection facts schedule status`: the project sync job is installed and loaded, with no inbox backlog.
+3. In the dashboard Pipeline view, read source parity, All = Σ harnesses, sanitization, the coverage grid, and project attribution for the window in question.
+4. Stop on a failing loader, a possible break or unexplained stray in the coverage grid, a parity or recombination mismatch, any sanitization violation, or a growing inbox backlog.
 
 ## Done when
 
 - Every required check has recorded evidence.
-- Failures and unverified producer, ledger, outbox, scheduler, or dashboard capabilities are surfaced explicitly.
+- Failures are surfaced explicitly with the view, harness, and signal they affect.
