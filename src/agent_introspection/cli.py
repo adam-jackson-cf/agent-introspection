@@ -253,7 +253,10 @@ def _facts_command(args: argparse.Namespace) -> dict[str, Any]:
         return _schedule_command(args)
     run = facts.docker_runner(_config(args))
     if args.facts_command == "install":
-        return facts.install(run)
+        result = facts.install(run)
+        # The dashboard reads the workflow store, so install creates and migrates it too.
+        _open(args).close()
+        return result
     if args.facts_command == "backfill":
         return facts.backfill(run, days=args.days)
     if args.facts_command == "sync-projects":

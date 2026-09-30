@@ -1,6 +1,10 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Registry, Row } from "./src/contracts";
-import { createApp, parseFilters } from "./server";
+import { createApp, parseFilters, sqliteWorkflow } from "./server";
 import {
   batch,
   clickhouse,
@@ -420,5 +424,41 @@ describe("snapshot horizon", () => {
       `${import.meta.dir}/../src/agent_introspection/facts.py`,
     ).text();
     expect(facts).toContain(`SNAPSHOT_DAYS = ${SNAPSHOT_DAYS}\n`);
+  });
+});
+
+describe("sqliteWorkflow", () => {
+  const scratch = () =>
+    join(
+      tmpdir(),
+      `workflow-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite3`,
+    );
+
+  test("an absent store reads as empty", () => {
+    expect(sqliteWorkflow(scratch())()).toEqual({
+      findings: [],
+      proposals: [],
+    });
+  });
+
+  test("a store without the subject column reads with null subjects", () => {
+    const path = scratch();
+    const db = new Database(path);
+    db.run(`CREATE TABLE findings (category TEXT, detector_id TEXT, trend_state TEXT,
+      occurrence_count INTEGER, canonical_task_count INTEGER, local_day_count INTEGER,
+      first_seen_ns INTEGER, last_seen_ns INTEGER, is_active INTEGER, id TEXT)`);
+    db.run(`CREATE TABLE proposals (id TEXT, finding_id TEXT, state TEXT, payload_json TEXT,
+      created_at TEXT, updated_at TEXT)`);
+    db.run(
+      `INSERT INTO findings VALUES ('tool', 'd', 'actionable', 3, 2, 2, 0, 0, 1, 'f1')`,
+    );
+    db.close();
+
+    const { findings } = sqliteWorkflow(path)();
+    rmSync(path);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.harness).toBeNull();
+    expect(findings[0]!.state).toBe("actionable");
   });
 });

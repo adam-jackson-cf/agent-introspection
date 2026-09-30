@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative } from "node:path";
 import {
@@ -142,25 +142,41 @@ async function loadRegistry(query: Query): Promise<Registry> {
   return { signals, support, routes, strays } as unknown as Registry;
 }
 
-/** A finding's harness, tool, and failure signature; NULL for findings without a subject. */
-const SUBJECT = (table: string) =>
+/**
+ * A finding's harness, tool, and failure signature; NULL for findings without a
+ * subject, or when the store predates the subject column and is not yet migrated.
+ */
+const SUBJECT = (table: string, hasSubject: boolean) =>
   ["harness", "tool", "signature"]
-    .map(
-      (field) =>
-        `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${field}') END AS ${field}`,
+    .map((field) =>
+      hasSubject
+        ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${field}') END AS ${field}`
+        : `NULL AS ${field}`,
     )
     .join(", ");
 
 /** Opens the SQLite workflow store read-only for each request. */
 export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
   return () => {
+    // The CLI creates the store on first use; until then there is nothing to show.
+    if (!existsSync(path)) return { findings: [], proposals: [] };
     const db = new Database(path, { readonly: true });
     try {
       const all = (sql: string) => db.query(sql).all() as Row[];
+      const tables = new Set(
+        all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) =>
+          String(row.name),
+        ),
+      );
+      if (!tables.has("findings") || !tables.has("proposals"))
+        return { findings: [], proposals: [] };
+      const hasSubject = all("PRAGMA table_info(findings)").some(
+        (row) => row.name === "subject",
+      );
       return {
         findings:
           all(`SELECT category, detector_id AS detector, trend_state AS state,
-            ${SUBJECT("findings")},
+            ${SUBJECT("findings", hasSubject)},
             occurrence_count AS occurrences, canonical_task_count AS tasks, local_day_count AS days,
             strftime('%Y-%m-%dT%H:%M:%SZ', first_seen_ns / 1e9, 'unixepoch') AS first_seen,
             strftime('%Y-%m-%dT%H:%M:%SZ', last_seen_ns / 1e9, 'unixepoch') AS last_seen
@@ -169,7 +185,7 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
         proposals:
           all(`SELECT p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
             json_extract(p.payload_json, '$.target') AS target, f.category, p.created_at,
-            ${SUBJECT("f")},
+            ${SUBJECT("f", hasSubject)},
             CASE WHEN p.state = 'applied' THEN p.updated_at END AS applied_at
           FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`),
       };

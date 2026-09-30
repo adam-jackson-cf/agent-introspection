@@ -276,3 +276,14 @@ def test_schedule_install_passes_the_selected_configuration(
 
     assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
     assert received == [config.resolve()]
+
+
+def test_facts_install_creates_the_workflow_store(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: lambda _sql: "")
+    monkeypatch.setattr(cli.facts, "install", lambda _run: {"installed": True})
+
+    assert main(["--config", str(config_file(tmp_path)), "facts", "install"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"installed": True}
+    assert (tmp_path / "workflow.sqlite3").exists()
