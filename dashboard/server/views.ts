@@ -76,7 +76,8 @@ ORDER BY harness, effort`,
     quantileExact(0.5)(duration_seconds) AS p50_duration, quantileExact(0.9)(duration_seconds) AS p90_duration,
     sum(model_steps) AS steps, sum(delegations) AS delegations,
     sum(coalesce(reasoning_tokens, 0)) AS reasoning, count(reasoning_tokens) AS reasoning_den,
-    sum(coalesce(output_tokens, 0)) AS output
+    sum(coalesce(output_tokens, 0)) AS output,
+    sumIf(coalesce(output_tokens, 0), reasoning_tokens IS NOT NULL) AS reasoning_output
 FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY harness, effort ORDER BY harness, effort`,
     daily_tasks: `SELECT toString(toDate(start_ts)) AS day, effort, count() AS tasks,
     sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,

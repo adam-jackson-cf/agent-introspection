@@ -272,7 +272,9 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) =>
                   num(row.reasoning_den) > 0
-                    ? fmtPct(ratio(num(row.reasoning), num(row.output)))
+                    ? fmtPct(
+                        ratio(num(row.reasoning), num(row.reasoning_output)),
+                      )
                     : "—",
               },
             ]}

@@ -327,12 +327,16 @@ const PARITY = `WITH
         GROUP BY harness
     )
 SELECT toString(${PARITY_WINDOW_START}) AS window_start, toString(${PARITY_WINDOW_END}) AS window_end,
-    r.harness AS harness, r.operations AS raw_operations, f.operations AS fact_operations,
-    r.input AS raw_input, f.input AS fact_input, r.cached AS raw_cached, f.cached AS fact_cached,
-    r.output AS raw_output, f.output AS fact_output,
-    toUInt8(r.operations = f.operations AND r.input = f.input AND r.cached = f.cached AND r.output = f.output) AS ok
-FROM raw AS r LEFT JOIN facts AS f ON f.harness = r.harness
-WHERE r.operations > 0 OR f.operations > 0
+    -- A full join also checks harnesses present only in facts; a missing side counts as 0.
+    if(r.harness != '', r.harness, f.harness) AS harness,
+    ifNull(r.operations, 0) AS raw_operations, ifNull(f.operations, 0) AS fact_operations,
+    ifNull(r.input, 0) AS raw_input, ifNull(f.input, 0) AS fact_input,
+    ifNull(r.cached, 0) AS raw_cached, ifNull(f.cached, 0) AS fact_cached,
+    ifNull(r.output, 0) AS raw_output, ifNull(f.output, 0) AS fact_output,
+    toUInt8(raw_operations = fact_operations AND raw_input = fact_input
+        AND raw_cached = fact_cached AND raw_output = fact_output) AS ok
+FROM raw AS r FULL OUTER JOIN facts AS f ON f.harness = r.harness
+WHERE raw_operations > 0 OR fact_operations > 0
 ORDER BY harness`;
 
 /**
