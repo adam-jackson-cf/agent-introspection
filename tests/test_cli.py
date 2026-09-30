@@ -226,3 +226,40 @@ def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
         "SELECT event_type FROM proposal_events WHERE proposal_id = ? ORDER BY sequence",
         (proposal_id,),
     ).fetchall() == [("created",), ("approved",)]
+
+
+def test_proposal_create_rejects_a_proposal_for_an_unreviewed_finding(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    config = config_file(tmp_path)
+    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    envelope = create_review_session(
+        connection, candidates=[{"id": "reviewed"}], reserved_model_budget=100
+    )
+    document = {
+        "session_id": envelope.session_id,
+        "nonce": envelope.nonce,
+        "schema_version": envelope.schema_version,
+        "payload_hash": envelope.payload_hash,
+        "requested_model": envelope.requested_model,
+        "requested_effort": envelope.requested_effort,
+        "results": [{"candidate_id": "reviewed", "proposal": proposal_input().__dict__}],
+        "provenance": {
+            "model": envelope.requested_model,
+            "effort": envelope.requested_effort,
+            "trace_id": "trace-1",
+            "token_count": 40,
+        },
+    }
+    source = tmp_path / "output.json"
+    source.write_text(json.dumps(document))
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--config", str(config), "proposal", "create", "--input-json", str(source)])
+
+    assert raised.value.code == EXIT_VALIDATION
+    assert "candidate_id" in capsys.readouterr().err
+    assert connection.execute(
+        "SELECT status FROM review_sessions WHERE id = ?", (envelope.session_id,)
+    ).fetchone() == ("exported",)
+    assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)

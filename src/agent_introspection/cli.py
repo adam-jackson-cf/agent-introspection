@@ -110,6 +110,8 @@ def _proposal_create(args: argparse.Namespace) -> dict[str, Any]:
                 if not isinstance(payload, dict):
                     raise ValueError("proposal result requires a proposal object")
                 proposal_input = ProposalInput(**payload)
+                if proposal_input.finding_id != result.get("candidate_id"):
+                    raise ValueError("proposal finding_id must match its reviewed candidate_id")
                 finding = connection.execute(
                     "SELECT trend_state FROM findings WHERE id = ?", (proposal_input.finding_id,)
                 ).fetchone()

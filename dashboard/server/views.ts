@@ -117,9 +117,9 @@ GROUP BY harness, tool, signature ORDER BY occurrences DESC LIMIT 30`,
     repeat_summary: `SELECT harness, uniqExactIf(task_id, attempts >= 2) AS repeat_tasks, uniqExact(task_id) AS tasks,
     sumIf(attempts, attempts >= 2) AS repeated_attempts
 FROM (
-    SELECT harness, task_id, arguments_hash, count() AS attempts
+    SELECT harness, task_id, tool, arguments_hash, count() AS attempts
     FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
-    GROUP BY harness, task_id, arguments_hash
+    GROUP BY harness, task_id, tool, arguments_hash
 ) GROUP BY harness ORDER BY harness`,
     repeats: `SELECT harness, session_id, task_id, tool, any(command_head) AS command, count() AS attempts,
     countIf(outcome = 'failed') AS failed
@@ -129,13 +129,14 @@ ORDER BY attempts DESC LIMIT 25`,
     loops: `WITH
     ordered AS (
         SELECT harness, session_id, task_id, ts, tool, command_head, arguments_hash, outcome,
-            lagInFrame(arguments_hash, 1, '') OVER (
+            concat(tool, char(0), arguments_hash) AS call_key,
+            lagInFrame(call_key, 1, '') OVER (
                 PARTITION BY harness, task_id ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
             ) AS previous
         FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
     ),
     runs AS (
-        SELECT *, sum(toUInt32(arguments_hash != previous)) OVER (
+        SELECT *, sum(toUInt32(call_key != previous)) OVER (
             PARTITION BY harness, task_id ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS run
         FROM ordered

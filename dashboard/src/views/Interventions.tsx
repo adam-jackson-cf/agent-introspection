@@ -79,14 +79,17 @@ export default function Interventions({
   const findings = (data.findings ?? []).filter(
     (row) => filters.harness === "" || row.harness === filters.harness,
   );
-  const proposals = data.proposals ?? [];
+  const proposals = (data.proposals ?? []).filter(
+    (row) => filters.harness === "" || row.harness === filters.harness,
+  );
   const applied = proposals.filter((row) => row.applied_at);
   const signatures = data.signature_daily ?? [];
   const tasks = data.task_daily ?? [];
   const comparisons = applied
-    .filter(
-      (row) => Date.parse(String(row.applied_at)) > Date.parse(filters.start),
-    )
+    .filter((row) => {
+      const at = Date.parse(String(row.applied_at));
+      return at > Date.parse(filters.start) && at < Date.parse(filters.end);
+    })
     .map((row) => prePost(row, signatures, tasks, filters.start, filters.end));
   const failuresByDay = groupSum(signatures, "day", ["occurrences"]);
   const tasksByDay = groupSum(tasks, "day", ["tasks"]);
