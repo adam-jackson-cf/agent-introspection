@@ -45,6 +45,20 @@ class AppConfig:
 _ROOT_KEYS = frozenset({"database", "signoz"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _SIGNOZ_KEYS = frozenset({"clickhouse_container", "docker_context"})
+# Keys the retired scan pipeline read. They are still rejected, so stale settings
+# never look active, but the error names them as safe to delete.
+_RETIRED_KEYS = {
+    "configuration": frozenset({"scheduler", "lifecycle", "legacy_project_attribution"}),
+    "signoz": frozenset(
+        {
+            "health_url",
+            "otlp_http_endpoint",
+            "compose_directory",
+            "collector_container",
+            "docker_host",
+        }
+    ),
+}
 
 
 def _expand_path(value: object, *, field: str) -> Path:
@@ -75,8 +89,13 @@ def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _reject_unknown(actual: set[str], allowed: frozenset[str], *, location: str) -> None:
     unknown = sorted(actual - allowed)
-    if unknown:
-        raise ConfigurationError(f"unsupported keys in {location}: {', '.join(unknown)}")
+    if not unknown:
+        return
+    retired = [key for key in unknown if key in _RETIRED_KEYS.get(location, frozenset())]
+    message = f"unsupported keys in {location}: {', '.join(unknown)}"
+    if retired:
+        message += f" ({', '.join(retired)} retired with the scan pipeline; delete them)"
+    raise ConfigurationError(message)
 
 
 def parse_config(data: dict[str, Any]) -> AppConfig:

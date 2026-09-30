@@ -61,3 +61,23 @@ def test_load_config_uses_defaults_only_for_the_absent_canonical_file(tmp_path: 
     invalid.write_text("[database\n")
     with pytest.raises(ConfigurationError, match="invalid TOML"):
         load_config(invalid)
+
+
+@pytest.mark.parametrize(
+    ("document", "retired"),
+    [
+        ({"scheduler": {"interval_seconds": 300}}, "scheduler"),
+        ({"signoz": {"otlp_http_endpoint": "x"}}, "otlp_http_endpoint"),
+    ],
+)
+def test_retired_keys_are_named_as_safe_to_delete(
+    document: dict[str, object], retired: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=f"{retired} retired with the scan pipeline"):
+        parse_config(document)
+
+
+def test_example_configuration_is_valid() -> None:
+    example = Path(__file__).parents[1] / "config.example.toml"
+
+    assert load_config(example).signoz.clickhouse_container == "signoz-clickhouse"

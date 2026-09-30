@@ -227,7 +227,7 @@ export default function App() {
   const viewHref = (id: ViewId, next: Filters = filters) =>
     `/${id}?${filterQuery(next)}`;
   const sessionHref = (harness: string, session: string) =>
-    `/session?${new URLSearchParams({ harness, session, ...Object.fromEntries(filterQuery(filters)) })}`;
+    `/session?${new URLSearchParams({ ...Object.fromEntries(filterQuery(filters)), harness, session })}`;
 
   useEffect(() => {
     const onPop = () => {
