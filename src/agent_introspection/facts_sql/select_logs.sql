@@ -59,16 +59,12 @@ WITH
         ),
         splitByChar('\n', out)
     ) AS output_lines,
-    coalesce(
-        nullIf(
-            arrayFirst(
-                l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
-                output_lines
-            ),
-            ''
-        ),
-        output_lines[1]
-    ) AS first_output_line,
+    -- Only a diagnostic line may become a signature; with none, the signature is
+    -- empty rather than an arbitrary output line that could carry raw content.
+    arrayFirst(
+        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        output_lines
+    ) AS error_line,
     event = 'codex.tool_result' AS is_codex_tool_result,
     is_codex_tool_result AND (
         attributes_string['success'] = 'false' OR (exit_code IS NOT NULL AND exit_code != '0')
@@ -106,7 +102,7 @@ SELECT
                         failed,
                         substring(
                             replaceRegexpAll(
-                                replaceRegexpAll(first_output_line, '/Users/[^/ ]+', '~'),
+                                replaceRegexpAll(error_line, '/Users/[^/ ]+', '~'),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'
                             ),

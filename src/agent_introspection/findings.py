@@ -129,7 +129,8 @@ def refresh(run: SqlRunner, connection: sqlite3.Connection) -> dict[str, int]:
         ]
         for key in stale:
             connection.execute(
-                "UPDATE findings SET trend_state = 'dormant', "
+                "UPDATE findings SET trend_state = 'dormant', occurrence_count = 0, "
+                "canonical_task_count = 0, local_day_count = 0, "
                 "entity_version = entity_version + 1, updated_at = ? WHERE fingerprint = ?",
                 (now, key),
             )

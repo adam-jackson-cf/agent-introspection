@@ -21,9 +21,10 @@ type RouteCounts = {
 const WINDOW =
   "ts >= {start:DateTime64(3, 'UTC')} AND ts < {end:DateTime64(3, 'UTC')}";
 const SOURCES: Source[] = ["spans", "logs"];
-/** Span names the loader keeps for Codex; mirrors select_spans.sql. */
+/** Codex spans the loader keeps; mirrors select_spans.sql, including its usage predicate. */
 const CODEX_SPAN_NAMES =
-  "'session_task.turn', 'session_task.run', 'run_sampling_request', 'try_run_sampling_request', 'turn/start', 'turn/interrupt', 'turn/steer', 'handle_responses'";
+  "'session_task.turn', 'session_task.run', 'run_sampling_request', 'try_run_sampling_request', 'turn/start', 'turn/interrupt', 'turn/steer'";
+const CODEX_LOADED = `(name IN (${CODEX_SPAN_NAMES}) OR (name = 'handle_responses' AND mapContains(attributes_number, 'gen_ai.usage.input_tokens')))`;
 const SERVICES =
   "'codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code'";
 const FORBIDDEN_KEYS =
@@ -247,7 +248,7 @@ const FRESHNESS = `WITH
         FROM signoz_traces.distributed_signoz_index_v3
         WHERE timestamp > now() - INTERVAL 1 DAY AND timestamp < now() - INTERVAL 1 MINUTE
             AND serviceName IN (${SERVICES})
-            AND (serviceName NOT LIKE 'codex%' OR name IN (${CODEX_SPAN_NAMES}))
+            AND (serviceName NOT LIKE 'codex%' OR ${CODEX_LOADED})
         GROUP BY harness
         UNION ALL
         SELECT 'logs', resource.\`service.name\`::String, fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC')

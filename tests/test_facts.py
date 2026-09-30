@@ -346,3 +346,13 @@ def test_gate_bypass_matches_leading_environment_assignments(args: str, bypass: 
     pattern = literal.replace("\\\\", "\\").replace("\\x27", "'")
 
     assert bool(re.search(pattern, args)) is bypass
+
+
+def test_failure_signature_never_falls_back_to_an_arbitrary_output_line() -> None:
+    select = facts.render_select("select_logs.sql", "1")
+
+    assert "output_lines[1]" not in select
+    signature = select.split("'x.failure_signature', if(")[1].split("'x.")[0]
+    assert "error_line" in signature
+    error_line = select.split("AS error_line,")[0].rsplit("arrayFirst(", 1)[1]
+    assert "(?i)(error|fail" in error_line

@@ -79,3 +79,14 @@ def test_existing_stores_gain_the_subject_column(tmp_path: Path) -> None:
     connection = connect_workflow(path)
 
     assert "subject" in {column[1] for column in connection.execute("PRAGMA table_info(findings)")}
+
+
+def test_dormant_findings_clear_their_window_counts() -> None:
+    connection = connect_workflow(":memory:")
+    findings.refresh(window(row("gone", 3, 2, 2)), connection)
+
+    findings.refresh(window(), connection)
+
+    assert connection.execute(
+        "SELECT trend_state, occurrence_count, canonical_task_count, local_day_count FROM findings"
+    ).fetchone() == ("dormant", 0, 0, 0)
