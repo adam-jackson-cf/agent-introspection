@@ -37,6 +37,19 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+lint_pathspecs=('*.py' '*.ts' '*.tsx' '*.mts' '*.cts' '*.md' '*.markdown')
+if "$stage"; then
+  # --stage re-adds whole files the fixers touched, so it is only exact when
+  # the working tree already matches the index for every lintable file.
+  unstaged="$(git diff --name-only -- "${lint_pathspecs[@]}")"
+  if [[ -n "$unstaged" ]]; then
+    printf '%s\n' '--stage refuses to run: these files have unstaged changes that it would stage:' >&2
+    printf '%s\n' "$unstaged" | sed 's/^/  /' >&2
+    printf '%s\n' 'Stage or discard them first, or run without --stage.' >&2
+    exit 2
+  fi
+fi
+
 bash scripts/check-quality-gate-parity.sh
 uv sync --locked --dev
 

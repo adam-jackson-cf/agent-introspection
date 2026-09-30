@@ -1,8 +1,11 @@
 import sqlite3
 from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from agent_introspection.interventions import InterventionType
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
@@ -12,9 +15,13 @@ from agent_introspection.proposals import (
 )
 from agent_introspection.workflow import connect_workflow
 
+PASSED_VALIDATION = {"validation": {"status": "passed", "checks": ["quality command passed"]}}
 
-def proposal_database(state: str = "actionable") -> sqlite3.Connection:
-    connection = connect_workflow(":memory:")
+
+def proposal_database(
+    state: str = "actionable", path: Path | str = ":memory:"
+) -> sqlite3.Connection:
+    connection = connect_workflow(path)
     connection.execute(
         """
         INSERT INTO findings (
@@ -119,23 +126,34 @@ def test_approval_is_a_decision_and_application_requires_separate_explicit_reque
             explicit_application_request=True,
         ),
     )
-    with pytest.raises(ValueError, match="validation evidence"):
-        transition_proposal(
-            connection,
-            TransitionProposalRequest(
-                proposal_id=proposal_id,
-                target_state=ProposalState.APPLIED,
-                actor="executor",
-                evidence={},
-            ),
-        )
+    for evidence in (
+        {},
+        {"validation": "failed"},
+        {"validation": ["quality command failed"]},
+        {"validation": {"status": "failed", "checks": ["quality command failed"]}},
+        {"validation": {"status": "passed", "checks": []}},
+        {"validation": {"status": "passed", "checks": [""]}},
+    ):
+        with pytest.raises(ValueError, match="validation evidence"):
+            transition_proposal(
+                connection,
+                TransitionProposalRequest(
+                    proposal_id=proposal_id,
+                    target_state=ProposalState.APPLIED,
+                    actor="executor",
+                    evidence=evidence,
+                ),
+            )
+        assert connection.execute(
+            "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
+        ).fetchone() == ("applying", 3)
     transition_proposal(
         connection,
         TransitionProposalRequest(
             proposal_id=proposal_id,
             target_state=ProposalState.APPLIED,
             actor="executor",
-            evidence={"validation": ["quality command passed"]},
+            evidence=PASSED_VALIDATION,
         ),
     )
     assert connection.execute(
@@ -147,3 +165,90 @@ def test_established_tool_audit_must_preserve_canonical_order_and_reasons() -> N
     value = proposal_input()
     with pytest.raises(ValueError, match="canonical tier order"):
         replace(value, established_tool_audit=list(reversed(value.established_tool_audit)))
+
+
+def audit_with(enforcing_tier: int | None) -> list[dict[str, str | bool | None]]:
+    labels = (
+        "Established tools of a project first.",
+        "New tools second.",
+        "Bespoke scripts third.",
+    )
+    return [
+        {
+            "tier": label,
+            "can_enforce": index == enforcing_tier,
+            "reason_unavailable": None if index == enforcing_tier else "cannot enforce",
+        }
+        for index, label in enumerate(labels)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("enforcing_tier", "accepted", "rejected"),
+    [
+        (0, InterventionType.ESTABLISHED_TOOL, InterventionType.NEW_TOOL),
+        (1, InterventionType.NEW_TOOL, InterventionType.ESTABLISHED_TOOL),
+        (2, InterventionType.BESPOKE_SCRIPT, InterventionType.AGENTS_GUIDANCE),
+        (None, InterventionType.AGENTS_GUIDANCE, InterventionType.ESTABLISHED_TOOL),
+        (None, InterventionType.IMPROVE_SKILL, "not_an_intervention"),
+    ],
+)
+def test_intervention_type_must_follow_the_available_enforcement_tier(
+    enforcing_tier: int | None, accepted: str, rejected: str
+) -> None:
+    value = proposal_input()
+    audit = audit_with(enforcing_tier)
+    replace(value, established_tool_audit=audit, intervention_type=accepted)
+    with pytest.raises(ValueError, match="intervention_type"):
+        replace(value, established_tool_audit=audit, intervention_type=rejected)
+
+
+def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.sqlite3"
+    first = proposal_database(path=path)
+    proposal_id = create_proposal(first, proposal_input())
+    second = connect_workflow(path, busy_timeout_ms=0)
+    competing: list[BaseException | None] = []
+
+    def decide_elsewhere(statement: str) -> None:
+        # Run a competing decision on a separate connection at the moment the first
+        # decision has read the proposal state and has not yet written.
+        if competing or "FROM proposal_events" not in statement:
+            return
+        try:
+            transition_proposal(
+                second,
+                TransitionProposalRequest(
+                    proposal_id=proposal_id,
+                    target_state=ProposalState.APPROVED,
+                    actor="other-user",
+                    evidence={"decision": "approve"},
+                ),
+            )
+        except sqlite3.OperationalError as exc:
+            competing.append(exc)
+        else:
+            competing.append(None)
+
+    first.set_trace_callback(decide_elsewhere)
+    transition_proposal(
+        first,
+        TransitionProposalRequest(
+            proposal_id=proposal_id,
+            target_state=ProposalState.REJECTED,
+            actor="user",
+            evidence={"decision": "reject"},
+        ),
+    )
+    first.set_trace_callback(None)
+
+    assert len(competing) == 1
+    assert isinstance(competing[0], sqlite3.OperationalError)
+    events: list[Any] = first.execute(
+        "SELECT event_type FROM proposal_events WHERE proposal_id = ? ORDER BY sequence",
+        (proposal_id,),
+    ).fetchall()
+    assert events == [("created",), ("rejected",)]
+    assert first.execute(
+        "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
+    ).fetchone() == ("rejected", 2)

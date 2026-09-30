@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+
+from agent_introspection.interventions import CANONICAL_TIER_LABELS, InterventionType
 
 
 class ProposalState(StrEnum):
@@ -28,6 +32,62 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
     ProposalState.APPLIED: frozenset(),
     ProposalState.IMPLEMENTATION_FAILED: frozenset(),
 }
+
+# Deterministic interventions in canonical tier order; the remaining intervention
+# types apply only when no tier can enforce the behavior.
+DETERMINISTIC_INTERVENTIONS = (
+    InterventionType.ESTABLISHED_TOOL,
+    InterventionType.NEW_TOOL,
+    InterventionType.BESPOKE_SCRIPT,
+)
+NON_DETERMINISTIC_INTERVENTIONS = frozenset(InterventionType) - frozenset(
+    DETERMINISTIC_INTERVENTIONS
+)
+
+
+class ProposalConflictError(RuntimeError):
+    """A proposal changed between reading its state and writing a transition."""
+
+
+@contextmanager
+def immediate_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Hold the write lock from the first read to commit, rolling back on failure."""
+    if connection.in_transaction:
+        raise RuntimeError("an immediate transaction cannot start inside an open transaction")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        connection.rollback()
+        raise
+    connection.commit()
+
+
+def _transaction(
+    connection: sqlite3.Connection, *, outer_transaction: bool
+) -> AbstractContextManager[None]:
+    if not outer_transaction:
+        return immediate_transaction(connection)
+    if not connection.in_transaction:
+        raise RuntimeError("outer_transaction requires an open transaction on the connection")
+    return nullcontext()
+
+
+def require_successful_validation(evidence: dict[str, Any]) -> None:
+    """Require evidence of the form {"validation": {"status": "passed", "checks": [...]}}."""
+    validation = evidence.get("validation")
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
+        raise ValueError(
+            "validation evidence is required before marking applied: "
+            '{"validation": {"status": "passed", "checks": [...]}}'
+        )
+    checks = validation.get("checks")
+    if (
+        not isinstance(checks, list)
+        or not checks
+        or not all(isinstance(check, str) and check.strip() for check in checks)
+    ):
+        raise ValueError("validation evidence requires a non-empty list of passed checks")
 
 
 @dataclass(frozen=True)
@@ -52,13 +112,8 @@ class ProposalInput:
     create_skill_handoff: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        tiers = [entry.get("tier") for entry in self.established_tool_audit]
-        expected = [
-            "Established tools of a project first.",
-            "New tools second.",
-            "Bespoke scripts third.",
-        ]
-        if tiers != expected:
+        tiers = tuple(entry.get("tier") for entry in self.established_tool_audit)
+        if tiers != CANONICAL_TIER_LABELS:
             raise ValueError("established-tool audit must evaluate the canonical tier order")
         available = 0
         for entry in self.established_tool_audit:
@@ -73,6 +128,24 @@ class ProposalInput:
                 raise ValueError("each unavailable enforcement tier requires a recorded reason")
         if available > 1:
             raise ValueError("a proposal can select only one deterministic enforcement tier")
+        self._require_consistent_intervention_type()
+
+    def _require_consistent_intervention_type(self) -> None:
+        enforcing = [
+            intervention
+            for entry, intervention in zip(
+                self.established_tool_audit, DETERMINISTIC_INTERVENTIONS, strict=True
+            )
+            if entry.get("can_enforce")
+        ]
+        if enforcing:
+            if self.intervention_type != enforcing[0]:
+                raise ValueError(
+                    f"intervention_type must be {enforcing[0]} when that tier can enforce"
+                )
+        elif self.intervention_type not in NON_DETERMINISTIC_INTERVENTIONS:
+            allowed = ", ".join(sorted(NON_DETERMINISTIC_INTERVENTIONS))
+            raise ValueError(f"intervention_type must be one of {allowed} when no tier can enforce")
 
 
 @dataclass(frozen=True)
@@ -88,19 +161,24 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> str:
-    """Persist a pending proposal and its immutable creation event."""
-    finding = connection.execute(
-        "SELECT trend_state FROM findings WHERE id = ?", (proposal.finding_id,)
-    ).fetchone()
-    if finding is None:
-        raise KeyError(proposal.finding_id)
-    if finding[0] != "actionable":
-        raise ValueError("only actionable findings can produce proposals")
+def create_proposal(
+    connection: sqlite3.Connection, proposal: ProposalInput, *, outer_transaction: bool = False
+) -> str:
+    """Persist a pending proposal and its immutable creation event.
+
+    With ``outer_transaction`` the caller's open transaction owns commit and rollback.
+    """
     proposal_id = str(uuid.uuid4())
     now = _now()
     payload = json.dumps(proposal.__dict__, sort_keys=True, separators=(",", ":"))
-    with connection:
+    with _transaction(connection, outer_transaction=outer_transaction):
+        finding = connection.execute(
+            "SELECT trend_state FROM findings WHERE id = ?", (proposal.finding_id,)
+        ).fetchone()
+        if finding is None:
+            raise KeyError(proposal.finding_id)
+        if finding[0] != "actionable":
+            raise ValueError("only actionable findings can produce proposals")
         connection.execute(
             """
             INSERT INTO proposals (
@@ -120,44 +198,75 @@ def create_proposal(connection: sqlite3.Connection, proposal: ProposalInput) -> 
     return proposal_id
 
 
-def transition_proposal(connection: sqlite3.Connection, request: TransitionProposalRequest) -> None:
-    """Apply a valid transition while retaining an immutable event history."""
-    row = connection.execute(
-        """
-        SELECT state, entity_version FROM proposals WHERE id = ?
-        """,
-        (request.proposal_id,),
-    ).fetchone()
-    if row is None:
-        raise KeyError(request.proposal_id)
-    source_state = ProposalState(row[0])
-    if request.target_state not in ALLOWED_TRANSITIONS[source_state]:
-        raise ValueError(f"invalid proposal transition: {source_state} -> {request.target_state}")
-    if request.target_state is ProposalState.APPLYING and not request.explicit_application_request:
-        raise PermissionError("entering applying requires a separate explicit user request")
-    if request.target_state is ProposalState.APPLIED and not request.evidence.get("validation"):
-        raise ValueError("validation evidence is required before marking applied")
-    version = int(row[1]) + 1
-    event_payload = json.dumps(
-        {
-            "actor": request.actor,
-            "evidence": request.evidence,
-            "from": source_state,
-            "to": request.target_state,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    now = _now()
-    with connection:
+def transition_proposal(
+    connection: sqlite3.Connection,
+    request: TransitionProposalRequest,
+    *,
+    outer_transaction: bool = False,
+) -> None:
+    """Apply a valid transition while retaining an immutable event history.
+
+    The state read and the write share one immediate transaction, and the write is
+    conditioned on the state and version that were read, so concurrent decisions
+    cannot overwrite each other. With ``outer_transaction`` the caller's open
+    transaction owns commit and rollback, so several transitions can apply atomically.
+    """
+    if request.target_state is ProposalState.APPLIED:
+        require_successful_validation(request.evidence)
+    with _transaction(connection, outer_transaction=outer_transaction):
+        row = connection.execute(
+            """
+            SELECT state, entity_version FROM proposals WHERE id = ?
+            """,
+            (request.proposal_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(request.proposal_id)
+        source_state = ProposalState(row[0])
+        if request.target_state not in ALLOWED_TRANSITIONS[source_state]:
+            raise ValueError(
+                f"invalid proposal transition: {source_state} -> {request.target_state}"
+            )
+        if (
+            request.target_state is ProposalState.APPLYING
+            and not request.explicit_application_request
+        ):
+            raise PermissionError("entering applying requires a separate explicit user request")
+        expected_version = int(row[1])
+        event_payload = json.dumps(
+            {
+                "actor": request.actor,
+                "evidence": request.evidence,
+                "from": source_state,
+                "to": request.target_state,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        now = _now()
         sequence = connection.execute(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM proposal_events WHERE proposal_id = ?",
             (request.proposal_id,),
         ).fetchone()[0]
-        connection.execute(
-            "UPDATE proposals SET state = ?, updated_at = ?, entity_version = ? WHERE id = ?",
-            (request.target_state, now, version, request.proposal_id),
+        updated = connection.execute(
+            """
+            UPDATE proposals SET state = ?, updated_at = ?, entity_version = ?
+            WHERE id = ? AND state = ? AND entity_version = ?
+            """,
+            (
+                request.target_state,
+                now,
+                expected_version + 1,
+                request.proposal_id,
+                source_state,
+                expected_version,
+            ),
         )
+        if updated.rowcount != 1:
+            raise ProposalConflictError(
+                f"proposal {request.proposal_id} changed during the {request.target_state} "
+                "transition"
+            )
         connection.execute(
             """
             INSERT INTO proposal_events (

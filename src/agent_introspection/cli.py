@@ -18,6 +18,8 @@ from agent_introspection.proposals import (
     ProposalState,
     TransitionProposalRequest,
     create_proposal,
+    immediate_transaction,
+    require_successful_validation,
     transition_proposal,
 )
 from agent_introspection.review import (
@@ -98,21 +100,27 @@ def _proposal_create(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("proposal creation requires provenance")
     connection = _open(args)
     try:
-        results = validate_model_output(connection, document, provenance=provenance)
-        proposal_inputs: list[ProposalInput] = []
-        for result in results:
-            payload = result.get("proposal")
-            if not isinstance(payload, dict):
-                raise ValueError("proposal result requires a proposal object")
-            proposal_input = ProposalInput(**payload)
-            finding = connection.execute(
-                "SELECT trend_state FROM findings WHERE id = ?", (proposal_input.finding_id,)
-            ).fetchone()
-            if finding is None or finding[0] != "actionable":
-                raise ValueError("only actionable findings can produce proposals")
-            proposal_inputs.append(proposal_input)
-        import_model_output(connection, document, provenance=provenance)
-        proposal_ids = [create_proposal(connection, value) for value in proposal_inputs]
+        # The review import and its proposals commit together or not at all, so a
+        # failed proposal insert never leaves the review consumed without proposals.
+        with immediate_transaction(connection):
+            results = validate_model_output(connection, document, provenance=provenance)
+            proposal_inputs: list[ProposalInput] = []
+            for result in results:
+                payload = result.get("proposal")
+                if not isinstance(payload, dict):
+                    raise ValueError("proposal result requires a proposal object")
+                proposal_input = ProposalInput(**payload)
+                finding = connection.execute(
+                    "SELECT trend_state FROM findings WHERE id = ?", (proposal_input.finding_id,)
+                ).fetchone()
+                if finding is None or finding[0] != "actionable":
+                    raise ValueError("only actionable findings can produce proposals")
+                proposal_inputs.append(proposal_input)
+            import_model_output(connection, document, provenance=provenance, outer_transaction=True)
+            proposal_ids = [
+                create_proposal(connection, value, outer_transaction=True)
+                for value in proposal_inputs
+            ]
         return {"status": "created", "proposal_ids": proposal_ids}
     finally:
         connection.close()
@@ -188,35 +196,39 @@ def _proposal_decide(args: argparse.Namespace) -> dict[str, Any]:
 
 def _proposal_mark_applied(args: argparse.Namespace) -> dict[str, Any]:
     evidence = _read_json(args.input_json)
-    if not evidence.get("validation"):
-        raise ValueError("mark-applied requires validation evidence")
+    require_successful_validation(evidence)
     connection = _open(args)
     try:
-        state = connection.execute(
-            "SELECT state FROM proposals WHERE id = ?", (args.proposal_id,)
-        ).fetchone()
-        if state is None:
-            raise KeyError(args.proposal_id)
-        if state[0] == ProposalState.APPROVED:
+        # One transaction covers approved -> applying -> applied, so a failure or a
+        # competing change never strands the proposal in applying.
+        with immediate_transaction(connection):
+            state = connection.execute(
+                "SELECT state FROM proposals WHERE id = ?", (args.proposal_id,)
+            ).fetchone()
+            if state is None:
+                raise KeyError(args.proposal_id)
+            if state[0] == ProposalState.APPROVED:
+                transition_proposal(
+                    connection,
+                    TransitionProposalRequest(
+                        proposal_id=args.proposal_id,
+                        target_state=ProposalState.APPLYING,
+                        actor=args.actor,
+                        evidence={"request": "mark-applied"},
+                        explicit_application_request=True,
+                    ),
+                    outer_transaction=True,
+                )
             transition_proposal(
                 connection,
                 TransitionProposalRequest(
                     proposal_id=args.proposal_id,
-                    target_state=ProposalState.APPLYING,
+                    target_state=ProposalState.APPLIED,
                     actor=args.actor,
-                    evidence={"request": "mark-applied"},
-                    explicit_application_request=True,
+                    evidence=evidence,
                 ),
+                outer_transaction=True,
             )
-        transition_proposal(
-            connection,
-            TransitionProposalRequest(
-                proposal_id=args.proposal_id,
-                target_state=ProposalState.APPLIED,
-                actor=args.actor,
-                evidence=evidence,
-            ),
-        )
         return {"status": "applied", "proposal_id": args.proposal_id}
     finally:
         connection.close()

@@ -7,6 +7,7 @@ import json
 import secrets
 import sqlite3
 import uuid
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -246,10 +247,21 @@ def _validate_output_identity(document: dict[str, Any], row: sqlite3.Row) -> Non
 def _validate_model_provenance(provenance: dict[str, Any], row: sqlite3.Row) -> None:
     if provenance.get("model") != row[2] or provenance.get("effort") != row[3]:
         raise ValueError("model provenance mismatch")
-    if not provenance.get("trace_id") or not provenance.get("token_count"):
+    if not provenance.get("trace_id") or provenance.get("token_count") is None:
         raise ValueError("model provenance is incomplete")
-    if int(provenance["token_count"]) > int(row[8]):
+    token_count = provenance["token_count"]
+    if isinstance(token_count, bool) or not isinstance(token_count, int) or token_count <= 0:
+        raise ValueError("model provenance token_count must be a positive integer")
+    if _charged_tokens(provenance) > int(row[8]):
         raise ValueError("model token budget exceeded")
+
+
+def _charged_tokens(provenance: dict[str, Any]) -> int:
+    """Charge the larger of token_count and the complete component total.
+
+    A low token_count must not hide components that already exceed it.
+    """
+    return max(int(provenance["token_count"]), _token_usage(provenance).total_tokens or 0)
 
 
 def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list[dict[str, Any]]:
@@ -286,12 +298,20 @@ def import_model_output(
     document: dict[str, Any],
     *,
     provenance: dict[str, Any],
+    outer_transaction: bool = False,
 ) -> None:
-    """Persist validated model output and consume its reserved budget."""
+    """Persist validated model output and consume its reserved budget.
+
+    With ``outer_transaction`` the caller's open transaction owns commit and rollback,
+    so the import can share one atomic unit with the proposals it drafts.
+    """
+    if outer_transaction and not connection.in_transaction:
+        raise RuntimeError("outer_transaction requires an open transaction on the connection")
     results = validate_model_output(connection, document, provenance=provenance)
     token_usage = _token_usage(provenance)
     now = datetime.now(UTC).isoformat()
-    with connection:
+    transaction: AbstractContextManager[object] = nullcontext() if outer_transaction else connection
+    with transaction:
         run_id = str(uuid.uuid4())
         connection.execute(
             """
@@ -342,5 +362,5 @@ def import_model_output(
                 id, review_session_id, entry_type, amount, created_at
             ) VALUES (?, ?, 'consumed', ?, ?)
             """,
-            (str(uuid.uuid4()), document["session_id"], -int(provenance["token_count"]), now),
+            (str(uuid.uuid4()), document["session_id"], -_charged_tokens(provenance), now),
         )

@@ -25,7 +25,7 @@ def output_for(envelope: ReviewEnvelope) -> dict[str, object]:
     }
 
 
-def provenance(envelope: ReviewEnvelope, *, token_count: int = 100) -> dict[str, object]:
+def provenance(envelope: ReviewEnvelope, *, token_count: object = 100) -> dict[str, object]:
     return {
         "model": envelope.requested_model,
         "effort": envelope.requested_effort,
@@ -109,6 +109,39 @@ def test_valid_output_is_imported_once_with_budget_ledger() -> None:
     )
     with pytest.raises(ValueError, match="already"):
         import_model_output(connection, document, provenance=provenance(envelope))
+
+
+def test_complete_token_components_are_charged_when_token_count_understates_them() -> None:
+    connection = review_database()
+    envelope = create_review_session(
+        connection,
+        candidates=[{"id": "c1"}],
+        reserved_model_budget=100,
+    )
+
+    import_model_output(
+        connection, output_for(envelope), provenance=provenance(envelope, token_count=1)
+    )
+
+    assert connection.execute(
+        "SELECT entry_type, amount FROM model_budget_ledger WHERE review_session_id = ? "
+        "ORDER BY entry_type",
+        (envelope.session_id,),
+    ).fetchall() == [("consumed", -100), ("reserved", 100)]
+
+
+def test_complete_token_components_over_budget_are_rejected() -> None:
+    connection = review_database()
+    envelope = create_review_session(
+        connection,
+        candidates=[{"id": "c1"}],
+        reserved_model_budget=50,
+    )
+
+    with pytest.raises(ValueError, match="budget exceeded"):
+        import_model_output(
+            connection, output_for(envelope), provenance=provenance(envelope, token_count=1)
+        )
 
 
 @pytest.mark.parametrize(
@@ -228,3 +261,32 @@ def test_export_rolls_back_when_its_budget_reservation_cannot_be_persisted() -> 
         "model_budget_ledger",
     ):
         assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("token_count", [-1, 0, True, 1.5, "1.5", "50"])
+def test_token_count_must_be_a_positive_integer_within_the_reserved_budget(
+    token_count: object,
+) -> None:
+    connection = review_database()
+    envelope = create_review_session(
+        connection,
+        candidates=[{"id": "c1"}],
+        reserved_model_budget=100,
+    )
+
+    with pytest.raises(ValueError, match="token_count"):
+        import_model_output(
+            connection,
+            output_for(envelope),
+            provenance=provenance(envelope, token_count=token_count),
+        )
+
+    assert connection.execute(
+        "SELECT status, entity_version FROM review_sessions WHERE id = ?", (envelope.session_id,)
+    ).fetchone() == ("exported", 1)
+    assert connection.execute("SELECT COUNT(*) FROM model_runs").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM proposal_drafts").fetchone() == (0,)
+    assert connection.execute(
+        "SELECT entry_type, amount FROM model_budget_ledger WHERE review_session_id = ?",
+        (envelope.session_id,),
+    ).fetchall() == [("reserved", 100)]

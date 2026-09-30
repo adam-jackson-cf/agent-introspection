@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from datetime import UTC, datetime
 from typing import Any
@@ -193,21 +194,70 @@ def test_backfill_splits_the_range_into_utc_days_ending_at_now() -> None:
     assert "'2026-09-03 12:30:00'" in statements[-1]
 
 
-@pytest.mark.parametrize("key", ["'prompt'", "'arguments'", "'output'", "'user.email'"])
-def test_log_projection_drops_raw_text_and_identity_keys(key: str) -> None:
-    select = facts.render_select("select_logs.sql", "1")
-    filtered_keys = select.split("mapFilter")[1].split("attributes_string")[0]
-
-    assert key in filtered_keys
+_ATTRIBUTE_FILTER = re.compile(
+    r"mapFilter\(\s*\(\s*(?P<key>\w+)\s*,\s*\w+\s*\)\s*->\s*(?P<subject>\w+)\s+"
+    r"(?P<negated>NOT\s+)?IN\s*\((?P<keys>[^()]*)\)\s*,\s*attributes_string\s*\)"
+)
 
 
-def test_span_projection_drops_prompt_and_intent_text_and_normalizes_status() -> None:
+def _filter_attributes(select: str, attributes: dict[str, str]) -> dict[str, str]:
+    """Apply the projection's ``mapFilter`` predicate to ``attributes``, as ClickHouse would.
+
+    The predicate must be a lambda over the key testing membership in a tuple of string
+    literals; any other shape fails loudly rather than being approximated.
+    """
+    (match,) = _ATTRIBUTE_FILTER.finditer(select)
+    assert match["subject"] == match["key"], "predicate must test the attribute key"
+    listed = re.findall(r"'([^']*)'", match["keys"])
+    assert re.fullmatch(r"[\s,]*", re.sub(r"'[^']*'", "", match["keys"])), "keys must be literals"
+    keep_listed = match["negated"] is None
+    return {k: v for k, v in attributes.items() if (k in listed) == keep_listed}
+
+
+_HARMLESS = {"gen_ai.tool.name": "bash", "session.id": "s1", "model": "m", "event.name": "e"}
+
+
+@pytest.mark.parametrize(
+    ("template", "sensitive"),
+    [
+        (
+            "select_logs.sql",
+            ["prompt", "arguments", "output", "content", "user.email", "user.account_id"],
+        ),
+        (
+            "select_spans.sql",
+            [
+                "user_prompt",
+                "prompt",
+                "gen_ai.tool.description",
+                "pi.gen_ai.tool.call.intent",
+                "user.email",
+                "user.id",
+                "organization.id",
+            ],
+        ),
+    ],
+)
+def test_projection_drops_raw_text_and_identity_attributes_and_keeps_the_rest(
+    template: str, sensitive: list[str]
+) -> None:
+    select = facts.render_select(template, "1")
+    attributes = {**_HARMLESS, **dict.fromkeys(sensitive, "secret")}
+
+    assert _filter_attributes(select, attributes) == _HARMLESS
+
+
+def test_attribute_filter_evaluator_rejects_a_retaining_predicate() -> None:
     select = facts.render_select("select_spans.sql", "1")
-    filtered_keys = select.split("mapFilter")[1].split("attributes_string")[0]
+    retaining = select.replace("k NOT IN (", "k IN (", 1)
+    moved = select.replace("'user_prompt', ", "", 1)
 
-    assert "'user_prompt'" in filtered_keys
-    assert "'gen_ai.tool.description'" in filtered_keys
-    assert "'pi.gen_ai.tool.call.intent'" in filtered_keys
+    assert "user_prompt" in _filter_attributes(retaining, {"user_prompt": "x"})
+    assert "user_prompt" in _filter_attributes(moved, {"user_prompt": "x"})
+
+
+def test_span_projection_normalizes_status() -> None:
+    select = facts.render_select("select_spans.sql", "1")
     status = select.split("AS status_message")[0].rsplit("substring(", 1)[1]
     assert "'~'" in status
     assert "'N'" in status

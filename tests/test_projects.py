@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection import projects
+from agent_introspection import facts, projects
 from agent_introspection.facts import FactsError
 
 EVENT = {
@@ -79,6 +79,45 @@ def test_sync_keeps_every_inbox_file_when_clickhouse_rejects_the_insert(tmp_path
         projects.sync(failing, inbox=inbox)
 
     assert {"event.json", "rejection.json"} <= {path.name for path in inbox.iterdir()}
+
+
+def test_sync_keeps_every_inbox_file_when_a_later_insert_fails_and_retry_is_deduplicated(
+    tmp_path: Path,
+) -> None:
+    inbox = tmp_path / "inbox"
+    write_inbox(inbox)
+    attempted: list[str] = []
+
+    def fails_on_rejections(sql: str) -> str:
+        attempted.append(sql)
+        if "session_project_rejections" in sql:
+            raise FactsError("Code: 241. DB::Exception: Memory limit exceeded")
+        return ""
+
+    with pytest.raises(FactsError):
+        projects.sync(fails_on_rejections, inbox=inbox)
+
+    assert [s.split(" ")[2] for s in attempted] == [
+        "introspection.session_projects",
+        "introspection.session_project_rejections",
+    ]
+    assert {"event.json", "rejection.json"} <= {path.name for path in inbox.iterdir()}
+
+    retried: list[str] = []
+    projects.sync(lambda sql: retried.append(sql) or "", inbox=inbox)
+
+    # The retry re-sends the event that already landed; the tables collapse it by key.
+    assert parsed_rows(retried)["session_projects"] == parsed_rows(attempted)["session_projects"]
+    tables = facts._sql("001_tables.sql")
+    for table, key in (
+        ("session_projects", "ORDER BY (session_id, event_id)"),
+        ("session_project_rejections", "ORDER BY rejection_id"),
+    ):
+        ddl = tables.split(f"CREATE TABLE IF NOT EXISTS introspection.{table}\n", 1)[1]
+        ddl = ddl.split(";", 1)[0]
+        assert "ENGINE = ReplacingMergeTree" in ddl
+        assert key in ddl
+    assert {path.name for path in inbox.iterdir()} == {".partial.json.tmp", "broken.json"}
 
 
 def test_sync_imports_retired_ledger_history_with_home_redacted(tmp_path: Path) -> None:

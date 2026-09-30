@@ -444,9 +444,10 @@ FROM introspection.session_project_rejections FINAL
 WHERE occurred_at >= {start:DateTime64(3, 'UTC')} AND occurred_at < {end:DateTime64(3, 'UTC')}
 GROUP BY producer, reason_code ORDER BY n DESC`;
 
+/** FINAL collapses rows re-sent by a retried sync so events are counted once. */
 const PROJECT_SYNC = `SELECT toString(max(loaded_at)) AS last_load,
     dateDiff('second', max(loaded_at), now64(3)) AS age_seconds, count() AS events
-FROM introspection.session_projects`;
+FROM introspection.session_projects FINAL`;
 
 const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, source, count() AS n FROM (
     SELECT ts, harness, 'spans' AS source FROM introspection.spans FINAL WHERE ${inWindow("ts")}
