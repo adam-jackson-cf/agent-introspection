@@ -326,3 +326,23 @@ def test_snapshots_bound_span_and_log_reads_to_the_horizon() -> None:
         assert "additional_table_filters = {'introspection.spans': " in refresher
         assert f"INTERVAL {facts.SNAPSHOT_DAYS + 1} DAY" in refresher
         assert "'introspection.logs': " in refresher
+
+
+@pytest.mark.parametrize(
+    ("args", "bypass"),
+    [
+        ('{"cmd":"HUSKY=0 git commit -m x"}', True),
+        ('{"cmd":"SKIP=lint git commit"}', True),
+        ('["bash","-lc","HUSKY=0 git push"]', True),
+        ('{"cmd":"git commit --no-verify"}', True),
+        ('{"cmd":"env FOO=1 HUSKY=0 git commit"}', True),
+        ('{"cmd":"echo NOHUSKY=0"}', False),
+        ('{"cmd":"git commit -m x"}', False),
+    ],
+)
+def test_gate_bypass_matches_leading_environment_assignments(args: str, bypass: bool) -> None:
+    select = facts.render_select("select_logs.sql", "1")
+    literal = select.split("'x.gate_bypass', toString(match(args, '")[1].split("')")[0]
+    pattern = literal.replace("\\\\", "\\").replace("\\x27", "'")
+
+    assert bool(re.search(pattern, args)) is bypass

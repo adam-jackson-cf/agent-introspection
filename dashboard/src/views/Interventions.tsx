@@ -17,11 +17,24 @@ function Unsupported({ signal }: { signal: string }) {
   );
 }
 
+/** The Europe/London calendar day of an instant, matching the daily facts buckets. */
+const londonDay = (instant: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(
+    instant,
+  );
+
+/** The calendar day `offset` days from `day`, both as YYYY-MM-DD. */
+const addDays = (day: string, offset: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + offset * DAY)
+    .toISOString()
+    .slice(0, 10);
+
 /**
- * Occurrences of the target signature per attributed task in equal windows
- * before and after the application time, clipped to the selected range.
+ * Occurrences of the target signature per attributed task in equal runs of whole
+ * London days before and after the application day, clipped to the selected range.
+ * The application day itself mixes pre and post events, so neither window counts it.
  */
-function prePost(
+export function prePost(
   proposal: Row,
   signatures: Row[],
   tasks: Row[],
@@ -30,10 +43,11 @@ function prePost(
 ): Row {
   const applied = Date.parse(String(proposal.applied_at));
   const span = Math.min(applied - Date.parse(start), Date.parse(end) - applied);
-  const window = (from: number, to: number) => {
+  const appliedDay = londonDay(applied);
+  const window = (first: string, last: string) => {
     const inRange = (row: Row) => {
-      const day = Date.parse(`${String(row.day)}T00:00:00Z`);
-      return day >= from && day < to;
+      const day = String(row.day);
+      return day >= first && day <= last;
     };
     const occurrences = signatures
       .filter(
@@ -52,9 +66,9 @@ function prePost(
       rate: taskCount > 0 ? occurrences / taskCount : null,
     };
   };
-  const days = Math.floor(span / DAY);
-  const pre = window(applied - days * DAY, applied);
-  const post = window(applied, applied + days * DAY);
+  const days = Math.max(Math.floor(span / DAY) - 1, 0);
+  const pre = window(addDays(appliedDay, -days), addDays(appliedDay, -1));
+  const post = window(addDays(appliedDay, 1), addDays(appliedDay, days));
   return {
     target: proposal.target,
     tier: proposal.tier,

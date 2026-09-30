@@ -98,7 +98,7 @@ SELECT
                 map(
                     'x.command_head', command_head,
                     'x.command_sub', command_sub,
-                    'x.gate_bypass', toString(match(args, '(--no-verify|(^|\\s)HUSKY=0|(^|\\s)SKIP=|--no-gpg-sign)')),
+                    'x.gate_bypass', toString(match(args, '(--no-verify|(^|[\\s"\\x27])HUSKY=0|(^|[\\s"\\x27])SKIP=|--no-gpg-sign)')),
                     'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^/Users/[^/]+', '~'),
                     'x.targets', toJSONString(targets),
                     'x.arguments_hash', toString(cityHash64(args)),
