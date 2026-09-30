@@ -106,6 +106,32 @@ uv run agent-introspection proposal list
 
 All command results are structured JSON on stdout. Diagnostics are written to stderr and failures use stable non-zero exit codes.
 
+## Proposal lifecycle
+
+A proposal moves `pending` → `approved` or `rejected` → `applying` → `applied`, and
+every transition appends an immutable event. `proposal decide` records an approval or
+rejection only. Nothing is applied by this tool.
+
+After you have applied an approved proposal yourself, record it with validation
+evidence:
+
+```sh
+uv run agent-introspection proposal mark-applied <proposal-id> --actor <name> \
+  --input-json evidence.json
+```
+
+`evidence.json` must report a passed validation with at least one named check:
+
+```json
+{"validation": {"status": "passed", "checks": ["uv run pytest", "quality gates"]}}
+```
+
+Any other shape, such as a missing `validation`, a `status` other than `passed`, or
+an empty or blank `checks` list, exits with code 50 and leaves the proposal unchanged.
+The command moves an `approved` proposal through `applying` to `applied` in one
+transaction, so a failure never leaves it stuck in `applying`, and a proposal changed
+by another process meanwhile is rejected rather than overwritten.
+
 ## Project attribution
 
 The session-context hooks installed in Claude Code, Codex, and omp write one JSON
