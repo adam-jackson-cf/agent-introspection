@@ -364,3 +364,12 @@ def test_span_status_never_falls_back_to_an_arbitrary_line() -> None:
     assert "status_lines[1]" not in select
     status_line = select.split("AS status_line\n")[0].rsplit("arrayFirst(", 1)[1]
     assert "(?i)(error|fail" in status_line
+
+
+def test_span_sweep_keys_on_end_time_so_long_spans_are_loaded() -> None:
+    sweep = next(loader for loader in facts.LOADERS if loader.name == "sweep_spans")
+
+    assert "timestamp + toIntervalNanosecond(duration_nano) > now() - INTERVAL 3 DAY" in (
+        sweep.window
+    )
+    assert "timestamp > now() - INTERVAL 3 DAY" not in sweep.window

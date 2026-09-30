@@ -161,3 +161,19 @@ def test_launchd_job_runs_the_sync_every_minute_with_docker_on_path() -> None:
     ]
     assert document["StartInterval"] == 60
     assert document["EnvironmentVariables"]["PATH"] == "/opt/docker/bin:/usr/bin"
+
+
+def test_launchd_job_keeps_a_selected_configuration() -> None:
+    document = plistlib.loads(
+        projects.plist(
+            Path("/venv/bin/agent-introspection"), ["/usr/bin"], Path("/etc/ai/custom.toml")
+        )
+    )
+
+    assert document["ProgramArguments"] == [
+        "/venv/bin/agent-introspection",
+        "--config",
+        "/etc/ai/custom.toml",
+        "facts",
+        "sync",
+    ]

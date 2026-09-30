@@ -142,12 +142,16 @@ def sync(run: SqlRunner, *, inbox: Path = INBOX, ledger: Path | None = None) -> 
     }
 
 
-def plist(executable: Path, path_dirs: Iterable[str]) -> bytes:
-    """Return the launchd job that runs ``facts sync`` (projects, then findings) every minute."""
+def plist(executable: Path, path_dirs: Iterable[str], config: Path | None = None) -> bytes:
+    """Return the launchd job that runs ``facts sync`` (projects, then findings) every minute.
+
+    A selected ``config`` is passed through, so the job syncs the same deployment.
+    """
+    selected = ["--config", str(config)] if config is not None else []
     return plistlib.dumps(
         {
             "Label": LABEL,
-            "ProgramArguments": [str(executable), "facts", "sync"],
+            "ProgramArguments": [str(executable), *selected, "facts", "sync"],
             "StartInterval": INTERVAL_SECONDS,
             "RunAtLoad": True,
             "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},
@@ -161,7 +165,7 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(("launchctl", *args), capture_output=True, text=True, check=False)
 
 
-def schedule_install() -> dict[str, Any]:
+def schedule_install(config: Path | None = None) -> dict[str, Any]:
     """Write and load the launchd job; the docker CLI directory joins its PATH."""
     executable = Path(sys.executable).with_name("agent-introspection")
     docker = shutil.which("docker")
@@ -169,7 +173,11 @@ def schedule_install() -> dict[str, Any]:
         raise RuntimeError("docker CLI not found on PATH")
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     PLIST.write_bytes(
-        plist(executable, (str(Path(docker).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin"))
+        plist(
+            executable,
+            (str(Path(docker).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin"),
+            config,
+        )
     )
     domain = f"gui/{os.getuid()}"
     _launchctl("bootout", f"{domain}/{LABEL}")

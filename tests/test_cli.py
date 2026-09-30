@@ -263,3 +263,16 @@ def test_proposal_create_rejects_a_proposal_for_an_unreviewed_finding(
         "SELECT status FROM review_sessions WHERE id = ?", (envelope.session_id,)
     ).fetchone() == ("exported",)
     assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
+
+
+def test_schedule_install_passes_the_selected_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = config_file(tmp_path)
+    received: list[Path | None] = []
+    monkeypatch.setattr(
+        cli.projects, "schedule_install", lambda selected: received.append(selected) or {}
+    )
+
+    assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
+    assert received == [config.resolve()]

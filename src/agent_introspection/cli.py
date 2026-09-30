@@ -236,13 +236,21 @@ def _proposal_mark_applied(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
 
 
+def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
+    if args.schedule_command == "install":
+        # Validate now, and resolve the path so the job reads the same file later.
+        config = Path(args.config).expanduser().resolve() if args.config else None
+        load_config(config)
+        return projects.schedule_install(config)
+    return {
+        "remove": projects.schedule_remove,
+        "status": projects.schedule_status,
+    }[args.schedule_command]()
+
+
 def _facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "schedule":
-        return {
-            "install": projects.schedule_install,
-            "remove": projects.schedule_remove,
-            "status": projects.schedule_status,
-        }[args.schedule_command]()
+        return _schedule_command(args)
     run = facts.docker_runner(_config(args))
     if args.facts_command == "install":
         return facts.install(run)
