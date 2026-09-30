@@ -42,7 +42,6 @@ export function prePost(
   end: string,
 ): Row {
   const applied = Date.parse(String(proposal.applied_at));
-  const span = Math.min(applied - Date.parse(start), Date.parse(end) - applied);
   const appliedDay = londonDay(applied);
   const window = (first: string, last: string) => {
     const inRange = (row: Row) => {
@@ -66,7 +65,27 @@ export function prePost(
       rate: taskCount > 0 ? occurrences / taskCount : null,
     };
   };
-  const days = Math.max(Math.floor(span / DAY) - 1, 0);
+  // Whole London days on each side: the range's first and last complete days,
+  // exclusive of the application day, and the shorter side sets both windows.
+  const firstFull = (instant: number) =>
+    londonDay(instant - 1) === londonDay(instant)
+      ? addDays(londonDay(instant), 1)
+      : londonDay(instant);
+  const lastFull = (instant: number) =>
+    londonDay(instant - 1) === londonDay(instant)
+      ? addDays(londonDay(instant), -1)
+      : londonDay(instant - 1);
+  const between = (from: string, to: string) =>
+    Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY,
+    );
+  const days = Math.max(
+    Math.min(
+      between(firstFull(Date.parse(start)), appliedDay),
+      between(appliedDay, lastFull(Date.parse(end))),
+    ),
+    0,
+  );
   const pre = window(addDays(appliedDay, -days), addDays(appliedDay, -1));
   const post = window(addDays(appliedDay, 1), addDays(appliedDay, days));
   return {

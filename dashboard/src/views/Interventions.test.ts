@@ -60,3 +60,18 @@ test("windows use the London calendar day of the application", () => {
   expect(result.pre_occurrences).toBe(3);
   expect(result.post_occurrences).toBe(5);
 });
+
+test("a range starting at London midnight keeps its first whole day", () => {
+  // 23:00 UTC on 1 September and 19 September are London midnights (BST).
+  const result = prePost(
+    proposal,
+    [day("2026-09-02", 7), day("2026-09-10", 50), day("2026-09-18", 1)],
+    tasks,
+    "2026-09-01T23:00:00Z",
+    "2026-09-19T23:00:00Z",
+  );
+
+  expect(result.days).toBe(8);
+  expect(result.pre_occurrences).toBe(7);
+  expect(result.post_occurrences).toBe(1);
+});

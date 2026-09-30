@@ -8,15 +8,11 @@
 -- characters. Span names get the same home-directory redaction.
 WITH
     arrayFilter(l -> l != '', splitByChar('\n', distributed_signoz_index_v3.status_message)) AS status_lines,
-    coalesce(
-        nullIf(
-            arrayFirst(
-                l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
-                status_lines
-            ),
-            ''
-        ),
-        status_lines[1]
+    -- Only a diagnostic line is kept; with none the stored status is empty, so
+    -- arbitrary raw output never reaches the durable table.
+    arrayFirst(
+        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        status_lines
     ) AS status_line
 SELECT
     serviceName AS harness,

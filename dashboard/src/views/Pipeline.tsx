@@ -92,6 +92,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
   const loaders = data.loaders ?? [];
   const failing = loaders.filter((row) => num(row.stale) === 1);
   const freshness = (data.freshness ?? []).filter(inScope);
+  const missingFacts = freshness.filter((row) => num(row.facts_missing) === 1);
   const maxLag = freshness.length
     ? Math.max(...freshness.map((row) => num(row.lag_seconds)))
     : null;
@@ -144,8 +145,12 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Max fact lag"
-          value={fmtSeconds(maxLag)}
-          detail="SigNoz latest row minus fact latest row"
+          value={missingFacts.length ? "no facts" : fmtSeconds(maxLag)}
+          detail={
+            missingFacts.length
+              ? `${missingFacts.length} source(s) with SigNoz rows but no fact rows`
+              : "SigNoz latest row minus fact latest row"
+          }
           signals={["pipeline.freshness"]}
         />
         <Kpi
@@ -210,7 +215,10 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
                 key: "lag_seconds",
                 label: "Fact lag",
                 numeric: true,
-                render: (row) => fmtSeconds(num(row.lag_seconds)),
+                render: (row) =>
+                  num(row.facts_missing) === 1
+                    ? "no facts"
+                    : fmtSeconds(num(row.lag_seconds)),
               },
               {
                 key: "source_age_seconds",

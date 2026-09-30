@@ -356,3 +356,11 @@ def test_failure_signature_never_falls_back_to_an_arbitrary_output_line() -> Non
     assert "error_line" in signature
     error_line = select.split("AS error_line,")[0].rsplit("arrayFirst(", 1)[1]
     assert "(?i)(error|fail" in error_line
+
+
+def test_span_status_never_falls_back_to_an_arbitrary_line() -> None:
+    select = facts.render_select("select_spans.sql", "1")
+
+    assert "status_lines[1]" not in select
+    status_line = select.split("AS status_line\n")[0].rsplit("arrayFirst(", 1)[1]
+    assert "(?i)(error|fail" in status_line

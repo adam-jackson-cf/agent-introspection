@@ -237,10 +237,10 @@ FROM system.view_refreshes WHERE database = 'introspection' ORDER BY view`;
 
 const FRESHNESS = `WITH
     facts AS (
-        SELECT 'spans' AS source, harness, max(ts) AS latest FROM introspection.spans
+        SELECT 'spans' AS source, harness, max(ts) AS latest, toUInt8(1) AS present FROM introspection.spans
         WHERE ts > now() - INTERVAL 1 DAY GROUP BY harness
         UNION ALL
-        SELECT 'logs', harness, max(ts) FROM introspection.logs
+        SELECT 'logs', harness, max(ts), toUInt8(1) FROM introspection.logs
         WHERE ts > now() - INTERVAL 1 DAY GROUP BY harness
     ),
     raw AS (
@@ -259,8 +259,10 @@ const FRESHNESS = `WITH
         GROUP BY 2
     )
 SELECT r.source AS source, r.harness AS harness, toString(r.latest) AS source_latest,
-    toString(f.latest) AS fact_latest,
-    greatest(dateDiff('second', f.latest, r.latest), 0) AS lag_seconds,
+    -- An unmatched join yields a default, not a timestamp: report no facts, never a lag.
+    toUInt8(ifNull(f.present, 0) = 0) AS facts_missing,
+    if(facts_missing = 1, NULL, toString(f.latest)) AS fact_latest,
+    if(facts_missing = 1, NULL, greatest(dateDiff('second', f.latest, r.latest), 0)) AS lag_seconds,
     dateDiff('second', r.latest, now()) AS source_age_seconds
 FROM raw AS r LEFT JOIN facts AS f ON f.source = r.source AND f.harness = r.harness
 ORDER BY harness, source`;
