@@ -29,7 +29,7 @@ Bootstrap the environment and check the SigNoz connection:
 ```bash
 uv sync
 mkdir -p ~/.config/agent-introspection
-cp config.example.toml ~/.config/agent-introspection/config.toml  # then set [signoz]
+cp config.example.toml ~/.config/agent-introspection/config.toml  # set [signoz], [harnesses]; [dashboard] in docker mode
 uv run agent-introspection facts preflight
 uv tool install --force --reinstall .   # standalone copy the launchd job and hooks run
 ```
@@ -44,7 +44,7 @@ Build the facts store, load the first minute of data, and open the dashboard:
 ```bash
 agent-introspection facts install             # tables, loaders, views, snapshots, registry
 agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
-agent-introspection facts sync                # projects + hook events, labels, findings, evaluations
+agent-introspection facts sync                # hook events, session attribution, labels, findings, evaluations
 agent-introspection facts status              # loader state and per-harness freshness
 bun install --cwd dashboard --frozen-lockfile
 bun run --cwd dashboard build
@@ -53,9 +53,9 @@ bun run --cwd dashboard start                 # http://127.0.0.1:4173
 
 This materializes the harnesses' SigNoz telemetry into the `introspection` ClickHouse
 database and serves the React companion on loopback. Its Pipeline view shows loader
-freshness, harness parity, and project attribution. Harness hooks, prompt export, and the
-every-minute `facts sync` schedule complete a full install; the `introspection-onboarding`
-skill runs them in order.
+freshness, harness parity, and project attribution. Each harness's OTLP export, activity
+hooks, prompt export, and the every-minute `facts sync` schedule complete a full install;
+the `introspection-onboarding` skill runs them in order.
 
 ## What Agent Introspection Does
 
@@ -77,15 +77,15 @@ approval records a decision only, and applying requires a separate explicit user
 
 `.agents/skills/` holds four skills for coding agents working on or with this
 repository. Each `SKILL.md` is a short index an agent loads when a request matches its
-`description`; it links to step workflows under `references/`, which the agent opens
-only as needed. The skills route to each other instead of overlapping.
+`description`; where a skill has step workflows, they live under `references/`, which
+the agent opens only as needed. The skills route to each other instead of overlapping.
 
-| Skill                                                                            | Purpose                                                                                                                                                                               | Use when                                                                                                                                                                                         |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md)   | Connect to the local SigNoz, run the ordered install, and install and validate harness hooks and prompt export. Ships the hook runtime, shim, and per-harness adapters in `scripts/`. | Installing or reinstalling, onboarding a harness, closing a signal gap with a new hook, validating hook configuration or end-to-end capture.                                                     |
-| [`introspection-operations`](.agents/skills/introspection-operations/SKILL.md)   | Keep the facts store healthy and change signals safely under the parity rule.                                                                                                         | Checking loaders, freshness, parity, the coverage grid, the hook inbox, or prompt labels; reinstalling or backfilling facts; adding, changing, closing, or excluding a signal or registry route. |
-| [`introspection-improvement`](.agents/skills/introspection-improvement/SKILL.md) | Run the improvement loop: discover findings, draft a proposal, record the user's decision, mark it applied, evaluate the result.                                                      | Finding what goes wrong with agents, turning findings into proposals, reviewing or approving one, marking one applied, checking whether a fix worked.                                            |
-| [`python-conventions`](.agents/skills/python-conventions/SKILL.md)               | Naming, package structure, object choice, and this repository's Python quality gates.                                                                                                 | Writing or refactoring Python in `src/`, `tests/`, `scripts/`, or `.agents` adapters.                                                                                                            |
+| Skill                                                                            | Purpose                                                                                                                                                                                                                                                               | Use when                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md)   | Connect to the local SigNoz, run the ordered install, configure each harness's OTLP export, session store, activity hooks, and prompt export, and prove capture end to end. Ships the activity-hook shim and the Claude Code and omp activity adapters in `scripts/`. | Installing or reinstalling, onboarding or re-checking a harness, proving capture end to end.                                                                                                                                        |
+| [`introspection-operations`](.agents/skills/introspection-operations/SKILL.md)   | Check facts-store health and change projections, fact views, or registry entries under the parity rule.                                                                                                                                                               | Checking preflight, loaders, freshness, parity, sanitization, the coverage grid, the inbox, or prompt labels; adding, changing, closing (including with a new hook event), or excluding a signal, then reinstalling or backfilling. |
+| [`introspection-improvement`](.agents/skills/introspection-improvement/SKILL.md) | Run the improvement loop: discover findings, draft a proposal, record the user's decision, mark it applied, evaluate the result.                                                                                                                                      | Finding what goes wrong with agents, turning findings into proposals, reviewing or approving one, marking one applied, checking whether a fix worked.                                                                               |
+| [`python-conventions`](.agents/skills/python-conventions/SKILL.md)               | Naming, package structure, object choice, and this repository's Python quality gates.                                                                                                                                                                                 | Writing or refactoring Python in `src/`, `tests/`, `scripts/`, or `.agents` adapters.                                                                                                                                               |
 
 ```text
 onboarding ──> operations (health gate) ──> improvement loop
@@ -105,8 +105,9 @@ onboarding ──> operations (health gate) ──> improvement loop
 - **Parity rule**: a signal is shown only when every harness this machine enables
   (`[harnesses] enabled`) reaches it; a signal an enabled harness does not emit is
   hidden here with a reason, never shown as zero.
-- **Session-context and activity hooks**: harness hooks that write records to a local
-  inbox. The first attributes sessions to Git projects; the second closes signals the
+- **Session stores and activity hooks**: project attribution reads only the session ID
+  and working directory from each harness's own session files and resolves the Git
+  repository; activity hooks write records to a local inbox to close signals the
   producers' own telemetry lacks.
 - **Prompt labels**: Jev classifications of each prompt's task type, correction kind,
   and sentiment. Only labels are stored.

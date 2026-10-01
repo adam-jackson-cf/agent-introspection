@@ -57,14 +57,14 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
                             └─> <view>_snapshot tables: last 91 days, rebuilt right after each minute load
                                   └─> Bun server: small aggregate queries over ClickHouse HTTP → React views
 signal_support.toml ─ facts install ─> introspection.signals · signal_routes · signal_support · signal_strays
-Harness session-context hooks ─> inbox JSON ─ facts sync-projects (launchd, every minute)
-  └─> introspection.session_projects ─> session_project (latest project per session, joined by session ID)
+Harness session stores (session_stores.toml) ─ facts sync, launchd every minute ─> introspection.session_projects
+  └─> session_project (attributed sessions' Git project, joined by session ID); activity hooks ─> hook-inbox ─ facts sync ─> introspection.hook_events
 SQLite workflow store (findings, proposals, review sessions): ~/.local/share/agent-introspection/introspection.sqlite3
 ```
 
 The source is [`facts.py`](../src/agent_introspection/facts.py) and
 [`facts_sql/`](../src/agent_introspection/facts_sql/). Operate it with
-`agent-introspection facts install | backfill --days N | status | sync-projects | schedule`.
+`agent-introspection facts install | backfill --days N | status | sessions | sync | schedule`.
 The human-readable catalog of every signal is [Dashboard Measure v3](dashboard-measure-v3.md).
 
 Serving (phase 2):
@@ -619,12 +619,13 @@ in hook targets; coverage grid 243 healthy, 7 not applicable, 5 no events; 42 fi
 - **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`
   tables have no TTL and hold history beyond that. Trace history before
   2026-09-10 had already expired under the earlier 15-day TTL and cannot be recovered.
-- **Project sync and findings:** `agent-introspection facts schedule install|status|remove`
-  manages the `com.adamjackson.agent-introspection.projects` LaunchAgent, which runs
-  `facts sync` (project sync, then findings promotion) every minute from the standalone
-  tool install at `~/.local/share/uv/tools/agent-introspection`. After changing the
-  Python package, run `uv tool install --force --reinstall .` from the repo.
-  `session_projects` is the only copy of synced hook history; never drop it.
+- **Sync and findings:** `agent-introspection facts schedule install|status|remove`
+  manages the `com.adamjackson.agent-introspection.sync` LaunchAgent, which runs
+  `facts sync` (hook events, session attribution, prompt labels, findings, evaluations)
+  every minute from the standalone tool install at `~/.local/share/uv/tools/agent-introspection`.
+  After changing the Python package, run `uv tool install --force --reinstall .` from the repo.
+  Never drop `hook_events` (the only copy of activity-hook history) or `session_projects`
+  (it keeps attribution for sessions the harnesses have since pruned).
 - **Rebuild:** `facts install` recreates loaders and views without touching data.
   `facts backfill --days 90` rebuilds or re-projects everything still in SigNoz,
   so a projection change applies to the full 90-day window.

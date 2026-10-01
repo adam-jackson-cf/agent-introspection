@@ -1,12 +1,14 @@
 # CLI Reference
 
 Use this catalog to find the `agent-introspection` command for a task. Every command
-writes structured JSON to stdout, writes diagnostics to stderr, and fails with a stable
-non-zero exit code.
+except `hook` writes structured JSON to stdout, writes diagnostics to stderr, and fails
+with a stable non-zero exit code.
 
 Run commands as `uv run agent-introspection …` from the repo, or as
 `agent-introspection …` from the standalone copy installed by
-`uv tool install --force --reinstall .` (the copy the launchd job and hooks run).
+`uv tool install --force --reinstall .` (the copy the launchd job and hooks run). The
+global `--config PATH` option, or `AGENT_INTROSPECTION_CONFIG`, selects a config file
+other than `~/.config/agent-introspection/config.toml`.
 
 ## Facts
 
@@ -34,6 +36,12 @@ Run commands as `uv run agent-introspection …` from the repo, or as
 | `proposal decide <proposal-id> approve\|reject --actor <name> --reason <text>` | Records a decision only.                                                                      | After the user decides.           |
 | `proposal mark-applied <proposal-id> --actor <name> --input-json FILE`         | Records a user-applied proposal with validation evidence.                                     | After applying a change yourself. |
 | `proposal evaluate [--now <ISO 8601 instant>]`                                 | Evaluates applied proposals whose window has elapsed.                                         | Normally run by `facts sync`.     |
+
+## Hooks
+
+| Command                   | What it does                                                                                                                                                                        | When to use it                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `hook <producer> <event>` | Reads one activity-hook envelope from stdin and writes normalized records to the hook inbox. Always exits 0 and prints nothing; failures go to the hook log by exception type only. | Run by the installed activity hooks, not by hand. |
 
 ## Notes
 

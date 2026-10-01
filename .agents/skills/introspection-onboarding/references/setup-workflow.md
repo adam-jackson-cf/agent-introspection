@@ -46,8 +46,8 @@ DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
 6. **Harnesses.** Run the harness configuration workflow for every harness in use.
 7. **Schedule.** `agent-introspection facts schedule install`, then
    `facts schedule status`.
-8. **First sync.** `agent-introspection facts sync`: `projects`, `labels`, `findings`,
-   and `evaluations` report no error, and `labels` is not `skipped`.
+8. **First sync.** `agent-introspection facts sync`: `hooks`, `sessions`, `labels`,
+   `findings`, and `evaluations` report no error, and `labels` is not `skipped`.
 9. **Validate.** The validation workflow, then the `introspection-operations` health
    workflow over 90 days.
 10. **Record** a reinstall in `docs/dashboard-v3-plan.md`'s findings log: date, commit,
