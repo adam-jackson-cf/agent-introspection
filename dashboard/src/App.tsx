@@ -23,6 +23,10 @@ export default function App() {
   const [custom, setCustom] = useState(
     () => presetFor(readFilters()) === "Custom range",
   );
+  // History restores filters without touching the selector; re-derive it.
+  useEffect(() => {
+    setCustom(presetFor(filters) === "Custom range");
+  }, [filters]);
   const data = useAppData(location, filters);
   const heading = useRef<HTMLHeadingElement>(null);
 

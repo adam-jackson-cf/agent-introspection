@@ -44,6 +44,7 @@ DETERMINISTIC_INTERVENTIONS = (
 NON_DETERMINISTIC_INTERVENTIONS = frozenset(InterventionType) - frozenset(
     DETERMINISTIC_INTERVENTIONS
 )
+SKILL_INTERVENTIONS = frozenset({InterventionType.CREATE_SKILL, InterventionType.IMPROVE_SKILL})
 
 
 class ProposalConflictError(RuntimeError):
@@ -205,6 +206,7 @@ class ProposalInput:
         if available > 1:
             raise ValueError("a proposal can select only one deterministic enforcement tier")
         self._require_consistent_intervention_type()
+        self._require_consistent_skill_handoff()
 
     def _require_consistent_intervention_type(self) -> None:
         enforcing = [
@@ -222,6 +224,28 @@ class ProposalInput:
         elif self.intervention_type not in NON_DETERMINISTIC_INTERVENTIONS:
             allowed = ", ".join(sorted(NON_DETERMINISTIC_INTERVENTIONS))
             raise ValueError(f"intervention_type must be one of {allowed} when no tier can enforce")
+
+    def _require_consistent_skill_handoff(self) -> None:
+        is_skill = self.intervention_type in SKILL_INTERVENTIONS
+        handoff = self.create_skill_handoff
+        if not is_skill:
+            if handoff is not None:
+                raise ValueError("create_skill_handoff must be null for non-skill interventions")
+            return
+        if not isinstance(handoff, dict):
+            raise ValueError(f"create_skill_handoff is required for {self.intervention_type}")
+        if set(handoff) != {"skill_name", "workflow_owner", "ordered_steps"}:
+            raise ValueError(
+                "create_skill_handoff requires skill_name, workflow_owner, ordered_steps"
+            )
+        if not isinstance(handoff["skill_name"], str) or not handoff["skill_name"].strip():
+            raise ValueError("create_skill_handoff.skill_name must be a non-empty string")
+        owner = handoff["workflow_owner"]
+        if owner is not None and not isinstance(owner, str):
+            raise ValueError("create_skill_handoff.workflow_owner must be a string or null")
+        steps = handoff["ordered_steps"]
+        if not isinstance(steps, list) or not all(isinstance(s, str) and s for s in steps):
+            raise ValueError("create_skill_handoff.ordered_steps must be a list of strings")
 
 
 @dataclass(frozen=True)
@@ -244,6 +268,16 @@ def metric_for_subject(subject: dict[str, Any]) -> str | None:
     if "project" in subject and "correction_kind" in subject:
         return CORRECTION_TASK_RATE
     return None
+
+
+def _require_counts_match_finding(
+    proposal: ProposalInput, row: sqlite3.Row | tuple[Any, ...]
+) -> None:
+    """Reject occurrence, task and day counts that disagree with the stored finding."""
+    stored = {"occurrence_count": row[2], "task_count": row[3], "day_count": row[4]}
+    for name, expected in stored.items():
+        if getattr(proposal, name) != expected:
+            raise ValueError(f"{name} must equal the finding's {expected}")
 
 
 def _require_metric_matches_finding(proposal: ProposalInput, subject_json: str) -> None:
@@ -303,13 +337,16 @@ def create_proposal(
     payload = json.dumps(proposal.__dict__, sort_keys=True, separators=(",", ":"))
     with _transaction(connection, outer_transaction=outer_transaction):
         finding = connection.execute(
-            "SELECT trend_state, subject FROM findings WHERE id = ?", (proposal.finding_id,)
+            "SELECT trend_state, subject, occurrence_count, canonical_task_count, "
+            "local_day_count FROM findings WHERE id = ?",
+            (proposal.finding_id,),
         ).fetchone()
         if finding is None:
             raise KeyError(proposal.finding_id)
         if finding[0] != "actionable":
             raise ValueError("only actionable findings can produce proposals")
         _require_metric_matches_finding(proposal, str(finding[1] or ""))
+        _require_counts_match_finding(proposal, finding)
         connection.execute(
             """
             INSERT INTO proposals (

@@ -17,11 +17,11 @@ hooks, and prompt export. Contracts: `session_stores.toml` (project attribution)
 
 ## What each known harness needs
 
-| Harness                       | OTLP export                                 | Session store (project)                       | Activity hooks                    | Prompt export                               |
-| ----------------------------- | ------------------------------------------- | --------------------------------------------- | --------------------------------- | ------------------------------------------- |
-| Claude Code                   | `env` in `~/.claude/settings.json`          | `~/.claude/projects/` (nothing to install)    | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env` |
-| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `<codex-root>/sessions/` (nothing to install) | none: its signals are native      | `log_user_prompt = true` in `[otel]`        |
-| omp                           | `~/.omp/.env`                               | `~/.omp/agent/sessions/` (nothing to install) | `activity.ts` extension           | sent by `activity.ts`                       |
+| Harness                       | OTLP export                                 | Session store (project)                       | Activity hooks                    | Prompt export                                                                      |
+| ----------------------------- | ------------------------------------------- | --------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
+| Claude Code                   | `env` in `~/.claude/settings.json`          | `~/.claude/projects/` (nothing to install)    | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env`                                        |
+| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `<codex-root>/sessions/` (nothing to install) | none: its signals are native      | `log_user_prompt = true` in `[otel]`                                               |
+| omp                           | `~/.omp/.env`                               | `~/.omp/agent/sessions/` (nothing to install) | `activity.ts` extension           | `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (sent by `activity.ts`) |
 
 `<codex-root>` is `$CODEX_HOME` when set to an absolute path, else `~/.codex`; configure
 every root in use. A root the bundled stores do not cover (for example Orca's
@@ -36,14 +36,22 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
    types or docs, and look for renamed telemetry attributes (omp renamed `pi.gen_ai.*`
    to `omp.gen_ai.*` on 2026-09-29).
 2. **Managed files.** Copy the shim and the omp extension so hooks never run a repo
-   path:
+   path. Show the diff against each existing destination first, and back up every
+   destination that exists before overwriting it. The subshell stops at the first
+   failed backup or install without closing your shell:
 
    ```sh
    S=.agents/skills/introspection-onboarding/scripts
    R=~/.local/lib/agent-introspection/activity-hooks-v1
+   T=$(date -u +%Y%m%dT%H%M%SZ)
    mkdir -p "$R/omp"
-   install -m 0755 "$S/activity-shim.sh" "$R/"
-   install -m 0644 "$S/adapters/omp/activity.ts" "$R/omp/"
+   (
+     for pair in "$S/activity-shim.sh:$R/activity-shim.sh:0755" "$S/adapters/omp/activity.ts:$R/omp/activity.ts:0644"; do
+       src=${pair%%:*}; rest=${pair#*:}; dst=${rest%%:*}; mode=${rest##*:}
+       if [ -e "$dst" ]; then diff -u "$dst" "$src"; cp -p "$dst" "$dst.bak-$T" || exit 1; fi
+       install -m "$mode" "$src" "$dst" || exit 1
+     done
+   )
    ```
 
 3. **OTLP export** to the local collector (gRPC usually `localhost:4317`, HTTP
@@ -62,14 +70,19 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
 5. **Activity hooks.**
    - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
      then without `--dry-run` (backs up, idempotent, `--remove` undoes).
-   - omp: `ln -sfn "$R/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts`
-     and list `~/.omp/agent/extensions/agent-introspection-activity.ts` under
+   - omp: link the extension, preserving whatever is already there:
+     `L=~/.omp/agent/extensions/agent-introspection-activity.ts`; if `[ -e "$L" ] || [ -L "$L" ]`,
+     show it (`ls -l "$L"`; `diff -u "$L" "$R/omp/activity.ts"` when it is a different file)
+     and move it aside with `mv "$L" "$L.bak-$T"`; then
+     `ln -sfn "$R/omp/activity.ts" "$L"`. List `$L` under
      `extensions:` in `~/.omp/agent/config.yml` (omp's ambient discovery does not load
-     it). Restart omp sessions.
+     it; back that file up and show its diff too). Restart omp sessions.
 6. **Prompt export** (after the user's confirmation): Claude Code
-   `OTEL_LOG_USER_PROMPTS=1`; Codex `log_user_prompt = true` in every root; omp needs
-   nothing more (its content-capture option sends whole conversations, so
-   `activity.ts` sends just the prompt). Labelling needs an OpenRouter key where
+   `OTEL_LOG_USER_PROMPTS=1`; Codex `log_user_prompt = true` in every root; omp
+   `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (`activity.ts` sends no
+   prompt text until it is set; omp's own content-capture option sends whole
+   conversations, so `activity.ts` sends just the prompt). Labelling needs an
+   OpenRouter key where
    `facts sync` runs: `OPENROUTER_API_KEY`, or omp's stored credential
    (`omp token openrouter`). New sessions pick up the change; running ones keep sending
    `REDACTED`.

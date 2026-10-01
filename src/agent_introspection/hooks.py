@@ -85,6 +85,28 @@ _GENERIC_LINE = re.compile(
     r"|error: script \"[^\"]*\" exited|={3,}|- Status: failed)"
 )
 _DIGITS = re.compile(r"[0-9a-f]{8,}|\d+")
+# Ordered credential redactions, applied before home/digit normalisation. The same
+# list, in the same order, is mirrored in facts_sql/select_logs.sql and select_spans.sql
+# (RE2 syntax only: no lookahead, so the long-token rule marks, unmarks, then redacts).
+REDACTIONS: tuple[tuple[str, str], ...] = (
+    (
+        r"""(?i)((?:token|password|passwd|secret|credential|auth|private[_-]?key|api[_-]?key|authorization)\w*["']?\s*[=:]\s*)"""
+        r"""(?:(?:Bearer|Basic)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;"']+)""",
+        r"\1[REDACTED]",
+    ),
+    (r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}", r"\1[REDACTED]"),
+    (
+        r"(?i)(\b(?:api key|access token|private key|secret|password|credential)\s+)"
+        r"(?:[A-Za-z0-9._~+/=-]{16,}|[A-Za-z._~+/=-]*[0-9][A-Za-z0-9._~+/=-]*)",
+        r"\1[REDACTED]",
+    ),
+    (r"\b(?:sk-|ghp_|gho_|ghs_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]{4,}", "[REDACTED]"),
+    (r"\b([A-Za-z0-9_-]{20,})\b", r"⟦\1⟧"),
+    (r"⟦([A-Za-z_-]*)⟧", r"\1"),
+    (r"⟦([0-9_-]*)⟧", r"\1"),
+    (r"⟦[^⟧]*⟧", "[REDACTED]"),
+)
+_REDACTORS = tuple((re.compile(pattern), repl) for pattern, repl in REDACTIONS)
 _PATH_KEYS = ("path", "file_path", "notebook_path")
 _ERROR_CLASS = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
@@ -237,6 +259,8 @@ def failure_signature(output: str) -> str:
     if not _DIAGNOSTIC.search(line[:SIGNATURE_CHARS]):
         tail = _DIAGNOSTIC_TAIL.search(line)
         line = tail.group(1) if tail else ""
+    for pattern, repl in _REDACTORS:
+        line = pattern.sub(repl, line)
     return _DIGITS.sub("N", _HOME_ANYWHERE.sub("~", line))[:SIGNATURE_CHARS]
 
 
@@ -430,17 +454,23 @@ def transcript_usage(transcript: Path, prompt_id: str) -> tuple[float, str]:
     and the model name are read; streamed entries sharing a message ID count once.
     """
     by_prompt: dict[str, tuple[str, float]] | None = None
+    closed = False
     since_last: dict[str, tuple[str, float]] = {}
     for entry in _entries(transcript):
+        started = False
         if by_prompt is None and prompt_id and _is_prompt_entry(entry, prompt_id):
             by_prompt = {}
-        if _is_prompt_entry(entry, ""):
+            started = True
+        typed = _is_prompt_entry(entry, "")
+        if typed:
             since_last = {}
+            if not started and by_prompt is not None:
+                closed = True
         fields = _usage_fields(entry)
         if fields is None:
             continue
         since_last[fields[0]] = fields[1:]
-        if by_prompt is not None:
+        if by_prompt is not None and not closed:
             by_prompt[fields[0]] = fields[1:]
     return _summarize(by_prompt if by_prompt is not None else since_last)
 
@@ -448,7 +478,10 @@ def transcript_usage(transcript: Path, prompt_id: str) -> tuple[float, str]:
 def _turn_stop_attrs(envelope: Envelope) -> Attrs:
     prompt_id = _text(envelope, "prompt_id")
     path = _text(envelope, "transcript_path")
-    reasoning, model = transcript_usage(Path(path), prompt_id) if path else (0.0, "")
+    try:
+        reasoning, model = transcript_usage(Path(path), prompt_id) if path else (0.0, "")
+    except OSError:
+        reasoning, model = 0.0, ""
     return {"prompt_id": prompt_id, "reasoning_tokens": reasoning, "response_model": model}
 
 

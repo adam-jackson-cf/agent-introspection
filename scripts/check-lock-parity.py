@@ -21,13 +21,54 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _requirement_names(requirements: list[str]) -> set[str]:
-    names: set[str] = set()
+def _specifier(text: str) -> str:
+    """Return a canonical comma-joined, sorted specifier string without whitespace."""
+    return ",".join(
+        sorted(part.strip().replace(" ", "") for part in text.split(",") if part.strip())
+    )
+
+
+def _marker(text: str) -> str:
+    """Return an environment marker with quotes and whitespace normalised."""
+    return " ".join(text.replace('"', "'").split())
+
+
+def _requirement_map(requirements: list[str]) -> set[tuple[str, str, str, str]]:
+    """Return ``(name, extras, specifier, marker)`` tuples for PEP 508 requirement strings."""
+    found: set[tuple[str, str, str, str]] = set()
     for requirement in requirements:
-        match = _REQUIREMENT_NAME.match(requirement.strip())
-        if match is not None:
-            names.add(_normalise(match.group(0)))
-    return names
+        text, _, marker = requirement.partition(";")
+        text = text.strip()
+        match = _REQUIREMENT_NAME.match(text)
+        if match is None:
+            continue
+        rest = text[match.end() :].strip()
+        extras = ""
+        if rest.startswith("["):
+            raw, _, rest = rest[1:].partition("]")
+            extras = ",".join(sorted(_normalise(extra.strip()) for extra in raw.split(",")))
+        rest = rest.strip().removeprefix("(").removesuffix(")")
+        found.add((_normalise(match.group(0)), extras, _specifier(rest), _marker(marker)))
+    return found
+
+
+def _locked_map(deps: list[dict[str, object]]) -> set[tuple[str, str, str, str]]:
+    """Return ``(name, extras, specifier, marker)`` tuples for uv.lock requires-dist entries."""
+    found: set[tuple[str, str, str, str]] = set()
+    for dep in deps:
+        extras_raw = dep.get("extras", [])
+        extras = ",".join(
+            sorted(_normalise(str(extra)) for extra in extras_raw)
+            if isinstance(extras_raw, list)
+            else []
+        )
+        found.add((
+            _normalise(str(dep["name"])),
+            extras,
+            _specifier(str(dep.get("specifier", ""))),
+            _marker(str(dep.get("marker", ""))),
+        ))
+    return found
 
 
 def check_python(pyproject_path: Path) -> list[str]:
@@ -48,14 +89,18 @@ def check_python(pyproject_path: Path) -> list[str]:
             f"{lock_path}: PARITY.lock-version version {entry.get('version')!r} "
             f"!= pyproject {project.get('version')!r}"
         )
-    manifest = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    declared = _requirement_names(project.get("dependencies", []))
-    for group in manifest.get("dependency-groups", {}).values():
-        declared |= _requirement_names([item for item in group if isinstance(item, str)])
+    declared = _requirement_map(project.get("dependencies", []))
+    for group in (
+        tomllib
+        .loads(pyproject_path.read_text(encoding="utf-8"))
+        .get("dependency-groups", {})
+        .values()
+    ):
+        declared |= _requirement_map([item for item in group if isinstance(item, str)])
     metadata = entry.get("metadata", {})
-    locked = _requirement_names([dep["name"] for dep in metadata.get("requires-dist", [])])
+    locked = _locked_map(metadata.get("requires-dist", []))
     for group in metadata.get("requires-dev", {}).values():
-        locked |= _requirement_names([dep["name"] for dep in group])
+        locked |= _locked_map(group)
     if declared != locked:
         problems.append(
             f"{lock_path}: PARITY.lock-version dependency drift, "

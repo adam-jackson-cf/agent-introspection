@@ -35,7 +35,7 @@ a benchmark: harnesses are never ranked or compared against each other.
 - **Privacy (D4).** Raw prompt, command, argument, output, and tool-intent text and
   identity keys are never stored. Only normalized `x.*` fields, digit-normalized
   failure signatures, and home-redacted paths are kept.
-- **Time.** Trends use UTC days; actionable repeats use a 7-day Europe/London window.
+- **Time.** Trends bucket by Europe/London days; actionable repeats use a 7-day Europe/London window.
 
 Harnesses: omp (`oh-my-pi`), Codex app-server (`codex-app-server`), Codex CLI
 (`codex_cli_rs`), Codex exec (`codex_exec`), and Claude Code (`claude-code`).

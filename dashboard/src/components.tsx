@@ -287,17 +287,33 @@ export function Panel({
           <h3>{title}</h3>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        <button
-          className="details"
-          aria-expanded={open}
-          aria-controls={noteId}
-          aria-label={
-            open ? `Hide notes for ${title}` : `Show notes for ${title}`
-          }
-          onClick={() => setOpen((value) => !value)}
+        <span
+          className="panel-info"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
         >
-          <span aria-hidden="true">i</span>
-        </button>
+          <button
+            className="details"
+            aria-describedby={noteId}
+            aria-label={`Definition of ${title}`}
+            onClick={() => setOpen(true)}
+          >
+            <span aria-hidden="true">i</span>
+          </button>
+          <div
+            id={noteId}
+            role="tooltip"
+            className="panel-popover"
+            hidden={!open}
+          >
+            <InfoNote signals={shown} />
+          </div>
+        </span>
       </header>
       <Contributors signals={shown} />
       <div className="panel-body">
@@ -305,11 +321,6 @@ export function Panel({
           {missing ? <NotApplicableNotice entries={missing} /> : children}
         </Boundary>
       </div>
-      {open && (
-        <footer id={noteId} className="panel-footer">
-          <InfoNote signals={shown} />
-        </footer>
-      )}
     </article>
   );
 }

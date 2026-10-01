@@ -13,7 +13,7 @@ import sqlite3
 from typing import Any
 
 from agent_introspection import evidence
-from agent_introspection.facts import DATABASE, SqlRunner, sql_string
+from agent_introspection.facts import DATABASE, SqlRunner, enabled_filter, sql_string
 from agent_introspection.findings import CORRECTION_DETECTOR_ID, DETECTOR_ID
 from agent_introspection.review import PROPOSAL_LIMITS, PURPOSE, create_review_session
 
@@ -56,10 +56,12 @@ def next_finding(connection: sqlite3.Connection) -> dict[str, Any] | None:
 
 
 def project_root(run: SqlRunner, subject: dict[str, Any], pack: dict[str, Any]) -> str | None:
-    """Return the most frequent root of the finding's project.
+    """Return the root of the finding's project that holds the finding's own sessions.
 
     A correction finding names its project; a failure cluster uses the project of
-    its evidence pack with the most failures.
+    its evidence pack with the most failures. Roots are ranked by the distinct
+    sessions with the cluster's failures (for a failure cluster) or by all of the
+    project's sessions (for a correction), then by root for a deterministic tie break.
     """
     names = [str(subject["project"])] if subject.get("project") else []
     names += [
@@ -69,9 +71,26 @@ def project_root(run: SqlRunner, subject: dict[str, Any], pack: dict[str, Any]) 
     ]
     if not names:
         return None
+    if subject.get("tool_family") and subject.get("failure_class"):
+        source = (
+            f"{DATABASE}.tool_calls_snapshot AS c INNER JOIN {DATABASE}.session_project AS p "
+            "ON p.session_id = c.session_id"
+        )
+        scope = (
+            f"p.project = {sql_string(names[0])} AND p.project_root != ''"
+            f" AND c.tool_family = {sql_string(str(subject['tool_family']))}"
+            f" AND c.failure_class = {sql_string(str(subject['failure_class']))}"
+            f" AND c.outcome = 'failed' AND c.ts > now() - INTERVAL {evidence.WINDOW_DAYS} DAY"
+            f" AND {enabled_filter('c.harness')}"
+        )
+        count = "uniqExact(c.session_id)"
+    else:
+        source = f"{DATABASE}.session_project AS p"
+        scope = f"p.project = {sql_string(names[0])} AND p.project_root != ''"
+        count = "count()"
     sql = (
-        f"SELECT project_root, count() AS sessions FROM {DATABASE}.session_project "
-        f"WHERE project = {sql_string(names[0])} AND project_root != '' "
+        f"SELECT p.project_root AS project_root, {count} AS sessions FROM {source} "
+        f"WHERE {scope} "
         "GROUP BY project_root ORDER BY sessions DESC, project_root LIMIT 1 FORMAT JSONEachRow"
     )
     rows = [json.loads(line) for line in run(sql).splitlines() if line]

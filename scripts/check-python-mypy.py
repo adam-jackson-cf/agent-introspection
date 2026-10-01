@@ -25,13 +25,21 @@ def _is_isolated(path: str) -> bool:
 
 
 def _entries(settings: dict[str, object], root: Path) -> list[str]:
-    """Return configured source roots as root-relative POSIX paths."""
+    """Return configured source roots as root-relative POSIX paths, with globs expanded."""
     bases = [Path(item) for item in as_list(settings.get("mypy_path")) or ["."]]
-    entries = [item.rstrip("/") for item in as_list(settings.get("files"))]
+    entries: list[str] = []
+    for item in as_list(settings.get("files")):
+        if any(char in item for char in "*?["):
+            matches = sorted(
+                match.relative_to(root).as_posix() for match in root.glob(item.removeprefix("./"))
+            )
+            entries.extend(matches or [item])
+        else:
+            entries.append(_normalise_entry(item))
     for package in as_list(settings.get("packages")):
         package_path = Path(*package.split("."))
         matches = [
-            (base / package_path).as_posix()
+            _normalise_entry((base / package_path).as_posix())
             for base in bases
             if (root / base / package_path).exists()
         ]
@@ -39,8 +47,13 @@ def _entries(settings: dict[str, object], root: Path) -> list[str]:
     return entries
 
 
+def _normalise_entry(item: str) -> str:
+    """Return ``item`` as a root-relative POSIX path; ``.`` stays ``.``."""
+    return Path(item).as_posix()
+
+
 def _covered(path: str, entries: list[str]) -> bool:
-    return any(path == entry or path.startswith(f"{entry}/") for entry in entries)
+    return any(entry == "." or path == entry or path.startswith(f"{entry}/") for entry in entries)
 
 
 def coverage_problems(root: Path, config: Path) -> list[str]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -101,7 +102,11 @@ def test_git_hook_environment_does_not_leak_into_temp_repos(
 
     repo = _make_staging_repo(tmp_path / "scratch")
     (repo / "module.py").write_text("x = 2\n")
-    _run(repo, "run-ci-quality-gates.sh", "--fix", "--stage")
+    result = _run(repo, "run-ci-quality-gates.sh", "--fix", "--stage")
+
+    # The unstaged lint change must reach the staging refusal, not die earlier.
+    assert result.returncode == 2
+    assert "unstaged changes" in result.stderr
 
     assert _git(host, "rev-parse", "HEAD") == head_before
     assert _git(host, "ls-files") == "tracked.txt\n"
@@ -222,3 +227,117 @@ def test_parity_rejects_runner_not_actively_invoked(
 
     assert result.returncode != 0
     assert missing_file in result.stderr
+
+
+@pytest.mark.parametrize("suffix", [" || true", " ; true", " && true", " | cat"])
+def test_parity_rejects_workflow_runner_with_masked_exit_status(
+    tmp_path: Path, suffix: str
+) -> None:
+    workflow = _WORKFLOW.replace(
+        "run: bash scripts/run-ci-quality-gates.sh",
+        f"run: bash scripts/run-ci-quality-gates.sh{suffix}",
+    )
+    repo = _parity_repo(tmp_path, _PRE_COMMIT, workflow)
+
+    result = _run(repo, "check-quality-gate-parity.sh")
+
+    assert result.returncode != 0
+    assert ".github/workflows/ci-quality-gates.yml" in result.stderr
+
+
+_RUNNER_MARKER = "scripts/check-coverage-slice.py"
+
+
+def _coverage_target(tmp_path: Path, runner_text: str, slice_minimum: int) -> list[str]:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/run.sh").write_text(runner_text)
+    (tmp_path / "scripts/impl.py").write_text("")
+    (tmp_path / "scripts/coverage-slice.json").write_text(f'{{"minimum_percent": {slice_minimum}}}')
+    catalog = {
+        "schema_version": 1,
+        "rules": [
+            {
+                "id": "TEST.coverage-minimum",
+                "kind": "process",
+                "applicability": "conditional",
+                "contract": {"threshold_percent": 85},
+            }
+        ],
+    }
+    ledger = {
+        "schema_version": 1,
+        "rules": [
+            {
+                "id": "TEST.coverage-minimum",
+                "status": "implemented",
+                "implementation_paths": ["scripts/impl.py"],
+                "local_runner": "scripts/run.sh",
+                "local_marker": _RUNNER_MARKER,
+                "ci_runner": "scripts/run.sh",
+                "ci_marker": _RUNNER_MARKER,
+                "canary": {},
+            }
+        ],
+    }
+    (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+    (tmp_path / "ledger.json").write_text(json.dumps(ledger))
+    return [
+        "python3",
+        str(_SCRIPTS / "validate-rule-coverage.py"),
+        "--root",
+        str(tmp_path),
+        "--catalog",
+        str(tmp_path / "catalog.json"),
+        "--ledger",
+        str(tmp_path / "ledger.json"),
+        "--structure-only",
+    ]
+
+
+def _validate(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+
+
+def test_rule_coverage_accepts_active_marker_and_matching_threshold(
+    tmp_path: Path,
+) -> None:
+    command = _coverage_target(tmp_path, f"uv run python {_RUNNER_MARKER}\n", 85)
+
+    assert _validate(command).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "runner_text",
+    [
+        f"# uv run python {_RUNNER_MARKER}\n",
+        f"true # {_RUNNER_MARKER}\n",
+        f"true;# {_RUNNER_MARKER}\n",
+        f"true &&# {_RUNNER_MARKER}\n",
+        f"true |# {_RUNNER_MARKER}\n",
+    ],
+    ids=[
+        "full-line-comment",
+        "trailing-comment",
+        "semicolon-comment",
+        "and-comment",
+        "pipe-comment",
+    ],
+)
+def test_rule_coverage_ignores_commented_runner_marker(tmp_path: Path, runner_text: str) -> None:
+    command = _coverage_target(tmp_path, runner_text, 85)
+
+    result = _validate(command)
+
+    assert result.returncode == 1
+    assert "lacks invocation marker" in result.stderr
+
+
+def test_rule_coverage_rejects_slice_minimum_below_registry_threshold(
+    tmp_path: Path,
+) -> None:
+    command = _coverage_target(tmp_path, f"uv run python {_RUNNER_MARKER}\n", 50)
+
+    result = _validate(command)
+
+    assert result.returncode == 1
+    assert "below registry threshold_percent 85" in result.stderr

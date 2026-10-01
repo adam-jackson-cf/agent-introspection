@@ -26,6 +26,60 @@ MAX_LOOP_DEPTH = 2
 # defining a class named ``*Analyzer``. The target currently has neither.
 ANALYZER_LIKE_PREFIXES: tuple[str, ...] = ()
 ANALYZER_CLASS_SUFFIX = "Analyzer"
+SUBPROCESS_CALLS = frozenset({
+    "run",
+    "Popen",
+    "call",
+    "check_call",
+    "check_output",
+    "getoutput",
+    "getstatusoutput",
+})
+PATH_FILESYSTEM_METHODS = frozenset({
+    "exists",
+    "glob",
+    "is_dir",
+    "is_file",
+    "is_symlink",
+    "iterdir",
+    "lstat",
+    "mkdir",
+    "open",
+    "read_bytes",
+    "read_text",
+    "rename",
+    "replace",
+    "rglob",
+    "rmdir",
+    "stat",
+    "touch",
+    "unlink",
+    "write_bytes",
+    "write_text",
+})
+OS_FILESYSTEM_CALLS = frozenset({
+    "copy",
+    "copy2",
+    "copyfile",
+    "copytree",
+    "listdir",
+    "lstat",
+    "makedirs",
+    "mkdir",
+    "move",
+    "open",
+    "remove",
+    "removedirs",
+    "rename",
+    "replace",
+    "rmdir",
+    "rmtree",
+    "scandir",
+    "stat",
+    "unlink",
+    "walk",
+})
+OS_PATH_FILESYSTEM_CALLS = frozenset({"exists", "getsize", "isdir", "isfile", "islink", "lexists"})
 OWNERSHIP_MARKERS = (
     "CODEOWNERS",
     ".github/CODEOWNERS",
@@ -70,6 +124,8 @@ class ScalabilityVisitor(ast.NodeVisitor):
         self._function_stack: list[str] = []
         self._loop_depth = 0
         self._future_annotations = False
+        self._subprocess_modules: set[str] = {"subprocess"}
+        self._subprocess_functions: set[str] = set()
 
     def visit_Module(self, node: ast.Module) -> None:
         self._future_annotations = any(
@@ -78,7 +134,19 @@ class ScalabilityVisitor(ast.NodeVisitor):
             and any(alias.name == "annotations" for alias in statement.names)
             for statement in node.body
         )
+        self._collect_subprocess_imports(node)
         self.generic_visit(node)
+
+    def _collect_subprocess_imports(self, tree: ast.Module) -> None:
+        for statement in ast.walk(tree):
+            if isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    if alias.name == "subprocess":
+                        self._subprocess_modules.add(alias.asname or alias.name)
+            elif isinstance(statement, ast.ImportFrom) and statement.module == "subprocess":
+                for alias in statement.names:
+                    if alias.name in SUBPROCESS_CALLS:
+                        self._subprocess_functions.add(alias.asname or alias.name)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -256,14 +324,15 @@ class ScalabilityVisitor(ast.NodeVisitor):
     def _current_function(self) -> str:
         return self._function_stack[-1] if self._function_stack else "<module>"
 
-    @staticmethod
-    def _is_direct_subprocess_call(node: ast.Call) -> bool:
-        return (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"run", "Popen"}
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "subprocess"
-        )
+    def _is_direct_subprocess_call(self, node: ast.Call) -> bool:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            return (
+                func.attr in SUBPROCESS_CALLS
+                and isinstance(func.value, ast.Name)
+                and func.value.id in self._subprocess_modules
+            )
+        return isinstance(func, ast.Name) and func.id in self._subprocess_functions
 
     @staticmethod
     def _is_direct_env_access_call(node: ast.Call) -> bool:
@@ -289,12 +358,17 @@ class ScalabilityVisitor(ast.NodeVisitor):
             return node.func.id == "open"
         if not isinstance(node.func, ast.Attribute):
             return False
-        return node.func.attr in {
-            "read_bytes",
-            "read_text",
-            "write_bytes",
-            "write_text",
-        }
+        owner = node.func.value
+        if isinstance(owner, ast.Name) and owner.id in {"os", "shutil"}:
+            return node.func.attr in OS_FILESYSTEM_CALLS
+        if (
+            isinstance(owner, ast.Attribute)
+            and owner.attr == "path"
+            and isinstance(owner.value, ast.Name)
+            and owner.value.id == "os"
+        ):
+            return node.func.attr in OS_PATH_FILESYSTEM_CALLS
+        return node.func.attr in PATH_FILESYSTEM_METHODS
 
     @staticmethod
     def _is_os_environ_subscript(node: ast.expr) -> bool:
@@ -365,6 +439,18 @@ def _selected_sources(repo_root: Path, raw_paths: Sequence[str]) -> list[SourceF
     return sources
 
 
+def _unmatched_paths(
+    repo_root: Path, raw_paths: Sequence[str], sources: Sequence[SourceFile]
+) -> list[str]:
+    resolved = [source.path for source in sources]
+    unmatched: list[str] = []
+    for raw_path in raw_paths:
+        root = (repo_root / raw_path).resolve()
+        if not any(path == root or path.is_relative_to(root) for path in resolved):
+            unmatched.append(raw_path)
+    return unmatched
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -392,6 +478,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         repo_root = args.repo_root.resolve()
         sources = _selected_sources(repo_root, args.paths)
+        unmatched = _unmatched_paths(repo_root, args.paths, sources)
+        if unmatched:
+            print(
+                "Python scalability quality check failed: paths match no maintained "
+                f"Python files: {', '.join(unmatched)}",
+                file=sys.stderr,
+            )
+            return 2
     diagnostics = collect_diagnostics(repo_root, sources)
     if diagnostics:
         print("Python scalability quality check failed:")

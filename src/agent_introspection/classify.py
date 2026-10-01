@@ -212,10 +212,14 @@ def _answers_match(answers: dict[str, Any]) -> bool:
             return False
         if question["type"] == "choice" and given.get("choice") not in question["criteria"]:
             return False
-        if question["type"] == "score" and not 0 <= given.get("score", -1) < len(
-            question["criteria"]
-        ):
-            return False
+        if question["type"] == "score":
+            score = given.get("score")
+            if (
+                not isinstance(score, int)
+                or isinstance(score, bool)
+                or not 0 <= score < len(question["criteria"])
+            ):
+                return False
     return True
 
 

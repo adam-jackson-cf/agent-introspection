@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,32 @@ def _text(value: object, rule_id: str, label: str) -> str:
     return value
 
 
+_COMMENT = re.compile(r"(^|[\s;&|()])#.*$", re.MULTILINE)
+_SLICE_CONFIG = "scripts/coverage-slice.json"
+
+
+def _active_text(path: Path) -> str:
+    """Return file text with full-line and trailing shell/YAML comments removed."""
+    return _COMMENT.sub("", path.read_text(encoding="utf-8"))
+
+
+def _contract_values(root: Path, contract: dict[str, Any], rule_id: str) -> None:
+    """Fail when a machine-readable registry threshold differs from the slice config."""
+    values = contract.get("contract")
+    threshold = values.get("threshold_percent") if isinstance(values, dict) else None
+    if threshold is None:
+        return
+    config = _json_object(_target_path(root, _SLICE_CONFIG, rule_id))
+    minimum = config.get("minimum_percent")
+    if isinstance(minimum, bool) or not isinstance(minimum, (int, float)):
+        raise CoverageError(f"{rule_id}: {_SLICE_CONFIG} lacks numeric minimum_percent")
+    if minimum < threshold:
+        raise CoverageError(
+            f"{rule_id}: {_SLICE_CONFIG} minimum_percent {minimum} is below "
+            f"registry threshold_percent {threshold}"
+        )
+
+
 def _implemented_paths(root: Path, row: dict[str, Any], rule_id: str) -> None:
     implementations = row.get("implementation_paths")
     if not isinstance(implementations, list) or not implementations:
@@ -72,7 +99,7 @@ def _implemented_paths(root: Path, row: dict[str, Any], rule_id: str) -> None:
     ):
         path = _target_path(root, row.get(path_key), rule_id)
         marker = _text(row.get(marker_key), rule_id, marker_key)
-        if marker not in path.read_text(encoding="utf-8"):
+        if marker not in _active_text(path):
             raise CoverageError(f"{rule_id}: {path_key} lacks invocation marker")
 
 
@@ -155,6 +182,7 @@ def _check_rule(
     if status != "implemented":
         raise CoverageError(f"{rule_id}: rule is not implemented")
     _implemented_paths(root, row, rule_id)
+    _contract_values(root, contract, rule_id)
     if contract.get("kind") == "tool":
         _configuration(root, row, rule_id)
     if not structure_only:

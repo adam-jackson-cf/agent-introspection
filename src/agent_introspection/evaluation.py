@@ -105,7 +105,7 @@ def _cluster_query(subject: dict[str, Any], names: str, window: Window, now: dat
             AND failure_class = {sql_string(str(subject["failure_class"]))}
             AND outcome = 'failed' AND task_id != '' AND harness IN ({names})
             AND {enabled_filter()}
-            AND ts >= {start}
+            AND ts >= {start} AND ts < {end}
     )) AS matched_tasks
 FROM (
     SELECT DISTINCT harness, task_id FROM {_table("task_outcomes", window, now)}

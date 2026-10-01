@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import tomllib
@@ -8,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import facts
-from agent_introspection.config import AppConfig, ConfigurationError
+from agent_introspection import facts, hooks
+from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig
 from agent_introspection.facts import FactsError
 
 
@@ -37,7 +38,15 @@ def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> N
         return next(i for i, s in enumerate(statements) if fragment in s)
 
     assert "CREATE TABLE IF NOT EXISTS introspection.spans" in statements[0]
-    assert "CREATE OR REPLACE TABLE introspection.signal_support" in statements[1]
+    assert (
+        "CREATE OR REPLACE TABLE introspection.signal_support"
+        in statements[first("CREATE OR REPLACE TABLE introspection.signal_support")]
+    )
+    checks = [i for i, s in enumerate(statements) if s.endswith("FORMAT Null")]
+    assert checks
+    # The live registry is replaced only after every route predicate has validated.
+    assert max(checks) < first("CREATE OR REPLACE TABLE introspection.signal_support")
+    assert max(checks) < first("INSERT INTO introspection.harnesses")
     loaders = [s for s in statements if "APPEND TO" in s]
     assert len(loaders) == len(facts.LOADERS)
     views = first("CREATE OR REPLACE VIEW introspection.usage_events")
@@ -287,7 +296,12 @@ def test_install_loads_this_machines_harnesses_before_the_registry_rows() -> Non
     harnesses = next(s for s in statements if "INSERT INTO introspection.harnesses" in s)
     assert '{"harness": "oh-my-pi", "label": "omp", "enabled": 0}' in harnesses
     assert '{"harness": "codex_exec", "label": "Codex exec", "enabled": 1}' in harnesses
-    assert "CREATE OR REPLACE TABLE introspection.harnesses" in statements[1]
+    create = next(
+        i
+        for i, s in enumerate(statements)
+        if "CREATE OR REPLACE TABLE introspection.harnesses" in s
+    )
+    assert create < statements.index(harnesses)
     with pytest.raises(ConfigurationError):
         facts.install_statements(["claude"])
     every = next(s for s in facts.install_statements() if "introspection.harnesses SELECT" in s)
@@ -439,12 +453,47 @@ def test_docker_runner_sends_sql_on_stdin_and_surfaces_the_last_error_line(
         return subprocess.CompletedProcess(argv, 1, "", "trace\nCode: 62. DB::Exception: bad")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(facts, "_require_local_docker_context", lambda context: None)
 
     with pytest.raises(FactsError, match="Code: 62"):
         facts.docker_runner(AppConfig())("SELECT 1")
 
     assert calls[0]["input"] == "SELECT 1"
     assert calls[0]["argv"][-2:] == ("clickhouse-client", "--multiquery")
+
+
+def _inspect(monkeypatch: pytest.MonkeyPatch, host: str) -> list[tuple[str, ...]]:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        payload = json.dumps([{"Endpoints": {"docker": {"Host": host}}}])
+        return subprocess.CompletedProcess(argv, 0, payload, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return calls
+
+
+@pytest.mark.parametrize("host", ["unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"])
+def test_docker_context_accepts_local_daemons(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+    calls = _inspect(monkeypatch, host)
+
+    facts._require_local_docker_context("desktop")
+
+    assert calls == [("docker", "context", "inspect", "desktop")]
+
+
+@pytest.mark.parametrize("host", ["ssh://me@build.example.com", "tcp://10.1.2.3:2376"])
+def test_docker_context_rejects_remote_daemons_before_any_statement(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    calls = _inspect(monkeypatch, host)
+    config = AppConfig(signoz=SigNozConfig(docker_context="remote"))
+
+    with pytest.raises(ConfigurationError, match="on this machine"):
+        facts.docker_runner(config)("SELECT 1")
+
+    assert calls == [("docker", "context", "inspect", "remote")]
 
 
 def test_backfill_reports_final_row_counts() -> None:
@@ -653,3 +702,21 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
     with pytest.raises(ConfigurationError, match="CH_PASSWORD") as missing:
         facts.http_runner(_http_config())
     assert "s3cret" not in str(missing.value)
+
+
+@pytest.mark.parametrize("template", ["select_logs.sql", "select_spans.sql"])
+def test_projection_redacts_credentials_before_normalizing_diagnostics(template: str) -> None:
+    select = facts.render_select(template, "1")
+
+    def sql_literal(text: str) -> str:
+        return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
+
+    # Every Python redaction, in order, appears verbatim in the SQL projection.
+    position = -1
+    for pattern, repl in hooks.REDACTIONS:
+        found = select.find(sql_literal(pattern), position + 1)
+        assert found > position, pattern
+        assert sql_literal(repl) in select[found:]
+        position = found
+    # Redaction wraps the window before home and digit normalization.
+    assert select.index("[REDACTED]") < select.index("'/Users/[^/ ]+',\n")

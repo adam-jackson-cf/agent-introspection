@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from agent_introspection import facts, schedule
+from agent_introspection.config import AppConfig
 
 
 def test_launchd_job_runs_the_sync_every_minute_with_docker_on_path() -> None:
@@ -66,3 +67,72 @@ def test_password_command_output_is_the_password_and_never_in_errors(
     with pytest.raises(ConfigurationError) as error:
         facts.clickhouse_password(failing)
     assert "leak" not in str(error.value)
+
+
+def test_failed_bootstrap_restores_and_reloads_the_previous_job(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    plist_path = tmp_path / "job.plist"
+    plist_path.write_bytes(b"previous")
+    (tmp_path / "agent-introspection").write_text("")
+    monkeypatch.setattr(schedule, "PLIST", plist_path)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(schedule, "load_config", lambda _config: AppConfig())
+    monkeypatch.setattr(schedule, "_job_path", lambda _signoz: [])
+    calls: list[tuple[str, bytes]] = []
+
+    def fake_launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+        calls.append((args[0], plist_path.read_bytes()))
+        failing = args[0] == "bootstrap" and plist_path.read_bytes() != b"previous"
+        return subprocess.CompletedProcess(args, 1 if failing else 0, "", "boom")
+
+    monkeypatch.setattr(schedule, "_launchctl", fake_launchctl)
+    with pytest.raises(RuntimeError, match="boom"):
+        schedule.schedule_install()
+    assert plist_path.read_bytes() == b"previous"
+    assert calls[-1] == ("bootstrap", b"previous")
+
+
+def test_failed_reload_of_the_previous_job_reports_both_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    plist_path = tmp_path / "job.plist"
+    plist_path.write_bytes(b"previous")
+    (tmp_path / "agent-introspection").write_text("")
+    monkeypatch.setattr(schedule, "PLIST", plist_path)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(schedule, "load_config", lambda _config: AppConfig())
+    monkeypatch.setattr(schedule, "_job_path", lambda _signoz: [])
+
+    def fake_launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+        if args[0] != "bootstrap":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        new = plist_path.read_bytes() != b"previous"
+        return subprocess.CompletedProcess(args, 1, "", "new-boom" if new else "old-boom")
+
+    monkeypatch.setattr(schedule, "_launchctl", fake_launchctl)
+    with pytest.raises(RuntimeError) as raised:
+        schedule.schedule_install()
+    text = str(raised.value)
+    assert "new-boom" in text
+    assert "old-boom" in text
+    assert "stopped" in text
+    assert plist_path.read_bytes() == b"previous"
+
+
+def test_missing_executable_is_rejected_before_the_loaded_job_is_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import sys
+
+    monkeypatch.setattr(schedule, "PLIST", tmp_path / "job.plist")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(schedule, "_launchctl", lambda *a: pytest.fail("launchctl ran"))
+    with pytest.raises(RuntimeError, match="not found"):
+        schedule.schedule_install()

@@ -154,8 +154,8 @@ a {
 }
 
 .content {
-  max-width: 1540px;
-  margin: auto;
+  max-width: 2560px;
+  margin: 0;
   padding: 22px 26px 52px;
 }
 .head {
@@ -314,8 +314,24 @@ a {
   min-width: 0;
   padding: 8px 14px 14px;
 }
-.panel-footer {
-  padding: 0 14px 12px;
+.panel-info {
+  position: relative;
+  flex-shrink: 0;
+}
+.panel-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  width: min(420px, 80vw);
+  padding: 4px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #101319;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+.panel-popover[hidden] {
+  display: none;
 }
 
 .contributors {

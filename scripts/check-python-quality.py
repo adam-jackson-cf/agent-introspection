@@ -43,6 +43,15 @@ FLAT_TEST_GROUPS: dict[str, str] = {"unit": "test_*.py"}
 SCRIPT_MODULE_DIRECTORY = "scripts/lib"
 # Directory names that are not Python package names (PYQ105).
 NON_PACKAGE_DIRECTORY_PARTS = frozenset({".github", "fixtures", "scripts", "src", "tests"})
+SUBPROCESS_CALLS = frozenset({
+    "run",
+    "Popen",
+    "call",
+    "check_call",
+    "check_output",
+    "getoutput",
+    "getstatusoutput",
+})
 # Dedicated subprocess seam wrappers per file (PYQ220): each named function does nothing
 # but run the subprocess. Files absent from this map may not call subprocess at all.
 # Tests are out of scope for this rule.
@@ -57,7 +66,7 @@ SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "scripts/validate-rule-coverage.py": frozenset({"_run"}),
     "src/agent_introspection/classify.py": frozenset({"_run_omp_token"}),
     "src/agent_introspection/drafting.py": frozenset({"run_codex"}),
-    "src/agent_introspection/facts.py": frozenset({"run", "_run_password_command"}),
+    "src/agent_introspection/facts.py": frozenset({"run", "_run_local_command"}),
     "src/agent_introspection/schedule.py": frozenset({"_launchctl"}),
     "src/agent_introspection/sessions.py": frozenset({"_run_git"}),
 }
@@ -336,14 +345,31 @@ def _function_scope_for_line(tree: ast.AST, line: int) -> str | None:
     return owner
 
 
-def _is_subprocess_call(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"run", "Popen"}
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "subprocess"
-    )
+def _subprocess_import_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Return local names bound to the subprocess module and to its process-launching APIs."""
+    module_names = {"subprocess"}
+    function_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            module_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "subprocess"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            function_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name in SUBPROCESS_CALLS
+            )
+    return module_names, function_names
+
+
+def _is_subprocess_call(node: ast.Call, module_names: set[str], function_names: set[str]) -> bool:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return (
+            func.attr in SUBPROCESS_CALLS
+            and isinstance(func.value, ast.Name)
+            and func.value.id in module_names
+        )
+    return isinstance(func, ast.Name) and func.id in function_names
 
 
 def _is_importlib_import_module_call(node: ast.AST) -> bool:
@@ -486,8 +512,11 @@ def _subprocess_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagno
         return []
     allowed_wrappers = SEAM_SUBPROCESS_WRAPPERS.get(relpath, frozenset())
     diagnostics: list[Diagnostic] = []
+    module_names, function_names = _subprocess_import_names(tree)
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _is_subprocess_call(node)):
+        if not (
+            isinstance(node, ast.Call) and _is_subprocess_call(node, module_names, function_names)
+        ):
             continue
         owner = _function_scope_for_line(tree, node.lineno)
         if owner not in allowed_wrappers:
@@ -504,7 +533,9 @@ def _subprocess_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagno
 
 def _call_attribute(node: ast.Call) -> str:
     func = node.func
-    return func.attr if isinstance(func, ast.Attribute) else ""
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else ""
 
 
 def _dynamic_import_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagnostic]:
@@ -620,6 +651,18 @@ def _selected_sources(repo_root: Path, raw_paths: Sequence[str]) -> list[SourceF
     return sources
 
 
+def _unmatched_paths(
+    repo_root: Path, raw_paths: Sequence[str], sources: Sequence[SourceFile]
+) -> list[str]:
+    resolved = [source.path for source in sources]
+    unmatched: list[str] = []
+    for raw_path in raw_paths:
+        root = (repo_root / raw_path).resolve()
+        if not any(path == root or path.is_relative_to(root) for path in resolved):
+            unmatched.append(raw_path)
+    return unmatched
+
+
 def _filter_checks(checks: Sequence[str]) -> set[str]:
     requested = set(checks)
     if "all" in requested:
@@ -660,6 +703,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if fixture_mode
         else _selected_sources(repo_root, args.paths)
     )
+    if not fixture_mode:
+        unmatched = _unmatched_paths(repo_root, args.paths, sources)
+        if unmatched:
+            print(
+                f"[python-quality] paths match no Python files: {', '.join(unmatched)}",
+                file=sys.stderr,
+            )
+            return 2
     checks = _filter_checks(args.check or ["all"])
     diagnostics: list[Diagnostic] = []
     if "structure" in checks:

@@ -12,7 +12,9 @@ them. The server binds only to `127.0.0.1:4173`.
 It queries the local SigNoz ClickHouse over HTTP at the address it resolves from
 `INTROSPECTION_CLICKHOUSE_URL`, else `[dashboard] clickhouse_url`, else the http mode's
 `[signoz] clickhouse_url` in the agent-introspection config; with none it refuses to
-start rather than assume a container runtime.
+start rather than assume a container runtime. It refuses any address that is not local
+(loopback, `localhost`, or `*.orb.local`) before sending credentials. The build writes to
+a temporary directory and replaces `dist/` only when every step succeeds.
 Every statement runs with `readonly=2` and the window and harness bound as query
 parameters, so the dashboard user's settings profile must allow `readonly=2` and needs
 only `SELECT ON introspection.*`.

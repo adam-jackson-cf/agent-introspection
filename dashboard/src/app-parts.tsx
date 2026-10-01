@@ -194,7 +194,9 @@ export function FilterBar(props: {
             <option key={label}>{label}</option>
           ))}
         </select>
-        {custom && <CustomRange filters={filters} change={change} />}
+        {(custom || presetFor(filters) === "Custom range") && (
+          <CustomRange filters={filters} change={change} />
+        )}
       </div>
       <HarnessSelector
         value={filters.harness}

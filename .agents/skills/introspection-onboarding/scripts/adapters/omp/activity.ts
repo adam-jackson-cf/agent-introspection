@@ -12,7 +12,9 @@ import { join } from "node:path";
 // `omp.user_prompt` OTLP log (the same shape as Claude Code's `user_prompt` and
 // Codex's `codex.user_prompt`) to the collector omp itself exports to, taken from
 // the standard `OTEL_EXPORTER_OTLP_*` variables. `facts sync` labels it with Jev.
-// With no endpoint configured, omp exports nothing and neither does this.
+// With no endpoint configured, omp exports nothing and neither does this. Prompt
+// text leaves the machine only after the user opts in: the onboarding workflow sets
+// `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` at its prompt-export step.
 
 const shimPath =
   process.env.AGENT_INTROSPECTION_SHIM ??
@@ -145,6 +147,9 @@ function attribute(
 /** Send one `omp.user_prompt` log to omp's OTLP collector; failures are dropped. */
 function exportPrompt(prompt: unknown, context: OmpContext): void {
   try {
+    if (process.env.AGENT_INTROSPECTION_OMP_PROMPT_EXPORT !== "1") {
+      return;
+    }
     const url = otlpLogsUrl();
     const session = sessionId(context);
     if (

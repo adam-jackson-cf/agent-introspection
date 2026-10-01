@@ -40,6 +40,13 @@ def _called_name(call: ast.Call, modules: set[str], callables: dict[str, str]) -
     return None
 
 
+def _is_bound(keyword: ast.keyword) -> bool:
+    """Return True for a ``timeout=`` keyword whose value is not the literal ``None``."""
+    return keyword.arg == "timeout" and not (
+        isinstance(keyword.value, ast.Constant) and keyword.value.value is None
+    )
+
+
 def check_file(path: Path) -> list[str]:
     """Return violations for subprocess calls in one test file."""
     try:
@@ -52,7 +59,7 @@ def check_file(path: Path) -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         name = _called_name(node, modules, callables)
-        if name in _BLOCKING_CALLS and not any(kw.arg == "timeout" for kw in node.keywords):
+        if name in _BLOCKING_CALLS and not any(_is_bound(kw) for kw in node.keywords):
             problems.append(
                 f"{path}:{node.lineno}: TEST.subprocess-timeouts subprocess.{name} needs timeout="
             )

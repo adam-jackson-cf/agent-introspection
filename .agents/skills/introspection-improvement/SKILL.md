@@ -66,7 +66,10 @@ instructions.
 - Record it promptly (the `applied` time starts the evaluation window):
   `agent-introspection proposal mark-applied <id> --actor <name> --input-json evidence.json`
   with `{"validation": {"status": "passed", "checks": ["<each check run>"]}}`. Exit 50
-  means the evidence was rejected and nothing changed.
+  means the evidence was rejected and the proposal record is unchanged (still
+  `approved`); the target repository change is already made and stays. Fix the evidence
+  (every check actually run, `status: passed`) and rerun `mark-applied`; if the change
+  itself must be undone, revert it in the target repository and tell the user.
 
 ## 5. Evaluate
 

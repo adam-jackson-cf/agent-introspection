@@ -292,7 +292,8 @@ def refresh(run: SqlRunner, connection: sqlite3.Connection) -> dict[str, int]:
         _mark_dormant(connection, stale, now)
         outcomes["dormant"] = len(stale)
     actionable = connection.execute(
-        "SELECT count(*) FROM findings WHERE detector_id IN (?, ?) AND trend_state = 'actionable'",
+        "SELECT count(*) FROM findings WHERE detector_id IN (?, ?) AND trend_state = 'actionable'"
+        " AND is_active = 1",
         (DETECTOR_ID, CORRECTION_DETECTOR_ID),
     ).fetchone()[0]
     return {**outcomes, "actionable": int(actionable)}

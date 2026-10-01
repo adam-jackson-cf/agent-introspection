@@ -226,7 +226,8 @@ function parseArrays(row: Row, keys: string[]): Row {
 export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
   return () => {
     // The CLI creates the store on first use; until then there is nothing to show.
-    if (!existsSync(path)) return { findings: [], proposals: [] };
+    if (!existsSync(path))
+      return { findings: [], proposals: [], proposal_events: [] };
     const db = new Database(path, { readonly: true });
     try {
       const all = (sql: string) => db.query(sql).all() as Row[];
@@ -236,7 +237,7 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
         ),
       );
       if (!tables.has("findings") || !tables.has("proposals"))
-        return { findings: [], proposals: [] };
+        return { findings: [], proposals: [], proposal_events: [] };
       const hasSubject = all("PRAGMA table_info(findings)").some(
         (row) => row.name === "subject",
       );
@@ -250,7 +251,7 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
           FROM findings WHERE is_active = 1
           ORDER BY trend_state = 'actionable' DESC, occurrence_count DESC, last_seen_ns DESC`);
       const proposals =
-        all(`SELECT p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
+        all(`SELECT p.id, p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
             json_extract(p.payload_json, '$.target') AS target, f.category, f.detector_id AS detector,
             p.created_at, ${SUBJECT("f", hasSubject)},
             ${metricField("metric")} AS metric,
@@ -265,11 +266,25 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
             ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.baseline_rate')")} AS baseline_rate,
             ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.evaluation_rate')")} AS evaluation_rate
           FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`);
+      // Decision history: who moved each proposal, when, and a short reason.
+      // Only whitelisted scalar evidence fields are read, never the raw payload.
+      const history = hasEvents
+        ? all(`SELECT p.id AS proposal_id, json_extract(p.payload_json, '$.target') AS target,
+            e.sequence, e.event_type AS event, json_extract(e.payload_json, '$.actor') AS actor,
+            e.created_at AS at,
+            substr(coalesce(json_extract(e.payload_json, '$.evidence.reason'),
+              json_extract(e.payload_json, '$.evidence.decision'),
+              json_extract(e.payload_json, '$.evidence.request'),
+              json_extract(e.payload_json, '$.verdict')), 1, 200) AS summary
+          FROM proposal_events AS e JOIN proposals AS p ON p.id = e.proposal_id
+          ORDER BY e.created_at DESC, e.sequence DESC`)
+        : [];
       return {
         findings: findings.map((row) => parseArrays(row, SUBJECT_ARRAYS)),
         proposals: proposals.map((row) =>
           parseArrays(row, [...SUBJECT_ARRAYS, "metric_harnesses"]),
         ),
+        proposal_events: history,
       };
     } finally {
       db.close();
@@ -410,6 +425,8 @@ export function createApp(
     const session = url.searchParams.get("session") ?? "";
     if (!isHarness(harness) || session === "" || session.length > 256)
       return badRequest("harness and session are required");
+    if (!enabledHarnesses(await registry()).includes(harness))
+      return badRequest("harness is not enabled on this machine");
     const response: SessionResponse = {
       harness,
       session,

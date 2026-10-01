@@ -109,8 +109,8 @@ it.
 
 ## What To Check
 
-- `proposal list` shows the proposal's state and history.
-- The Interventions dashboard view shows findings, proposals, and approval history.
+- `proposal list` shows the proposal's state; `proposal show` prints its full event history (decisions, actors, times, evidence).
+- The Interventions dashboard view shows findings, proposals, and an approval history table of each decision event (time, target, event, actor, and a short recorded reason; never raw prompt text).
 
 ## Related Docs
 

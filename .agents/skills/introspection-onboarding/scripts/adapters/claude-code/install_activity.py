@@ -139,7 +139,10 @@ def backup(path: Path) -> Path:
 def install_shim(runtime_dir: Path) -> Path:
     source = Path(__file__).resolve().parents[2] / SHIM
     target = runtime_dir / SHIM
-    atomic_write(target, source.read_text(encoding="utf-8"), 0o755)
+    content = source.read_text(encoding="utf-8")
+    if target.exists() and target.read_text(encoding="utf-8") != content:
+        print(f"backup: {backup(target)}")
+    atomic_write(target, content, 0o755)
     return target
 
 
@@ -154,6 +157,7 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _arguments(argv)
+    args.settings = args.settings.resolve()  # write through a symlinked settings file
     before, settings = load(args.settings)
     shim = args.runtime_dir / SHIM
     updated = remove(settings) if args.remove else install(settings, shim)

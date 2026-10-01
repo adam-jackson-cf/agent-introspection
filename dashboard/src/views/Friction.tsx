@@ -19,6 +19,7 @@ import {
   num,
   pivotDaily,
   ratio,
+  SERIES,
   sumRows,
 } from "../format";
 
@@ -117,18 +118,18 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
           />
         </Panel>
         <Panel
-          title="Daily interrupted and steered tasks"
-          subtitle="Tasks started that day with an explicit user interrupt or steer"
+          title="Daily interrupt and steer signals"
+          subtitle="Tasks started that day with an explicit user interrupt, and tasks with a steer; a task with both counts in each line"
           signals={["friction.interrupt", "friction.steer"]}
           span={5}
         >
           <DailyChart
             rows={signals}
             series={[
-              { key: "interrupt", label: "Interrupt", color: "#3987e5" },
-              { key: "steer", label: "Steer", color: "#d95926" },
+              { key: "interrupt", label: "Interrupt", color: SERIES[0]! },
+              { key: "steer", label: "Steer", color: SERIES[1]! },
             ]}
-            kind="stack"
+            kind="line"
             format={fmtCount}
           />
           <TableView

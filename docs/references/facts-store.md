@@ -11,6 +11,23 @@ curated producer spans and logs from SigNoz into the durable `introspection` dat
 every minute, with raw prompt, command, argument, and output text and identity keys
 removed.
 
+Log loading has a supported maximum export delay of 3 days: the minute loader reads by
+observed time, and the hourly sweep re-reads the last 3 days by event time. A log
+exported later than that, with both timestamps older than 3 days, is never loaded. This
+limit is accepted; `facts backfill` can recover such rows by hand.
+
+Diagnostic text (failure signatures and span status messages) has credential
+assignments (`token=`, `password=`, `credential=`, `auth=`, `private_key:`, `api_key:`,
+quoted `token="..."` and JSON `"api_key": "..."` values, `Authorization: Bearer ...`),
+spaced forms (`API key <value>` when the value has a digit or 16+ characters), common key
+prefixes (`sk-`, `ghp_`, `xox*-`, `AKIA`) and any run of 20+ `[A-Za-z0-9_-]` characters
+containing both letters and digits replaced with `[REDACTED]` in both the hook and the
+SQL projections (`hooks.REDACTIONS` is the single list; the SQL mirrors it in order).
+This is pattern-based and best-effort: an unlabelled short credential in free text can
+still be stored, which is why only one capped diagnostic line is kept and the facts
+store stays on this machine. `facts install` replaces the registry tables only after
+every route predicate validates.
+
 The views `usage_events`, `task_outcomes`, `tool_calls`, `user_signals`, `model_calls`,
 and `task_labels` normalize omp, Codex, and Claude Code telemetry, joined with the
 activity-hook events that close what a producer's own telemetry lacks (see

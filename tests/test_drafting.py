@@ -168,7 +168,12 @@ def test_working_directory_falls_back_when_the_project_root_is_missing(tmp_path:
 
 def model_document(prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
     envelope = json.loads(prompt.split("Review envelope:\n", 1)[1].split("\n", 1)[0])
-    proposal = proposal_input().__dict__ | {"finding_id": envelope["ordered_candidate_ids"][0]}
+    proposal = proposal_input().__dict__ | {
+        "finding_id": envelope["ordered_candidate_ids"][0],
+        "occurrence_count": 6,
+        "task_count": 3,
+        "day_count": 2,
+    }
     document = {
         key: envelope[key]
         for key in (

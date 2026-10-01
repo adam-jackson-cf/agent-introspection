@@ -259,11 +259,18 @@ def _validate_model_provenance(provenance: dict[str, Any], row: sqlite3.Row) -> 
 
 
 def _charged_tokens(provenance: dict[str, Any]) -> int:
-    """Charge the larger of token_count and the complete component total.
+    """Charge the larger of token_count and the sum of every reported component.
 
-    A low token_count must not hide components that already exceed it.
+    A low token_count must not hide components that already exceed it, even when
+    usage is partial.
     """
-    return max(int(provenance["token_count"]), _token_usage(provenance).total_tokens or 0)
+    usage = _token_usage(provenance)
+    known = sum(
+        value
+        for value in (usage.input_tokens, usage.output_tokens, usage.reasoning_tokens)
+        if value is not None
+    )
+    return max(int(provenance["token_count"]), known)
 
 
 def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list[dict[str, Any]]:
@@ -271,6 +278,8 @@ def _validated_model_results(document: dict[str, Any], row: sqlite3.Row) -> list
     if not isinstance(results, list):
         raise ValueError("results must be a list")
     expected_ids = json.loads(str(row[4]))
+    if not all(isinstance(result, dict) for result in results):
+        raise ValueError("each result must be an object")
     actual_ids = [result.get("candidate_id") for result in results]
     if actual_ids != expected_ids:
         raise ValueError("model output candidate IDs or ordering mismatch")

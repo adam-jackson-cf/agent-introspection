@@ -426,6 +426,20 @@ def main(argv: list[str] | None = None) -> int:
                 for prefix in prefixes
             )
         ]
+        unmatched = [
+            prefix
+            for prefix in prefixes
+            if not any(
+                result.relpath == prefix or result.relpath.startswith(f"{prefix}/")
+                for result in results
+            )
+        ]
+        if unmatched:
+            print(
+                f"[fanout] paths match no Python files: {', '.join(unmatched)}",
+                file=sys.stderr,
+            )
+            return 2
 
     failures = [result for result in results if result.reasons]
     if not failures:

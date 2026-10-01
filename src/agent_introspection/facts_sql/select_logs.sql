@@ -131,7 +131,43 @@ SELECT
                         failed,
                         substring(
                             replaceRegexpAll(
-                                replaceRegexpAll(error_window, '/Users/[^/ ]+', '~'),
+                                replaceRegexpAll(
+                                    replaceRegexpAll(
+                                        replaceRegexpAll(
+                                            replaceRegexpAll(
+                                                replaceRegexpAll(
+                                                    replaceRegexpAll(
+                                                        replaceRegexpAll(
+                                                            replaceRegexpAll(
+                                                                replaceRegexpAll(
+                                                                    error_window,
+                                                                    '(?i)((?:token|password|passwd|secret|credential|auth|private[_-]?key|api[_-]?key|authorization)\\w*["'']?\\s*[=:]\\s*)(?:(?:Bearer|Basic)\\s+)?(?:"[^"]*"|''[^'']*''|[^\\s,;"'']+)',
+                                                                    '\\1[REDACTED]'
+                                                                ),
+                                                                '(?i)(\\bbearer\\s+)[A-Za-z0-9._~+/=-]{8,}',
+                                                                '\\1[REDACTED]'
+                                                            ),
+                                                            '(?i)(\\b(?:api key|access token|private key|secret|password|credential)\\s+)(?:[A-Za-z0-9._~+/=-]{16,}|[A-Za-z._~+/=-]*[0-9][A-Za-z0-9._~+/=-]*)',
+                                                            '\\1[REDACTED]'
+                                                        ),
+                                                        '\\b(?:sk-|ghp_|gho_|ghs_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]{4,}',
+                                                        '[REDACTED]'
+                                                    ),
+                                                    '\\b([A-Za-z0-9_-]{20,})\\b',
+                                                    '⟦\\1⟧'
+                                                ),
+                                                '⟦([A-Za-z_-]*)⟧',
+                                                '\\1'
+                                            ),
+                                            '⟦([0-9_-]*)⟧',
+                                            '\\1'
+                                        ),
+                                        '⟦[^⟧]*⟧',
+                                        '[REDACTED]'
+                                    ),
+                                    '/Users/[^/ ]+',
+                                    '~'
+                                ),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'
                             ),

@@ -262,6 +262,90 @@ def test_stop_without_a_known_prompt_id_uses_the_last_typed_prompt(tmp_path: Pat
     assert usage == (150.0, "claude-opus-5-5")
 
 
+def test_usage_stops_at_the_next_typed_prompt(tmp_path: Path) -> None:
+    path = transcript(tmp_path)
+    later = [
+        {"type": "user", "promptId": "p-2", "message": {"role": "user", "content": "next"}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m9",
+                "model": "claude-later",
+                "usage": {"output_tokens_details": {"thinking_tokens": 700}},
+            },
+        },
+    ]
+    with path.open("a") as handle:
+        handle.write("".join(json.dumps(line) + "\n" for line in later))
+
+    assert hooks.transcript_usage(path, "p-1") == (150.0, "claude-opus-5-5")
+
+
+def test_stop_with_a_missing_transcript_still_emits_turn_stop(tmp_path: Path) -> None:
+    envelope = {
+        "session_id": SESSION,
+        "prompt_id": "p-1",
+        "transcript_path": str(tmp_path / "gone.jsonl"),
+    }
+    (item,) = hooks.normalize("claude-code", "Stop", envelope, context(tmp_path))
+    assert item["event_type"] == "turn_stop"
+    assert item["attrs"] == {"prompt_id": "p-1", "reasoning_tokens": 0.0, "response_model": ""}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "Error: auth failed password=hunterTWO token=ghp_abcDEF123",
+        "Error: API key sk-secretvalue was rejected",
+        "Error: Authorization: Bearer abcdef123456789 denied",
+        "Error: AKIAIOSFODNN7EXAMPLE not permitted; api_key: zzzsecret",
+    ],
+)
+def test_failure_signature_never_keeps_credentials(output: str) -> None:
+    signature = hooks.failure_signature(output)
+    for secret in ("hunterTWO", "ghp_", "sk-secretvalue", "abcdef", "AKIA", "zzzsecret"):
+        assert secret not in signature
+    assert "[REDACTED]" in signature
+
+
+@pytest.mark.parametrize(
+    ("output", "secret"),
+    [
+        ('Error: login failed token="quoted s3cretvalue"', "s3cretvalue"),
+        ("Error: login failed password='pw with spaces'", "spaces"),
+        ('Error: bad request {"api_key": "zzzsecret99"}', "zzzsecret99"),
+        ("Error: API key abcd1234efgh5678ijkl was rejected", "abcd1234"),
+        ("Error: upstream returned zXy9Wv8Ut7Sr6Qp5On4Mm3 denied", "zXy9Wv8"),
+        ("Error: login failed credential=hunterpw", "hunterpw"),
+        ("Error: API key abXYcd1 was rejected", "abXYcd"),
+        ("Error: private_key: 'BEGINxyz' invalid", "BEGINxyz"),
+    ],
+)
+def test_failure_signature_redacts_quoted_spaced_and_unprefixed_credentials(
+    output: str, secret: str
+) -> None:
+    signature = hooks.failure_signature(output)
+    assert secret not in signature
+    assert "[REDACTED]" in signature
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "Error: token expired for request",
+        "ValueError: password authentication failed",
+        "FileNotFoundError: /Users/me/project/src/agent_introspection/hooks.py missing",
+        "Error: AbstractSingletonProxyFactoryBean unavailable",
+        "Error: invalid secret length",
+        "Error: password incorrect for user",
+    ],
+)
+def test_failure_signature_keeps_ordinary_diagnostics(output: str) -> None:
+    signature = hooks.failure_signature(output)
+    assert "[REDACTED]" not in signature
+    assert signature == hooks._DIGITS.sub("N", hooks._HOME_ANYWHERE.sub("~", output))
+
+
 def test_claude_failure_and_subagent_events(tmp_path: Path) -> None:
     ctx = context(tmp_path)
     (failure,) = hooks.normalize(
@@ -477,6 +561,72 @@ def test_claude_installer_is_idempotent_preserves_others_and_removes(
     installer.main([*args, "--remove"])
     assert json.loads(settings.read_text()) == original
     assert len(list(tmp_path.glob("settings.json.bak-*"))) == 2
+
+
+OMP_PROBE = """
+import register from "%s";
+let sent = 0;
+globalThis.fetch = (() => { sent += 1; return Promise.resolve(new Response("")); }) as any;
+const handlers: Record<string, any> = {};
+register({ on: (name: string, fn: any) => { handlers[name] = fn; } } as any);
+handlers.before_agent_start(
+  { prompt: "secret prompt" },
+  { sessionManager: { getSessionId: () => "s1" } },
+);
+console.log(sent);
+"""
+
+
+@pytest.mark.parametrize(("opt_in", "expected"), [(None, "0"), ("1", "1")])
+def test_omp_prompt_is_exported_only_after_opt_in(
+    tmp_path: Path, opt_in: str | None, expected: str
+) -> None:
+    probe = tmp_path / "probe.ts"
+    probe.write_text(OMP_PROBE % (SCRIPTS / "adapters/omp/activity.ts"))
+    env = {
+        **os.environ,
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
+        "AGENT_INTROSPECTION_SHIM": "/nonexistent",
+    }
+    env.pop("AGENT_INTROSPECTION_OMP_PROMPT_EXPORT", None)
+    if opt_in is not None:
+        env["AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"] = opt_in
+    result = subprocess.run(
+        ["bun", str(probe)], env=env, capture_output=True, text=True, timeout=60, check=True
+    )
+    assert result.stdout.strip() == expected
+
+
+def test_claude_installer_writes_through_symlinked_settings(tmp_path: Path) -> None:
+    installer = load_script("adapters/claude-code/install_activity.py")
+    target = tmp_path / "managed" / "settings.json"
+    target.parent.mkdir()
+    target.write_text('{"env": {"A": "1"}}\n')
+    link = tmp_path / "settings.json"
+    link.symlink_to(target)
+
+    installer.main(["--settings", str(link), "--runtime-dir", str(tmp_path / "runtime")])
+
+    assert link.is_symlink()
+    assert link.resolve() == target
+    assert set(json.loads(target.read_text())["hooks"]) >= set(installer.EVENTS)
+
+
+def test_claude_installer_backs_up_a_differing_shim_before_replacing_it(tmp_path: Path) -> None:
+    installer = load_script("adapters/claude-code/install_activity.py")
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    shim = runtime / installer.SHIM
+    shim.write_text("#!/bin/sh\n# user-edited\n")
+
+    installer.install_shim(runtime)
+
+    backups = list(runtime.glob(f"{installer.SHIM}.bak-*"))
+    assert [path.read_text() for path in backups] == ["#!/bin/sh\n# user-edited\n"]
+    assert shim.read_text() != "#!/bin/sh\n# user-edited\n"
+
+    installer.install_shim(runtime)
+    assert len(list(runtime.glob(f"{installer.SHIM}.bak-*"))) == 1
 
 
 def test_every_home_path_in_one_argument_is_redacted() -> None:

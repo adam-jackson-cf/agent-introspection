@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Row } from "../contracts";
 import {
+  historyFor,
   metricLabel,
   prePost,
   subjectLabel,
@@ -157,4 +158,12 @@ test("subject and metric labels read the structured fields", () => {
   ).toBe(
     "cluster_task_rate ≤ 0.5× baseline · 7 d after vs 14 d before · Claude Code",
   );
+});
+
+test("history keeps only events of the in-scope proposals", () => {
+  const events: Row[] = [
+    { proposal_id: "p1", event: "applied" },
+    { proposal_id: "p2", event: "applied" },
+  ];
+  expect(historyFor([{ id: "p1" }], events)).toEqual([events[0]!]);
 });

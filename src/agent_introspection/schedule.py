@@ -70,16 +70,34 @@ def _job_path(signoz: SigNozConfig) -> list[str]:
 
 
 def schedule_install(config: Path | None = None) -> dict[str, Any]:
-    """Write and load the launchd job that runs `facts sync` every minute."""
+    """Write and load the launchd job that runs `facts sync` every minute.
+
+    A failed bootstrap restores and reloads the previously installed job.
+    """
     executable = Path(sys.executable).with_name("agent-introspection")
+    if not executable.exists():
+        raise RuntimeError(f"{executable} not found; cannot schedule a missing executable")
     tools = _job_path(load_config(config).signoz)
     PLIST.parent.mkdir(parents=True, exist_ok=True)
+    previous = PLIST.read_bytes() if PLIST.exists() else None
     PLIST.write_bytes(plist(executable, (*tools, "/usr/bin", "/bin", "/usr/sbin", "/sbin"), config))
     domain = f"gui/{os.getuid()}"
     _launchctl("bootout", f"{domain}/{LABEL}")
     loaded = _launchctl("bootstrap", domain, str(PLIST))
     if loaded.returncode != 0:
-        raise RuntimeError(loaded.stderr.strip() or "launchctl bootstrap failed")
+        message = loaded.stderr.strip() or "launchctl bootstrap failed"
+        if previous is None:
+            PLIST.unlink(missing_ok=True)
+        else:
+            PLIST.write_bytes(previous)
+            restored = _launchctl("bootstrap", domain, str(PLIST))
+            if restored.returncode != 0:
+                detail = restored.stderr.strip() or "launchctl bootstrap failed"
+                raise RuntimeError(
+                    f"new job failed to load ({message}) and the previous job could not be "
+                    f"reloaded ({detail}); the schedule is stopped"
+                )
+        raise RuntimeError(message)
     return {"installed": True, "label": LABEL, "interval_seconds": INTERVAL_SECONDS}
 
 

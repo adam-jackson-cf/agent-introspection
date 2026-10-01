@@ -4,8 +4,9 @@ Use this guide to run the same checks as pre-commit and CI before calling a chan
 
 ## Purpose
 
-The Python package and the independent dashboard package share one check-only quality
-suite, `scripts/run-ci-quality-gates.sh`, used by both pre-commit and CI.
+The Python package and the independent dashboard package share one quality suite,
+`scripts/run-ci-quality-gates.sh`. Pre-commit runs it with `--fix --stage` (auto-fix and
+re-stage); CI runs it check-only.
 
 ## Preconditions
 
@@ -50,10 +51,11 @@ suite, `scripts/run-ci-quality-gates.sh`, used by both pre-commit and CI.
    bun run --cwd dashboard start
    ```
 
-5. Auto-fix is opt-in and separate from the check-only suite:
+5. Auto-fix is opt-in for manual runs:
    `bash scripts/run-ci-quality-gates.sh --fix` formats and fixes, and
-   `--fix --stage` also re-stages the files it changed. Pre-commit runs the
-   check-only suite.
+   `--fix --stage` also re-stages the files it changed. The pre-commit hook runs
+   `--fix --stage`, so a commit auto-fixes and re-stages lint changes; it refuses to
+   stage over unstaged changes. CI runs the check-only suite.
 
 6. After any Python change, reinstall the standalone CLI, because the launchd job and
    every activity hook run that copy: `uv tool install --force --reinstall .`

@@ -1,5 +1,5 @@
 import { HARNESSES, type Harness, type Row } from "./contracts";
-import { EFFORT_TOKENS, HARNESS_TOKENS } from "./tokens";
+import { EFFORT_TOKENS, HARNESS_TOKENS, PART_TOKENS } from "./tokens";
 
 /**
  * Harness identity colors: categorical `cat-1`…`cat-5` in docs/ux/DESIGN.md, read from
@@ -20,11 +20,10 @@ export const HARNESS_LABEL: Record<Harness, string> = {
   "claude-code": "Claude Code",
 };
 /**
- * Categorical slots for non-harness series, in fixed order. They still reuse
- * the harness tokens; DESIGN.md assigns non-harness series `cat-6`…`cat-8`
- * (PART_TOKENS), which is an open item in the UX review backlog.
+ * Categorical slots for non-harness series, in fixed order: `cat-6`…`cat-8`
+ * (PART_TOKENS), so a series never shares a colour with a harness.
  */
-export const SERIES = [...HARNESS_TOKENS];
+export const SERIES = [...PART_TOKENS];
 
 /**
  * Effort is ordinal: one blue ramp low → xhigh (`seq-effort-*` in DESIGN.md).

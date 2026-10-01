@@ -232,6 +232,11 @@ const tierCounts = (proposals: Row[]) =>
     tier: tier === "null" ? "not recorded" : tier,
     proposals: sums.n,
   }));
+/** Decision events belonging to the given (in-scope) proposals. */
+export const historyFor = (proposals: Row[], events: Row[]): Row[] => {
+  const ids = new Set(proposals.map((row) => row.id));
+  return events.filter((event) => ids.has(event.proposal_id));
+};
 
 export default function Interventions({
   data,
@@ -248,6 +253,7 @@ export default function Interventions({
     );
   const findings = (data.findings ?? []).filter(inScope);
   const proposals = (data.proposals ?? []).filter(inScope);
+  const history = historyFor(proposals, data.proposal_events ?? []);
   const applied = proposals.filter((row) => row.applied_at);
   const corrections = findings.filter(
     (row) => row.detector === CORRECTION_DETECTOR,
@@ -469,6 +475,37 @@ export default function Interventions({
             ]}
             rows={proposals}
             empty="No proposals yet; `agent-introspection candidates export` drafts one for the next actionable finding."
+          />
+        </Panel>
+        <Panel
+          title="Approval history"
+          subtitle="Each decision event on the proposals above: who, when, and the recorded reason"
+          signals={["intervene.tier_audit"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              {
+                key: "at",
+                label: "When (UTC)",
+                render: (row) => shortTime(row.at),
+              },
+              { key: "target", label: "Target" },
+              { key: "event", label: "Event" },
+              {
+                key: "actor",
+                label: "Actor",
+                render: (row) => (row.actor == null ? "—" : String(row.actor)),
+              },
+              {
+                key: "summary",
+                label: "Reason / evidence",
+                render: (row) =>
+                  row.summary == null ? "—" : String(row.summary),
+              },
+            ]}
+            rows={history}
+            empty="No proposal decisions recorded."
           />
         </Panel>
         <Panel

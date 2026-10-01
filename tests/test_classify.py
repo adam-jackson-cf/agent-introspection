@@ -66,6 +66,23 @@ def test_run_labels_prompts_and_stores_only_answers() -> None:
     assert "ignored_instruction" in insert
     assert "uv, not pip" not in insert
     assert "supersecret123" not in sent[0].decode()
+    assert "supersecret123" not in insert
+
+
+def test_malformed_score_fails_only_its_prompt() -> None:
+    def post(body: bytes, _key: str) -> dict[str, Any]:
+        bad = json.loads(body)["state"]["message"] == "bad"
+        answers = jev_response()["answers"]
+        if bad:
+            answers["sentiment"]["score"] = "0"
+        return jev_response(answers=answers)
+
+    good, broken = pending("a"), pending("b") | {"prompt": "bad"}
+    ch = FakeClickHouse(good, broken)
+    result = classify.run(ch, key="k", post=post)
+
+    assert (result["labelled"], result["failed"]) == (1, 1)
+    assert "unexpected_answers" in ch.statements[-1]
 
 
 def test_failed_decisions_are_recorded_with_a_reason_and_retried_later() -> None:

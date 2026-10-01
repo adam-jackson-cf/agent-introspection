@@ -5,7 +5,8 @@ runner_pattern='scripts/run-ci-quality-gates\.sh'
 
 # Match only active YAML: drop full-line and trailing comments before looking
 # for a pre-commit hook entry and a workflow step run command that invoke the
-# runner directly, not merely mention it.
+# runner directly, not merely mention it. Only the runner's own arguments may
+# follow it; shell operators that can mask its exit status are rejected.
 active_config() {
   sed -E 's/(^|[[:space:]])#.*$//' "$1"
 }
@@ -13,7 +14,7 @@ active_config() {
 require_invocation() {
   local file="$1" key="$2"
   if ! active_config "$file" \
-    | grep -Eq "^[[:space:]]*(-[[:space:]]+)?${key}:[[:space:]]+(bash[[:space:]]+)?(\./)?${runner_pattern}([[:space:]]|$)"; then
+    | grep -Eq "^[[:space:]]*(-[[:space:]]+)?${key}:[[:space:]]+(bash[[:space:]]+)?(\./)?${runner_pattern}([[:space:]]+[A-Za-z0-9_./=-]+)*[[:space:]]*$"; then
     printf '%s: no active %s invokes %s\n' "$file" "$key" 'scripts/run-ci-quality-gates.sh' >&2
     exit 1
   fi

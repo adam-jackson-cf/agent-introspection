@@ -8,31 +8,29 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
-_KEY_VALUE = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
 _LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#|/)", re.IGNORECASE)
 _SKILL_GLOB = ".agents/skills/*/SKILL.md"
 
 
-def _unquote(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
+def parse_frontmatter(text: str) -> dict[str, object] | None:
+    """Return the parsed YAML frontmatter mapping, or None when the block is absent.
 
-
-def parse_frontmatter(text: str) -> dict[str, str] | None:
-    """Return top-level scalar frontmatter keys, or None when the block is absent."""
+    Raises ValueError when the block is not valid YAML or not a mapping.
+    """
     match = _FRONTMATTER.match(text)
     if match is None:
         return None
-    fields: dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        key_value = _KEY_VALUE.match(line)
-        if key_value is not None:
-            fields[key_value.group(1)] = _unquote(key_value.group(2))
-    return fields
+    try:
+        loaded = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as error:
+        raise ValueError(f"invalid YAML frontmatter: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError("frontmatter is not a YAML mapping")
+    return {str(key): value for key, value in loaded.items()}
 
 
 def _linked_paths(text: str) -> list[str]:
@@ -46,19 +44,22 @@ def check_skill(path: Path) -> list[str]:
     """Return SKILL.metadata violations for one SKILL.md file."""
     problems: list[str] = []
     text = path.read_text(encoding="utf-8")
-    fields = parse_frontmatter(text)
+    try:
+        fields = parse_frontmatter(text)
+    except ValueError as error:
+        return [f"{path}: SKILL.metadata {error}"]
     if fields is None:
         return [f"{path}: SKILL.metadata missing YAML frontmatter"]
-    name = fields.get("name", "")
+    name = fields.get("name")
     if name != path.parent.name:
         problems.append(
             f"{path}: SKILL.metadata name {name!r} does not match directory {path.parent.name!r}"
         )
-    description = fields.get("description", "")
-    if not description.lower().startswith("use when"):
+    description = fields.get("description")
+    if not isinstance(description, str) or not description.lower().startswith("use when"):
         problems.append(f"{path}: SKILL.metadata description must start with 'Use when'")
     shared = fields.get("global")
-    if shared is not None and shared not in {"true", "false"}:
+    if shared is not None and not isinstance(shared, bool):
         problems.append(f"{path}: SKILL.metadata 'global' must be a boolean, got {shared!r}")
     for target in _linked_paths(text):
         if not (path.parent / target).exists():

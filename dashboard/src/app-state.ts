@@ -21,9 +21,12 @@ export const lastDays = (days: number): Pick<Filters, "start" | "end"> => {
     end: iso(end),
   };
 };
-export const presetFor = (filters: Filters) => {
-  const days =
-    (Date.parse(filters.end) - Date.parse(filters.start)) / 86_400_000;
+/** A preset is live only when the window ends at (about) the current time. */
+const LIVE_END_TOLERANCE_MS = 5 * 60_000;
+export const presetFor = (filters: Filters, now = Date.now()) => {
+  const end = Date.parse(filters.end);
+  const days = (end - Date.parse(filters.start)) / 86_400_000;
+  if (Math.abs(now - end) > LIVE_END_TOLERANCE_MS) return "Custom range";
   return (
     Object.entries(PRESETS).find(
       ([, value]) => Math.abs(value - days) < 0.001,

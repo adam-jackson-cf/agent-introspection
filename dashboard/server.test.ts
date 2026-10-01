@@ -114,7 +114,7 @@ describe("request handling", () => {
 describe("ClickHouse client", () => {
   test("sends read-only statements with bound parameters and surfaces the exception line", async () => {
     let url = "";
-    const ok = clickhouse("http://ch:8123", async (input) => {
+    const ok = clickhouse("http://localhost:8123", async (input) => {
       url = String(input);
       return new Response(JSON.stringify({ data: [{ n: 1 }] }));
     });
@@ -124,7 +124,7 @@ describe("ClickHouse client", () => {
     expect(url).toContain("readonly=2");
     expect(url).toContain("param_harness=codex_exec");
     const failing = clickhouse(
-      "http://ch:8123",
+      "http://localhost:8123",
       async () =>
         new Response("Code: 62. DB::Exception: Syntax error\ntrace", {
           status: 500,
@@ -145,7 +145,7 @@ describe("ClickHouse credentials", () => {
       INTROSPECTION_CLICKHOUSE_PASSWORD: "s3cret",
     });
     const query = clickhouse(
-      "https://ch.example.com:8443",
+      "https://signoz-clickhouse.orb.local:8443",
       async (input, requestInit) => {
         url = String(input);
         init = requestInit;
@@ -166,12 +166,40 @@ describe("ClickHouse credentials", () => {
 
   test("sends no Authorization header without credentials", async () => {
     let init: RequestInit | undefined;
-    const query = clickhouse("http://ch:8123", async (_input, requestInit) => {
-      init = requestInit;
-      return new Response(JSON.stringify({ data: [] }));
-    });
+    const query = clickhouse(
+      "http://localhost:8123",
+      async (_input, requestInit) => {
+        init = requestInit;
+        return new Response(JSON.stringify({ data: [] }));
+      },
+    );
     await query("SELECT 1");
     expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+  });
+
+  test("refuses non-local addresses before sending credentials", async () => {
+    let called = false;
+    const fetchFn = async () => {
+      called = true;
+      return new Response(JSON.stringify({ data: [] }));
+    };
+    const credentials = { user: "reader", password: "s3cret" };
+    for (const remote of [
+      "https://ch.example.com:8443",
+      "http://10.0.0.5:8123",
+      "http://127.0.0.1.evil.com:8123",
+    ])
+      expect(() => clickhouse(remote, fetchFn, credentials)).toThrow(
+        "not local",
+      );
+    for (const local of [
+      "http://127.0.0.1:8123",
+      "http://localhost:8123",
+      "http://[::1]:8123",
+      "http://signoz-clickhouse.orb.local:8123",
+    ])
+      await clickhouse(local, fetchFn, credentials)("SELECT 1");
+    expect(called).toBe(true);
   });
 });
 
@@ -246,6 +274,7 @@ describe("sqliteWorkflow", () => {
     expect(sqliteWorkflow(scratch())()).toEqual({
       findings: [],
       proposals: [],
+      proposal_events: [],
     });
   });
 
@@ -352,10 +381,34 @@ describe("sqliteWorkflow", () => {
       }),
       "2026-09-21T00:00:00Z",
     );
+    event.run(
+      "e4",
+      4,
+      "decided",
+      JSON.stringify({
+        actor: "adam",
+        evidence: { reason: "ok to ship", prompt: "secret-prompt" },
+      }),
+      "2026-09-22T00:00:00Z",
+    );
     db.close();
 
-    const { findings, proposals } = sqliteWorkflow(path)();
+    const { findings, proposals, proposal_events } = sqliteWorkflow(path)();
     rmSync(path);
+    expect(proposal_events.map((row) => row.event)).toEqual([
+      "decided",
+      "evaluated",
+      "evaluated",
+      "applied",
+    ]);
+    expect(proposal_events[0]).toMatchObject({
+      proposal_id: "p1",
+      actor: "adam",
+      summary: "ok to ship",
+      at: "2026-09-22T00:00:00Z",
+    });
+    expect(proposal_events[1]!.summary).toBe("validated");
+    expect(JSON.stringify(proposal_events)).not.toContain("secret-prompt");
 
     expect(
       findings.find((row) => row.detector === "facts.failure_cluster"),
@@ -467,6 +520,25 @@ describe("registry", () => {
       ),
     );
     expect(disabled.status).toBe(400);
+    const queried: string[] = [];
+    const sessionApp = createApp({
+      query: async (sql) => {
+        queried.push(sql);
+        return sql.includes("FROM introspection.signals") ? rows : [];
+      },
+      workflow: () => ({}),
+    });
+    const before = queried.length;
+    const session = await sessionApp(
+      new Request(
+        "http://127.0.0.1:4173/api/session?harness=codex_exec&session=s1",
+        { headers: HOST },
+      ),
+    );
+    expect(session.status).toBe(400);
+    expect(
+      queried.slice(before).some((sql) => sql.includes("{session:String}")),
+    ).toBe(false);
   });
 
   test("a machine with no enabled harness is reported as not installed", async () => {

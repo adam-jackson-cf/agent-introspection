@@ -215,3 +215,14 @@ def test_generic_failure_classes_never_become_actionable() -> None:
         "Traceback (most recent call last):": "emerging",
         "ModuleNotFoundError: No module named '…'": "actionable",
     }
+
+
+def test_refresh_reports_only_active_actionable_findings() -> None:
+    connection = connect_workflow(":memory:")
+    findings.refresh(window(row("typo path", 3, 2, 2)), connection)
+    connection.execute("UPDATE findings SET is_active = 0, replaced_by_finding_id = id")
+    connection.commit()
+
+    result = findings.refresh(window(), connection)
+
+    assert result["actionable"] == 0

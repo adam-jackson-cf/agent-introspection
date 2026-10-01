@@ -180,3 +180,16 @@ def test_legacy_free_text_metrics_are_skipped() -> None:
     assert result["skipped"] == [
         {"proposal_id": "legacy", "reason": "legacy free-text success metric"}
     ]
+
+
+def test_cluster_query_ignores_matching_failures_after_the_window_end() -> None:
+    connection, _, applied_at = applied_proposal()
+    statements, run = facts((10, 5), (10, 1))
+
+    evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
+
+    baseline = statements[0]
+    end = evaluation._literal(applied_at)
+    assert f"AND ts >= {evaluation._literal(applied_at - timedelta(days=14))} AND ts < {end}" in (
+        baseline.replace("\n", " ")
+    )

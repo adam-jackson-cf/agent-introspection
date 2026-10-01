@@ -49,7 +49,7 @@ const requestUrl = (location: Location, filters: Filters) => {
 
 const isAbort = (error: Error) => error.name === "AbortError";
 
-const matchingView = (
+export const matchingView = (
   location: Location,
   response: AppResponse | null,
   filters: Filters,
@@ -64,34 +64,59 @@ const matchingView = (
     ? response
     : null;
 
-/** Loads the signal registry once and reports a failure through `onFailure`. */
-function useRegistry(onFailure: (message: string) => void) {
+export const matchingSession = (
+  location: Location,
+  response: AppResponse | null,
+) =>
+  location.kind === "session" &&
+  response &&
+  "session" in response &&
+  response.harness === location.harness &&
+  response.session === location.session
+    ? response
+    : null;
+
+/** The visible failure: a registry that has not loaded outranks a view failure. */
+export const visibleFailure = (registryFailure: string, viewFailure: string) =>
+  registryFailure || viewFailure;
+
+/** Loads the signal registry; `reload` retries it only while it is absent. */
+function useRegistry() {
   const [registry, setRegistry] = useState<Registry | null>(null);
+  const [failure, setFailure] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const loaded = useRef(false);
   useEffect(() => {
     const abort = new AbortController();
     getJson("/api/registry", abort.signal)
       .then((body) => {
         if (!isRegistry(body))
           throw new Error("The registry response is malformed.");
+        loaded.current = true;
         setRegistry(body);
+        setFailure("");
       })
       .catch((error: Error) => {
-        if (!isAbort(error)) onFailure(error.message);
+        if (!isAbort(error)) setFailure(error.message);
       });
     return () => abort.abort();
-  }, [onFailure]);
-  return registry;
+  }, [attempt]);
+  const reload = useCallback(() => {
+    if (!loaded.current) setAttempt((count) => count + 1);
+  }, []);
+  return { registry, registryFailure: failure, reload };
 }
 
 /** Registry plus the response for the current location, newest request wins. */
 export function useAppData(location: Location, filters: Filters) {
   const [response, setResponse] = useState<AppResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [failure, setFailure] = useState("");
+  const [viewFailure, setFailure] = useState("");
   const sequence = useRef(0);
-  const registry = useRegistry(setFailure);
+  const { registry, registryFailure, reload: reloadRegistry } = useRegistry();
+  const failure = visibleFailure(registryFailure, viewFailure);
 
-  const refresh = useCallback(() => {
+  const load = useCallback(() => {
     const abort = new AbortController();
     const request = ++sequence.current;
     setLoading(true);
@@ -118,12 +143,13 @@ export function useAppData(location: Location, filters: Filters) {
       });
     return () => abort.abort();
   }, [filters, location]);
-  useEffect(() => refresh(), [refresh]);
+  useEffect(() => load(), [load]);
 
   const viewResponse = matchingView(location, response, filters);
-  const sessionResponse =
-    location.kind === "session" && response && "session" in response
-      ? response
-      : null;
+  const sessionResponse = matchingSession(location, response);
+  const refresh = useCallback(() => {
+    reloadRegistry();
+    return load();
+  }, [reloadRegistry, load]);
   return { registry, loading, failure, refresh, viewResponse, sessionResponse };
 }

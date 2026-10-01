@@ -51,6 +51,26 @@ function configuredUrl(text: string | undefined): unknown {
   return config.dashboard?.clickhouse_url ?? config.signoz?.clickhouse_url;
 }
 
+/** Loopback, `localhost`, or a local container name such as OrbStack's `*.orb.local`. */
+export function assertLocalAddress(baseUrl: string): void {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    throw new Error(`ClickHouse address is not a valid URL: ${baseUrl}`);
+  }
+  const local =
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".orb.local") ||
+    host === "[::1]" ||
+    /^127(\.\d{1,3}){3}$/.test(host);
+  if (!local)
+    throw new Error(
+      `ClickHouse address ${host} is not local (loopback, localhost, or *.orb.local)`,
+    );
+}
+
 /**
  * Where the local SigNoz ClickHouse's HTTP interface is: the
  * `INTROSPECTION_CLICKHOUSE_URL` variable, else `[dashboard] clickhouse_url`, else the
@@ -87,6 +107,7 @@ export function clickhouse(
   fetchFn: Fetch = fetch,
   credentials?: Credentials,
 ): Query {
+  assertLocalAddress(baseUrl);
   const headers: Record<string, string> = credentials
     ? {
         Authorization: `Basic ${btoa(`${credentials.user}:${credentials.password}`)}`,

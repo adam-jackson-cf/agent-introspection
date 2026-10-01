@@ -290,3 +290,37 @@ def test_token_count_must_be_a_positive_integer_within_the_reserved_budget(
         "SELECT entry_type, amount FROM model_budget_ledger WHERE review_session_id = ?",
         (envelope.session_id,),
     ).fetchall() == [("reserved", 100)]
+
+
+def test_partial_token_components_are_charged_against_the_budget() -> None:
+    connection = review_database()
+    envelope = create_review_session(
+        connection, candidates=[{"id": "c1"}], reserved_model_budget=100
+    )
+    partial = {
+        "model": envelope.requested_model,
+        "effort": envelope.requested_effort,
+        "trace_id": "trace-1",
+        "token_count": 1,
+        "input_tokens": 101,
+    }
+    with pytest.raises(ValueError, match="budget"):
+        import_model_output(connection, output_for(envelope), provenance=partial)
+    assert connection.execute("SELECT COUNT(*) FROM model_runs").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM proposal_drafts").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("member", [None, 7, "c1"])
+def test_non_object_model_results_are_rejected_with_value_error(member: object) -> None:
+    connection = review_database()
+    envelope = create_review_session(
+        connection, candidates=[{"id": "c1"}], reserved_model_budget=1_000
+    )
+    document = output_for(envelope)
+    document["results"] = [member]
+    with pytest.raises(ValueError, match="object"):
+        import_model_output(connection, document, provenance=provenance(envelope))
+    assert connection.execute(
+        "SELECT status FROM review_sessions WHERE id = ?", (envelope.session_id,)
+    ).fetchone() == ("exported",)
+    assert connection.execute("SELECT COUNT(*) FROM proposal_drafts").fetchone() == (0,)

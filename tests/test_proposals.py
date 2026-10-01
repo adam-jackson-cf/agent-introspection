@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,12 @@ SUCCESS_METRIC: dict[str, Any] = {
     "baseline_days": 14,
     "evaluation_days": 14,
     "max_ratio": 0.5,
+}
+
+SKILL_HANDOFF: dict[str, Any] = {
+    "skill_name": "release-checks",
+    "workflow_owner": None,
+    "ordered_steps": ["run the quality command"],
 }
 
 PASSED_VALIDATION = {"validation": {"status": "passed", "checks": ["quality command passed"]}}
@@ -206,11 +213,56 @@ def audit_with(enforcing_tier: int | None) -> list[dict[str, str | bool | None]]
 def test_intervention_type_must_follow_the_available_enforcement_tier(
     enforcing_tier: int | None, accepted: str, rejected: str
 ) -> None:
-    value = proposal_input()
+    skill = accepted in (InterventionType.IMPROVE_SKILL, InterventionType.CREATE_SKILL)
     audit = audit_with(enforcing_tier)
-    replace(value, established_tool_audit=audit, intervention_type=accepted)
+    value = replace(
+        proposal_input(),
+        established_tool_audit=audit,
+        intervention_type=accepted,
+        create_skill_handoff=SKILL_HANDOFF if skill else None,
+    )
     with pytest.raises(ValueError, match="intervention_type"):
         replace(value, established_tool_audit=audit, intervention_type=rejected)
+
+
+@pytest.mark.parametrize("kind", [InterventionType.CREATE_SKILL, InterventionType.IMPROVE_SKILL])
+@pytest.mark.parametrize(
+    "handoff",
+    [None, {}, {"skill_name": "", "workflow_owner": None, "ordered_steps": ["a"]}],
+)
+def test_skill_interventions_require_a_well_formed_handoff(
+    kind: InterventionType, handoff: dict[str, Any] | None
+) -> None:
+    with pytest.raises(ValueError, match="create_skill_handoff"):
+        replace(
+            proposal_input(),
+            established_tool_audit=audit_with(None),
+            intervention_type=kind,
+            create_skill_handoff=handoff,
+        )
+
+
+def test_non_skill_interventions_reject_a_handoff() -> None:
+    with pytest.raises(ValueError, match="create_skill_handoff"):
+        replace(proposal_input(), create_skill_handoff=SKILL_HANDOFF)
+
+
+@pytest.mark.parametrize(
+    ("field", "mismatched"),
+    [
+        ("occurrence_count", lambda: replace(proposal_input(), occurrence_count=99)),
+        ("task_count", lambda: replace(proposal_input(), task_count=99)),
+        ("day_count", lambda: replace(proposal_input(), day_count=99)),
+    ],
+)
+def test_proposal_counts_must_match_the_finding(
+    field: str, mismatched: Callable[[], ProposalInput]
+) -> None:
+    connection = proposal_database()
+    with pytest.raises(ValueError, match=field):
+        create_proposal(connection, mismatched())
+    assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM proposal_events").fetchone() == (0,)
 
 
 def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> None:

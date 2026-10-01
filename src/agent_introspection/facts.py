@@ -15,6 +15,7 @@ import os
 import subprocess
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any, cast
 
-from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig
+from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig, is_local_host
 
 DATABASE = "introspection"
 _QUERY_TIMEOUT_SECONDS = 600.0
@@ -498,20 +499,22 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     """Return the ordered idempotent statements that create the whole facts store.
 
     Loaders, snapshots, and registry tables hold no source-of-truth state, so they
-    are recreated to pick up projection, view, registry, and harness changes.
+    are recreated to pick up projection, view, registry, and harness changes. The
+    registry tables are replaced only after every route predicate has validated,
+    so a failing check leaves the previous registry readable.
     ``enabled`` holds the configured harness keys; None enables every harness.
     """
     registry = load_registry()
     harnesses = enabled_harnesses(registry, enabled)
     return [
         _sql("001_tables.sql"),
-        _sql("002_registry.sql"),
         *(f"DROP VIEW IF EXISTS {DATABASE}.refresh_{snapshot.view}" for snapshot in SNAPSHOTS),
         *(f"DROP VIEW IF EXISTS {DATABASE}.{loader.name}" for loader in LOADERS),
         *(loader_ddl(loader) for loader in LOADERS),
         _sql("003_views.sql"),
         *(statement for snapshot in SNAPSHOTS for statement in snapshot_statements(snapshot)),
         *route_check_statements(registry),
+        _sql("002_registry.sql"),
         *registry_statements(registry, harnesses),
     ]
 
@@ -532,8 +535,32 @@ def backfill_statements(target: str, start: datetime, end: datetime) -> list[str
     return statements
 
 
+def _require_local_docker_context(context: str | None) -> None:
+    """Raise unless the Docker context's daemon endpoint is a local socket or host."""
+    command = ("docker", "context", "inspect", *((context,) if context is not None else ()))
+    try:
+        completed = _run_local_command(command)
+        host = json.loads(completed.stdout)[0]["Endpoints"]["docker"]["Host"]
+    except (OSError, subprocess.TimeoutExpired, ValueError, LookupError, TypeError) as exc:
+        raise ConfigurationError("could not resolve the Docker context endpoint") from exc
+    if not isinstance(host, str):
+        raise ConfigurationError("could not resolve the Docker context endpoint")
+    parsed = urllib.parse.urlsplit(host)
+    if parsed.scheme in ("unix", "npipe") or (
+        parsed.scheme == "tcp" and is_local_host(parsed.hostname or "")
+    ):
+        return
+    raise ConfigurationError(
+        "signoz.docker_context must target a Docker daemon on this machine, "
+        f"not {parsed.scheme}://{parsed.hostname or ''}"
+    )
+
+
 def docker_runner(config: AppConfig) -> SqlRunner:
-    """Return a runner that executes multi-statement SQL through ``clickhouse-client``."""
+    """Return a runner that executes multi-statement SQL through ``clickhouse-client``.
+
+    The first statement batch verifies that the Docker context targets a local daemon.
+    """
     # Without a configured context, docker uses the current one (`docker context show`).
     context = config.signoz.docker_context
     prefix = (
@@ -545,8 +572,13 @@ def docker_runner(config: AppConfig) -> SqlRunner:
         "clickhouse-client",
         "--multiquery",
     )
+    verified = False
 
     def run(sql: str) -> str:
+        nonlocal verified
+        if not verified:
+            _require_local_docker_context(context)
+            verified = True
         try:
             completed = subprocess.run(
                 prefix,
@@ -632,7 +664,7 @@ def _exception_line(text: str) -> str:
     return next((line for line in lines if "DB::Exception" in line), lines[-1] if lines else "")
 
 
-def _run_password_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+def _run_local_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
 
 
@@ -650,7 +682,7 @@ def clickhouse_password(signoz: SigNozConfig) -> str:
         return os.environ[signoz.clickhouse_password_env]
     if signoz.clickhouse_password_command is not None:
         try:
-            result = _run_password_command(signoz.clickhouse_password_command)
+            result = _run_local_command(signoz.clickhouse_password_command)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ConfigurationError("signoz.clickhouse_password_command could not run") from exc
         password = result.stdout.strip()
