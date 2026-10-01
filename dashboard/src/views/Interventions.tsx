@@ -179,6 +179,60 @@ const HarnessList = ({ value }: { value: unknown }) => {
 const fmtRatio = (value: unknown) =>
   value === null || value === undefined ? "—" : `${num(value).toFixed(2)}×`;
 
+const dailyFacts = (data: Record<string, Row[]>): DailyFacts => ({
+  clusters: data.cluster_daily ?? [],
+  corrections: data.correction_daily ?? [],
+  tasks: data.task_daily ?? [],
+});
+
+const BASELINE_SERIES = [
+  {
+    key: "failures",
+    label: "Cluster failures per 100 tasks",
+    color: SERIES[0]!,
+  },
+  {
+    key: "corrected",
+    label: "Corrections per 100 labelled tasks",
+    color: SERIES[1]!,
+  },
+];
+
+/** Cluster failures and corrections per day, as rates over that day's tasks. */
+function baselineByDay(daily: DailyFacts) {
+  const failuresByDay = groupSum(daily.clusters, "day", ["occurrences"]);
+  const correctedByDay = groupSum(daily.corrections, "day", [
+    "corrected",
+    "tasks",
+  ]);
+  const tasksByDay = groupSum(daily.tasks, "day", ["tasks"]);
+  return [...new Set([...tasksByDay.keys(), ...correctedByDay.keys()])]
+    .sort()
+    .map((day) => ({
+      day,
+      failures: ratio(
+        failuresByDay.get(day)?.occurrences ?? 0,
+        tasksByDay.get(day)?.tasks ?? 0,
+      ),
+      corrected: ratio(
+        correctedByDay.get(day)?.corrected ?? 0,
+        correctedByDay.get(day)?.tasks ?? 0,
+      ),
+    }));
+}
+
+const tierCounts = (proposals: Row[]) =>
+  [
+    ...groupSum(
+      proposals.map((row) => ({ ...row, n: 1 })),
+      "tier",
+      ["n"],
+    ),
+  ].map(([tier, sums]) => ({
+    tier: tier === "null" ? "not recorded" : tier,
+    proposals: sums.n,
+  }));
+
 export default function Interventions({
   data,
 }: {
@@ -198,11 +252,7 @@ export default function Interventions({
   const corrections = findings.filter(
     (row) => row.detector === CORRECTION_DETECTOR,
   );
-  const daily: DailyFacts = {
-    clusters: data.cluster_daily ?? [],
-    corrections: data.correction_daily ?? [],
-    tasks: data.task_daily ?? [],
-  };
+  const daily = dailyFacts(data);
   const comparisons = applied
     .filter((row) => {
       const at = Date.parse(String(row.applied_at));
@@ -216,49 +266,9 @@ export default function Interventions({
     "verdict",
     ["n"],
   );
-  const failuresByDay = groupSum(daily.clusters, "day", ["occurrences"]);
-  const correctedByDay = groupSum(daily.corrections, "day", [
-    "corrected",
-    "tasks",
-  ]);
-  const tasksByDay = groupSum(daily.tasks, "day", ["tasks"]);
-  const baseline = [
-    ...new Set([...tasksByDay.keys(), ...correctedByDay.keys()]),
-  ]
-    .sort()
-    .map((day) => ({
-      day,
-      failures: ratio(
-        failuresByDay.get(day)?.occurrences ?? 0,
-        tasksByDay.get(day)?.tasks ?? 0,
-      ),
-      corrected: ratio(
-        correctedByDay.get(day)?.corrected ?? 0,
-        correctedByDay.get(day)?.tasks ?? 0,
-      ),
-    }));
-  const tiers = [
-    ...groupSum(
-      proposals.map((row) => ({ ...row, n: 1 })),
-      "tier",
-      ["n"],
-    ),
-  ].map(([tier, sums]) => ({
-    tier: tier === "null" ? "not recorded" : tier,
-    proposals: sums.n,
-  }));
-  const baselineSeries = [
-    {
-      key: "failures",
-      label: "Cluster failures per 100 tasks",
-      color: SERIES[0]!,
-    },
-    {
-      key: "corrected",
-      label: "Corrections per 100 labelled tasks",
-      color: SERIES[1]!,
-    },
-  ];
+  const verdictCount = (verdict: string) => verdicts.get(verdict)?.n ?? 0;
+  const baseline = baselineByDay(daily);
+  const tiers = tierCounts(proposals);
   return (
     <>
       <Section title="At a glance">
@@ -277,7 +287,7 @@ export default function Interventions({
         <Kpi
           title="Applied interventions"
           value={fmtCount(applied.length)}
-          detail={`${fmtCount(verdicts.get("validated")?.n ?? 0)} validated · ${fmtCount(verdicts.get("regressed")?.n ?? 0)} regressed · ${fmtCount(verdicts.get("inconclusive")?.n ?? 0)} inconclusive`}
+          detail={`${fmtCount(verdictCount("validated"))} validated · ${fmtCount(verdictCount("regressed"))} regressed · ${fmtCount(verdictCount("inconclusive"))} inconclusive`}
           signals={["intervene.post_recurrence"]}
         />
         <Kpi
@@ -345,14 +355,14 @@ export default function Interventions({
         >
           <DailyChart
             rows={baseline}
-            series={baselineSeries}
+            series={BASELINE_SERIES}
             kind="line"
             format={(value) => (value === null ? "—" : value.toFixed(0))}
           />
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...baselineSeries.map((entry) => ({
+              ...BASELINE_SERIES.map((entry) => ({
                 key: entry.key,
                 label: entry.label,
                 numeric: true,

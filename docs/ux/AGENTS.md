@@ -17,15 +17,15 @@ disagrees with those standards, the standards win: fix this file. The decisions 
 
 ## Where things live
 
-| What | Path |
-| --- | --- |
-| Pages | `dashboard/src/views/` |
-| Shared components | `dashboard/src/components.tsx`, `dashboard/src/charts.tsx` |
-| Token mirror (values) | `dashboard/src/tokens.css` |
-| Token readers for code | `dashboard/src/tokens.ts` |
-| Chart palettes | `dashboard/src/format.ts` |
-| Numbers and logic | `dashboard/server/views.ts`, `dashboard/server/pipeline.ts` |
-| Review screenshots and score files (git-ignored) | `docs/ux/reviews/captures/` |
+| What                                             | Path                                                        |
+| ------------------------------------------------ | ----------------------------------------------------------- |
+| Pages                                            | `dashboard/src/views/`                                      |
+| Shared components                                | `dashboard/src/components.tsx`, `dashboard/src/charts.tsx`  |
+| Token mirror (values)                            | `dashboard/src/tokens.css`                                  |
+| Token readers for code                           | `dashboard/src/tokens.ts`                                   |
+| Chart palettes                                   | `dashboard/src/format.ts`                                   |
+| Numbers and logic                                | `dashboard/server/views.ts`, `dashboard/server/pipeline.ts` |
+| Review screenshots and score files (git-ignored) | `docs/ux/reviews/captures/`                                 |
 
 ## Conventions
 

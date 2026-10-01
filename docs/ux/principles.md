@@ -25,11 +25,11 @@ works (A1, A2, …).
 Every page opens on its answer: the thing a reader came to that page to learn. Depth is always one deliberate
 step away, never in the way.
 
-| Level | What it holds | How you get there |
-| --- | --- | --- |
-| **L1: glance** | The page's answer, in the form it takes on this page: a state, a few figures, a short list or one chart. Visible without scrolling at the fold budget. | Opening the page |
-| **L2: explain** | The chart, table, drivers or comparison behind the answer. | In place, next to what it explains: an expander, tab or popover. The L1 context stays visible. |
-| **L3: investigate** | Raw data, method, assumptions and history. | Its own page or view, linked from the L2 element it deepens. |
+| Level               | What it holds                                                                                                                                          | How you get there                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| **L1: glance**      | The page's answer, in the form it takes on this page: a state, a few figures, a short list or one chart. Visible without scrolling at the fold budget. | Opening the page                                                                               |
+| **L2: explain**     | The chart, table, drivers or comparison behind the answer.                                                                                             | In place, next to what it explains: an expander, tab or popover. The L1 context stays visible. |
+| **L3: investigate** | Raw data, method, assumptions and history.                                                                                                             | Its own page or view, linked from the L2 element it deepens.                                   |
 
 Rules:
 
@@ -40,8 +40,8 @@ Rules:
 
 ### P1. Every number explains itself
 
-A figure is finished only when a reader can answer *what, in what units, over what period, as of when, from
-where*:
+A figure is finished only when a reader can answer _what, in what units, over what period, as of when, from
+where_:
 
 1. **Label and unit** on the figure.
 2. **Basis:** state any adjustment (per item or total, gross or net, sampled or complete) once per page, and
@@ -103,7 +103,7 @@ where*:
 - **Height is the scarce axis.** L1 plus the start of the first L2 band fit in 1330 px. Prefer wide, short
   charts 280–360 px high, and side-by-side comparisons over stacked ones.
 - **Prose keeps a readable measure.** Paragraphs, callouts and lists are capped at about 80 characters a line
-  *within their column*. The layout gets wide, but text blocks don't.
+  _within their column_. The layout gets wide, but text blocks don't.
 - **Side-by-side for two or three options; a table for more.**
 - Below 1024 px wide the layout stacks to one column, with L1 still first. Phones are out of scope.
 

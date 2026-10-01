@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -183,7 +184,7 @@ def test_repo_registry_gives_every_harness_signal_a_record_for_every_harness() -
     harness_signals = [s["signal"] for s in registry.signals if s["scope"] == "harness"]
     assert len(registry.support) == 5 * len(harness_signals)
     views = {s["view"] for s in registry.signals}
-    assert views == set(facts.tomllib.loads(facts._sql(facts.REGISTRY_FILE))["views"])
+    assert views == set(tomllib.loads(facts._sql(facts.REGISTRY_FILE))["views"])
 
 
 def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
@@ -506,7 +507,7 @@ def test_http_runner_sends_one_statement_per_request_with_basic_auth(
     assert request.full_url == "http://localhost:8123/?wait_end_of_query=1"
     expected = base64.b64encode(b"facts:s3cret").decode()
     assert request.get_header("Authorization") == f"Basic {expected}"
-    assert timeout == 600.0
+    assert timeout == pytest.approx(600.0)
     assert facts.runner(_http_config()).__qualname__.startswith("http_runner")
     assert facts.runner(AppConfig()).__qualname__.startswith("docker_runner")
 
@@ -517,12 +518,13 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
     import io
     import urllib.error
     import urllib.request
+    from email.message import Message
 
     from agent_introspection.config import ConfigurationError
 
     def failing(request: Any, timeout: float) -> _Response:
         body = io.BytesIO(b"Code: 497. DB::Exception: facts: Not enough privileges\ntrace")
-        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, body)  # type: ignore[arg-type]
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), body)
 
     monkeypatch.setattr(urllib.request, "urlopen", failing)
     monkeypatch.setenv("CH_PASSWORD", "s3cret")

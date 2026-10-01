@@ -54,7 +54,7 @@ class SigNozConfig:
 
     @property
     def mode(self) -> Literal["docker", "http"]:
-        """Return ``http`` when a ClickHouse URL is configured, else ``docker``."""
+        """``http`` when a ClickHouse URL is configured, else ``docker``."""
         return "http" if self.clickhouse_url is not None else "docker"
 
 
@@ -71,23 +71,24 @@ _ROOT_KEYS = frozenset({"database", "signoz", "dashboard"})
 _DASHBOARD_KEYS = frozenset({"clickhouse_url"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _DOCKER_KEYS = frozenset({"clickhouse_container", "docker_context"})
-_HTTP_KEYS = frozenset(
-    {"clickhouse_url", "clickhouse_user", "clickhouse_password_env", "clickhouse_password_command"}
-)
+_HTTP_KEYS = frozenset({
+    "clickhouse_url",
+    "clickhouse_user",
+    "clickhouse_password_env",
+    "clickhouse_password_command",
+})
 _SIGNOZ_KEYS = _DOCKER_KEYS | _HTTP_KEYS | {"otlp_endpoint"}
 # Keys the retired scan pipeline read. They are still rejected, so stale settings
 # never look active, but the error names them as safe to delete.
 _RETIRED_KEYS = {
     "configuration": frozenset({"scheduler", "lifecycle", "legacy_project_attribution"}),
-    "signoz": frozenset(
-        {
-            "health_url",
-            "otlp_http_endpoint",
-            "compose_directory",
-            "collector_container",
-            "docker_host",
-        }
-    ),
+    "signoz": frozenset({
+        "health_url",
+        "otlp_http_endpoint",
+        "compose_directory",
+        "collector_container",
+        "docker_host",
+    }),
 }
 
 

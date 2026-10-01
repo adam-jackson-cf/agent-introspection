@@ -1,6 +1,6 @@
 ---
 name: "introspection-onboarding"
-description: "Install, reinstall, or validate Agent Introspection on this machine against the self-hosted SigNoz already running here: the SigNoz connection, the facts store, the launchd sync, and each harness's telemetry, hooks, and prompt export (omp, Codex, Claude Code). USE WHEN installing or reinstalling Agent Introspection, onboarding or re-checking a harness, or proving capture end to end. Local only: it never installs SigNoz."
+description: "Use when installing or reinstalling Agent Introspection, onboarding or re-checking a harness, or proving capture end to end. Installs, reinstalls, or validates Agent Introspection on this machine against the self-hosted SigNoz already running here: the SigNoz connection, the facts store, the launchd sync, and each harness's telemetry, hooks, and prompt export (omp, Codex, Claude Code). Local only: it never installs SigNoz."
 ---
 
 # Onboarding

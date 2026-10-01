@@ -17,7 +17,7 @@ reinstall it after a change that re-projects the facts or changes finding identi
   name, the user publishes it on loopback (their change to SigNoz, not ours).
 - A ClickHouse user with `SELECT` on `signoz_traces.*`, `signoz_logs.*`, and
   `system.view_refreshes`, plus `CREATE DATABASE, CREATE TABLE, CREATE VIEW,
-  DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
+DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
   default user usually has them).
 
 ## Steps

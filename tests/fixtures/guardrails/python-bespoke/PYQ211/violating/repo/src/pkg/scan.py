@@ -1,0 +1,2 @@
+class ScanAnalyzer(ProjectAnalyzerMixin):
+    pass

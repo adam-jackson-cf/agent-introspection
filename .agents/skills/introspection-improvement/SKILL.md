@@ -1,6 +1,6 @@
 ---
 name: "introspection-improvement"
-description: "Run the Agent Introspection improvement loop: find recurring agent problems, draft an evidence-backed intervention proposal, record the user's decision, record an applied fix, and evaluate whether it worked. USE WHEN asked what is going wrong with agents, to turn findings into proposals or fixes, to review, approve, or reject a proposal, to mark one applied, or to check whether an intervention worked."
+description: "Use when asked what is going wrong with agents, to turn findings into proposals or fixes, to review, approve, or reject a proposal, to mark one applied, or to check whether an intervention worked. Runs the Agent Introspection improvement loop: find recurring agent problems, draft an evidence-backed intervention proposal, record the user's decision, record an applied fix, and evaluate whether it worked."
 ---
 
 # Improvement loop

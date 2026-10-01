@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
+from agent_introspection.json_types import JsonMapping
+
 PURPOSE = "proposal"
 PROPOSAL_MODEL = "gpt-5.5"
 PROPOSAL_EFFORT = "high"
@@ -42,7 +44,7 @@ class ReviewEnvelope:
     payload_hash: str
     byte_count: int
     reserved_model_budget: int
-    payload: dict[str, Any]
+    payload: JsonMapping
 
     def as_dict(self) -> dict[str, Any]:
         return {

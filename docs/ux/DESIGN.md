@@ -372,16 +372,16 @@ The scale is one step larger than today: body text moves from 13px to 14px, and 
 (today table headers are 9px and chart ticks, contributors and captions 10–11px). Labels and table headers
 use sentence case, not tracked capitals.
 
-| Token | Use |
-| --- | --- |
-| `page-title` | The view title |
-| `band-title` | Band headings, the sub-questions |
-| `panel-title` | Panel titles |
-| `figure-lg` | Headline figures in "At a glance" |
-| `body-md` | The page question, notices and body text |
-| `label` | Figure labels, legends, filter labels, table cells, links |
-| `caption` | Panel subtitles, table headers, chart ticks, chips, popovers, info notes |
-| `mono` | Session IDs |
+| Token         | Use                                                                      |
+| ------------- | ------------------------------------------------------------------------ |
+| `page-title`  | The view title                                                           |
+| `band-title`  | Band headings, the sub-questions                                         |
+| `panel-title` | Panel titles                                                             |
+| `figure-lg`   | Headline figures in "At a glance"                                        |
+| `body-md`     | The page question, notices and body text                                 |
+| `label`       | Figure labels, legends, filter labels, table cells, links                |
+| `caption`     | Panel subtitles, table headers, chart ticks, chips, popovers, info notes |
+| `mono`        | Session IDs                                                              |
 
 Numbers always use tabular lining figures (`tnum`, `lnum`), so columns align. Don't highlight one word in a
 sentence with colour or italics.

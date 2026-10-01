@@ -63,7 +63,12 @@ separate explicit user request.
    `evidence.json` must report a passed validation with at least one named check:
 
    ```json
-   {"validation": {"status": "passed", "checks": ["uv run pytest", "quality gates"]}}
+   {
+     "validation": {
+       "status": "passed",
+       "checks": ["uv run pytest", "quality gates"]
+     }
+   }
    ```
 
    Any other shape, such as a missing `validation`, a `status` other than `passed`, or
@@ -85,8 +90,13 @@ separate explicit user request.
 A proposal's `predicted_success_metric` is structured:
 
 ```json
-{"metric": "cluster_task_rate", "harnesses": ["codex_exec"],
- "baseline_days": 14, "evaluation_days": 14, "max_ratio": 0.5}
+{
+  "metric": "cluster_task_rate",
+  "harnesses": ["codex_exec"],
+  "baseline_days": 14,
+  "evaluation_days": 14,
+  "max_ratio": 0.5
+}
 ```
 
 `cluster_task_rate` (failure clusters) is tasks that hit the cluster per task;

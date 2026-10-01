@@ -120,61 +120,53 @@ def _metric_schema(metrics: list[str], harnesses: list[str]) -> dict[str, Any]:
     harness: dict[str, Any] = {"type": "string"}
     if harnesses:
         harness["enum"] = harnesses
-    return _object(
-        {
-            "metric": {"type": "string", "enum": metrics},
-            "harnesses": {"type": "array", "items": harness, "minItems": 1},
-            "baseline_days": {"type": "integer", "minimum": MIN_METRIC_WINDOW_DAYS},
-            "evaluation_days": {"type": "integer", "minimum": MIN_METRIC_WINDOW_DAYS},
-            "max_ratio": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        }
-    )
+    return _object({
+        "metric": {"type": "string", "enum": metrics},
+        "harnesses": {"type": "array", "items": harness, "minItems": 1},
+        "baseline_days": {"type": "integer", "minimum": MIN_METRIC_WINDOW_DAYS},
+        "evaluation_days": {"type": "integer", "minimum": MIN_METRIC_WINDOW_DAYS},
+        "max_ratio": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    })
 
 
 def _proposal_schema(
     candidate_ids: list[str], metrics: list[str], harnesses: list[str]
 ) -> dict[str, Any]:
-    tier = _object(
-        {
-            "tier": {"type": "string", "enum": list(CANONICAL_TIER_LABELS)},
-            "can_enforce": {"type": "boolean"},
-            "reason_unavailable": {"type": ["string", "null"]},
-        }
-    )
-    handoff = _object(
-        {
-            "skill_name": {"type": "string"},
-            "workflow_owner": {"type": ["string", "null"]},
-            "ordered_steps": _string_list(),
-        }
-    )
-    return _object(
-        {
-            "finding_id": {"type": "string", "enum": candidate_ids},
-            "root_cause": {"type": "string"},
-            "trend_window": {"type": "string"},
-            "occurrence_count": {"type": "integer"},
-            "task_count": {"type": "integer"},
-            "day_count": {"type": "integer"},
-            "representative_evidence": _string_list(),
-            "membership_rationale": {"type": "string"},
-            "intervention_type": {"type": "string", "enum": [str(t) for t in InterventionType]},
-            "scope": {"type": "string"},
-            "target": {"type": "string"},
-            "intended_change": {"type": "string"},
-            "established_tool_audit": {
-                "type": "array",
-                "items": tier,
-                "minItems": len(CANONICAL_TIER_LABELS),
-                "maxItems": len(CANONICAL_TIER_LABELS),
-            },
-            "rejected_alternatives": _string_list(),
-            "validation_criteria": _string_list(),
-            "rollback_criteria": _string_list(),
-            "predicted_success_metric": _metric_schema(metrics, harnesses),
-            "create_skill_handoff": {"anyOf": [handoff, {"type": "null"}]},
-        }
-    )
+    tier = _object({
+        "tier": {"type": "string", "enum": list(CANONICAL_TIER_LABELS)},
+        "can_enforce": {"type": "boolean"},
+        "reason_unavailable": {"type": ["string", "null"]},
+    })
+    handoff = _object({
+        "skill_name": {"type": "string"},
+        "workflow_owner": {"type": ["string", "null"]},
+        "ordered_steps": _string_list(),
+    })
+    return _object({
+        "finding_id": {"type": "string", "enum": candidate_ids},
+        "root_cause": {"type": "string"},
+        "trend_window": {"type": "string"},
+        "occurrence_count": {"type": "integer"},
+        "task_count": {"type": "integer"},
+        "day_count": {"type": "integer"},
+        "representative_evidence": _string_list(),
+        "membership_rationale": {"type": "string"},
+        "intervention_type": {"type": "string", "enum": [str(t) for t in InterventionType]},
+        "scope": {"type": "string"},
+        "target": {"type": "string"},
+        "intended_change": {"type": "string"},
+        "established_tool_audit": {
+            "type": "array",
+            "items": tier,
+            "minItems": len(CANONICAL_TIER_LABELS),
+            "maxItems": len(CANONICAL_TIER_LABELS),
+        },
+        "rejected_alternatives": _string_list(),
+        "validation_criteria": _string_list(),
+        "rollback_criteria": _string_list(),
+        "predicted_success_metric": _metric_schema(metrics, harnesses),
+        "create_skill_handoff": {"anyOf": [handoff, {"type": "null"}]},
+    })
 
 
 def output_schema(review: dict[str, Any]) -> dict[str, Any]:
@@ -198,23 +190,19 @@ def output_schema(review: dict[str, Any]) -> dict[str, Any]:
             "requested_effort",
         )
     }
-    result = _object(
-        {
-            "candidate_id": {"type": "string", "enum": ids},
-            "proposal": _proposal_schema(ids, metrics, harnesses),
-        }
-    )
-    return _object(
-        {
-            **echo,
-            "results": {
-                "type": "array",
-                "items": result,
-                "minItems": len(ids),
-                "maxItems": len(ids),
-            },
-        }
-    )
+    result = _object({
+        "candidate_id": {"type": "string", "enum": ids},
+        "proposal": _proposal_schema(ids, metrics, harnesses),
+    })
+    return _object({
+        **echo,
+        "results": {
+            "type": "array",
+            "items": result,
+            "minItems": len(ids),
+            "maxItems": len(ids),
+        },
+    })
 
 
 _INSTRUCTIONS = f"""\

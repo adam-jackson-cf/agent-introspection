@@ -1,0 +1,12 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "fixture-dashboard",
+      "version": "1.0.0",
+      "dependencies": {
+        "react": "19.1.1",
+      },
+    },
+  },
+}

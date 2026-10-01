@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from agent_introspection import cli, facts, preflight
+from agent_introspection import facts, preflight
 from agent_introspection.cli import EXIT_FACTS, main
 from agent_introspection.config import AppConfig, ConfigurationError, parse_config
 from agent_introspection.facts import FactsError
@@ -39,9 +40,11 @@ def fake_clickhouse(
             "table = 'distributed_signoz_index_v3'": _columns(span_columns),
             "table = 'distributed_logs_v2'": _columns(preflight.LOG_COLUMNS),
             "SHOW GRANTS": show_grants,
-            "GROUP BY source, service": json.dumps(
-                {"source": "spans", "service": "claude-code", "rows": "3"}
-            ),
+            "GROUP BY source, service": json.dumps({
+                "source": "spans",
+                "service": "claude-code",
+                "rows": "3",
+            }),
         }
         if sql.startswith("CHECK GRANT"):
             if grants is None:
@@ -52,8 +55,8 @@ def fake_clickhouse(
     return executed, run
 
 
-def _statuses(result: dict[str, object]) -> dict[str, str]:
-    return {check["name"]: check["status"] for check in result["checks"]}  # type: ignore[attr-defined]
+def _statuses(result: dict[str, Any]) -> dict[str, str]:
+    return {check["name"]: check["status"] for check in result["checks"]}
 
 
 def test_preflight_passes_a_compatible_server_and_only_reads() -> None:
@@ -130,14 +133,12 @@ def test_only_a_local_signoz_is_accepted() -> None:
         with pytest.raises(ConfigurationError, match="this machine"):
             parse_config({"signoz": {"clickhouse_url": f"http://{host}:8123"}})
     with pytest.raises(ConfigurationError, match="this machine"):
-        parse_config(
-            {
-                "signoz": {
-                    "clickhouse_url": "http://127.0.0.1:8123",
-                    "otlp_endpoint": "http://otel.io",
-                }
+        parse_config({
+            "signoz": {
+                "clickhouse_url": "http://127.0.0.1:8123",
+                "otlp_endpoint": "http://otel.io",
             }
-        )
+        })
     for host in ("127.0.0.1", "[::1]", "localhost", "signoz-clickhouse.orb.local"):
         local = parse_config({"signoz": {"clickhouse_url": f"http://{host}:8123"}})
         assert _statuses(preflight.preflight(run, local))["transport"] == "pass"
@@ -172,11 +173,11 @@ def test_cli_preflight_prints_every_check_and_exits_non_zero_on_failure(
     config = tmp_path / "config.toml"
     config.write_text("")
     _, run = fake_clickhouse(version="23.8.1", grants={})
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: run)
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
 
     assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
     assert json.loads(capsys.readouterr().out)["passed"] is False
 
     _, healthy = fake_clickhouse(grants={})
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: healthy)
+    monkeypatch.setattr(facts, "runner", lambda _config: healthy)
     assert main(["--config", str(config), "facts", "preflight"]) == 0

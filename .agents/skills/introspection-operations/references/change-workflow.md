@@ -37,7 +37,7 @@ for: `aligned`, `differs` (another route; the note says how), or `not applicable
    union of per-harness rows; ratios aggregate before dividing; info notes come only
    from the registry.
 5. **Apply**:
-   - `uv run python scripts/render_measures.py` (regenerates Measure v3 and the
+   - `uv run python scripts/render-measures.py` (regenerates Measure v3 and the
      data-gaps doc; a test fails when they drift);
    - `bash scripts/run-ci-quality-gates.sh`;
    - `uv tool install --force --reinstall .` after any Python change;

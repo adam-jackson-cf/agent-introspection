@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Any
 
 from agent_introspection.interventions import CANONICAL_TIER_LABELS, InterventionType
+from agent_introspection.json_types import JsonMapping, JsonObject
 
 
 class ProposalState(StrEnum):
@@ -73,7 +74,7 @@ def _transaction(
     return nullcontext()
 
 
-def require_successful_validation(evidence: dict[str, Any]) -> None:
+def require_successful_validation(evidence: JsonMapping) -> None:
     """Require evidence of the form {"validation": {"status": "passed", "checks": [...]}}."""
     validation = evidence.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
@@ -94,9 +95,13 @@ CLUSTER_TASK_RATE = "cluster_task_rate"
 CORRECTION_TASK_RATE = "correction_task_rate"
 SUCCESS_METRICS = (CLUSTER_TASK_RATE, CORRECTION_TASK_RATE)
 MIN_METRIC_WINDOW_DAYS = 7
-_SUCCESS_METRIC_KEYS = frozenset(
-    {"metric", "harnesses", "baseline_days", "evaluation_days", "max_ratio"}
-)
+_SUCCESS_METRIC_KEYS = frozenset({
+    "metric",
+    "harnesses",
+    "baseline_days",
+    "evaluation_days",
+    "max_ratio",
+})
 
 
 @dataclass(frozen=True)
@@ -178,8 +183,8 @@ class ProposalInput:
     rejected_alternatives: list[str]
     validation_criteria: list[str]
     rollback_criteria: list[str]
-    predicted_success_metric: dict[str, Any]
-    create_skill_handoff: dict[str, Any] | None = None
+    predicted_success_metric: JsonObject
+    create_skill_handoff: JsonObject | None = None
 
     def __post_init__(self) -> None:
         SuccessMetric.parse(self.predicted_success_metric)
@@ -224,7 +229,7 @@ class TransitionProposalRequest:
     proposal_id: str
     target_state: ProposalState
     actor: str
-    evidence: dict[str, Any]
+    evidence: JsonMapping
     explicit_application_request: bool = False
 
 

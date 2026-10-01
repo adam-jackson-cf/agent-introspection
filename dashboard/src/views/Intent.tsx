@@ -51,6 +51,9 @@ const words = (value: unknown) => String(value ?? "").replaceAll("_", " ");
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
 
+const stringList = (value: unknown) =>
+  Array.isArray(value) ? value.map(String) : [];
+
 /**
  * Recombines per-harness rows of one (project, correction kind) into a single
  * row: tasks and sessions are harness-scoped, so they sum.
@@ -73,11 +76,7 @@ export function recombineCorrections(rows: Row[]): Row[] {
         tasks: sums.tasks!,
         sessions: sums.sessions!,
         task_types: [
-          ...new Set(
-            members.flatMap((row) =>
-              Array.isArray(row.task_types) ? row.task_types.map(String) : [],
-            ),
-          ),
+          ...new Set(members.flatMap((row) => stringList(row.task_types))),
         ].sort((a, b) => typeRank(a) - typeRank(b)),
         last_seen: members
           .map((row) => String(row.last_seen ?? ""))

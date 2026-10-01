@@ -1,6 +1,6 @@
 ---
 name: "python-conventions"
-description: "Guide Python naming, package structure, code-object choices, and this repository's Python quality gates. USE WHEN writing or refactoring Python code in agent-introspection (src/, tests/, scripts/, or .agents adapters)."
+description: "Use when writing or refactoring Python code in agent-introspection (src/, tests/, scripts/, or .agents adapters). Guides Python naming, package structure, code-object choices, and this repository's Python quality gates."
 ---
 
 # Guidance

@@ -147,6 +147,12 @@ def clip(text: str, limit: int = PROMPT_CHAR_LIMIT) -> str:
     return f"{text[:head]}\n…[{len(text) - head - tail} characters omitted]…\n{text[-tail:]}"
 
 
+def _run_omp_token() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["omp", "token", "openrouter"], capture_output=True, text=True, timeout=10, check=False
+    )
+
+
 def api_key() -> str:
     """Return the OpenRouter key from the environment or omp's stored credential."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
@@ -154,9 +160,7 @@ def api_key() -> str:
         return key
     missing = "no OpenRouter key: set OPENROUTER_API_KEY or log in to omp"
     try:
-        result = subprocess.run(
-            ["omp", "token", "openrouter"], capture_output=True, text=True, timeout=10, check=False
-        )
+        result = _run_omp_token()
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise JevUnavailableError(missing) from exc
     key = result.stdout.strip()

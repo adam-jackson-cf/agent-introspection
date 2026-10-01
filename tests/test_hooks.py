@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from agent_introspection import hooks, projects
+from tests.test_projects import recorder
 
 SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
 NOW = datetime(2026, 9, 30, 12, 0, 0, 123456, tzinfo=UTC)
@@ -378,7 +379,7 @@ def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
     hooks.write(item, inbox)
     executed: list[str] = []
 
-    result = projects.sync(lambda sql: executed.append(sql) or "", inbox=inbox)
+    result = projects.sync(recorder(executed), inbox=inbox)
 
     assert result["hook_events"] == 1
     assert result["invalid"] == 0
@@ -390,7 +391,7 @@ def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
     literal = statement.split("Float64)', '", 1)[1].rsplit("') SETTINGS", 1)[0]
     row = json.loads(literal.replace("\\'", "'").replace("\\\\", "\\"))
     assert row["attrs_string"]["targets"] == '["~/p/a.py"]'
-    assert row["attrs_number"]["gate_bypass"] == 0.0
+    assert row["attrs_number"]["gate_bypass"] == 0
     assert row["attrs_string"]["tool_name"] == "Edit"
     assert "arguments_length" in row["attrs_number"]
     assert list(inbox.iterdir()) == []
@@ -424,7 +425,7 @@ def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -
     for _ in range(100):
         if received.exists():
             break
-        subprocess.run(["sleep", "0.05"], check=True)
+        subprocess.run(["sleep", "0.05"], check=True, timeout=10)
     assert received.read_text() == '{"session_id": "s"}'
 
 
@@ -447,7 +448,7 @@ ORCA = {
 def test_claude_installer_is_idempotent_preserves_others_and_removes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    installer = load_script("adapters/claude-code/install-activity.py")
+    installer = load_script("adapters/claude-code/install_activity.py")
     settings = tmp_path / "settings.json"
     original = {
         "env": {"A": "1"},

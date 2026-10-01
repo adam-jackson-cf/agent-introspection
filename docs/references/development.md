@@ -18,9 +18,9 @@ suite, `scripts/run-ci-quality-gates.sh`, used by both pre-commit and CI.
 
    ```sh
    uv sync
-   uv run ruff check .
+   uv run ruff check --no-fix .
    uv run ruff format --check .
-   uv run mypy src
+   uv run python scripts/check-python-mypy.py
    uv run pytest
    ```
 
@@ -50,8 +50,49 @@ suite, `scripts/run-ci-quality-gates.sh`, used by both pre-commit and CI.
    bun run --cwd dashboard start
    ```
 
-5. After any Python change, reinstall the standalone CLI, because the launchd job and
+5. Auto-fix is opt-in and separate from the check-only suite:
+   `bash scripts/run-ci-quality-gates.sh --fix` formats and fixes, and
+   `--fix --stage` also re-stages the files it changed. Pre-commit runs the
+   check-only suite.
+
+6. After any Python change, reinstall the standalone CLI, because the launchd job and
    every activity hook run that copy: `uv tool install --force --reinstall .`
+
+## Guardrails
+
+`scripts/run-ci-quality-gates.sh` is the single runner for pre-commit and CI. Besides
+Ruff, mypy (`src`, `scripts`, `tests` and each `.agents` skill script), pytest with
+coverage, oxlint, markdownlint, Prettier and the dashboard checks, it runs the
+repository-owned checkers in `scripts/`:
+
+- `check-python-quality.py`, `check-python-scalability.py` and `check-python-fanout.py`
+  enforce structure, class shape, subprocess seams and fan-out limits.
+- `check-python-suppressions.py` fails when `noqa`, `type: ignore` or Ruff/mypy
+  ignore settings grow past `scripts/python-suppression-baseline.json`. Fix the code;
+  update the baseline only to record a reviewed removal.
+- `check-coverage-slice.py`, `check-lock-parity.py`, `check-skill-metadata.py`,
+  `check-test-subprocess-timeouts.py` and `check-typescript-limits.ts` cover the
+  remaining rules.
+- `validate-rule-coverage.py` checks `docs/guardrails/coverage-ledger.json` against
+  the rule catalog `docs/guardrails/enaible-rules.json`. Locally it validates the
+  ledger structure only; under `CI=true` it also runs every rule canary
+  (about 40 seconds).
+- `CI=true` additionally runs `check-runner-failure-propagation.py` (proves a
+  failing step fails the runner) and `check-dependency-audit.py` (needs network).
+  GitHub Actions sets `CI=true`; export it to reproduce the CI run locally.
+
+Script layout: command scripts directly under `scripts/` use kebab-case names, and
+importable helper modules live in `scripts/lib/` with snake-case names. Flat
+`tests/test_*.py` files count as the `unit` test group. Canary fixtures under
+`tests/fixtures/guardrails/` deliberately violate rules and are excluded from every
+linter and from pytest collection. To add or change a rule, update its checker, its
+fixtures and its ledger row together, then run the full validator:
+
+```sh
+uv run python scripts/validate-rule-coverage.py --root . \
+  --catalog docs/guardrails/enaible-rules.json \
+  --ledger docs/guardrails/coverage-ledger.json
+```
 
 ## What To Check
 

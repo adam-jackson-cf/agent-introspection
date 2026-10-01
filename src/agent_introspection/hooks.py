@@ -127,47 +127,45 @@ def command_head(tokens: list[str]) -> str:
 
 # Only tools whose second token is a subcommand keep it, so a free-text argument
 # (`echo word`) never becomes a stored subcommand. Mirrors select_logs.sql.
-SUBCOMMAND_HEADS = frozenset(
-    (
-        "aws",
-        "brew",
-        "bun",
-        "bunx",
-        "cargo",
-        "claude",
-        "clawpatch",
-        "codegraph",
-        "codex",
-        "defaults",
-        "deno",
-        "docker",
-        "gcloud",
-        "gh",
-        "git",
-        "go",
-        "hdiutil",
-        "helm",
-        "infisical",
-        "just",
-        "kubectl",
-        "launchctl",
-        "make",
-        "npm",
-        "npx",
-        "omp",
-        "orca",
-        "pip",
-        "pipx",
-        "pnpm",
-        "poetry",
-        "security",
-        "systemctl",
-        "terraform",
-        "uv",
-        "volta",
-        "yarn",
-    )
-)
+SUBCOMMAND_HEADS = frozenset((
+    "aws",
+    "brew",
+    "bun",
+    "bunx",
+    "cargo",
+    "claude",
+    "clawpatch",
+    "codegraph",
+    "codex",
+    "defaults",
+    "deno",
+    "docker",
+    "gcloud",
+    "gh",
+    "git",
+    "go",
+    "hdiutil",
+    "helm",
+    "infisical",
+    "just",
+    "kubectl",
+    "launchctl",
+    "make",
+    "npm",
+    "npx",
+    "omp",
+    "orca",
+    "pip",
+    "pipx",
+    "pnpm",
+    "poetry",
+    "security",
+    "systemctl",
+    "terraform",
+    "uv",
+    "volta",
+    "yarn",
+))
 
 
 def command_sub(tokens: list[str]) -> str:
@@ -243,12 +241,15 @@ def failure_signature(output: str) -> str:
 # --- Records ----------------------------------------------------------------------
 
 
+type Clock = Callable[[], datetime]
+
+
 @dataclass
 class Context:
     """Where turn state lives, and the clock records are stamped with."""
 
     state_dir: Path = field(default_factory=lambda: STATE_DIR)
-    now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    now: Clock = field(default=lambda: datetime.now(UTC))
 
 
 def timestamp(moment: datetime) -> str:

@@ -87,6 +87,16 @@ export function routeCountQueries(registry: Registry): Record<string, string> {
   return queries;
 }
 
+function harnessCounts(rows: Row[], index: number) {
+  const totals = new Map<string, number>();
+  const rest = new Map<string, number>();
+  for (const row of rows) {
+    totals.set(String(row.harness), Number(row[`t${index}`]));
+    rest.set(String(row.harness), Number(row[`u${index}`]));
+  }
+  return [totals, rest] as const;
+}
+
 /** Interprets the per-source count rows of `routeCountQueries`. */
 export function countsFromRows(
   registry: Registry,
@@ -96,12 +106,7 @@ export function countsFromRows(
   const unexplained = new Map<string, Map<string, number>>();
   for (const source of SOURCES)
     routePredicates(registry, source).forEach(([route], index) => {
-      const totals = new Map<string, number>();
-      const rest = new Map<string, number>();
-      for (const row of rows[source] ?? []) {
-        totals.set(String(row.harness), Number(row[`t${index}`]));
-        rest.set(String(row.harness), Number(row[`u${index}`]));
-      }
+      const [totals, rest] = harnessCounts(rows[source] ?? [], index);
       total.set(route, totals);
       unexplained.set(route, rest);
     });
@@ -154,6 +159,75 @@ export type CoverageState =
   | "stray (explained)"
   | "stray (unexplained)";
 
+const harnessesWithRows = (registry: Registry, counts: RouteCounts) => {
+  const active = new Set<string>();
+  for (const route of registry.routes)
+    if ((counts.total.get(route.route)?.get(route.harness) ?? 0) > 0)
+      active.add(route.harness);
+  return active;
+};
+
+const hasRoute = (registry: Registry, route: string, harness: Harness) =>
+  registry.routes.some(
+    (candidate: SignalRoute) =>
+      candidate.route === route && candidate.harness === harness,
+  );
+
+/** Rows and unexplained rows on the signal's routes that are not this harness's own. */
+function foreignCounts(
+  registry: Registry,
+  counts: RouteCounts,
+  signalRoutes: Set<string>,
+  own: { route: string; harness: Harness },
+): { foreign: number; unexplained: number } {
+  let foreign = 0;
+  let unexplained = 0;
+  const others = [...signalRoutes].filter(
+    (route) => route !== own.route && !hasRoute(registry, route, own.harness),
+  );
+  for (const route of others) {
+    foreign += counts.total.get(route)?.get(own.harness) ?? 0;
+    unexplained += counts.unexplained.get(route)?.get(own.harness) ?? 0;
+  }
+  return { foreign, unexplained };
+}
+
+type CellCounts = { own: number; foreign: number; unexplained: number };
+
+function notApplicableState(cell: CellCounts): CoverageState {
+  if (cell.unexplained > 0 || cell.own > 0) return "stray (unexplained)";
+  return cell.foreign > 0 ? "stray (explained)" : "not applicable";
+}
+
+function silentState(
+  registry: Registry,
+  support: Registry["support"][number],
+  harness: Harness,
+  active: Set<string>,
+): CoverageState {
+  if (!active.has(harness)) return "idle";
+  const expectsEvents = registry.routes.some(
+    (route) =>
+      route.route === support.route &&
+      route.harness === harness &&
+      route.expect === "events",
+  );
+  return expectsEvents ? "no events" : "possible break";
+}
+
+function coverageState(
+  registry: Registry,
+  support: Registry["support"][number],
+  harness: Harness,
+  active: Set<string>,
+  cell: CellCounts,
+): CoverageState {
+  if (support.alignment === "not applicable") return notApplicableState(cell);
+  if (cell.own > 0)
+    return cell.unexplained > 0 ? "stray (unexplained)" : "healthy";
+  return silentState(registry, support, harness, active);
+}
+
 /**
  * Coverage grid: registry alignment versus data per signal × harness. A harness
  * is active when any of its routes has rows in the window, so a route without
@@ -164,10 +238,7 @@ export type CoverageState =
  * applicable to a harness should have no rows at all, so any rows flag it.
  */
 export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
-  const active = new Set<string>();
-  for (const route of registry.routes)
-    if ((counts.total.get(route.route)?.get(route.harness) ?? 0) > 0)
-      active.add(route.harness);
+  const active = harnessesWithRows(registry, counts);
   const rows: Row[] = [];
   for (const signal of registry.signals) {
     if (signal.scope !== "harness") continue;
@@ -183,41 +254,17 @@ export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
         support.route === ""
           ? 0
           : (counts.total.get(support.route)?.get(harness) ?? 0);
-      let foreign = 0;
-      let unexplained = 0;
-      for (const route of signalRoutes) {
-        if (route === support.route) continue;
-        if (
-          registry.routes.some(
-            (candidate: SignalRoute) =>
-              candidate.route === route && candidate.harness === harness,
-          )
-        )
-          continue;
-        foreign += counts.total.get(route)?.get(harness) ?? 0;
-        unexplained += counts.unexplained.get(route)?.get(harness) ?? 0;
-      }
-      const state: CoverageState =
-        support.alignment === "not applicable"
-          ? unexplained > 0 || own > 0
-            ? "stray (unexplained)"
-            : foreign > 0
-              ? "stray (explained)"
-              : "not applicable"
-          : own > 0
-            ? unexplained > 0
-              ? "stray (unexplained)"
-              : "healthy"
-            : !active.has(harness)
-              ? "idle"
-              : registry.routes.some(
-                    (route) =>
-                      route.route === support.route &&
-                      route.harness === harness &&
-                      route.expect === "events",
-                  )
-                ? "no events"
-                : "possible break";
+      const { foreign, unexplained } = foreignCounts(
+        registry,
+        counts,
+        signalRoutes,
+        { route: support.route, harness },
+      );
+      const state = coverageState(registry, support, harness, active, {
+        own,
+        foreign,
+        unexplained,
+      });
       rows.push({
         signal: signal.signal,
         title: signal.title,
@@ -421,6 +468,9 @@ export function recombinationQueries(): Record<string, string> {
   return queries;
 }
 
+const sumMeasure = (grouped: Row[], name: string): number =>
+  grouped.reduce((total, row) => total + Number(row[name] ?? 0), 0);
+
 /** Compares each direct All aggregate with the sum of its per-harness rows. */
 export function recombine(results: Record<string, Row[]>): Row[] {
   const rows: Row[] = [];
@@ -429,10 +479,7 @@ export function recombine(results: Record<string, Row[]>): Row[] {
     const grouped = results[`${check}:harness`] ?? [];
     for (const name of measureNames(spec.measures)) {
       const direct = Number(all[0]?.[name] ?? 0);
-      const summed = grouped.reduce(
-        (total, row) => total + Number(row[name] ?? 0),
-        0,
-      );
+      const summed = sumMeasure(grouped, name);
       rows.push({
         check,
         measure: name,

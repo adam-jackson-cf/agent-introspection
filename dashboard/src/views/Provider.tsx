@@ -15,20 +15,12 @@ import {
   sumRows,
 } from "../format";
 
-export default function Provider({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+/** One row per harness with its own retry route; zero is a valid observation
+ * for a harness with model calls, and a harness without calls has no row. */
+function retryRows(data: Record<string, Row[]>): Row[] {
   const kpi = data.kpi ?? [];
-  const all = sumRows(kpi, [
-    "calls",
-    "failed",
-    "cancelled",
-    "unknown",
-    "retried",
-    "attempt_den",
-  ]);
-  const sampling = data.codex_sampling ?? [];
   const codexRetries = [
-    ...groupSum(sampling, "harness", ["steps", "attempts"]),
+    ...groupSum(data.codex_sampling ?? [], "harness", ["steps", "attempts"]),
   ].map(([harness, sums]) => ({
     harness,
     steps: sums.steps!,
@@ -39,9 +31,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
   const claudeKpi = kpi.find((row) => row.harness === "claude-code");
   const ompKpi = kpi.find((row) => row.harness === "oh-my-pi");
   const ompRetries = num(data.omp_retries?.[0]?.retries);
-  // One row per harness with its own retry route; zero is a valid observation
-  // for a harness with model calls, and a harness without calls has no row.
-  const retries: Row[] = [
+  return [
     ...codexRetries.map((row) => ({
       harness: row.harness,
       extra: row.extra,
@@ -66,6 +56,42 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
         ]
       : []),
   ];
+}
+
+/** Codex latency is the sampling step; other harnesses keep their own rows. */
+function latencyRows(data: Record<string, Row[]>): Row[] {
+  const sampling = data.codex_sampling ?? [];
+  const latency = data.latency ?? [];
+  return [
+    ...latency.filter((row) => !String(row.harness).startsWith("codex")),
+    ...latency
+      .filter((row) => String(row.harness).startsWith("codex"))
+      .map((row) => {
+        const step = sampling.find(
+          (entry) => entry.harness === row.harness && entry.model === row.model,
+        );
+        return {
+          ...row,
+          p50: step?.p50 ?? null,
+          p95: step?.p95 ?? null,
+        } as Row;
+      }),
+  ].sort((a, b) => num(b.calls) - num(a.calls));
+}
+
+export default function Provider({ data }: { data: Record<string, Row[]> }) {
+  const { filters } = useView();
+  const kpi = data.kpi ?? [];
+  const all = sumRows(kpi, [
+    "calls",
+    "failed",
+    "cancelled",
+    "unknown",
+    "retried",
+    "attempt_den",
+  ]);
+  const daily = data.daily ?? [];
+  const retries = retryRows(data);
   const extraAttempts = retries.reduce(
     (total, row) => total + num(row.extra),
     0,
@@ -77,7 +103,6 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const daily = data.daily ?? [];
   const errorDaily = pivotDaily(
     daily,
     (row) => String(row.harness),
@@ -92,23 +117,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
     };
     return days;
   }, {});
-  const latency: Row[] = [
-    ...(data.latency ?? []).filter(
-      (row) => !String(row.harness).startsWith("codex"),
-    ),
-    ...(data.latency ?? [])
-      .filter((row) => String(row.harness).startsWith("codex"))
-      .map((row) => {
-        const step = sampling.find(
-          (entry) => entry.harness === row.harness && entry.model === row.model,
-        );
-        return {
-          ...row,
-          p50: step?.p50 ?? null,
-          p95: step?.p95 ?? null,
-        } as Row;
-      }),
-  ].sort((a, b) => num(b.calls) - num(a.calls));
+  const latency = latencyRows(data);
   return (
     <>
       <Section title="At a glance">

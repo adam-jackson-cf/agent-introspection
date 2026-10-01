@@ -16,7 +16,7 @@ import subprocess
 import tomllib
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
@@ -250,15 +250,13 @@ def _parse_strays(entries: list[dict[str, Any]], harnesses: dict[str, str]) -> l
         _require(harness in harnesses, f"{stray}: unknown harness")
         source = _text(entry, "source", stray)
         _require(source in _SOURCES, f"{stray}: source must be one of {', '.join(_SOURCES)}")
-        rows.append(
-            {
-                "stray": stray,
-                "harness": harness,
-                "source": source,
-                "match": _text(entry, "match", stray),
-                "reason": _text(entry, "reason", stray),
-            }
-        )
+        rows.append({
+            "stray": stray,
+            "harness": harness,
+            "source": source,
+            "match": _text(entry, "match", stray),
+            "reason": _text(entry, "reason", stray),
+        })
     return rows
 
 
@@ -301,17 +299,15 @@ def _parse_support(
         _require(
             alignment == "aligned" or note != "", f"{signal}/{harness}: {alignment} needs a note"
         )
-        rows.append(
-            {
-                "signal": signal,
-                "harness": harness,
-                "harness_label": label,
-                "route": route,
-                "unit": unit,
-                "alignment": alignment,
-                "note": note,
-            }
-        )
+        rows.append({
+            "signal": signal,
+            "harness": harness,
+            "harness_label": label,
+            "route": route,
+            "unit": unit,
+            "alignment": alignment,
+            "note": note,
+        })
     return rows
 
 
@@ -325,15 +321,13 @@ def _parse_excluded(
         _require(view in views, f"{signal}: unknown view {view}")
         missing = cast(list[str], entry.get("missing", []))
         _require(bool(missing) and set(missing) <= set(harnesses), f"{signal}: unknown harness")
-        rows.append(
-            {
-                "signal": signal,
-                "view": view,
-                "title": _text(entry, "title", signal),
-                "missing": ", ".join(harnesses[harness] for harness in missing),
-                "reason": _text(entry, "reason", signal),
-            }
-        )
+        rows.append({
+            "signal": signal,
+            "view": view,
+            "title": _text(entry, "title", signal),
+            "missing": ", ".join(harnesses[harness] for harness in missing),
+            "reason": _text(entry, "reason", signal),
+        })
     return rows
 
 
@@ -353,20 +347,18 @@ def parse_registry(document: dict[str, Any]) -> Registry:
         scope = entry.get("scope", "harness")
         _require(scope in ("harness", "system"), f"{signal}: scope must be harness or system")
         unit = _text(entry, "unit", signal)
-        signals.append(
-            {
-                "signal": signal,
-                "view": view,
-                "view_title": views[view],
-                "view_order": list(views).index(view),
-                "title": _text(entry, "title", signal),
-                "question": _text(entry, "question", signal),
-                "unit": unit,
-                "formula": _text(entry, "formula", signal),
-                "scope": scope,
-                "sort": order,
-            }
-        )
+        signals.append({
+            "signal": signal,
+            "view": view,
+            "view_title": views[view],
+            "view_order": list(views).index(view),
+            "title": _text(entry, "title", signal),
+            "question": _text(entry, "question", signal),
+            "unit": unit,
+            "formula": _text(entry, "formula", signal),
+            "scope": scope,
+            "sort": order,
+        })
         declared = cast(dict[str, dict[str, str]], entry.get("support", {}))
         if scope == "system":
             _require(not declared, f"{signal}: system signals have no per-harness support")
@@ -560,6 +552,10 @@ def _exception_line(text: str) -> str:
     return next((line for line in lines if "DB::Exception" in line), lines[-1] if lines else "")
 
 
+def _run_password_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
+
+
 def clickhouse_password(signoz: SigNozConfig) -> str:
     """Return the HTTP-mode password from its environment variable or command.
 
@@ -574,13 +570,7 @@ def clickhouse_password(signoz: SigNozConfig) -> str:
         return os.environ[signoz.clickhouse_password_env]
     if signoz.clickhouse_password_command is not None:
         try:
-            result = subprocess.run(
-                signoz.clickhouse_password_command,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
+            result = _run_password_command(signoz.clickhouse_password_command)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ConfigurationError("signoz.clickhouse_password_command could not run") from exc
         password = result.stdout.strip()

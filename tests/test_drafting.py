@@ -160,7 +160,7 @@ def test_dry_run_prints_the_command_without_reserving_a_session(tmp_path: Path) 
 
 
 def test_working_directory_falls_back_when_the_project_root_is_missing(tmp_path: Path) -> None:
-    review = {"payload": {"candidates": [{"project_root": str(tmp_path / "gone")}]}}
+    review: dict[str, Any] = {"payload": {"candidates": [{"project_root": str(tmp_path / "gone")}]}}
     assert drafting.working_directory(review, tmp_path) == tmp_path
     review = {"payload": {"candidates": [{"project_root": None}]}}
     assert drafting.working_directory(review, tmp_path) == tmp_path

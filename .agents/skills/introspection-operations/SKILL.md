@@ -1,6 +1,6 @@
 ---
 name: "introspection-operations"
-description: "Check and change the Agent Introspection facts store safely. USE WHEN checking health (preflight, loaders, freshness, parity, sanitization, coverage grid, inbox, prompt labels), or changing a projection, fact view, or registry entry: adding, changing, closing (including with a new hook event), or excluding a dashboard signal, then reinstalling or backfilling."
+description: "Use when checking health (preflight, loaders, freshness, parity, sanitization, coverage grid, inbox, prompt labels), or changing a projection, fact view, or registry entry: adding, changing, closing (including with a new hook event), or excluding a dashboard signal, then reinstalling or backfilling. Checks and changes the Agent Introspection facts store safely."
 ---
 
 # Operations

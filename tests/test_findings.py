@@ -3,12 +3,11 @@ import sqlite3
 from pathlib import Path
 
 from agent_introspection import findings
+from agent_introspection.facts import SqlRunner
 from agent_introspection.workflow import connect_workflow
 
 
-def window(
-    *rows: dict[str, object], corrections: tuple[dict[str, object], ...] = ()
-) -> findings.SqlRunner:
+def window(*rows: dict[str, object], corrections: tuple[dict[str, object], ...] = ()) -> SqlRunner:
     def run(sql: str) -> str:
         chosen = corrections if sql == findings.CORRECTION_QUERY else rows
         return "\n".join(json.dumps(row) for row in chosen)

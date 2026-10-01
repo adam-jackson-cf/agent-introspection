@@ -10,7 +10,7 @@ scripts/
 ├── activity-shim.sh                  # activity hooks: detach `agent-introspection hook`
 ├── README.md                          # shared contract and SigNoz data flow
 └── adapters/
-    ├── claude-code/                   # Claude Code hook adapter, install-activity.py
+    ├── claude-code/                   # Claude Code hook adapter, install_activity.py
     ├── codex-cli/                     # Codex CLI notify adapter
     ├── codex-app-server/              # Desktop global hook installer and adapter
     └── omp/                           # OMP extension adapter, activity.ts
@@ -37,24 +37,24 @@ flowchart LR
 
 ```ts
 type SessionContextEvent = {
-  event_id: string // SHA-256 of producer, session ID, event type, time, and Git root
-  producer: "claude-code" | "codex-cli" | "codex-app-server" | "omp"
-  session_id: string
+  event_id: string; // SHA-256 of producer, session ID, event type, time, and Git root
+  producer: "claude-code" | "codex-cli" | "codex-app-server" | "omp";
+  session_id: string;
   event_type:
     | "session_start"
     | "workspace_changed"
     | "session_end"
-    | "session_context" // Codex CLI only
-  occurred_at: string // RFC3339 with an offset
+    | "session_context"; // Codex CLI only
+  occurred_at: string; // RFC3339 with an offset
   agent: {
     project: {
-      id: string // SHA-256 of "git\0" + the normalized Git root
-      name: string
-      root: string // normalized absolute Git root
-      kind: "git"
-    }
-  }
-}
+      id: string; // SHA-256 of "git\0" + the normalized Git root
+      name: string;
+      root: string; // normalized absolute Git root
+      kind: "git";
+    };
+  };
+};
 ```
 
 `session_context` records are Codex CLI project evidence from its `notify` hook. The dashboard takes each session's latest recorded project (`introspection.session_project`, `argMax` by time); no intervals are computed. Codex app-server and exec sessions are attributed through the same Codex CLI `notify` hook, because the three surfaces share session IDs. Every adapter must pass exactly `PRODUCER SESSION_ID EVENT_TYPE OCCURRED_AT WORKSPACE`; only the shared runtime resolves the Git root, derives IDs, and writes the schema.
@@ -99,9 +99,9 @@ backs the config up as `<file>.bak-<UTC timestamp>` before a change, is idempote
 and keeps every other hook):
 
 ```sh
-python3 adapters/claude-code/install-activity.py --dry-run   # show the diff
-python3 adapters/claude-code/install-activity.py             # ~/.claude/settings.json
-python3 adapters/claude-code/install-activity.py --remove
+python3 adapters/claude-code/install_activity.py --dry-run   # show the diff
+python3 adapters/claude-code/install_activity.py             # ~/.claude/settings.json
+python3 adapters/claude-code/install_activity.py --remove
 ```
 
 Codex has no activity hook; its signals are native.

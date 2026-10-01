@@ -5,7 +5,7 @@ purpose: >
   Grades one Agent Introspection dashboard page against the UX principles in docs/ux/principles.md and the visual standard in
   docs/ux/DESIGN.md. Score from the running page at 2560 × 1440 (screenshot) and its source. Cite the screenshot file
   and code lines in each rationale. It ranks UX fixes; it never judges the domain logic behind the numbers.
-scale: {min: 0, max: 3}
+scale: { min: 0, max: 3 }
 criteria:
   - id: zoomed_out_first
     weight: 0.20
@@ -104,11 +104,21 @@ criteria:
       2: Readable charts with one lapse (a non-harness series in a harness colour, a missing unit, a hard-to-compare stack)
       3: Every chart uses its palette by role, is 280–360px high, labels its unit and series, shows gaps, and has a readout on every mark
 gates:
-  - {criterion: zoomed_out_first, at_most: 0, cap: Rework, reason: "Fails the overriding principle: the page doesn't open on its answer."}
-  - {criterion: number_clarity, at_most: 0, cap: Needs work, reason: "Numbers the reader can't interpret undermine every decision on the page."}
+  - {
+      criterion: zoomed_out_first,
+      at_most: 0,
+      cap: Rework,
+      reason: "Fails the overriding principle: the page doesn't open on its answer.",
+    }
+  - {
+      criterion: number_clarity,
+      at_most: 0,
+      cap: Needs work,
+      reason: "Numbers the reader can't interpret undermine every decision on the page.",
+    }
 band_order: [Exemplary, Good, Needs work, Rework]
 bands:
-  - {min: 85, label: Exemplary}
-  - {min: 65, label: Good}
-  - {min: 40, label: Needs work}
-  - {min: 0, label: Rework}
+  - { min: 85, label: Exemplary }
+  - { min: 65, label: Good }
+  - { min: 40, label: Needs work }
+  - { min: 0, label: Rework }

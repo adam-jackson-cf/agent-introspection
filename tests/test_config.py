@@ -23,12 +23,10 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
 ) -> None:
     monkeypatch.setenv("INTROSPECTION_ROOT", str(tmp_path))
 
-    config = parse_config(
-        {
-            "database": {"path": "$INTROSPECTION_ROOT/state.sqlite3", "busy_timeout_ms": 12_000},
-            "signoz": {"clickhouse_container": "clickhouse", "docker_context": "desktop"},
-        }
-    )
+    config = parse_config({
+        "database": {"path": "$INTROSPECTION_ROOT/state.sqlite3", "busy_timeout_ms": 12_000},
+        "signoz": {"clickhouse_container": "clickhouse", "docker_context": "desktop"},
+    })
 
     assert config.database.path == tmp_path / "state.sqlite3"
     assert config.database.busy_timeout_ms == 12_000
@@ -84,16 +82,14 @@ def test_example_configuration_is_valid() -> None:
 
 
 def test_http_mode_reads_url_user_and_password_variable_name() -> None:
-    config = parse_config(
-        {
-            "signoz": {
-                "clickhouse_url": "http://signoz-clickhouse.orb.local:8123/",
-                "clickhouse_user": "introspection",
-                "clickhouse_password_env": "INTROSPECTION_CLICKHOUSE_PASSWORD",
-                "otlp_endpoint": "http://localhost:4318",
-            }
+    config = parse_config({
+        "signoz": {
+            "clickhouse_url": "http://signoz-clickhouse.orb.local:8123/",
+            "clickhouse_user": "introspection",
+            "clickhouse_password_env": "INTROSPECTION_CLICKHOUSE_PASSWORD",
+            "otlp_endpoint": "http://localhost:4318",
         }
-    )
+    })
 
     assert config.signoz.mode == "http"
     assert config.signoz.clickhouse_url == "http://signoz-clickhouse.orb.local:8123"
@@ -132,23 +128,21 @@ def test_http_mode_rejects_mixed_modes_and_inline_secrets(
 
 def test_password_command_is_an_argv_list_and_excludes_the_env_variable() -> None:
     url = "http://127.0.0.1:8123"
-    config = parse_config(
-        {"signoz": {"clickhouse_url": url, "clickhouse_password_command": ["security", "-w"]}}
-    )
+    config = parse_config({
+        "signoz": {"clickhouse_url": url, "clickhouse_password_command": ["security", "-w"]}
+    })
     assert config.signoz.clickhouse_password_command == ("security", "-w")
     for bad in ("security -w", [], ["security", ""]):
         with pytest.raises(ConfigurationError, match="list of arguments"):
             parse_config({"signoz": {"clickhouse_url": url, "clickhouse_password_command": bad}})
     with pytest.raises(ConfigurationError, match="not both"):
-        parse_config(
-            {
-                "signoz": {
-                    "clickhouse_url": url,
-                    "clickhouse_password_env": "CH_PASSWORD",
-                    "clickhouse_password_command": ["security"],
-                }
+        parse_config({
+            "signoz": {
+                "clickhouse_url": url,
+                "clickhouse_password_env": "CH_PASSWORD",
+                "clickhouse_password_command": ["security"],
             }
-        )
+        })
 
 
 def test_dashboard_url_is_optional_and_local() -> None:

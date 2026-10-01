@@ -227,17 +227,15 @@ def plist(executable: Path, path_dirs: Iterable[str], config: Path | None = None
     A selected ``config`` is passed through, so the job syncs the same deployment.
     """
     selected = ["--config", str(config)] if config is not None else []
-    return plistlib.dumps(
-        {
-            "Label": LABEL,
-            "ProgramArguments": [str(executable), *selected, "facts", "sync"],
-            "StartInterval": INTERVAL_SECONDS,
-            "RunAtLoad": True,
-            "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},
-            "StandardOutPath": str(LOG),
-            "StandardErrorPath": str(LOG),
-        }
-    )
+    return plistlib.dumps({
+        "Label": LABEL,
+        "ProgramArguments": [str(executable), *selected, "facts", "sync"],
+        "StartInterval": INTERVAL_SECONDS,
+        "RunAtLoad": True,
+        "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},
+        "StandardOutPath": str(LOG),
+        "StandardErrorPath": str(LOG),
+    })
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:

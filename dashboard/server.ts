@@ -383,42 +383,45 @@ export function createApp(
     };
   }
 
-  return async (request) => {
-    if (!isTrustedRequest(request))
-      return json({ error: "untrusted host or origin" }, 403);
-    if (request.method !== "GET" && request.method !== "HEAD")
-      return json({ error: "method not allowed" }, 405);
-    const url = new URL(request.url);
+  async function viewResponse(url: URL): Promise<Response> {
+    const id = url.searchParams.get("view") ?? "";
+    if (!(VIEW_IDS as readonly string[]).includes(id))
+      return badRequest("view must be a known view");
+    const filters = parseFilters(url);
+    if (filters instanceof Response) return filters;
+    return json(await view(id as ViewId, filters));
+  }
+
+  async function sessionResponse(url: URL): Promise<Response> {
+    const harness = url.searchParams.get("harness") ?? "";
+    const session = url.searchParams.get("session") ?? "";
+    if (!isHarness(harness) || session === "" || session.length > 256)
+      return badRequest("harness and session are required");
+    const response: SessionResponse = {
+      harness,
+      session,
+      queriedAt: dependencies.now().toISOString(),
+      // A session can be older than the snapshot horizon.
+      data: await batch(query, live(SESSION_QUERIES), { harness, session }),
+    };
+    return json(response);
+  }
+
+  async function apiResponse(url: URL): Promise<Response | undefined> {
     try {
       if (url.pathname === "/api/registry") return json(await registry());
-      if (url.pathname === "/api/view") {
-        const id = url.searchParams.get("view") ?? "";
-        if (!(VIEW_IDS as readonly string[]).includes(id))
-          return badRequest("view must be a known view");
-        const filters = parseFilters(url);
-        if (filters instanceof Response) return filters;
-        return json(await view(id as ViewId, filters));
-      }
-      if (url.pathname === "/api/session") {
-        const harness = url.searchParams.get("harness") ?? "";
-        const session = url.searchParams.get("session") ?? "";
-        if (!isHarness(harness) || session === "" || session.length > 256)
-          return badRequest("harness and session are required");
-        const response: SessionResponse = {
-          harness,
-          session,
-          queriedAt: dependencies.now().toISOString(),
-          // A session can be older than the snapshot horizon.
-          data: await batch(query, live(SESSION_QUERIES), { harness, session }),
-        };
-        return json(response);
-      }
+      if (url.pathname === "/api/view") return await viewResponse(url);
+      if (url.pathname === "/api/session") return await sessionResponse(url);
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "query failed" },
         503,
       );
     }
+    return undefined;
+  }
+
+  async function assetResponse(request: Request, url: URL): Promise<Response> {
     if (url.pathname.startsWith("/api/"))
       return json({ error: "not found" }, 404);
     const route = url.pathname.slice(1);
@@ -434,6 +437,15 @@ export function createApp(
       request.method === "HEAD" ? null : await asset.clone().arrayBuffer(),
       { headers: new Headers(asset.headers) },
     );
+  }
+
+  return async (request) => {
+    if (!isTrustedRequest(request))
+      return json({ error: "untrusted host or origin" }, 403);
+    if (request.method !== "GET" && request.method !== "HEAD")
+      return json({ error: "method not allowed" }, 405);
+    const url = new URL(request.url);
+    return (await apiResponse(url)) ?? assetResponse(request, url);
   };
 }
 

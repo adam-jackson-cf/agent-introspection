@@ -43,6 +43,7 @@ def _git(repo: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=60,
     )
     return completed.stdout
 
@@ -54,6 +55,7 @@ def _run(repo: Path, script: str, *args: str) -> subprocess.CompletedProcess[str
         env=_isolated_env(),
         capture_output=True,
         text=True,
+        timeout=120,
         check=False,
     )
 

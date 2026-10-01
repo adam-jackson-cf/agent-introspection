@@ -1,0 +1,16 @@
+{
+  "files": {
+    "src/agent_introspection/findings.py": {
+      "summary": {
+        "covered_lines": 60,
+        "num_statements": 100
+      }
+    },
+    "src/agent_introspection/cli.py": {
+      "summary": {
+        "covered_lines": 0,
+        "num_statements": 100
+      }
+    }
+  }
+}

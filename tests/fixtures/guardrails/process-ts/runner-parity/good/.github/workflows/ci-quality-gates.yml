@@ -1,0 +1,7 @@
+name: quality
+on: [push]
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/run-ci-quality-gates.sh

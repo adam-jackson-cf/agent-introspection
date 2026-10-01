@@ -1,0 +1,26 @@
+{
+  "comments": {},
+  "config": [
+    "mypy.exclude=[\"^tests/fixtures/\"]",
+    "mypy.override:[\"_pytest.*\", \"pytest\"]:follow_imports=\"normal\"",
+    "ruff.exclude:.git",
+    "ruff.exclude:.mypy_cache",
+    "ruff.exclude:.pytest_cache",
+    "ruff.exclude:.ruff_cache",
+    "ruff.exclude:.venv",
+    "ruff.exclude:__pycache__",
+    "ruff.exclude:build",
+    "ruff.exclude:dist",
+    "ruff.exclude:node_modules",
+    "ruff.exclude:tests/fixtures/",
+    "ruff.lint.ignore:D100",
+    "ruff.lint.ignore:D101",
+    "ruff.lint.ignore:D102",
+    "ruff.lint.ignore:D103",
+    "ruff.lint.ignore:D104",
+    "ruff.lint.ignore:D105",
+    "ruff.lint.ignore:D107",
+    "ruff.lint.per-file-ignores:tests/**/*.py:D"
+  ],
+  "schema_version": 1
+}

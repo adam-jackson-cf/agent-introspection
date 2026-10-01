@@ -150,17 +150,23 @@ def missing_privileges(text: str, *, database_exists: bool) -> list[str]:
     so partial revokes fail closed.
     """
     granted, revoked = parse_grants(text)
-    missing = []
-    for required in _required(database_exists):
-        names = {required, *REQUIRED_PRIVILEGES[required], *_ALL}
-        has = any((name, scope) in granted for name in names for scope in _FACTS_SCOPES)
-        blocked = any(
-            name in names and (scope == "*.*" or scope.startswith(f"{DATABASE}."))
-            for name, scope in revoked
-        )
-        if not has or blocked:
-            missing.append(required)
-    return missing
+    return [
+        required
+        for required in _required(database_exists)
+        if _privilege_missing(required, granted, revoked)
+    ]
+
+
+def _privilege_missing(
+    required: str, granted: set[tuple[str, str]], revoked: set[tuple[str, str]]
+) -> bool:
+    names = {required, *REQUIRED_PRIVILEGES[required], *_ALL}
+    has = any((name, scope) in granted for name in names for scope in _FACTS_SCOPES)
+    blocked = any(
+        name in names and (scope == "*.*" or scope.startswith(f"{DATABASE}."))
+        for name, scope in revoked
+    )
+    return not has or blocked
 
 
 def _required(database_exists: bool) -> list[str]:

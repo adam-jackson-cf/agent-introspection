@@ -17,11 +17,11 @@ hooks, and prompt export. Record contracts: `scripts/README.md` (session-context
 
 ## What each known harness needs
 
-| Harness | OTLP export | Session-context (project) | Activity hooks | Prompt export |
-| --- | --- | --- | --- | --- |
-| Claude Code | `env` in `~/.claude/settings.json` | `SessionStart`, `CwdChanged`, `SessionEnd` hooks | 6 hooks via `install-activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env` |
-| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `notify` (covers every Codex surface) | none: its signals are native | `log_user_prompt = true` in `[otel]` |
-| omp | `~/.omp/.env` | `adapter.ts` extension | `activity.ts` extension | sent by `activity.ts` |
+| Harness                       | OTLP export                                 | Session-context (project)                        | Activity hooks                    | Prompt export                               |
+| ----------------------------- | ------------------------------------------- | ------------------------------------------------ | --------------------------------- | ------------------------------------------- |
+| Claude Code                   | `env` in `~/.claude/settings.json`          | `SessionStart`, `CwdChanged`, `SessionEnd` hooks | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env` |
+| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `notify` (covers every Codex surface)            | none: its signals are native      | `log_user_prompt = true` in `[otel]`        |
+| omp                           | `~/.omp/.env`                               | `adapter.ts` extension                           | `activity.ts` extension           | sent by `activity.ts`                       |
 
 `<codex-root>` is `$CODEX_HOME` when set to an absolute path, else `~/.codex`; configure
 every root in use (for example an Orca per-account root and `~/.codex`).
@@ -64,7 +64,7 @@ every root in use (for example an Orca per-account root and `~/.codex`).
      never replace it.
    - omp: `ln -sfn "$R/adapters/omp/adapter.ts" ~/.omp/agent/extensions/agent-introspection.ts`.
 5. **Activity hooks.**
-   - Claude Code: `python3 "$S/adapters/claude-code/install-activity.py" --dry-run`,
+   - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
      then without `--dry-run` (backs up, idempotent, `--remove` undoes).
    - omp: `ln -sfn "$R/adapters/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts`
      and list `~/.omp/agent/extensions/agent-introspection-activity.ts` under
@@ -91,17 +91,17 @@ registry, so it cannot show partial or misleading data. Find, and record in a ha
 profile (version, evidence, and whether each item is native, needs a hook, or is
 missing):
 
-| Need | What to find | Check |
-| --- | --- | --- |
-| Telemetry export | Its OTLP settings; the `service.name` it reports | Rows for that service in SigNoz after a short session |
-| Session identity | The attribute naming the session, stable across its turns | Same value on usage, task, and tool rows |
-| Task boundary | The span or event that is one user turn or run, with start and end | One per prompt |
-| Model calls and usage | Per-call tokens (input, cached, output, reasoning), model, effort, errors, latency | Sums match the harness's own accounting |
-| Tool calls | Tool name, outcome, failure text, arguments or a way to hash them, call ID | One per call, joinable to the task |
-| User signals | Interrupt, steer, approvals | Rare-event routes |
-| Prompt text | A prompt event with its text, or a hook that can send one | Not a placeholder |
-| Project attribution | A hook or callback giving the same session ID plus the absolute working directory at session start | Session ID equals the telemetry session key |
-| Hook surface | Documented hook or extension events and their payload fields | For each gap above that telemetry lacks |
+| Need                  | What to find                                                                                       | Check                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Telemetry export      | Its OTLP settings; the `service.name` it reports                                                   | Rows for that service in SigNoz after a short session |
+| Session identity      | The attribute naming the session, stable across its turns                                          | Same value on usage, task, and tool rows              |
+| Task boundary         | The span or event that is one user turn or run, with start and end                                 | One per prompt                                        |
+| Model calls and usage | Per-call tokens (input, cached, output, reasoning), model, effort, errors, latency                 | Sums match the harness's own accounting               |
+| Tool calls            | Tool name, outcome, failure text, arguments or a way to hash them, call ID                         | One per call, joinable to the task                    |
+| User signals          | Interrupt, steer, approvals                                                                        | Rare-event routes                                     |
+| Prompt text           | A prompt event with its text, or a hook that can send one                                          | Not a placeholder                                     |
+| Project attribution   | A hook or callback giving the same session ID plus the absolute working directory at session start | Session ID equals the telemetry session key           |
+| Hook surface          | Documented hook or extension events and their payload fields                                       | For each gap above that telemetry lacks               |
 
 Inspect only installed docs, configuration, types, and telemetry key names and counts;
 never print prompts, commands, or secrets. Then add it with the

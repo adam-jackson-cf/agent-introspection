@@ -32,13 +32,41 @@ function StateChip({ state, title }: { state: string; title?: string }) {
   );
 }
 
+type CoverageCell = (signal: unknown, harness: Harness) => Row | undefined;
+
+function CoverageRow(props: {
+  row: Row;
+  harnesses: readonly Harness[];
+  cell: CoverageCell;
+}) {
+  const { row, harnesses, cell } = props;
+  return (
+    <tr>
+      <th scope="row">{String(row.title)}</th>
+      {harnesses.map((harness) => {
+        const entry = cell(row.signal, harness);
+        return (
+          <td key={harness}>
+            {entry && (
+              <StateChip
+                state={String(entry.state)}
+                title={`${String(entry.route) || "no route"} · ${fmtCount(num(entry.own))} own rows · ${fmtCount(num(entry.foreign))} rows on other routes (${fmtCount(num(entry.unexplained))} unexplained)`}
+              />
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
+
 function CoverageGrid({ rows }: { rows: Row[] }) {
   const { filters } = useView();
   const harnesses: readonly Harness[] =
     filters.harness === "" ? HARNESSES : [filters.harness];
   const signals = [...new Map(rows.map((row) => [row.signal, row])).values()];
   const views = [...new Set(signals.map((row) => String(row.view)))];
-  const cell = (signal: unknown, harness: Harness) =>
+  const cell: CoverageCell = (signal, harness) =>
     rows.find((row) => row.signal === signal && row.harness === harness);
   return (
     <div className="table-wrap coverage">
@@ -61,22 +89,12 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
             {signals
               .filter((row) => row.view === view)
               .map((row) => (
-                <tr key={String(row.signal)}>
-                  <th scope="row">{String(row.title)}</th>
-                  {harnesses.map((harness) => {
-                    const entry = cell(row.signal, harness);
-                    return (
-                      <td key={harness}>
-                        {entry && (
-                          <StateChip
-                            state={String(entry.state)}
-                            title={`${String(entry.route) || "no route"} · ${fmtCount(num(entry.own))} own rows · ${fmtCount(num(entry.foreign))} rows on other routes (${fmtCount(num(entry.unexplained))} unexplained)`}
-                          />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
+                <CoverageRow
+                  key={String(row.signal)}
+                  row={row}
+                  harnesses={harnesses}
+                  cell={cell}
+                />
               ))}
           </tbody>
         ))}
@@ -85,23 +103,30 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
   );
 }
 
-export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
-  const { filters, registry } = useView();
-  const viewTitle = (view: string) =>
-    registry.signals.find((entry) => entry.view === view)?.view_title ?? view;
-  const inScope = (row: Row) =>
-    filters.harness === "" || row.harness === filters.harness;
-  const loaders = data.loaders ?? [];
-  const failing = loaders.filter((row) => num(row.stale) === 1);
-  const freshness = (data.freshness ?? []).filter(inScope);
-  const missingFacts = freshness.filter((row) => num(row.facts_missing) === 1);
-  const maxLag = freshness.length
+const maxLagSeconds = (freshness: Row[]) =>
+  freshness.length
     ? Math.max(...freshness.map((row) => num(row.lag_seconds)))
     : null;
-  const parity = (data.parity ?? []).filter(inScope);
-  const parityOk = parity.filter((row) => num(row.ok) === 1).length;
-  const sanitization = data.sanitization ?? [];
-  const violations = sanitization.reduce(
+
+function dailyByHarness(rows: Row[]) {
+  const daily = new Map<string, Row>();
+  for (const row of rows) {
+    const day = String(row.day);
+    const entry = daily.get(day) ?? { day };
+    const key = String(row.harness);
+    entry[key] = num(entry[key]) + num(row.n);
+    daily.set(day, entry);
+  }
+  return daily;
+}
+
+const parityWindow = (parity: Row[]) =>
+  parity[0]
+    ? `${String(parity[0].window_start).slice(0, 16)} → ${String(parity[0].window_end).slice(0, 16)} UTC`
+    : "";
+
+const sanitizationViolations = (rows: Row[]) =>
+  rows.reduce(
     (total, row) =>
       total +
       num(row.forbidden_keys) +
@@ -109,19 +134,29 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
       num(row.home_paths),
     0,
   );
-  const coverage = (data.coverage ?? []).filter(inScope);
+
+export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
+  const { filters, registry } = useView();
+  const viewTitle = (view: string) =>
+    registry.signals.find((entry) => entry.view === view)?.view_title ?? view;
+  const inScope = (row: Row) =>
+    filters.harness === "" || row.harness === filters.harness;
+  const rowsOf = (key: string) => data[key] ?? [];
+  const loaders = rowsOf("loaders");
+  const failing = loaders.filter((row) => num(row.stale) === 1);
+  const freshness = rowsOf("freshness").filter(inScope);
+  const missingFacts = freshness.filter((row) => num(row.facts_missing) === 1);
+  const maxLag = maxLagSeconds(freshness);
+  const parity = rowsOf("parity").filter(inScope);
+  const parityOk = parity.filter((row) => num(row.ok) === 1).length;
+  const sanitization = rowsOf("sanitization");
+  const violations = sanitizationViolations(sanitization);
+  const coverage = rowsOf("coverage").filter(inScope);
   const unexplained = coverage.filter((row) =>
     UNEXPLAINED.has(String(row.state)),
   );
-  const recombination = data.recombination ?? [];
-  const daily = new Map<string, Row>();
-  for (const row of (data.daily_rows ?? []).filter(inScope)) {
-    const day = String(row.day);
-    const entry = daily.get(day) ?? { day };
-    const key = String(row.harness);
-    entry[key] = num(entry[key]) + num(row.n);
-    daily.set(day, entry);
-  }
+  const recombination = rowsOf("recombination");
+  const daily = dailyByHarness(rowsOf("daily_rows").filter(inScope));
   const dailySeries = HARNESSES.filter(
     (harness) => filters.harness === "" || harness === filters.harness,
   ).map((harness) => ({
@@ -129,9 +164,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const window = parity[0]
-    ? `${String(parity[0].window_start).slice(0, 16)} → ${String(parity[0].window_end).slice(0, 16)} UTC`
-    : "";
+  const window = parityWindow(parity);
   return (
     <>
       <Section title="At a glance">

@@ -14,7 +14,7 @@ import sys
 import tempfile
 import unicodedata
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 _LABEL: Final = "com.adamjackson.agent-introspection-codex-app-server"
 _MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/session-context-runtime-v1")
@@ -152,11 +152,15 @@ def _is_owned(entry: dict[str, object], expected: dict[str, object]) -> bool:
     return entry == expected
 
 
+def _run_command(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, **kwargs)
+
+
 def _command_tokens(command: str, adapter: Path) -> list[str] | None:
     if str(adapter) not in command:
         return None
     try:
-        syntax = subprocess.run(
+        syntax = _run_command(
             ["/bin/sh", "-n"],
             input=command,
             text=True,
@@ -348,18 +352,15 @@ def _validate_legacy_plist(home: Path, legacy_proxies: tuple[Path, Path]) -> boo
         payload = plistlib.loads(path.read_bytes())
     except (OSError, plistlib.InvalidFileException) as error:
         raise InstallError("legacy Codex app-server LaunchAgent is invalid") from error
+    program_arguments = ["/bin/launchctl", "setenv", "CODEX_CLI_PATH"]
     expected = {
         "Label": _LABEL,
         "ProcessType": "Background",
-        "ProgramArguments": ["/bin/launchctl", "setenv", "CODEX_CLI_PATH"],
+        "ProgramArguments": program_arguments,
         "RunAtLoad": True,
     }
     if not isinstance(payload, dict) or not any(
-        payload
-        == {
-            **expected,
-            "ProgramArguments": [*expected["ProgramArguments"], str(proxy)],
-        }
+        payload == {**expected, "ProgramArguments": [*program_arguments, str(proxy)]}
         for proxy in legacy_proxies
     ):
         raise InstallError("legacy Codex app-server LaunchAgent is not installer-owned")
@@ -419,7 +420,7 @@ def _deactivate_legacy(
 ) -> None:
     domain = f"gui/{os.getuid()}"
     try:
-        service = subprocess.run(
+        service = _run_command(
             [str(launchctl), "print", f"{domain}/{_LABEL}"],
             check=False,
             stdout=subprocess.DEVNULL,
@@ -428,13 +429,13 @@ def _deactivate_legacy(
         if service.returncode == 0:
             if not owns_plist:
                 raise InstallError("active legacy Codex app-server service is not installer-owned")
-            subprocess.run(
+            _run_command(
                 [str(launchctl), "bootout", f"{domain}/{_LABEL}"],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        current = subprocess.run(
+        current = _run_command(
             [str(launchctl), "getenv", "CODEX_CLI_PATH"],
             check=False,
             capture_output=True,
@@ -443,7 +444,7 @@ def _deactivate_legacy(
         if current.returncode == 0 and current.stdout.strip() in {
             str(path) for path in legacy_proxies
         }:
-            subprocess.run(
+            _run_command(
                 [str(launchctl), "unsetenv", "CODEX_CLI_PATH"],
                 check=True,
                 stdout=subprocess.DEVNULL,

@@ -84,15 +84,23 @@ def _runtime() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "session-context-runtime.sh"
 
 
+def _run_agent_introspection(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(argv, check=False)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         return _usage()
     try:
         session_id, workspace, occurred_at = _envelope(argv[1])
-        completed = subprocess.run(
-            [str(_runtime()), PRODUCER, session_id, "session_context", occurred_at, workspace],
-            check=False,
-        )
+        completed = _run_agent_introspection([
+            str(_runtime()),
+            PRODUCER,
+            session_id,
+            "session_context",
+            occurred_at,
+            workspace,
+        ])
         return completed.returncode
     except (HookInputError, KeyError, OSError):
         return _usage()

@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from agent_introspection import cli
+from agent_introspection import facts, projects
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
 from agent_introspection.findings import CORRECTION_DETECTOR_ID
@@ -60,7 +61,7 @@ def test_facts_failures_exit_with_the_facts_code(
     def failing(_statement: str) -> str:
         raise FactsError("Code: 81. DB::Exception: Database introspection does not exist")
 
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: failing)
+    monkeypatch.setattr(facts, "runner", lambda _config: failing)
 
     with pytest.raises(SystemExit) as raised:
         main(["--config", str(config_file(tmp_path)), "facts", "status"])
@@ -205,19 +206,17 @@ def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
     )
 
     with pytest.raises(SystemExit) as raised:
-        main(
-            [
-                "--config",
-                str(config),
-                "proposal",
-                "mark-applied",
-                proposal_id,
-                "--actor",
-                "user",
-                "--input-json",
-                str(source),
-            ]
-        )
+        main([
+            "--config",
+            str(config),
+            "proposal",
+            "mark-applied",
+            proposal_id,
+            "--actor",
+            "user",
+            "--input-json",
+            str(source),
+        ])
 
     assert raised.value.code == EXIT_DATABASE
     assert "event store unavailable" in capsys.readouterr().err
@@ -272,9 +271,12 @@ def test_schedule_install_passes_the_selected_configuration(
 ) -> None:
     config = config_file(tmp_path)
     received: list[Path | None] = []
-    monkeypatch.setattr(
-        cli.projects, "schedule_install", lambda selected: received.append(selected) or {}
-    )
+
+    def schedule_install(selected: Path | None = None) -> dict[str, Any]:
+        received.append(selected)
+        return {}
+
+    monkeypatch.setattr(projects, "schedule_install", schedule_install)
 
     assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
     assert received == [config.resolve()]
@@ -283,8 +285,8 @@ def test_schedule_install_passes_the_selected_configuration(
 def test_facts_install_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: lambda _sql: "")
-    monkeypatch.setattr(cli.facts, "install", lambda _run: {"installed": True})
+    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
+    monkeypatch.setattr(facts, "install", lambda _run: {"installed": True})
 
     assert main(["--config", str(config_file(tmp_path)), "facts", "install"]) == 0
     assert json.loads(capsys.readouterr().out) == {"installed": True}
@@ -302,7 +304,7 @@ def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
         connection, "c-correction", impact=6, last_seen_ns=9, detector_id=CORRECTION_DETECTOR_ID
     )
     _, run = facts_runner()
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: run)
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
 
     assert main(["--config", config, "candidates", "export", "--reserved-model-budget", "10"]) == 0
 
@@ -321,7 +323,7 @@ def test_proposal_draft_dry_run_and_evaluate_commands(
     connection = connect_workflow(tmp_path / "workflow.sqlite3")
     insert_finding(connection, "a-cluster", impact=3, last_seen_ns=9)
     _, run = facts_runner()
-    monkeypatch.setattr(cli.facts, "runner", lambda _config: run)
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
 
     argv = ["--config", config, "proposal", "draft", "--reserved-model-budget", "100", "--dry-run"]
     assert main(argv) == 0

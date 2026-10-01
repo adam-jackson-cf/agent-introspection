@@ -1,12 +1,13 @@
 import json
 import plistlib
+import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from agent_introspection import facts, projects
-from agent_introspection.facts import FactsError
+from agent_introspection.facts import FactsError, SqlRunner
 
 EVENT = {
     "event_id": "e" * 64,
@@ -43,6 +44,14 @@ def write_inbox(inbox: Path) -> None:
     (inbox / ".partial.json.tmp").write_text("in flight")
 
 
+def recorder(log: list[str]) -> SqlRunner:
+    def run(sql: str) -> str:
+        log.append(sql)
+        return ""
+
+    return run
+
+
 def parsed_rows(statements: list[str]) -> dict[str, list[dict[str, str]]]:
     rows: dict[str, list[dict[str, str]]] = {}
     for statement in statements:
@@ -58,7 +67,7 @@ def test_sync_loads_events_and_rejections_then_removes_only_loaded_files(tmp_pat
     write_inbox(inbox)
     executed: list[str] = []
 
-    result = projects.sync(lambda sql: executed.append(sql) or "", inbox=inbox)
+    result = projects.sync(recorder(executed), inbox=inbox)
 
     assert result == {
         "events": 1,
@@ -110,7 +119,7 @@ def test_sync_keeps_every_inbox_file_when_a_later_insert_fails_and_retry_is_dedu
     assert {"event.json", "rejection.json"} <= {path.name for path in inbox.iterdir()}
 
     retried: list[str] = []
-    projects.sync(lambda sql: retried.append(sql) or "", inbox=inbox)
+    projects.sync(recorder(retried), inbox=inbox)
 
     # The retry re-sends the event that already landed; the tables collapse it by key.
     assert parsed_rows(retried)["session_projects"] == parsed_rows(attempted)["session_projects"]
@@ -143,9 +152,7 @@ def test_sync_imports_retired_ledger_history_with_home_redacted(tmp_path: Path) 
     connection.close()
     executed: list[str] = []
 
-    result = projects.sync(
-        lambda sql: executed.append(sql) or "", inbox=tmp_path / "none", ledger=ledger
-    )
+    result = projects.sync(recorder(executed), inbox=tmp_path / "none", ledger=ledger)
 
     assert result["ledger_events"] == 2_500
     assert all(len(statement) < 256 * 1024 for statement in executed)
@@ -189,7 +196,7 @@ def test_scheduled_job_path_follows_the_connection_mode(monkeypatch: pytest.Monk
     from agent_introspection.config import SigNozConfig
 
     found = {"docker": "/opt/docker/bin/docker", "security": "/usr/bin/security"}
-    monkeypatch.setattr(projects.shutil, "which", found.get)
+    monkeypatch.setattr(shutil, "which", found.get)
     assert projects._job_path(SigNozConfig()) == ["/opt/docker/bin"]
     command = SigNozConfig(
         clickhouse_url="http://localhost:8123", clickhouse_password_command=("security", "-w")

@@ -18,6 +18,9 @@ const LOCALIZED = 0.8;
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
 
+const stringList = (value: unknown) =>
+  Array.isArray(value) ? value.map(String) : [];
+
 /**
  * Recombines per-harness failure-cluster rows into one row per cluster (tool
  * family × failure class): occurrences and tasks are the sums of the harness
@@ -47,11 +50,7 @@ export function recombineClusters(rows: Row[]): Row[] {
         (row) => `${String(row.harness)}:${num(row.occurrences)}`,
       ),
       tools: [
-        ...new Set(
-          members.flatMap((row) =>
-            Array.isArray(row.tools) ? row.tools.map(String) : [],
-          ),
-        ),
+        ...new Set(members.flatMap((row) => stringList(row.tools))),
       ].sort(),
       last_seen: members
         .map((row) => String(row.last_seen ?? ""))
@@ -63,7 +62,7 @@ export function recombineClusters(rows: Row[]): Row[] {
 
 /** Each harness's occurrences of one cluster, in registry order. */
 function Breakdown({ row }: { row: Row }) {
-  const parts = Array.isArray(row.breakdown) ? row.breakdown.map(String) : [];
+  const parts = stringList(row.breakdown);
   return (
     <span className="breakdown">
       {parts.map((part) => {

@@ -286,14 +286,15 @@ def test_success_metric_must_be_a_structured_task_rate(
 
 
 def test_free_text_success_metric_is_rejected_but_readable_as_legacy() -> None:
+    not_an_object: Any = "zero bypasses in seven days"
     with pytest.raises(ValueError, match="must be an object"):
-        replace(proposal_input(), predicted_success_metric="zero bypasses in seven days")  # type: ignore[arg-type]
+        replace(proposal_input(), predicted_success_metric=not_an_object)
     assert SuccessMetric.from_payload({"predicted_success_metric": "zero bypasses"}) is None
-    metric = SuccessMetric.from_payload(
-        {"predicted_success_metric": SUCCESS_METRIC | {"max_ratio": 1}}
-    )
+    metric = SuccessMetric.from_payload({
+        "predicted_success_metric": SUCCESS_METRIC | {"max_ratio": 1}
+    })
     assert metric is not None
-    assert metric.max_ratio == 1.0
+    assert metric.max_ratio == pytest.approx(1.0)
     assert metric.harnesses == ("codex_exec",)
 
 

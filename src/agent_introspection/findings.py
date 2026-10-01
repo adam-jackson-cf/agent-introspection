@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_introspection.facts import DATABASE, SqlRunner
+from agent_introspection.json_types import JsonObject
 
 DETECTOR_ID = "facts.failure_cluster"
 CORRECTION_DETECTOR_ID = "facts.repeated_correction"
@@ -107,6 +108,9 @@ FORMAT JSONEachRow
 """
 
 
+type SubjectBuilder = Callable[[JsonObject], JsonObject]
+
+
 @dataclass(frozen=True)
 class Detector:
     """One recurring-problem query and how its rows become findings."""
@@ -115,7 +119,7 @@ class Detector:
     category: str
     query: str
     key_fields: tuple[str, str]
-    subject: Callable[[dict[str, Any]], dict[str, Any]]
+    subject: SubjectBuilder
 
 
 def impact(tasks: int, unclean_tasks: int) -> int:

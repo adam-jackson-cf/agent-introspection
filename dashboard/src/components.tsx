@@ -122,6 +122,38 @@ export function Contributors({ signals }: { signals: string[] }) {
   );
 }
 
+/** One harness's route and alignment for a signal; nothing when unsupported. */
+function SupportRow(props: {
+  context: ViewContextValue;
+  signal: string;
+  harness: Harness;
+}) {
+  const { context, signal, harness } = props;
+  const support = supportFor(context.registry, signal, harness);
+  if (!support) return null;
+  const route = context.registry.routes.find(
+    (entry) => entry.route === support.route && entry.harness === harness,
+  );
+  const rows = context.contributions[signal]?.[harness];
+  return (
+    <tr>
+      <th scope="row">{HARNESS_LABEL[harness]}</th>
+      <td>
+        <span className={`alignment ${support.alignment.replaceAll(" ", "-")}`}>
+          {support.alignment}
+        </span>
+      </td>
+      <td>
+        {route?.description ?? ""}
+        {support.note && <em>{support.note}</em>}
+        {support.alignment !== "not applicable" && (
+          <small>{fmtCount(rows ?? 0)} rows on this route in the window</small>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 /** Registry-driven note: definition, then each harness's route and alignment. */
 export function InfoNote({ signals }: { signals: string[] }) {
   const context = useView();
@@ -140,42 +172,14 @@ export function InfoNote({ signals }: { signals: string[] }) {
             {definition.scope === "harness" && (
               <table>
                 <tbody>
-                  {selectedHarnesses(context.filters).map((harness) => {
-                    const support = supportFor(
-                      context.registry,
-                      signal,
-                      harness,
-                    );
-                    if (!support) return null;
-                    const route = context.registry.routes.find(
-                      (entry) =>
-                        entry.route === support.route &&
-                        entry.harness === harness,
-                    );
-                    const rows = context.contributions[signal]?.[harness];
-                    return (
-                      <tr key={harness}>
-                        <th scope="row">{HARNESS_LABEL[harness]}</th>
-                        <td>
-                          <span
-                            className={`alignment ${support.alignment.replaceAll(" ", "-")}`}
-                          >
-                            {support.alignment}
-                          </span>
-                        </td>
-                        <td>
-                          {route?.description ?? ""}
-                          {support.note && <em>{support.note}</em>}
-                          {support.alignment !== "not applicable" && (
-                            <small>
-                              {fmtCount(rows ?? 0)} rows on this route in the
-                              window
-                            </small>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {selectedHarnesses(context.filters).map((harness) => (
+                    <SupportRow
+                      key={harness}
+                      context={context}
+                      signal={signal}
+                      harness={harness}
+                    />
+                  ))}
                 </tbody>
               </table>
             )}

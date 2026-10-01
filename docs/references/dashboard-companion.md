@@ -19,14 +19,14 @@ only `SELECT ON introspection.*`.
 
 ## Environment variables
 
-| Variable | What it sets | Default |
-| --- | --- | --- |
-| `INTROSPECTION_CLICKHOUSE_URL` | Local ClickHouse HTTP address; overrides the config. | `[dashboard]` or `[signoz]` `clickhouse_url` |
-| `AGENT_INTROSPECTION_CONFIG` | Config file the address is read from. | `~/.config/agent-introspection/config.toml` |
-| `INTROSPECTION_CLICKHOUSE_USER` | Basic-auth user, when the server needs a login. | `default` when only a password is set |
-| `INTROSPECTION_CLICKHOUSE_PASSWORD` | Basic-auth password. Supply it from a secret manager, never a file. | none |
-| `INTROSPECTION_WORKFLOW_DB` | Workflow SQLite store the Interventions view reads findings and proposals from. | `~/.local/share/agent-introspection/introspection.sqlite3` |
-| `INTROSPECTION_PROJECT_INBOX` | Session-context inbox counted as the Pipeline sync backlog. | `~/.local/share/agent-introspection/session-context-inbox` |
+| Variable                            | What it sets                                                                    | Default                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `INTROSPECTION_CLICKHOUSE_URL`      | Local ClickHouse HTTP address; overrides the config.                            | `[dashboard]` or `[signoz]` `clickhouse_url`               |
+| `AGENT_INTROSPECTION_CONFIG`        | Config file the address is read from.                                           | `~/.config/agent-introspection/config.toml`                |
+| `INTROSPECTION_CLICKHOUSE_USER`     | Basic-auth user, when the server needs a login.                                 | `default` when only a password is set                      |
+| `INTROSPECTION_CLICKHOUSE_PASSWORD` | Basic-auth password. Supply it from a secret manager, never a file.             | none                                                       |
+| `INTROSPECTION_WORKFLOW_DB`         | Workflow SQLite store the Interventions view reads findings and proposals from. | `~/.local/share/agent-introspection/introspection.sqlite3` |
+| `INTROSPECTION_PROJECT_INBOX`       | Session-context inbox counted as the Pipeline sync backlog.                     | `~/.local/share/agent-introspection/session-context-inbox` |
 
 Sources: `dashboard/server.ts`, `dashboard/server/clickhouse.ts`.
 

@@ -35,6 +35,22 @@ export function credentialsFromEnv(
   return { user: user || "default", password: password ?? "" };
 }
 
+const defaultReadConfig = (path: string): string | undefined =>
+  existsSync(path) ? readFileSync(path, "utf8") : undefined;
+
+function configPath(env: Record<string, string | undefined>): string {
+  return (
+    env.AGENT_INTROSPECTION_CONFIG ||
+    join(env.HOME ?? homedir(), ".config/agent-introspection/config.toml")
+  );
+}
+
+function configuredUrl(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
+  const config = Bun.TOML.parse(text) as ConfigDocument;
+  return config.dashboard?.clickhouse_url ?? config.signoz?.clickhouse_url;
+}
+
 /**
  * Where the local SigNoz ClickHouse's HTTP interface is: the
  * `INTROSPECTION_CLICKHOUSE_URL` variable, else `[dashboard] clickhouse_url`, else the
@@ -44,17 +60,11 @@ export function credentialsFromEnv(
  */
 export function clickhouseUrl(
   env: Record<string, string | undefined> = process.env,
-  readConfig: (path: string) => string | undefined = (path) =>
-    existsSync(path) ? readFileSync(path, "utf8") : undefined,
+  readConfig: (path: string) => string | undefined = defaultReadConfig,
 ): string {
   if (env.INTROSPECTION_CLICKHOUSE_URL) return env.INTROSPECTION_CLICKHOUSE_URL;
-  const path =
-    env.AGENT_INTROSPECTION_CONFIG ||
-    join(env.HOME ?? homedir(), ".config/agent-introspection/config.toml");
-  const text = readConfig(path);
-  const config =
-    text === undefined ? {} : (Bun.TOML.parse(text) as ConfigDocument);
-  const url = config.dashboard?.clickhouse_url ?? config.signoz?.clickhouse_url;
+  const path = configPath(env);
+  const url = configuredUrl(readConfig(path));
   if (typeof url === "string" && url !== "") return url;
   throw new Error(
     "No ClickHouse address for the dashboard: set INTROSPECTION_CLICKHOUSE_URL or " +

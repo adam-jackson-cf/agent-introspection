@@ -231,11 +231,9 @@ def evaluate_due(
             continue
         payload = evaluate(run, subject, metric, applied_at, moment)
         if _append_once(connection, proposal_id, payload):
-            evaluated.append(
-                {
-                    "proposal_id": proposal_id,
-                    "verdict": payload["verdict"],
-                    "ratio": payload["ratio"],
-                }
-            )
+            evaluated.append({
+                "proposal_id": proposal_id,
+                "verdict": payload["verdict"],
+                "ratio": payload["ratio"],
+            })
     return {"evaluated": evaluated, "skipped": skipped}

@@ -1,0 +1,12 @@
+import m0 from "pkg-0";
+import m1 from "pkg-1";
+import m2 from "pkg-2";
+import m3 from "pkg-3";
+import m4 from "pkg-4";
+import m5 from "pkg-5";
+import m6 from "pkg-6";
+import m7 from "pkg-7";
+import m8 from "pkg-8";
+import m9 from "pkg-9";
+import m10 from "pkg-10";
+export default [m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10];
