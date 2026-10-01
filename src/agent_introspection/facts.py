@@ -17,7 +17,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any, cast
@@ -136,8 +136,22 @@ SNAPSHOTS = (
 )
 
 REGISTRY_FILE = "signal_support.toml"
-_ALIGNMENTS = ("aligned", "differs", "not applicable")
+_ALIGNMENTS = ("aligned", "differs", "not applicable", "not emitted")
+# Alignments that reach the signal on a machine using the harness; `not emitted`
+# hides the signal wherever the harness is enabled.
+REACHES = frozenset({"aligned", "differs", "not applicable"})
+_ROUTELESS = frozenset({"not applicable", "not emitted"})
 _HARNESS_GROUPS = {"codex": ("codex-app-server", "codex_cli_rs", "codex_exec")}
+# Detectors and evidence count only the harnesses this machine uses
+# (`introspection.harnesses`, loaded by `facts install` from the config).
+ENABLED_HARNESSES = f"(SELECT harness FROM {DATABASE}.harnesses WHERE enabled = 1)"
+
+
+def enabled_filter(column: str = "harness") -> str:
+    """Return a predicate keeping rows of the enabled harnesses."""
+    return f"{column} IN {ENABLED_HARNESSES}"
+
+
 # Route predicates run against the table (or, for activity hooks, the view that
 # resolves each hook event's harness) named for their source.
 SOURCE_TABLES = {"spans": "spans", "logs": "logs", "hooks": "hook_rows"}
@@ -152,13 +166,14 @@ class RegistryError(ValueError):
 
 @dataclass(frozen=True)
 class Registry:
-    """Rows for the five registry tables, in file order."""
+    """Rows for the five registry tables, in file order, and the harness labels."""
 
     signals: list[Row]
     routes: list[Row]
     support: list[Row]
     strays: list[Row]
     excluded: list[Row]
+    harnesses: dict[str, str] = field(default_factory=dict)
 
 
 def _sql(name: str) -> str:
@@ -284,16 +299,11 @@ def _parse_support(
     for harness, label in harnesses.items():
         value = expanded[harness]
         alignment = value.get("alignment", "")
-        _require(
-            alignment != "not emitted",
-            f"{signal}/{harness}: not emitted breaks harness parity; close the gap with a "
-            "route (native or activity hook) or move the signal to [[excluded]]",
-        )
         _require(alignment in _ALIGNMENTS, f"{signal}/{harness}: unknown alignment")
         route = value.get("route", "")
         note = value.get("note", "")
-        if alignment == "not applicable":
-            _require(route == "", f"{signal}/{harness}: not applicable has no route")
+        if alignment in _ROUTELESS:
+            _require(route == "", f"{signal}/{harness}: {alignment} has no route")
         else:
             _require(harness in covered_by.get(route, []), f"{signal}/{harness}: bad route")
         _require(
@@ -308,6 +318,10 @@ def _parse_support(
             "alignment": alignment,
             "note": note,
         })
+    _require(
+        any(row["route"] != "" for row in rows),
+        f"{signal}: no harness emits it; list it under [[excluded]]",
+    )
     return rows
 
 
@@ -320,7 +334,12 @@ def _parse_excluded(
         view = _text(entry, "view", signal)
         _require(view in views, f"{signal}: unknown view {view}")
         missing = cast(list[str], entry.get("missing", []))
-        _require(bool(missing) and set(missing) <= set(harnesses), f"{signal}: unknown harness")
+        _require(set(missing) <= set(harnesses), f"{signal}: unknown harness")
+        _require(
+            set(missing) == set(harnesses),
+            f"{signal}: [[excluded]] is for signals no harness produces; list it as a "
+            "[[signal]] with `not emitted` for the harnesses that lack it",
+        )
         rows.append({
             "signal": signal,
             "view": view,
@@ -376,6 +395,7 @@ def parse_registry(document: dict[str, Any]) -> Registry:
         support=support,
         strays=_parse_strays(document.get("stray", []), harnesses),
         excluded=excluded,
+        harnesses=dict(harnesses),
     )
 
 
@@ -384,14 +404,72 @@ def load_registry() -> Registry:
     return parse_registry(tomllib.loads(_sql(REGISTRY_FILE)))
 
 
+def enabled_harnesses(registry: Registry, enabled: Sequence[str] | None) -> tuple[str, ...]:
+    """Resolve the configured harness keys to registry harnesses, in registry order.
+
+    None enables every registry harness; `codex` names the three Codex surfaces.
+    """
+    if enabled is None:
+        return tuple(registry.harnesses)
+    unknown = [
+        key for key in enabled if key not in registry.harnesses and key not in _HARNESS_GROUPS
+    ]
+    if unknown:
+        raise ConfigurationError(
+            f"harnesses.enabled: unknown harness {', '.join(unknown)}; known: "
+            + ", ".join([*registry.harnesses, *_HARNESS_GROUPS])
+        )
+    chosen = {harness for key in enabled for harness in _HARNESS_GROUPS.get(key, (key,))}
+    return tuple(harness for harness in registry.harnesses if harness in chosen)
+
+
+def harness_rows(registry: Registry, enabled: Sequence[str]) -> list[Row]:
+    """Return one `introspection.harnesses` row per registry harness."""
+    return [
+        {"harness": harness, "label": label, "enabled": int(harness in enabled)}
+        for harness, label in registry.harnesses.items()
+    ]
+
+
+def hidden_signals(registry: Registry, enabled: Sequence[str]) -> list[Row]:
+    """Return the harness-scoped signals hidden on a machine using ``enabled``.
+
+    A signal is visible only when every enabled harness reaches it (aligned, differs,
+    or not applicable); an enabled harness that does not emit it hides it here. One
+    row per signal and reason, naming the enabled harnesses it applies to.
+    """
+    hidden: list[Row] = []
+    for signal in registry.signals:
+        by_note: dict[str, list[str]] = {}
+        for row in registry.support:
+            if (
+                row["signal"] == signal["signal"]
+                and row["harness"] in enabled
+                and row["alignment"] not in REACHES
+            ):
+                by_note.setdefault(str(row["note"]), []).append(str(row["harness_label"]))
+        hidden.extend(
+            {
+                "signal": signal["signal"],
+                "view": signal["view"],
+                "title": signal["title"],
+                "missing": ", ".join(labels),
+                "note": note,
+            }
+            for note, labels in by_note.items()
+        )
+    return hidden
+
+
 def sql_string(value: str) -> str:
     """Quote a value as a ClickHouse string literal."""
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def registry_statements(registry: Registry) -> list[str]:
-    """Return statements that replace the registry tables with the file's rows."""
+def registry_statements(registry: Registry, enabled: Sequence[str]) -> list[str]:
+    """Return statements that fill the registry tables and this machine's harnesses."""
     tables: dict[str, list[Row]] = {
+        "harnesses": harness_rows(registry, enabled),
         "signals": registry.signals,
         "signal_routes": registry.routes,
         "signal_support": registry.support,
@@ -416,13 +494,15 @@ def route_check_statements(registry: Registry) -> list[str]:
     ]
 
 
-def install_statements() -> list[str]:
+def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     """Return the ordered idempotent statements that create the whole facts store.
 
     Loaders, snapshots, and registry tables hold no source-of-truth state, so they
-    are recreated to pick up projection, view, and registry changes.
+    are recreated to pick up projection, view, registry, and harness changes.
+    ``enabled`` holds the configured harness keys; None enables every harness.
     """
     registry = load_registry()
+    harnesses = enabled_harnesses(registry, enabled)
     return [
         _sql("001_tables.sql"),
         _sql("002_registry.sql"),
@@ -432,7 +512,7 @@ def install_statements() -> list[str]:
         _sql("003_views.sql"),
         *(statement for snapshot in SNAPSHOTS for statement in snapshot_statements(snapshot)),
         *route_check_statements(registry),
-        *registry_statements(registry),
+        *registry_statements(registry, harnesses),
     ]
 
 
@@ -626,16 +706,28 @@ def runner(config: AppConfig) -> SqlRunner:
     return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
 
 
-def install(run: SqlRunner) -> dict[str, Any]:
-    """Create the facts database, loaders, views, snapshots, and registry tables."""
-    for statement in install_statements():
+def install(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, Any]:
+    """Create the facts database, loaders, views, snapshots, and registry tables.
+
+    ``enabled`` holds the configured harness keys (None: every registry harness);
+    unknown keys are rejected before any statement runs.
+    """
+    statements = install_statements(enabled)
+    for statement in statements:
         run(statement)
     registry = load_registry()
+    harnesses = enabled_harnesses(registry, enabled)
     return {
         "database": DATABASE,
         "loaders": [loader.name for loader in LOADERS],
         "snapshots": [f"{snapshot.view}_snapshot" for snapshot in SNAPSHOTS],
         "registry": {"signals": len(registry.signals), "support": len(registry.support)},
+        "harnesses": {
+            "enabled": list(harnesses),
+            "hidden_signals": list(
+                dict.fromkeys(row["signal"] for row in hidden_signals(registry, harnesses))
+            ),
+        },
     }
 
 

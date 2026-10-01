@@ -670,18 +670,17 @@ SELECT
 FROM introspection.hook_events FINAL
 WHERE producer = 'omp' AND event_type = 'approval';
 
--- One project per session: the latest the hooks reported. Session IDs are
--- producer-native UUIDs, so they join facts without the harness; 3 of about 7,100
--- sessions ever changed project.
+-- The Git project of each attributed session, joined to the facts by session ID
+-- (session IDs are harness-native UUIDs, so the harness is not needed).
 CREATE OR REPLACE VIEW introspection.session_project AS
 SELECT
     session_id,
-    argMax(project_name, occurred_at) AS project,
-    argMax(project_id, occurred_at) AS project_id,
-    argMax(producer, occurred_at) AS producer,
-    argMax(project_root, occurred_at) AS project_root
+    project_name AS project,
+    project_id,
+    store,
+    project_root
 FROM introspection.session_projects FINAL
-GROUP BY session_id;
+WHERE status = 'attributed';
 
 -- One row per task with the Jev labels of the prompt that started it and of the
 -- next prompt in the session (`introspection.prompt_labels`, labelled by `facts sync`

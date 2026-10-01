@@ -26,18 +26,28 @@ only `SELECT ON introspection.*`.
 | `INTROSPECTION_CLICKHOUSE_USER`     | Basic-auth user, when the server needs a login.                                 | `default` when only a password is set                      |
 | `INTROSPECTION_CLICKHOUSE_PASSWORD` | Basic-auth password. Supply it from a secret manager, never a file.             | none                                                       |
 | `INTROSPECTION_WORKFLOW_DB`         | Workflow SQLite store the Interventions view reads findings and proposals from. | `~/.local/share/agent-introspection/introspection.sqlite3` |
-| `INTROSPECTION_PROJECT_INBOX`       | Session-context inbox counted as the Pipeline sync backlog.                     | `~/.local/share/agent-introspection/session-context-inbox` |
+| `INTROSPECTION_HOOK_INBOX`          | Activity-hook inbox counted as the Pipeline backlog.                            | `~/.local/share/agent-introspection/hook-inbox`            |
 
 Sources: `dashboard/server.ts`, `dashboard/server/clickhouse.ts`.
 
 ## Reading the views
 
 Each view answers one question, outcome first: KPI tiles, daily trends, breakdowns,
-exemplar tables, and a session drill-down. The harness selector shows All or one
-harness. All is the union of every harness's rows for the same signal, and ratios are
-aggregated before division. A cell that cannot exist for a harness (headless Codex exec
-has no user to interrupt or follow up) shows the registry's reason, never zero.
-Harnesses are never ranked against each other.
+exemplar tables, and a session drill-down. The harness selector shows All or one of
+the harnesses this machine enables (config `[harnesses] enabled`, loaded into
+`introspection.harnesses` by `facts install`). All is the union of the enabled
+harnesses' rows for the same signal, and ratios are aggregated before division. A cell
+that cannot exist for a harness (headless Codex exec has no user to interrupt or follow
+up) shows the registry's reason, never zero. A signal an enabled harness does not emit
+is hidden on this machine: its panels are not rendered, and the Pipeline view lists it
+under "Signals hidden on this machine". Harnesses are never ranked against each other.
+
+Each panel's chips show, per enabled harness, the coverage state of its route in the
+window: rows (with `from <date>` when the route's first row falls inside the window,
+such as an activity hook installed then), route missing (no rows while the harness is
+otherwise active: a possible break), no activity (the harness is idle), no events (a
+rare-event route), or not applicable. The coverage grid shows harnesses this machine
+does not enable as not in use, flagged when their routes still have rows.
 
 ## Related Docs
 

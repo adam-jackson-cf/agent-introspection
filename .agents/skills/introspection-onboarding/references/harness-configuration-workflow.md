@@ -2,7 +2,7 @@
 
 Configure the harnesses the user asks for, and only those, so every dashboard signal
 each can produce reaches the facts: telemetry export, project attribution, activity
-hooks, and prompt export. Record contracts: `scripts/README.md` (session-context records) and
+hooks, and prompt export. Contracts: `session_stores.toml` (project attribution) and
 `docs/hook-events.md` (activity-hook records and prompt export).
 
 ## Choose the harnesses
@@ -17,14 +17,16 @@ hooks, and prompt export. Record contracts: `scripts/README.md` (session-context
 
 ## What each known harness needs
 
-| Harness                       | OTLP export                                 | Session-context (project)                        | Activity hooks                    | Prompt export                               |
-| ----------------------------- | ------------------------------------------- | ------------------------------------------------ | --------------------------------- | ------------------------------------------- |
-| Claude Code                   | `env` in `~/.claude/settings.json`          | `SessionStart`, `CwdChanged`, `SessionEnd` hooks | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env` |
-| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `notify` (covers every Codex surface)            | none: its signals are native      | `log_user_prompt = true` in `[otel]`        |
-| omp                           | `~/.omp/.env`                               | `adapter.ts` extension                           | `activity.ts` extension           | sent by `activity.ts`                       |
+| Harness                       | OTLP export                                 | Session store (project)                       | Activity hooks                    | Prompt export                               |
+| ----------------------------- | ------------------------------------------- | --------------------------------------------- | --------------------------------- | ------------------------------------------- |
+| Claude Code                   | `env` in `~/.claude/settings.json`          | `~/.claude/projects/` (nothing to install)    | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env` |
+| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `<codex-root>/sessions/` (nothing to install) | none: its signals are native      | `log_user_prompt = true` in `[otel]`        |
+| omp                           | `~/.omp/.env`                               | `~/.omp/agent/sessions/` (nothing to install) | `activity.ts` extension           | sent by `activity.ts`                       |
 
 `<codex-root>` is `$CODEX_HOME` when set to an absolute path, else `~/.codex`; configure
-every root in use (for example an Orca per-account root and `~/.codex`).
+every root in use. A root the bundled stores do not cover (for example Orca's
+per-account Codex homes) goes under `[sessions.roots]` in the config:
+`codex = ["~/Library/Application Support/orca/codex-accounts/*/home/sessions"]`.
 
 ## Steps
 
@@ -33,17 +35,15 @@ every root in use (for example an Orca per-account root and `~/.codex`).
    18.4.4; after an upgrade, confirm the event names and payload fields in the installed
    types or docs, and look for renamed telemetry attributes (omp renamed `pi.gen_ai.*`
    to `omp.gen_ai.*` on 2026-09-29).
-2. **Managed files.** Copy the runtime, shim, and adapters from this skill's `scripts/`
-   so hooks never run a repo path:
+2. **Managed files.** Copy the shim and the omp extension so hooks never run a repo
+   path:
 
    ```sh
    S=.agents/skills/introspection-onboarding/scripts
-   R=~/.local/lib/agent-introspection/session-context-runtime-v1
-   mkdir -p "$R/adapters/omp"
-   install -m 0755 "$S/session-context-runtime.sh" "$S/activity-shim.sh" "$R/"
-   install -m 0755 "$S/adapters/claude-code/adapter.py" "$R/adapters/claude-code.py"
-   install -m 0755 "$S/adapters/codex-cli/adapter.py" "$R/adapters/codex.py"
-   install -m 0644 "$S/adapters/omp/adapter.ts" "$S/adapters/omp/activity.ts" "$R/adapters/omp/"
+   R=~/.local/lib/agent-introspection/activity-hooks-v1
+   mkdir -p "$R/omp"
+   install -m 0755 "$S/activity-shim.sh" "$R/"
+   install -m 0644 "$S/adapters/omp/activity.ts" "$R/omp/"
    ```
 
 3. **OTLP export** to the local collector (gRPC usually `localhost:4317`, HTTP
@@ -56,17 +56,13 @@ every root in use (for example an Orca per-account root and `~/.codex`).
      collector.
    - omp `~/.omp/.env`: `OTEL_EXPORTER_OTLP_ENDPOINT` (HTTP),
      `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_SERVICE_NAME=oh-my-pi`.
-4. **Session-context hook.**
-   - Claude Code: command hooks `SessionStart`, `CwdChanged`, `SessionEnd` running
-     `$R/adapters/claude-code.py`.
-   - Codex: `notify = ["$R/adapters/codex.py"]`. If another tool already owns `notify`
-     (Codex Computer Use wraps it as `--previous-notify`), add ours to that chain;
-     never replace it.
-   - omp: `ln -sfn "$R/adapters/omp/adapter.ts" ~/.omp/agent/extensions/agent-introspection.ts`.
+4. **Session store.** Project attribution reads it; nothing is installed. Confirm the
+   harness's store exists and holds recent sessions (`ls -t` its root), and after the
+   first `facts sync`, that `agent-introspection facts sessions` reports them.
 5. **Activity hooks.**
    - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
      then without `--dry-run` (backs up, idempotent, `--remove` undoes).
-   - omp: `ln -sfn "$R/adapters/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts`
+   - omp: `ln -sfn "$R/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts`
      and list `~/.omp/agent/extensions/agent-introspection-activity.ts` under
      `extensions:` in `~/.omp/agent/config.yml` (omp's ambient discovery does not load
      it). Restart omp sessions.
@@ -91,17 +87,17 @@ registry, so it cannot show partial or misleading data. Find, and record in a ha
 profile (version, evidence, and whether each item is native, needs a hook, or is
 missing):
 
-| Need                  | What to find                                                                                       | Check                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Telemetry export      | Its OTLP settings; the `service.name` it reports                                                   | Rows for that service in SigNoz after a short session |
-| Session identity      | The attribute naming the session, stable across its turns                                          | Same value on usage, task, and tool rows              |
-| Task boundary         | The span or event that is one user turn or run, with start and end                                 | One per prompt                                        |
-| Model calls and usage | Per-call tokens (input, cached, output, reasoning), model, effort, errors, latency                 | Sums match the harness's own accounting               |
-| Tool calls            | Tool name, outcome, failure text, arguments or a way to hash them, call ID                         | One per call, joinable to the task                    |
-| User signals          | Interrupt, steer, approvals                                                                        | Rare-event routes                                     |
-| Prompt text           | A prompt event with its text, or a hook that can send one                                          | Not a placeholder                                     |
-| Project attribution   | A hook or callback giving the same session ID plus the absolute working directory at session start | Session ID equals the telemetry session key           |
-| Hook surface          | Documented hook or extension events and their payload fields                                       | For each gap above that telemetry lacks               |
+| Need                  | What to find                                                                                                                                   | Check                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Telemetry export      | Its OTLP settings; the `service.name` it reports                                                                                               | Rows for that service in SigNoz after a short session |
+| Session identity      | The attribute naming the session, stable across its turns                                                                                      | Same value on usage, task, and tool rows              |
+| Task boundary         | The span or event that is one user turn or run, with start and end                                                                             | One per prompt                                        |
+| Model calls and usage | Per-call tokens (input, cached, output, reasoning), model, effort, errors, latency                                                             | Sums match the harness's own accounting               |
+| Tool calls            | Tool name, outcome, failure text, arguments or a way to hash them, call ID                                                                     | One per call, joinable to the task                    |
+| User signals          | Interrupt, steer, approvals                                                                                                                    | Rare-event routes                                     |
+| Prompt text           | A prompt event with its text, or a hook that can send one                                                                                      | Not a placeholder                                     |
+| Project attribution   | Where it stores sessions on disk, and the record holding the session ID and absolute working directory (becomes a `session_stores.toml` entry) | Session ID equals the telemetry session key           |
+| Hook surface          | Documented hook or extension events and their payload fields                                                                                   | For each gap above that telemetry lacks               |
 
 Inspect only installed docs, configuration, types, and telemetry key names and counts;
 never print prompts, commands, or secrets. Then add it with the

@@ -17,7 +17,7 @@ harness hook (Claude Code settings, omp extension)
   └─> activity shim: reads the hook envelope on stdin, returns at once,
       hands the envelope to a detached `agent-introspection hook <producer> <event>`
         └─> normalizer (src/agent_introspection/hooks.py): derives fields, drops text
-              └─> ~/.local/share/agent-introspection/session-context-inbox/<event_id>.json
+              └─> ~/.local/share/agent-introspection/hook-inbox/<event_id>.json
                     └─> facts sync (every minute) ─> introspection.hook_events
                           └─> fact views (tool_calls, task_outcomes, task_labels, …)
 ```
@@ -95,7 +95,7 @@ than six hours counts as closed.
 
 The shim is `.agents/skills/introspection-onboarding/scripts/activity-shim.sh`;
 the installers copy it to
-`~/.local/lib/agent-introspection/session-context-runtime-v1/activity-shim.sh`.
+`~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
 See the [adapter READMEs](../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
 for the commands. Failures are logged by exception type only to
 `~/.local/share/agent-introspection/hooks.log`.

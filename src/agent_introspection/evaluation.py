@@ -27,7 +27,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from agent_introspection.facts import DATABASE, SNAPSHOT_DAYS, SqlRunner, sql_string
+from agent_introspection.facts import (
+    DATABASE,
+    SNAPSHOT_DAYS,
+    SqlRunner,
+    enabled_filter,
+    sql_string,
+)
 from agent_introspection.proposals import (
     CLUSTER_TASK_RATE,
     ProposalState,
@@ -98,11 +104,12 @@ def _cluster_query(subject: dict[str, Any], names: str, window: Window, now: dat
         WHERE tool_family = {sql_string(str(subject["tool_family"]))}
             AND failure_class = {sql_string(str(subject["failure_class"]))}
             AND outcome = 'failed' AND task_id != '' AND harness IN ({names})
+            AND {enabled_filter()}
             AND ts >= {start}
     )) AS matched_tasks
 FROM (
     SELECT DISTINCT harness, task_id FROM {_table("task_outcomes", window, now)}
-    WHERE harness IN ({names}) AND task_id != ''
+    WHERE harness IN ({names}) AND {enabled_filter()} AND task_id != ''
         AND start_ts >= {start} AND start_ts < {end}
 )
 FORMAT JSONEachRow"""
@@ -116,7 +123,8 @@ def _correction_query(subject: dict[str, Any], names: str, window: Window, now: 
 FROM {_table("task_labels", window, now)} AS l
 INNER JOIN {DATABASE}.session_project AS p ON p.session_id = l.session_id
 WHERE p.project = {sql_string(str(subject["project"]))} AND l.labelled = 1
-    AND l.harness IN ({names}) AND l.start_ts >= {start} AND l.start_ts < {end}
+    AND l.harness IN ({names}) AND {enabled_filter("l.harness")}
+    AND l.start_ts >= {start} AND l.start_ts < {end}
 FORMAT JSONEachRow"""
 
 

@@ -43,36 +43,25 @@ ENGINE = ReplacingMergeTree(loaded_at)
 PARTITION BY toYYYYMM(ts)
 ORDER BY (harness, log_id);
 
--- Session-to-project events from the harness session-context hooks. The sync
--- removes each inbox file once its row is here, so this table is the only copy.
+-- Session-to-project attribution (`facts sync`, sessions.py): one row per session from
+-- the harnesses' own session stores, `attributed` with its Git project or the reason
+-- it has none; `resolved_by` is `workspace` (its directory's Git root) or `remote` (the
+-- directory is gone; its recorded Git remote matched a repository on this machine).
+-- Resolved again on a rescan; ReplacingMergeTree keeps the latest.
 CREATE TABLE IF NOT EXISTS introspection.session_projects
 (
-    event_id String,
-    producer LowCardinality(String),
     session_id String,
-    event_type LowCardinality(String),
-    occurred_at DateTime64(6, 'UTC'),
+    store LowCardinality(String),
+    status LowCardinality(String),
     project_id String,
     project_name String,
     project_root String,
+    resolved_by LowCardinality(String),
+    started_at DateTime64(3, 'UTC'),
     loaded_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (session_id, event_id);
-
--- Hook events that could not name a project (for example a non-git workspace).
-CREATE TABLE IF NOT EXISTS introspection.session_project_rejections
-(
-    rejection_id String,
-    producer LowCardinality(String),
-    correlation_id String,
-    lifecycle_event LowCardinality(String),
-    occurred_at DateTime64(6, 'UTC'),
-    reason_code LowCardinality(String),
-    loaded_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY rejection_id;
+ORDER BY session_id;
 
 
 -- Normalized activity-hook events (see docs/hook-events.md) that close signals the

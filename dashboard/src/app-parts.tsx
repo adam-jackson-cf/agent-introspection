@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 import type {
   Filters,
+  Harness,
   Registry,
   SessionResponse,
   ViewId,
@@ -169,12 +170,13 @@ function CustomRange(props: {
 
 export function FilterBar(props: {
   filters: Filters;
+  harnesses: readonly Harness[];
   custom: boolean;
   setCustom: (custom: boolean) => void;
   setRange: (days: number) => void;
   change: (next: Filters) => void;
 }) {
-  const { filters, custom, setCustom, setRange, change } = props;
+  const { filters, harnesses, custom, setCustom, setRange, change } = props;
   return (
     <div className="filters" aria-label="Filters">
       <div className="filter">
@@ -196,11 +198,12 @@ export function FilterBar(props: {
       </div>
       <HarnessSelector
         value={filters.harness}
+        harnesses={harnesses}
         onChange={(harness) => change({ ...filters, harness })}
       />
       <p className="scope">
         {filters.harness === ""
-          ? "All = the union of each harness's rows for the same signal"
+          ? "All = the union of each enabled harness's rows for the same signal"
           : "One harness: signals not applicable to it say so, never zero"}
       </p>
     </div>

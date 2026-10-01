@@ -1,0 +1,56 @@
+# Harness session stores: where each harness keeps its sessions on this machine, and
+# which record names the session and its working directory. `facts sync` reads only
+# these fields (never message content) to attribute sessions to Git projects.
+#
+# name        store name, recorded with each attribution
+# harnesses   registry harness keys whose sessions the store holds
+# roots       directories to search; `~`, `$VAR`, and glob patterns expand; a root
+#             whose variable is unset or that does not exist is skipped. Users add
+#             roots under `[sessions.roots]` in their config.
+# glob        session files under a root
+# max_lines   how many leading lines to read for the record
+# match       fields the record must have with these values (dotted paths)
+# session_id  dotted path of the session ID (equals the harness's telemetry session key)
+# cwd         dotted path of the session's absolute working directory
+# started_at  dotted path of the record's timestamp
+# remote      optional dotted path of the session's Git remote URL; used only when the
+#             working directory no longer exists, to find that repository on this machine
+
+[[store]]
+name = "claude-code"
+harnesses = ["claude-code"]
+roots = ["$CLAUDE_CONFIG_DIR/projects", "~/.claude/projects"]
+glob = "*/*.jsonl"
+max_lines = 60
+match = {}
+session_id = "sessionId"
+cwd = "cwd"
+started_at = "timestamp"
+
+[[store]]
+name = "codex"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+roots = [
+    "$CODEX_HOME/sessions",
+    "$CODEX_HOME/archived_sessions",
+    "~/.codex/sessions",
+    "~/.codex/archived_sessions",
+]
+glob = "**/rollout-*.jsonl"
+max_lines = 1
+match = { type = "session_meta" }
+session_id = "payload.id"
+cwd = "payload.cwd"
+started_at = "timestamp"
+remote = "payload.git.repository_url"
+
+[[store]]
+name = "omp"
+harnesses = ["oh-my-pi"]
+roots = ["~/.omp/agent/sessions"]
+glob = "*/*.jsonl"
+max_lines = 5
+match = { type = "session" }
+session_id = "id"
+cwd = "cwd"
+started_at = "timestamp"

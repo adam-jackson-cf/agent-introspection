@@ -23,6 +23,7 @@ import {
   SNAPSHOT_DAYS,
   type Query,
 } from "./server/clickhouse";
+import { enabledHarnesses, hiddenSignals } from "./src/harness-scope";
 import { contributions, pipelineData, routeCounts } from "./server/pipeline";
 import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 
@@ -31,10 +32,10 @@ const PORT = 4173;
 const WORKFLOW_DB =
   process.env.INTROSPECTION_WORKFLOW_DB ??
   join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
-/** Hook files waiting for `facts sync-projects` (a backlog means the job is not running). */
-const PROJECT_INBOX =
-  process.env.INTROSPECTION_PROJECT_INBOX ??
-  join(homedir(), ".local/share/agent-introspection/session-context-inbox");
+/** Hook-event files waiting for `facts sync` (a growing backlog means the job is not running). */
+const HOOK_INBOX =
+  process.env.INTROSPECTION_HOOK_INBOX ??
+  join(homedir(), ".local/share/agent-introspection/hook-inbox");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
 /** Route counts feed coverage and contributor chips; loaders add rows once a minute. */
@@ -62,7 +63,7 @@ export type InboxReader = () => number;
 
 const countInbox: InboxReader = () => {
   try {
-    return readdirSync(PROJECT_INBOX).filter((name) => name.endsWith(".json"))
+    return readdirSync(HOOK_INBOX).filter((name) => name.endsWith(".json"))
       .length;
   } catch (error) {
     // The hooks create the inbox on their first write; until then nothing waits.
@@ -126,27 +127,34 @@ const params = (filters: Filters): Record<string, string> => ({
 });
 
 async function loadRegistry(query: Query): Promise<Registry> {
-  const { signals, support, routes, strays, exclusions } = await batch(query, {
-    signals:
-      "SELECT signal, view, view_title, title, question, unit, formula, scope FROM introspection.signals ORDER BY sort",
-    support:
-      "SELECT signal, harness, harness_label, route, alignment, note FROM introspection.signal_support ORDER BY signal, harness",
-    routes:
-      "SELECT route, harness, harness_label, source, match, expect, description FROM introspection.signal_routes ORDER BY route, harness",
-    strays:
-      "SELECT stray, harness, source, match, reason FROM introspection.signal_strays ORDER BY stray",
-    exclusions:
-      "SELECT signal, view, title, missing, reason FROM introspection.signal_exclusions ORDER BY signal",
-  });
+  const { signals, support, routes, strays, exclusions, harnesses } =
+    await batch(query, {
+      signals:
+        "SELECT signal, view, view_title, title, question, unit, formula, scope FROM introspection.signals ORDER BY sort",
+      support:
+        "SELECT signal, harness, harness_label, route, alignment, note FROM introspection.signal_support ORDER BY signal, harness",
+      routes:
+        "SELECT route, harness, harness_label, source, match, expect, description FROM introspection.signal_routes ORDER BY route, harness",
+      strays:
+        "SELECT stray, harness, source, match, reason FROM introspection.signal_strays ORDER BY stray",
+      exclusions:
+        "SELECT signal, view, title, missing, reason FROM introspection.signal_exclusions ORDER BY signal",
+      harnesses:
+        "SELECT harness, label, enabled FROM introspection.harnesses ORDER BY harness",
+    });
   if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
-  return {
+  const registry = {
     signals,
     support,
     routes,
     strays,
     exclusions,
-  } as unknown as Registry;
+    harnesses,
+  } as unknown as Omit<Registry, "hidden">;
+  if (enabledHarnesses(registry).length === 0)
+    throw new Error("no harness is enabled; run facts install");
+  return { ...registry, hidden: hiddenSignals(registry) };
 }
 
 /** Scalar fields of a finding subject (facts.failure_cluster or facts.repeated_correction). */
@@ -389,6 +397,11 @@ export function createApp(
       return badRequest("view must be a known view");
     const filters = parseFilters(url);
     if (filters instanceof Response) return filters;
+    if (
+      filters.harness !== "" &&
+      !enabledHarnesses(await registry()).includes(filters.harness)
+    )
+      return badRequest("harness is not enabled on this machine");
     return json(await view(id as ViewId, filters));
   }
 

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  HARNESSES,
+  type Contribution,
   type Contributions,
   type Filters,
   type Harness,
@@ -15,6 +15,7 @@ import {
   type SignalSupport,
 } from "./contracts";
 import { fmtCount, HARNESS_COLOR, HARNESS_LABEL } from "./format";
+import { enabledHarnesses, isHidden } from "./harness-scope";
 
 export type ViewContextValue = {
   registry: Registry;
@@ -29,8 +30,21 @@ export const useView = (): ViewContextValue => {
   return value;
 };
 
-const selectedHarnesses = (filters: Filters): readonly Harness[] =>
-  filters.harness === "" ? HARNESSES : [filters.harness];
+/** The selected harness, or every enabled harness for All. */
+const selectedHarnesses = (
+  context: Pick<ViewContextValue, "registry" | "filters">,
+): readonly Harness[] =>
+  context.filters.harness === ""
+    ? enabledHarnesses(context.registry)
+    : [context.filters.harness];
+
+/** The harnesses a view's charts and tables cover: the selection, or All = enabled. */
+export const useSelectedHarnesses = (): readonly Harness[] =>
+  selectedHarnesses(useView());
+
+/** Whether a signal is shown on this machine (every enabled harness reaches it). */
+export const useVisible = (signal: string): boolean =>
+  !isHidden(useView().registry, signal);
 
 const supportFor = (registry: Registry, signal: string, harness: Harness) =>
   registry.support.find(
@@ -48,7 +62,7 @@ export function notApplicable(
 ): SignalSupport[] | null {
   const measured = signals[0];
   if (!measured) return null;
-  const entries = selectedHarnesses(context.filters).map((harness) =>
+  const entries = selectedHarnesses(context).map((harness) =>
     supportFor(context.registry, measured, harness),
   );
   return entries.length > 0 &&
@@ -57,27 +71,47 @@ export function notApplicable(
     : null;
 }
 
-type ContributionState = "rows" | "no rows" | "not applicable";
+/** Most telling first when no signal of the panel has rows. */
+const SILENT_ORDER: Contribution["state"][] = [
+  "route missing",
+  "no events",
+  "no activity",
+  "not applicable",
+];
 
-function contributionState(
-  context: ViewContextValue,
+/**
+ * One harness's chip for a panel: rows when any of its signals has rows on the
+ * harness's route (with the measured signal's start day when that falls in the
+ * window), else the most telling coverage state among its signals.
+ */
+export function panelContribution(
+  contributions: Contributions,
   signals: string[],
   harness: Harness,
-): { state: ContributionState; rows: number } {
-  const applicable = signals.filter(
-    (signal) =>
-      supportFor(context.registry, signal, harness)?.alignment !==
-      "not applicable",
-  );
-  if (applicable.length === 0) return { state: "not applicable", rows: 0 };
-  const rows = Math.max(
-    0,
-    ...applicable.map(
-      (signal) => context.contributions[signal]?.[harness] ?? 0,
-    ),
-  );
-  return { state: rows > 0 ? "rows" : "no rows", rows };
+): Contribution {
+  const entries = signals
+    .map((signal) => contributions[signal]?.[harness])
+    .filter((entry): entry is Contribution => entry !== undefined);
+  const withRows = entries.filter((entry) => entry.state === "rows");
+  if (withRows.length > 0)
+    return {
+      state: "rows",
+      rows: Math.max(...withRows.map((entry) => entry.rows)),
+      from: withRows[0]!.from,
+    };
+  const state =
+    SILENT_ORDER.find((candidate) =>
+      entries.some((entry) => entry.state === candidate),
+    ) ?? "not applicable";
+  return { state, rows: 0, from: null };
 }
+
+const chipTitle = (harness: Harness, chip: Contribution) => {
+  const label = HARNESS_LABEL[harness];
+  if (chip.state !== "rows") return `${label}: ${chip.state}`;
+  const since = chip.from ? `; its route starts on ${chip.from}` : "";
+  return `${label}: ${fmtCount(chip.rows)} rows on its route${since}`;
+};
 
 /** Which harnesses contributed rows to the panel's signals in the window. */
 export function Contributors({ signals }: { signals: string[] }) {
@@ -90,31 +124,30 @@ export function Contributors({ signals }: { signals: string[] }) {
   if (harnessSignals.length === 0) return null;
   return (
     <ul className="contributors" aria-label="Harnesses contributing data">
-      {selectedHarnesses(context.filters).map((harness) => {
-        const { state, rows } = contributionState(
-          context,
+      {selectedHarnesses(context).map((harness) => {
+        const chip = panelContribution(
+          context.contributions,
           harnessSignals,
           harness,
         );
         return (
           <li
             key={harness}
-            className={`contributor contributor-${state.replaceAll(" ", "-")}`}
-            title={
-              state === "rows"
-                ? `${HARNESS_LABEL[harness]}: ${fmtCount(rows)} rows on its route`
-                : `${HARNESS_LABEL[harness]}: ${state}`
-            }
+            className={`contributor contributor-${chip.state.replaceAll(" ", "-")}`}
+            title={chipTitle(harness, chip)}
           >
             <i
               style={{
                 background:
-                  state === "rows" ? HARNESS_COLOR[harness] : undefined,
+                  chip.state === "rows" ? HARNESS_COLOR[harness] : undefined,
               }}
               aria-hidden="true"
             />
             {HARNESS_LABEL[harness]}
-            {state !== "rows" && <small>{state}</small>}
+            {chip.state !== "rows" && <small>{chip.state}</small>}
+            {chip.state === "rows" && chip.from && (
+              <small>from {chip.from}</small>
+            )}
           </li>
         );
       })}
@@ -134,7 +167,7 @@ function SupportRow(props: {
   const route = context.registry.routes.find(
     (entry) => entry.route === support.route && entry.harness === harness,
   );
-  const rows = context.contributions[signal]?.[harness];
+  const rows = context.contributions[signal]?.[harness]?.rows;
   return (
     <tr>
       <th scope="row">{HARNESS_LABEL[harness]}</th>
@@ -172,7 +205,7 @@ export function InfoNote({ signals }: { signals: string[] }) {
             {definition.scope === "harness" && (
               <table>
                 <tbody>
-                  {selectedHarnesses(context.filters).map((harness) => (
+                  {selectedHarnesses(context).map((harness) => (
                     <SupportRow
                       key={harness}
                       context={context}
@@ -225,7 +258,8 @@ export function NotApplicableNotice({ entries }: { entries: SignalSupport[] }) {
  * Panel frame shared by every view: title, contributors, and an info note
  * rendered from the signal support registry. When the panel's signal is not
  * applicable to any selected harness, the body is replaced by the registry's
- * reason, never by zero.
+ * reason, never by zero. A panel whose measured signal (the first) is hidden on
+ * this machine is not rendered; other hidden signals drop out of its chips and note.
  */
 export function Panel({
   title,
@@ -243,7 +277,9 @@ export function Panel({
   const context = useView();
   const [open, setOpen] = useState(false);
   const noteId = useId();
-  const missing = notApplicable(context, signals);
+  const shown = signals.filter((signal) => !isHidden(context.registry, signal));
+  const missing = notApplicable(context, shown);
+  if (signals[0] !== undefined && shown[0] !== signals[0]) return null;
   return (
     <article className="panel" data-span={span}>
       <header className="panel-head">
@@ -263,7 +299,7 @@ export function Panel({
           <span aria-hidden="true">i</span>
         </button>
       </header>
-      <Contributors signals={signals} />
+      <Contributors signals={shown} />
       <div className="panel-body">
         <Boundary label={title}>
           {missing ? <NotApplicableNotice entries={missing} /> : children}
@@ -271,7 +307,7 @@ export function Panel({
       </div>
       {open && (
         <footer id={noteId} className="panel-footer">
-          <InfoNote signals={signals} />
+          <InfoNote signals={shown} />
         </footer>
       )}
     </article>
@@ -315,11 +351,14 @@ export function Section({
   );
 }
 
+/** All plus each harness this machine uses. */
 export function HarnessSelector({
   value,
+  harnesses,
   onChange,
 }: {
   value: Filters["harness"];
+  harnesses: readonly Harness[];
   onChange: (value: Filters["harness"]) => void;
 }) {
   return (
@@ -331,7 +370,7 @@ export function HarnessSelector({
         onChange={(event) => onChange(event.target.value as Filters["harness"])}
       >
         <option value="">All harnesses</option>
-        {HARNESSES.map((harness) => (
+        {harnesses.map((harness) => (
           <option key={harness} value={harness}>
             {HARNESS_LABEL[harness]}
           </option>

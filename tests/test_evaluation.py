@@ -149,6 +149,20 @@ def test_correction_findings_use_the_correction_task_rate() -> None:
     assert all("task_labels_snapshot" in sql for sql in statements)
     assert all("p.project = 'example'" in sql for sql in statements)
     assert all("correction_kind_next = 'ignored'" in sql for sql in statements)
+    assert all(
+        "l.harness IN (SELECT harness FROM introspection.harnesses" in sql for sql in statements
+    )
+
+
+def test_cluster_rates_count_only_the_enabled_harnesses() -> None:
+    connection, _, applied_at = applied_proposal()
+    statements, run = facts((20, 6), (20, 2))
+
+    evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
+
+    enabled = "harness IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)"
+    assert statements
+    assert all(sql.count(enabled) == 2 for sql in statements)
 
 
 def test_legacy_free_text_metrics_are_skipped() -> None:

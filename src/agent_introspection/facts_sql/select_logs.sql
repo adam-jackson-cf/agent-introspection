@@ -40,7 +40,8 @@ WITH
     arraySlice(
         arrayDistinct(
             arrayMap(
-                p -> substring(replaceRegexpOne(trimBoth(p), '^/Users/[^/]+', '~'), 1, 300),
+                -- Every /Users/<name> becomes ~: one argument can hold several paths.
+                p -> substring(replaceRegexpAll(trimBoth(p), '/Users/[^/\\s;:,]+', '~'), 1, 300),
                 arrayConcat(
                     -- Patches arrive with real or JSON-escaped newlines; stop at either.
                     extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),

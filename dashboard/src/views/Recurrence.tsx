@@ -1,6 +1,13 @@
 import { DailyChart, DataTable, TableView, type Column } from "../charts";
 import { HARNESSES, type Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, useView } from "../components";
+import {
+  HarnessName,
+  Kpi,
+  Panel,
+  Section,
+  useView,
+  useSelectedHarnesses,
+} from "../components";
 import {
   fmtCount,
   fmtPct,
@@ -98,6 +105,7 @@ const CLUSTER_COLUMNS: Column[] = [
 
 export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
   const { filters } = useView();
+  const selected = useSelectedHarnesses();
   const targets = sumRows(data.target_summary ?? [], ["targets", "recurring"]);
   const summary = data.cluster_summary?.[0] ?? {};
   const actionable = recombineClusters(data.actionable ?? []);
@@ -106,9 +114,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
   const localized = concentration.filter(
     (row) => num(row.top_count) >= LOCALIZED * num(row.attributed),
   );
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
@@ -217,7 +223,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Project concentration"
-          subtitle="Where each repeated signature occurs; project from the session-context hooks"
+          subtitle="Where each repeated signature occurs; project from the harness session stores"
           signals={["recur.project_concentration"]}
           span={12}
         >

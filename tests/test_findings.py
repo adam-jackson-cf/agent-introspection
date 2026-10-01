@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from agent_introspection import findings
+from agent_introspection import evidence, findings
 from agent_introspection.facts import SqlRunner
 from agent_introspection.workflow import connect_workflow
 
@@ -185,6 +185,17 @@ def test_findings_from_the_retired_detector_go_dormant() -> None:
 def test_evaluation_workspaces_are_excluded() -> None:
     for query in (findings.WINDOW_QUERY, findings.CORRECTION_QUERY):
         assert f"NOT match(p.project_root, '{findings.EVALUATION_PATH}')" in query
+
+
+def test_detectors_count_only_the_enabled_harnesses() -> None:
+    enabled = "IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)"
+    assert f"c.harness {enabled}" in findings.WINDOW_QUERY
+    assert f"l.harness {enabled}" in findings.CORRECTION_QUERY
+    cluster = evidence.queries("shell", "exit 1")
+    correction = evidence.correction_queries("example", "ignored")
+    for name, sql in [*cluster.items(), *correction.items()]:
+        assert enabled in sql, name
+    assert f"c.harness {enabled}" in cluster["projects"]
 
 
 def test_generic_failure_classes_never_become_actionable() -> None:

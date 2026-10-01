@@ -1,5 +1,5 @@
 {
   "minimum_percent": 85,
   "include": ["src/agent_introspection/*.py"],
-  "exclude": ["src/agent_introspection/cli.py", "src/agent_introspection/projects.py"]
+  "exclude": ["src/agent_introspection/cli.py", "src/agent_introspection/schedule.py"]
 }

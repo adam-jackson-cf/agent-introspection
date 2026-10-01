@@ -18,7 +18,7 @@ const shimPath =
   process.env.AGENT_INTROSPECTION_SHIM ??
   join(
     homedir(),
-    ".local/lib/agent-introspection/session-context-runtime-v1/activity-shim.sh",
+    ".local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh",
   );
 
 type ActivityEvent =

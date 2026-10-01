@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from agent_introspection import facts
-from agent_introspection.config import AppConfig
+from agent_introspection.config import AppConfig, ConfigurationError
 from agent_introspection.facts import FactsError
 
 
@@ -165,9 +165,25 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "codex.usage", "alignment": "aligned"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "no field"},
+                "claude-code": {"alignment": "not emitted"},
             },
-            "breaks harness parity",
+            "needs a note",
+        ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"route": "claude.usage", "alignment": "not emitted", "note": "n"},
+            },
+            "not emitted has no route",
+        ),
+        (
+            {
+                "codex": {"alignment": "not emitted", "note": "n"},
+                "oh-my-pi": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"alignment": "not applicable", "note": "n"},
+            },
+            "no harness emits it",
         ),
     ],
 )
@@ -176,6 +192,106 @@ def test_registry_rejects_incomplete_or_undisclosed_support(
 ) -> None:
     with pytest.raises(facts.RegistryError, match=message):
         facts.parse_registry(_document(**support))
+
+
+def _visibility_registry() -> facts.Registry:
+    return facts.parse_registry(
+        _document(
+            codex={"alignment": "not emitted", "note": "no duration"},
+            codex_exec={"alignment": "not applicable", "note": "headless"},
+            **{
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"route": "claude.usage", "alignment": "differs", "note": "n"},
+            },
+        )
+    )
+
+
+def test_not_emitted_cells_hide_a_signal_only_where_that_harness_is_enabled() -> None:
+    registry = _visibility_registry()
+
+    every = facts.enabled_harnesses(registry, None)
+    assert facts.hidden_signals(registry, every) == [
+        {
+            "signal": "s",
+            "view": "cache",
+            "title": "t",
+            "missing": "codex-app-server, codex_cli_rs",
+            "note": "no duration",
+        }
+    ]
+    # Not applicable still reaches the signal, so Codex exec alone keeps it visible.
+    assert facts.hidden_signals(registry, ("claude-code", "oh-my-pi", "codex_exec")) == []
+    assert facts.hidden_signals(registry, ("claude-code", "codex_cli_rs"))[0]["missing"] == (
+        "codex_cli_rs"
+    )
+
+
+def test_enabled_harnesses_expand_codex_keep_registry_order_and_reject_unknown_keys() -> None:
+    registry = _visibility_registry()
+
+    assert facts.enabled_harnesses(registry, None) == tuple(registry.harnesses)
+    assert facts.enabled_harnesses(registry, ["claude-code", "codex"]) == (
+        "codex-app-server",
+        "codex_cli_rs",
+        "codex_exec",
+        "claude-code",
+    )
+    with pytest.raises(ConfigurationError, match="unknown harness gemini"):
+        facts.enabled_harnesses(registry, ["claude-code", "gemini"])
+
+
+def test_excluded_is_only_for_signals_no_harness_produces() -> None:
+    document = _document(
+        codex={"route": "codex.usage", "alignment": "aligned"},
+        **{
+            "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+            "claude-code": {"route": "claude.usage", "alignment": "aligned"},
+        },
+    )
+    document["excluded"] = [
+        {"id": "x", "view": "cache", "title": "x", "missing": ["oh-my-pi"], "reason": "r"}
+    ]
+
+    with pytest.raises(facts.RegistryError, match="no harness produces"):
+        facts.parse_registry(document)
+
+
+def test_repo_registry_lists_harness_specific_gaps_as_not_emitted_signals() -> None:
+    registry = facts.load_registry()
+    restored = {
+        "usage.cache_creation",
+        "guard.sandbox",
+        "provider.stream_disconnects",
+        "provider.throughput",
+        "provider.model_conformance",
+    }
+
+    assert [row["signal"] for row in registry.excluded] == ["intervene.rule_adherence"]
+    every = facts.enabled_harnesses(registry, None)
+    assert {row["signal"] for row in facts.hidden_signals(registry, every)} == restored
+    # A machine without Codex shows throughput; with only Codex it shows stream disconnects.
+    no_codex = facts.enabled_harnesses(registry, ["claude-code", "oh-my-pi"])
+    assert "provider.throughput" not in {
+        row["signal"] for row in facts.hidden_signals(registry, no_codex)
+    }
+    codex_only = facts.enabled_harnesses(registry, ["codex"])
+    assert "provider.stream_disconnects" not in {
+        row["signal"] for row in facts.hidden_signals(registry, codex_only)
+    }
+
+
+def test_install_loads_this_machines_harnesses_before_the_registry_rows() -> None:
+    statements = facts.install_statements(["claude-code", "codex"])
+
+    harnesses = next(s for s in statements if "INSERT INTO introspection.harnesses" in s)
+    assert '{"harness": "oh-my-pi", "label": "omp", "enabled": 0}' in harnesses
+    assert '{"harness": "codex_exec", "label": "Codex exec", "enabled": 1}' in harnesses
+    assert "CREATE OR REPLACE TABLE introspection.harnesses" in statements[1]
+    with pytest.raises(ConfigurationError):
+        facts.install_statements(["claude"])
+    every = next(s for s in facts.install_statements() if "introspection.harnesses SELECT" in s)
+    assert '"enabled": 0' not in every
 
 
 def test_repo_registry_gives_every_harness_signal_a_record_for_every_harness() -> None:
@@ -196,7 +312,7 @@ def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
         excluded=[],
     )
 
-    (statement,) = facts.registry_statements(registry)
+    (statement,) = facts.registry_statements(registry, ())
 
     assert statement.startswith(
         "INSERT INTO introspection.signal_strays SELECT * FROM format(JSONEachRow, '"

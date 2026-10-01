@@ -16,20 +16,25 @@ const M = "introspection.model_calls_snapshot";
 const L = "introspection.task_labels_snapshot";
 /** Activity-hook events with the harness resolved (a view: never FINAL). */
 const H = "introspection.hook_rows";
-/** Session → project from the harness session-context hooks. */
+/** Session → Git project, resolved from the harness session stores. */
 export const P = "introspection.session_project";
 
 const START = "{start:DateTime64(3, 'UTC')}";
 const END = "{end:DateTime64(3, 'UTC')}";
-export const HARNESS_FILTER =
-  "({harness:String} = '' OR harness = {harness:String})";
+/** The harnesses this machine uses (`facts install` loads them from the config). */
+export const ENABLED_HARNESSES =
+  "(SELECT harness FROM introspection.harnesses WHERE enabled = 1)";
+/** The selected harness, or All: the union of the enabled harnesses. */
+const harnessFilter = (column: string): string =>
+  `${column} IN ${ENABLED_HARNESSES} AND ({harness:String} = '' OR ${column} = {harness:String})`;
+export const HARNESS_FILTER = harnessFilter("harness");
 
 /** Selected window and harness over one timestamp column. */
 export const inWindow = (ts: string): string =>
   `${ts} >= ${START} AND ${ts} < ${END} AND ${HARNESS_FILTER}`;
 /** The same window for a joined table's alias. */
 const inWindowOf = (alias: string, ts: string): string =>
-  `${alias}.${ts} >= ${START} AND ${alias}.${ts} < ${END} AND ({harness:String} = '' OR ${alias}.harness = {harness:String})`;
+  `${alias}.${ts} >= ${START} AND ${alias}.${ts} < ${END} AND ${harnessFilter(`${alias}.harness`)}`;
 
 const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
 /** Waiting and status-polling tools repeat identical calls by design (registry: tools.repeats). */
@@ -119,18 +124,19 @@ const CORRECTED_DEN = `countIf(${NEXT_PROMPT} AND corrected_next IS NOT NULL)`;
 
 /** Seven Europe/London calendar days ending on the window end, over an alias's `ts`. */
 const LONDON_WEEK_OF = (alias: string) =>
-  `toDate(${alias}.ts, 'Europe/London') > toDate(${END}, 'Europe/London') - 7 AND ${alias}.ts < ${END} AND ({harness:String} = '' OR ${alias}.harness = {harness:String})`;
+  `toDate(${alias}.ts, 'Europe/London') > toDate(${END}, 'Europe/London') - 7 AND ${alias}.ts < ${END} AND ${harnessFilter(`${alias}.harness`)}`;
 
 export const VIEW_QUERIES: Record<Exclude<ViewId, "pipeline">, ViewQueries> = {
   cache: {
-    kpi: `SELECT harness, sum(input_tokens) AS input, sum(cached_input) AS cached, sum(output_tokens) AS output,
+    kpi: `SELECT harness, sum(input_tokens) AS input, sum(cached_input) AS cached,
+    sum(coalesce(cache_creation_input, 0)) AS creation, sum(output_tokens) AS output,
     count() AS operations, uniqExact(session_id) AS sessions
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
     daily: `SELECT toString(toDate(ts)) AS day, harness, sum(input_tokens) AS input,
     sum(cached_input) AS cached, sum(output_tokens) AS output
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY day, harness ORDER BY day, harness`,
     models: `SELECT harness, provider, model, count() AS operations, sum(input_tokens) AS input,
-    sum(cached_input) AS cached, sum(output_tokens) AS output
+    sum(cached_input) AS cached, sum(coalesce(cache_creation_input, 0)) AS creation, sum(output_tokens) AS output
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY harness, provider, model ORDER BY input DESC LIMIT 40`,
     sessions: `SELECT harness, session_id, arrayStringConcat(arraySort(groupUniqArray(model)), ', ') AS models,
     count() AS operations, sum(input_tokens) AS input, sum(cached_input) AS cached, sum(output_tokens) AS output,
@@ -262,6 +268,12 @@ GROUP BY harness, decision, source ORDER BY n DESC`,
     decisions_daily: `SELECT toString(toDate(ts)) AS day, harness, count() AS decisions,
     countIf(detail NOT IN ${APPROVALS}) AS rejected
 FROM ${S} WHERE ${inWindow("ts")} AND signal = 'tool_decision' GROUP BY day, harness ORDER BY day`,
+    sandbox: `SELECT harness, detail AS outcome, tool, count() AS n
+FROM ${S} WHERE ${inWindow("ts")} AND signal = 'sandbox_outcome'
+GROUP BY harness, outcome, tool ORDER BY n DESC LIMIT 30`,
+    sandbox_daily: `SELECT toString(toDate(ts)) AS day, harness, count() AS outcomes,
+    countIf(detail = 'denied') AS denied
+FROM ${S} WHERE ${inWindow("ts")} AND signal = 'sandbox_outcome' GROUP BY day, harness ORDER BY day`,
     bypass: `SELECT harness, countIf(command_head != '') AS commands, countIf(gate_bypass = 1) AS bypass,
     uniqExactIf(task_id, gate_bypass = 1 AND task_id != '') AS tasks
 FROM ${C} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
@@ -285,11 +297,16 @@ ORDER BY commands DESC, calls DESC LIMIT 25`,
   provider: {
     kpi: `SELECT harness, count() AS calls, countIf(outcome = 'failed') AS failed,
     countIf(outcome = 'cancelled') AS cancelled, countIf(outcome = 'unknown') AS unknown,
+    countIf(stream_disconnect = 1) AS disconnects, count(stream_disconnect) AS disconnect_den,
+    countIf(response_model != '' AND response_model != model) AS mismatched,
+    countIf(response_model != '') AS with_response_model,
     countIf(attempt > 1) AS retried, count(attempt) AS attempt_den
 FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
     latency: `SELECT harness, model, count() AS calls,
     quantileExact(0.5)(duration_seconds) AS p50, quantileExact(0.95)(duration_seconds) AS p95,
-    quantileExact(0.5)(ttft_seconds) AS ttft_p50, quantileExact(0.95)(ttft_seconds) AS ttft_p95
+    quantileExact(0.5)(ttft_seconds) AS ttft_p50, quantileExact(0.95)(ttft_seconds) AS ttft_p95,
+    quantileExact(0.5)(if(duration_seconds > ttft_seconds AND output_tokens > 0,
+        output_tokens / (duration_seconds - ttft_seconds), NULL)) AS tps_p50
 FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness, model ORDER BY calls DESC LIMIT 30`,
     codex_sampling: `SELECT harness, attrs_string['model'] AS model,
     countIf(name = 'run_sampling_request') AS steps,

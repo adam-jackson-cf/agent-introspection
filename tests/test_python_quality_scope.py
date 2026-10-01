@@ -25,7 +25,7 @@ def quality_scope() -> ModuleType:
         ("tests/test_session_context.py", True),
         ("scripts/lib/python_quality_scope.py", True),
         (
-            ".agents/skills/introspection-onboarding/scripts/adapters/codex-cli/adapter.py",
+            ".agents/skills/introspection-onboarding/scripts/adapters/claude-code/install_activity.py",
             True,
         ),
         ("docs/reference/generated.py", False),

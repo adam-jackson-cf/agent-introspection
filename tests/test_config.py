@@ -151,3 +151,27 @@ def test_dashboard_url_is_optional_and_local() -> None:
     assert parse_config({}).dashboard_clickhouse_url is None
     with pytest.raises(ConfigurationError, match="this machine"):
         parse_config({"dashboard": {"clickhouse_url": "http://ch.example.com:8123"}})
+
+
+def test_enabled_harnesses_are_optional_and_kept_as_listed() -> None:
+    assert parse_config({}).harnesses_enabled is None
+    config = parse_config({"harnesses": {"enabled": ["claude-code", "codex"]}})
+
+    assert config.harnesses_enabled == ("claude-code", "codex")
+
+
+@pytest.mark.parametrize(
+    ("harnesses", "message"),
+    [
+        ({"enabled": []}, "non-empty list"),
+        ({"enabled": "claude-code"}, "non-empty list"),
+        ({"enabled": ["claude-code", ""]}, "non-empty list"),
+        ({"enabled": ["codex", "codex"]}, "more than once"),
+        ({"disabled": ["codex"]}, "unsupported keys in harnesses"),
+    ],
+)
+def test_enabled_harnesses_reject_malformed_lists(
+    harnesses: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        parse_config({"harnesses": harnesses})

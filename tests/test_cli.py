@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import facts, projects
+from agent_introspection import facts, schedule
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
 from agent_introspection.findings import CORRECTION_DETECTOR_ID
@@ -276,7 +276,7 @@ def test_schedule_install_passes_the_selected_configuration(
         received.append(selected)
         return {}
 
-    monkeypatch.setattr(projects, "schedule_install", schedule_install)
+    monkeypatch.setattr(schedule, "schedule_install", schedule_install)
 
     assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
     assert received == [config.resolve()]
@@ -286,10 +286,20 @@ def test_facts_install_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
-    monkeypatch.setattr(facts, "install", lambda _run: {"installed": True})
+    received: list[object] = []
 
-    assert main(["--config", str(config_file(tmp_path)), "facts", "install"]) == 0
+    def install(_run: object, enabled: object) -> dict[str, bool]:
+        received.append(enabled)
+        return {"installed": True}
+
+    monkeypatch.setattr(facts, "install", install)
+
+    config = config_file(tmp_path)
+    config.write_text(config.read_text() + '[harnesses]\nenabled = ["claude-code", "codex"]\n')
+
+    assert main(["--config", str(config), "facts", "install"]) == 0
     assert json.loads(capsys.readouterr().out) == {"installed": True}
+    assert received == [("claude-code", "codex")]
     assert (tmp_path / "workflow.sqlite3").exists()
 
 

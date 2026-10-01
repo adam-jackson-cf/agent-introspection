@@ -14,7 +14,7 @@ from agent_introspection import facts
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 DOC = DOCS / "dashboard-measure-v3.md"
 GAPS = DOCS / "dashboard-data-gaps.md"
-_MARK = {"aligned": "✓", "differs": "≈", "not applicable": "—"}
+_MARK = {"aligned": "✓", "differs": "≈", "not applicable": "—", "not emitted": "✗"}
 BEGIN = "<!-- BEGIN GENERATED FROM signal_support.toml -->"
 END = "<!-- END GENERATED FROM signal_support.toml -->"
 
@@ -138,7 +138,7 @@ def render() -> str:
 
 
 def render_gaps() -> str:
-    """Return the support matrix, the not-applicable, differs, and excluded lists."""
+    """Return the support matrix and the not-emitted, not-applicable, differs, excluded lists."""
     registry = facts.load_registry()
     harnesses = list(dict.fromkeys(str(row["harness_label"]) for row in registry.support))
     cells = {(str(row["signal"]), str(row["harness_label"])): row for row in registry.support}
@@ -153,9 +153,16 @@ def render_gaps() -> str:
         f"{len(per_harness)} per-harness signals across {len(harnesses)} harnesses: "
         f"{len(registry.support)} cells, {counts['aligned']} aligned (✓), "
         f"{counts['differs']} reached by a different route (≈), "
-        f"{counts['not applicable']} not applicable by construction (—). Every signal is "
-        "reached by every harness it can exist for; a signal some harness cannot produce "
-        "is excluded (below).",
+        f"{counts['not applicable']} not applicable by construction (—), "
+        f"{counts['not emitted']} not emitted (✗).",
+        "",
+        "Parity is judged per machine, over the harnesses it uses (config `[harnesses] "
+        "enabled`, loaded into `introspection.harnesses` by `facts install`; absent means "
+        "every harness). A signal is shown when every enabled harness reaches it (✓, ≈, "
+        "or —). When an enabled harness does not emit it (✗), the signal is hidden on that "
+        "machine, and the Pipeline view lists it with the reason; it is never shown as "
+        "zero. A machine using only Claude Code and omp, for example, shows Output "
+        "throughput, which Codex cannot produce.",
         "",
         "| View | Signal | " + " | ".join(harnesses) + " |",
         "| --- | --- | " + " | ".join("---" for _ in harnesses) + " |",
@@ -163,6 +170,20 @@ def render_gaps() -> str:
     for signal in per_harness:
         marks = [_MARK[str(cells[str(signal["signal"]), h]["alignment"])] for h in harnesses]
         lines.append(f"| {signal['view_title']} | {signal['title']} | " + " | ".join(marks) + " |")
+    lines += [
+        "",
+        "## Signals a harness does not emit",
+        "",
+        "Each is hidden on a machine that enables the harness.",
+        "",
+        "| Signal | Harness | Why |",
+        "| --- | --- | --- |",
+    ]
+    lines += [
+        f"| {titles[str(row['signal'])]} | {row['harness_label']} | {_cell(row['note'])} |"
+        for row in registry.support
+        if row["alignment"] == "not emitted"
+    ]
     lines += [
         "",
         "## Signals not applicable to a harness",
@@ -193,8 +214,8 @@ def render_gaps() -> str:
         "",
         "## Excluded signals",
         "",
-        "At least one harness can produce these neither natively nor through an activity",
-        "hook, so they are left off the dashboard.",
+        "No harness can produce these, natively or through an activity hook, so they are",
+        "never shown.",
         "",
         "| Signal | View | Missing for | Reason |",
         "| --- | --- | --- | --- |",

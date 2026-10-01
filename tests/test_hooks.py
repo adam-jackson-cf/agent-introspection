@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import hooks, projects
-from tests.test_projects import recorder
+from agent_introspection import hooks, inbox
+from tests.test_inbox import recorder
 
 SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
 NOW = datetime(2026, 9, 30, 12, 0, 0, 123456, tzinfo=UTC)
@@ -349,13 +349,13 @@ def test_no_raw_argument_or_output_text_in_records(tmp_path: Path) -> None:
 def test_write_is_atomic_and_main_never_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    inbox = tmp_path / "inbox"
-    monkeypatch.setattr(hooks, "INBOX", inbox)
+    hook_inbox = tmp_path / "inbox"
+    monkeypatch.setattr(hooks, "INBOX", hook_inbox)
     monkeypatch.setattr(hooks, "LOG", tmp_path / "hooks.log")
     envelope = {"session_id": SESSION, "tool_name": "Bash", "tool_input": {"command": "ls"}}
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(envelope)))
     assert hooks.main("claude-code", "PreToolUse") == 0
-    (written,) = inbox.iterdir()
+    (written,) = hook_inbox.iterdir()
     assert json.loads(written.read_text())["schema"] == hooks.SCHEMA
     assert written.name == json.loads(written.read_text())["event_id"] + ".json"
 
@@ -367,7 +367,7 @@ def test_write_is_atomic_and_main_never_fails(
 
 
 def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
-    inbox = tmp_path / "inbox"
+    hook_inbox = tmp_path / "inbox"
     ctx = context(tmp_path)
     envelope = {
         "session_id": SESSION,
@@ -376,10 +376,10 @@ def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
         "tool_input": {"file_path": "/Users/me/p/a.py"},
     }
     (item,) = hooks.normalize("claude-code", "PreToolUse", envelope, ctx)
-    hooks.write(item, inbox)
+    hooks.write(item, hook_inbox)
     executed: list[str] = []
 
-    result = projects.sync(recorder(executed), inbox=inbox)
+    result = inbox.sync(recorder(executed), inbox=hook_inbox)
 
     assert result["hook_events"] == 1
     assert result["invalid"] == 0
@@ -394,12 +394,12 @@ def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
     assert row["attrs_number"]["gate_bypass"] == 0
     assert row["attrs_string"]["tool_name"] == "Edit"
     assert "arguments_length" in row["attrs_number"]
-    assert list(inbox.iterdir()) == []
+    assert list(hook_inbox.iterdir()) == []
 
 
 def test_large_rows_are_split_by_size() -> None:
     rows = [{"event_id": str(index), "blob": "x" * 5000} for index in range(100)]
-    statements = projects.insert_statements("hook_events", rows)
+    statements = inbox.insert_statements("hook_events", rows)
     assert len(statements) > 1
     assert all(len(statement) < 256 * 1024 for statement in statements)
 
@@ -477,3 +477,8 @@ def test_claude_installer_is_idempotent_preserves_others_and_removes(
     installer.main([*args, "--remove"])
     assert json.loads(settings.read_text()) == original
     assert len(list(tmp_path.glob("settings.json.bak-*"))) == 2
+
+
+def test_every_home_path_in_one_argument_is_redacted() -> None:
+    value = "~/.omp/**/x;/Users/someone/.claude/**/x;/Users/someone/.agents/**/x"
+    assert hooks.redact_home(value) == "~/.omp/**/x;~/.claude/**/x;~/.agents/**/x"

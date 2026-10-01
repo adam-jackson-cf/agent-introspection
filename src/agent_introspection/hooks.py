@@ -37,7 +37,7 @@ from typing import Any
 
 SCHEMA = "agent-introspection.hook-event/1"
 DATA_DIR = Path.home() / ".local/share/agent-introspection"
-INBOX = DATA_DIR / "session-context-inbox"
+INBOX = DATA_DIR / "hook-inbox"
 STATE_DIR = DATA_DIR / "hook-state"
 LOG = DATA_DIR / "hooks.log"
 TURN_STALE_SECONDS = 6 * 3600
@@ -62,7 +62,6 @@ _FILE_EXTENSION = re.compile(
 _NUMBER = re.compile(r"^[0-9.]+$")
 _TOKEN_QUOTES = (re.compile(r"^[\"']+"), re.compile(r"[\"';,)]+$"))
 _PATCH_FILE = re.compile(r"\*\*\* (?:Update|Add|Delete) File: ([^\n\\]+)")
-_HOME = re.compile(r"^/Users/[^/]+")
 _HOME_ANYWHERE = re.compile(r"/Users/[^/ ]+")
 _GATE_BYPASS = re.compile(r"(--no-verify|(^|[\s\"'])HUSKY=0|(^|[\s\"'])SKIP=|--no-gpg-sign)")
 _OUTPUT_NOISE = re.compile(
@@ -90,9 +89,12 @@ _PATH_KEYS = ("path", "file_path", "notebook_path")
 _ERROR_CLASS = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
+_HOME_PATHS = re.compile(r"/Users/[^/\s;:,'\"]+")
+
+
 def redact_home(path: str) -> str:
-    """Replace a leading ``/Users/<name>`` with ``~``."""
-    return _HOME.sub("~", path)
+    """Replace every ``/Users/<name>`` with ``~``; one argument can hold several paths."""
+    return _HOME_PATHS.sub("~", path)
 
 
 def canonical_arguments(arguments: object) -> str:

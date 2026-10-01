@@ -1,12 +1,12 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
 } from "../components";
 import {
   fmtCount,
@@ -32,16 +32,14 @@ const flag = (value: unknown) =>
   value === null || value === undefined ? "—" : num(value) === 1 ? "yes" : "no";
 
 export default function Friction({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
   const kpi = data.kpi ?? [];
   const all = sumRows(kpi, FIELDS);
   const rate = (key: string, sums: Record<string, number> = all) =>
     ratio(sums[`${key}_n`]!, sums[`${key}_den`]!);
   const detail = (key: string) =>
     `${fmtCount(all[`${key}_n`]!)} of ${fmtCount(all[`${key}_den`]!)} tasks that observe it`;
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],

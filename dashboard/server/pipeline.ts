@@ -1,4 +1,6 @@
 import type {
+  Contribution,
+  ContributionState,
   Contributions,
   Harness,
   Registry,
@@ -7,6 +9,7 @@ import type {
   SignalRoute,
 } from "../src/contracts";
 import { HARNESSES } from "../src/contracts";
+import { enabledHarnesses, isHidden } from "../src/harness-scope";
 import { batch, live, type Query } from "./clickhouse";
 import { inWindow } from "./views";
 
@@ -17,10 +20,12 @@ type RouteCounts = {
   total: Map<string, Map<string, number>>;
   /** route → harness → matching rows not explained by a registered stray. */
   unexplained: Map<string, Map<string, number>>;
+  /** route → harness → UTC day of the route's first row when no row precedes the window. */
+  first: Map<string, Map<string, string>>;
 };
 
-const WINDOW =
-  "ts >= {start:DateTime64(3, 'UTC')} AND ts < {end:DateTime64(3, 'UTC')}";
+const START = "{start:DateTime64(3, 'UTC')}";
+const WINDOW = `ts >= ${START} AND ts < {end:DateTime64(3, 'UTC')}`;
 const SOURCES: Source[] = ["spans", "logs", "hooks"];
 /**
  * The relation each route source's predicates run against. Activity hooks are
@@ -69,7 +74,10 @@ const strayCondition = (registry: Registry, source: Source): string => {
 /**
  * Counts rows per harness for every route predicate over the window, and the
  * part of each count not explained by a registered stray. Predicates come from
- * the registry tables that `facts install` loaded from the repo-owned file.
+ * the registry tables that `facts install` loaded from the repo-owned file. The
+ * scan reaches back through all history before the window end, so each route also
+ * reports the day of its first row when that row falls inside the window (a route
+ * that started mid-window, such as an activity hook installed then).
  */
 export function routeCountQueries(registry: Registry): Record<string, string> {
   const queries: Record<string, string> = {};
@@ -78,11 +86,12 @@ export function routeCountQueries(registry: Registry): Record<string, string> {
     if (predicates.length === 0) continue;
     const stray = strayCondition(registry, source);
     const columns = predicates.flatMap(([, match], index) => [
-      `countIf(${match}) AS t${index}`,
-      `countIf((${match}) AND NOT (${stray})) AS u${index}`,
+      `countIf((${match}) AND ts >= ${START}) AS t${index}`,
+      `countIf((${match}) AND ts >= ${START} AND NOT (${stray})) AS u${index}`,
+      `if(countIf((${match}) AND ts < ${START}) = 0, toString(toDate(minIf(ts, ${match}))), '') AS f${index}`,
     ]);
     queries[source] =
-      `SELECT harness, ${columns.join(", ")} FROM ${SOURCE_RELATION[source]} WHERE ${WINDOW} GROUP BY harness`;
+      `SELECT harness, ${columns.join(", ")} FROM ${SOURCE_RELATION[source]} WHERE ts < {end:DateTime64(3, 'UTC')} GROUP BY harness`;
   }
   return queries;
 }
@@ -90,11 +99,15 @@ export function routeCountQueries(registry: Registry): Record<string, string> {
 function harnessCounts(rows: Row[], index: number) {
   const totals = new Map<string, number>();
   const rest = new Map<string, number>();
+  const first = new Map<string, string>();
   for (const row of rows) {
     totals.set(String(row.harness), Number(row[`t${index}`]));
     rest.set(String(row.harness), Number(row[`u${index}`]));
+    const day = String(row[`f${index}`] ?? "");
+    if (Number(row[`t${index}`]) > 0 && day !== "")
+      first.set(String(row.harness), day);
   }
-  return [totals, rest] as const;
+  return [totals, rest, first] as const;
 }
 
 /** Interprets the per-source count rows of `routeCountQueries`. */
@@ -104,13 +117,15 @@ export function countsFromRows(
 ): RouteCounts {
   const total = new Map<string, Map<string, number>>();
   const unexplained = new Map<string, Map<string, number>>();
+  const first = new Map<string, Map<string, string>>();
   for (const source of SOURCES)
     routePredicates(registry, source).forEach(([route], index) => {
-      const [totals, rest] = harnessCounts(rows[source] ?? [], index);
+      const [totals, rest, days] = harnessCounts(rows[source] ?? [], index);
       total.set(route, totals);
       unexplained.set(route, rest);
+      first.set(route, days);
     });
-  return { total, unexplained };
+  return { total, unexplained, first };
 }
 
 export async function routeCounts(
@@ -129,27 +144,6 @@ const routeOf = (registry: Registry, signal: string, harness: string) =>
     (entry) => entry.signal === signal && entry.harness === harness,
   );
 
-/** Rows on each harness's own route for every harness-scoped signal of a view. */
-export function contributions(
-  registry: Registry,
-  counts: RouteCounts,
-  view: string,
-): Contributions {
-  const result: Contributions = {};
-  for (const signal of registry.signals) {
-    if (signal.view !== view || signal.scope !== "harness") continue;
-    const perHarness: Partial<Record<Harness, number>> = {};
-    for (const harness of HARNESSES) {
-      const support = routeOf(registry, signal.signal, harness);
-      if (support && support.route !== "")
-        perHarness[harness] =
-          counts.total.get(support.route)?.get(harness) ?? 0;
-    }
-    result[signal.signal] = perHarness;
-  }
-  return result;
-}
-
 export type CoverageState =
   | "healthy"
   | "idle"
@@ -157,7 +151,9 @@ export type CoverageState =
   | "no events"
   | "not applicable"
   | "stray (explained)"
-  | "stray (unexplained)";
+  | "stray (unexplained)"
+  | "not in use"
+  | "not in use, rows present";
 
 const harnessesWithRows = (registry: Registry, counts: RouteCounts) => {
   const active = new Set<string>();
@@ -228,20 +224,93 @@ function coverageState(
   return silentState(registry, support, harness, active);
 }
 
+const ownRows = (
+  counts: RouteCounts,
+  support: Registry["support"][number],
+  harness: Harness,
+) =>
+  support.route === ""
+    ? 0
+    : (counts.total.get(support.route)?.get(harness) ?? 0);
+
+/** The chip state is the coverage state seen from one panel. */
+const CHIP_STATE: Partial<Record<CoverageState, ContributionState>> = {
+  healthy: "rows",
+  "stray (unexplained)": "rows",
+  idle: "no activity",
+  "possible break": "route missing",
+  "no events": "no events",
+  "not applicable": "not applicable",
+  "stray (explained)": "not applicable",
+};
+
+/** One enabled harness's chip for a signal, from its coverage state. */
+function chip(
+  registry: Registry,
+  counts: RouteCounts,
+  support: Registry["support"][number],
+  active: Set<string>,
+): Contribution {
+  const harness = support.harness;
+  const own = ownRows(counts, support, harness);
+  if (support.alignment === "not applicable")
+    return { state: "not applicable", rows: own, from: null };
+  if (own === 0)
+    return {
+      state: CHIP_STATE[silentState(registry, support, harness, active)]!,
+      rows: 0,
+      from: null,
+    };
+  const from = counts.first.get(support.route)?.get(harness) ?? null;
+  return { state: "rows", rows: own, from };
+}
+
 /**
- * Coverage grid: registry alignment versus data per signal × harness. A harness
- * is active when any of its routes has rows in the window, so a route without
- * rows is a possible break only while the harness is otherwise active, and only
- * for routes that must have rows; a rare-event route reports no events. Rows on
- * another harness's route of the same signal are stray: explained when a
- * registered stray covers them, unexplained otherwise. A signal that is not
- * applicable to a harness should have no rows at all, so any rows flag it.
+ * Chip state per enabled harness for every harness-scoped signal of a view that
+ * is shown on this machine, reusing the coverage grid's state. `from` is the day
+ * a route's first row arrived when that falls inside the window.
+ */
+export function contributions(
+  registry: Registry,
+  counts: RouteCounts,
+  view: string,
+): Contributions {
+  const active = harnessesWithRows(registry, counts);
+  const enabled = enabledHarnesses(registry);
+  const result: Contributions = {};
+  for (const signal of registry.signals) {
+    if (signal.view !== view || signal.scope !== "harness") continue;
+    if (isHidden(registry, signal.signal)) continue;
+    const perHarness: Partial<Record<Harness, Contribution>> = {};
+    for (const harness of enabled) {
+      const support = routeOf(registry, signal.signal, harness);
+      if (support)
+        perHarness[harness] = chip(registry, counts, support, active);
+    }
+    result[signal.signal] = perHarness;
+  }
+  return result;
+}
+
+/**
+ * Coverage grid: registry alignment versus data per signal × harness, for the
+ * signals shown on this machine. A harness is active when any of its routes has
+ * rows in the window, so a route without rows is a possible break only while the
+ * harness is otherwise active, and only for routes that must have rows; a
+ * rare-event route reports no events. Rows on another harness's route of the
+ * same signal are stray: explained when a registered stray covers them,
+ * unexplained otherwise. A signal that is not applicable to a harness should
+ * have no rows at all, so any rows flag it. A harness this machine does not
+ * enable is not in use; rows on its own route are flagged, since its producer
+ * still exports.
  */
 export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
   const active = harnessesWithRows(registry, counts);
+  const enabled = new Set<string>(enabledHarnesses(registry));
   const rows: Row[] = [];
   for (const signal of registry.signals) {
-    if (signal.scope !== "harness") continue;
+    if (signal.scope !== "harness" || isHidden(registry, signal.signal))
+      continue;
     const signalRoutes = new Set(
       registry.support
         .filter((entry) => entry.signal === signal.signal && entry.route)
@@ -250,21 +319,22 @@ export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
     for (const harness of HARNESSES) {
       const support = routeOf(registry, signal.signal, harness);
       if (!support) continue;
-      const own =
-        support.route === ""
-          ? 0
-          : (counts.total.get(support.route)?.get(harness) ?? 0);
+      const own = ownRows(counts, support, harness);
       const { foreign, unexplained } = foreignCounts(
         registry,
         counts,
         signalRoutes,
         { route: support.route, harness },
       );
-      const state = coverageState(registry, support, harness, active, {
-        own,
-        foreign,
-        unexplained,
-      });
+      const state: CoverageState = !enabled.has(harness)
+        ? own > 0
+          ? "not in use, rows present"
+          : "not in use"
+        : coverageState(registry, support, harness, active, {
+            own,
+            foreign,
+            unexplained,
+          });
       rows.push({
         signal: signal.signal,
         title: signal.title,
@@ -512,19 +582,28 @@ SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORB
         OR match(attrs_string['failure_signature'], '/Users/[A-Za-z0-9._-]+'))
 FROM introspection.hook_events`;
 
-/** Share of tasks whose session has a hook-recorded project, per harness. */
-const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks, countIf(p.project != '') AS attributed
+/**
+ * Per harness: tasks, tasks whose session has a project, and tasks whose session the
+ * resolver found in no session store (for example a run that kept no session).
+ */
+const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks,
+    countIf(s.status = 'attributed') AS attributed,
+    countIf(s.status = '') AS no_session_record
 FROM introspection.task_outcomes_snapshot AS t
-LEFT JOIN introspection.session_project AS p ON p.session_id = t.session_id
+LEFT JOIN (
+    SELECT session_id, any(status) AS status FROM introspection.session_projects FINAL GROUP BY session_id
+) AS s ON s.session_id = t.session_id
 WHERE t.start_ts >= {start:DateTime64(3, 'UTC')} AND t.start_ts < {end:DateTime64(3, 'UTC')}
 GROUP BY harness ORDER BY harness`;
 
-const PROJECT_REJECTIONS = `SELECT producer, reason_code, count() AS n
-FROM introspection.session_project_rejections FINAL
-WHERE occurred_at >= {start:DateTime64(3, 'UTC')} AND occurred_at < {end:DateTime64(3, 'UTC')}
-GROUP BY producer, reason_code ORDER BY n DESC`;
+/** Sessions the resolver could not attribute, by session store and reason. */
+const PROJECT_REJECTIONS = `SELECT store, status AS reason, count() AS n
+FROM introspection.session_projects FINAL
+WHERE status != 'attributed'
+    AND started_at >= {start:DateTime64(3, 'UTC')} AND started_at < {end:DateTime64(3, 'UTC')}
+GROUP BY store, reason ORDER BY n DESC`;
 
-/** FINAL collapses rows re-sent by a retried sync so events are counted once. */
+/** When the resolver last stored a session, and how many it holds. */
 const PROJECT_SYNC = `SELECT toString(max(loaded_at)) AS last_load,
     dateDiff('second', max(loaded_at), now64(3)) AS age_seconds, count() AS events
 FROM introspection.session_projects FINAL`;
@@ -575,5 +654,6 @@ export async function pipelineData(
     project_sync: results.project_sync!,
     strays: registry.strays.map((entry) => ({ ...entry })),
     exclusions: registry.exclusions.map((entry) => ({ ...entry })),
+    hidden: registry.hidden.map((entry) => ({ ...entry })),
   };
 }

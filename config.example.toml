@@ -24,3 +24,11 @@ clickhouse_container = "signoz-clickhouse"
 # it uses [signoz] clickhouse_url. INTROSPECTION_CLICKHOUSE_URL overrides both.
 # [dashboard]
 # clickhouse_url = "http://127.0.0.1:8123"
+
+# The harnesses this machine uses. Harness parity, the dashboard's harness selector,
+# and the findings detectors cover only these; a signal some enabled harness cannot
+# produce is hidden here. Keys are the registry harnesses (oh-my-pi, codex-app-server,
+# codex_cli_rs, codex_exec, claude-code); `codex` names the three Codex surfaces.
+# Absent means every registry harness. `facts install` loads the list into ClickHouse.
+# [harnesses]
+# enabled = ["claude-code", "oh-my-pi", "codex"]

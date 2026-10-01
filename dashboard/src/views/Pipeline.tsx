@@ -1,6 +1,13 @@
 import { DailyChart, DataTable, TableView } from "../charts";
 import { HARNESSES, type Harness, type Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, useView } from "../components";
+import {
+  HarnessName,
+  Kpi,
+  Panel,
+  Section,
+  useView,
+  useSelectedHarnesses,
+} from "../components";
 import {
   fmtCount,
   fmtPct,
@@ -19,8 +26,14 @@ const STATE_MARK: Record<string, { mark: string; tone: string }> = {
   "stray (explained)": { mark: "≈", tone: "warning" },
   "possible break": { mark: "!", tone: "serious" },
   "stray (unexplained)": { mark: "✕", tone: "critical" },
+  "not in use": { mark: "–", tone: "neutral" },
+  "not in use, rows present": { mark: "!", tone: "warning" },
 };
-const UNEXPLAINED = new Set(["possible break", "stray (unexplained)"]);
+const UNEXPLAINED = new Set([
+  "possible break",
+  "stray (unexplained)",
+  "not in use, rows present",
+]);
 
 function StateChip({ state, title }: { state: string; title?: string }) {
   const spec = STATE_MARK[state] ?? { mark: "?", tone: "neutral" };
@@ -60,6 +73,7 @@ function CoverageRow(props: {
   );
 }
 
+/** Every known harness for All, so harnesses this machine does not use show as not in use. */
 function CoverageGrid({ rows }: { rows: Row[] }) {
   const { filters } = useView();
   const harnesses: readonly Harness[] =
@@ -137,6 +151,7 @@ const sanitizationViolations = (rows: Row[]) =>
 
 export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
   const { filters, registry } = useView();
+  const selected = useSelectedHarnesses();
   const viewTitle = (view: string) =>
     registry.signals.find((entry) => entry.view === view)?.view_title ?? view;
   const inScope = (row: Row) =>
@@ -157,9 +172,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
   );
   const recombination = rowsOf("recombination");
   const daily = dailyByHarness(rowsOf("daily_rows").filter(inScope));
-  const dailySeries = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const dailySeries = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
@@ -387,7 +400,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Project attribution"
-          subtitle="Tasks whose session has a project from the session-context hooks"
+          subtitle="Tasks whose session has a Git project, resolved from the harness session stores"
           signals={["pipeline.project_attribution"]}
         >
           <DataTable
@@ -399,6 +412,11 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               },
               { key: "tasks", label: "Tasks", numeric: true },
               { key: "attributed", label: "With project", numeric: true },
+              {
+                key: "no_session_record",
+                label: "No session record",
+                numeric: true,
+              },
               {
                 key: "share",
                 label: "Share",
@@ -422,19 +440,23 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => fmtSeconds(num(row.age_seconds)),
               },
-              { key: "inbox_backlog", label: "Inbox backlog", numeric: true },
-              { key: "events", label: "Hook events", numeric: true },
+              {
+                key: "inbox_backlog",
+                label: "Hook inbox backlog",
+                numeric: true,
+              },
+              { key: "events", label: "Sessions resolved", numeric: true },
             ]}
             rows={data.project_sync ?? []}
           />
           <DataTable
             columns={[
-              { key: "producer", label: "Hook" },
-              { key: "reason_code", label: "Rejected because" },
-              { key: "n", label: "Events", numeric: true },
+              { key: "store", label: "Session store" },
+              { key: "reason", label: "No project because" },
+              { key: "n", label: "Sessions", numeric: true },
             ]}
             rows={data.project_rejections ?? []}
-            empty="No hook rejections in the selected range."
+            empty="Every session in the selected range has a project."
           />
         </Panel>
         <Panel
@@ -480,7 +502,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Excluded signals"
-          subtitle="Signals left off the dashboard because at least one harness can produce them neither natively nor through an activity hook"
+          subtitle="Signals left off the dashboard because no harness produces them, natively or through an activity hook"
           signals={["pipeline.coverage"]}
           span={12}
         >
@@ -496,7 +518,28 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               { key: "reason", label: "Reason" },
             ]}
             rows={data.exclusions ?? []}
-            empty="No signal is excluded: every signal is reached by every harness it can exist for."
+            empty="No signal is excluded: some harness produces every signal."
+          />
+        </Panel>
+        <Panel
+          title="Signals hidden on this machine"
+          subtitle="An enabled harness does not emit them, so their panels are not shown here; a machine without that harness shows them"
+          signals={["pipeline.coverage"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              { key: "title", label: "Signal" },
+              {
+                key: "view",
+                label: "View",
+                render: (row) => viewTitle(String(row.view)),
+              },
+              { key: "missing", label: "Not emitted by" },
+              { key: "note", label: "Why" },
+            ]}
+            rows={rowsOf("hidden")}
+            empty="No signal is hidden: every enabled harness reaches every signal."
           />
         </Panel>
       </Section>

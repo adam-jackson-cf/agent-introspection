@@ -15,8 +15,6 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
 - Never print or write a secret; check presence only.
 - Confirm with the user before turning on prompt export: prompt text is then kept in
   SigNoz for its retention. The facts store never keeps it.
-- Never install the Codex Desktop (`codex-app-server`) session-context hooks into a
-  Codex root that Codex CLI also uses: they cannot tell the two apart.
 
 ## Workflows
 
@@ -24,7 +22,7 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
   reinstall in order (facts, harnesses, schedule, first sync).
 - [Harness configuration](references/harness-configuration-workflow.md): choose the
   harnesses to include (never assume any), explore an unknown one, and configure each
-  known one's OTLP export, session-context hook, activity hooks, and prompt export.
+  known one's OTLP export, session store, activity hooks, and prompt export.
 - [Validation](references/validation-workflow.md): check configuration without running
   anything, then prove a live session end to end.
 
@@ -35,5 +33,5 @@ Closing a signal gap with a new hook event is a code change: see the
 
 - Steps run, with evidence (preflight, install, sync results, validation rows).
 - Files changed, with backup paths, and any step the user must do (for example
-  trusting a Codex hook).
+  restarting a harness).
 - Per harness: what is captured, and any gap with its reason.

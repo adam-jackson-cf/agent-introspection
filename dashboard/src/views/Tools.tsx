@@ -1,12 +1,12 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
 } from "../components";
 import {
   fmtCount,
@@ -20,7 +20,7 @@ import {
 } from "../format";
 
 export default function Tools({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
   const kpi = sumRows(data.kpi ?? [], [
     "calls",
     "explicit",
@@ -36,9 +36,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
     "repeated_attempts",
   ]);
   const daily = data.daily ?? [];
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],

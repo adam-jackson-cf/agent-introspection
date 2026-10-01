@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Literal
 from urllib.parse import urlsplit
@@ -65,9 +65,17 @@ class AppConfig:
     database: DatabaseConfig = DatabaseConfig()
     signoz: SigNozConfig = SigNozConfig()
     dashboard_clickhouse_url: str | None = None
+    # Registry harness keys this machine uses (`codex` names the three Codex surfaces);
+    # None means every registry harness. `facts install` validates the keys.
+    harnesses_enabled: tuple[str, ...] | None = None
+    # Extra session-store roots per store name (`[sessions.roots]`), for example an
+    # Orca per-account Codex home; `~`, `$VAR`, and globs expand at scan time.
+    session_roots: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
-_ROOT_KEYS = frozenset({"database", "signoz", "dashboard"})
+_ROOT_KEYS = frozenset({"database", "signoz", "dashboard", "harnesses", "sessions"})
+_SESSIONS_KEYS = frozenset({"roots"})
+_HARNESSES_KEYS = frozenset({"enabled"})
 _DASHBOARD_KEYS = frozenset({"clickhouse_url"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
 _DOCKER_KEYS = frozenset({"clickhouse_container", "docker_context"})
@@ -200,6 +208,22 @@ def _signoz(signoz: dict[str, Any]) -> SigNozConfig:
     )
 
 
+def _enabled_harnesses(harnesses: dict[str, Any]) -> tuple[str, ...] | None:
+    """Validate [harnesses] enabled: a non-empty list of distinct harness keys."""
+    if "enabled" not in harnesses:
+        return None
+    value = harnesses["enabled"]
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(key, str) and key.strip() for key in value)
+    ):
+        raise ConfigurationError("harnesses.enabled must be a non-empty list of harness keys")
+    if len(set(value)) != len(value):
+        raise ConfigurationError("harnesses.enabled lists a harness more than once")
+    return tuple(value)
+
+
 def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
     value = data.get(name, {})
     if not isinstance(value, dict):
@@ -224,9 +248,13 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     database = _table(data, "database")
     signoz = _table(data, "signoz")
     dashboard = _table(data, "dashboard")
+    harnesses = _table(data, "harnesses")
+    sessions = _table(data, "sessions")
+    _reject_unknown(set(sessions), _SESSIONS_KEYS, location="sessions")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(dashboard), _DASHBOARD_KEYS, location="dashboard")
+    _reject_unknown(set(harnesses), _HARNESSES_KEYS, location="harnesses")
     defaults = AppConfig()
     return AppConfig(
         database=DatabaseConfig(
@@ -247,7 +275,21 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             if "clickhouse_url" in dashboard
             else None
         ),
+        harnesses_enabled=_enabled_harnesses(harnesses),
+        session_roots=_session_roots(sessions),
     )
+
+
+def _session_roots(sessions: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    roots = sessions.get("roots", {})
+    if not isinstance(roots, dict) or not all(
+        isinstance(name, str)
+        and isinstance(paths, list)
+        and all(isinstance(path, str) and path for path in paths)
+        for name, paths in roots.items()
+    ):
+        raise ConfigurationError("sessions.roots must map a store name to a list of paths")
+    return {name: tuple(paths) for name, paths in roots.items()}
 
 
 def load_config(path: Path | None = None) -> AppConfig:

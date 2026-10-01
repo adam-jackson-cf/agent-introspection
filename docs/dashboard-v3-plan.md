@@ -592,6 +592,28 @@ removed). The config refuses any ClickHouse or OTLP address that is not loopback
 and called out in the README. The "fresh cutover" workflow is now the setup workflow:
 install, or reinstall after a breaking change, against the existing local SigNoz.
 
+**F36. Attribution from session stores, and enabled harnesses (2026-10-01, clean
+cutover).** Project attribution no longer uses hooks: `facts sync` reads each session's
+ID and working directory from the harness's own session store (`session_stores.toml`:
+Claude Code transcripts, Codex rollouts including `archived_sessions`, omp session
+files) and resolves the Git root locally; a session whose workspace is gone is matched
+to a repository on this machine by its recorded Git remote (Codex). The session-context
+runtime, adapters, Codex `notify` chain entry, Codex Desktop installer, and their
+inbox records were removed from the repository and this machine (archived under
+`~/.local/share/agent-introspection/backups/pre-cutover-20261001T105312Z`); the
+activity hooks moved to `~/.local/lib/agent-introspection/activity-hooks-v1` and the
+`hook-inbox`; the launchd job is `com.adamjackson.agent-introspection.sync`. Parity is
+judged over `[harnesses] enabled`: a signal an enabled harness cannot produce is hidden
+on this machine, and the five previously excluded signals are back for machines whose
+harnesses all produce them. Clean cut: the old attribution tables, hook events of the
+retired prompt routes, and the workflow store were replaced, not migrated. Validated:
+4,608 sessions resolved in about 5 s (3,682 attributed, 362 of them by remote); 30-day
+task attribution 99% Claude Code (was 86%), 97% Codex exec, 85% Codex CLI, 74% Codex
+app-server (pruned sessions), 30% omp (batch runs without session files); parity and
+recombination exact; sanitization 0 everywhere after fixing multi-path home redaction
+in hook targets; coverage grid 243 healthy, 7 not applicable, 5 no events; 42 findings
+(19 actionable) from the first sync.
+
 ## Operations
 
 - **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`

@@ -1,6 +1,13 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, useView } from "../components";
+import { type Row } from "../contracts";
+import {
+  HarnessName,
+  Kpi,
+  Panel,
+  Section,
+  useSelectedHarnesses,
+  useVisible,
+} from "../components";
 import {
   fmtCount,
   fmtPct,
@@ -80,13 +87,18 @@ function latencyRows(data: Record<string, Row[]>): Row[] {
 }
 
 export default function Provider({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
+  const disconnectsShown = useVisible("provider.stream_disconnects");
+  const throughputShown = useVisible("provider.throughput");
+  const conformanceShown = useVisible("provider.model_conformance");
   const kpi = data.kpi ?? [];
   const all = sumRows(kpi, [
     "calls",
     "failed",
     "cancelled",
     "unknown",
+    "disconnects",
+    "disconnect_den",
     "retried",
     "attempt_den",
   ]);
@@ -96,9 +108,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
     (total, row) => total + num(row.extra),
     0,
   );
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
@@ -133,12 +143,21 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           detail="failed / model calls not cancelled by the user"
           signals={["provider.error_rate"]}
         />
-        <Kpi
-          title="Retries"
-          value={fmtCount(extraAttempts)}
-          detail="attempts beyond the first per logical call"
-          signals={["provider.retries"]}
-        />
+        {disconnectsShown ? (
+          <Kpi
+            title="Stream disconnects"
+            value={fmtCount(all.disconnects!)}
+            detail={`of ${fmtCount(all.disconnect_den!)} response streams`}
+            signals={["provider.stream_disconnects"]}
+          />
+        ) : (
+          <Kpi
+            title="Retries"
+            value={fmtCount(extraAttempts)}
+            detail="attempts beyond the first per logical call"
+            signals={["provider.retries"]}
+          />
+        )}
         <Kpi
           title="Unknown outcomes"
           value={fmtCount(all.unknown!)}
@@ -198,9 +217,13 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
       </Section>
       <Section title="Where does provider time go?">
         <Panel
-          title="Latency and time to first token by model"
+          title={
+            throughputShown
+              ? "Latency, time to first token, and throughput by model"
+              : "Latency and time to first token by model"
+          }
           subtitle="Codex latency is the sampling step (includes retries and tool draining); its calls are response streams"
-          signals={["provider.latency", "provider.ttft"]}
+          signals={["provider.latency", "provider.ttft", "provider.throughput"]}
           span={12}
         >
           <DataTable
@@ -241,13 +264,35 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => fmtSeconds(maybe(row.ttft_p95)),
               },
+              ...(throughputShown
+                ? [
+                    {
+                      key: "tps_p50",
+                      label: "P50 tokens/s",
+                      numeric: true,
+                      render: (row: Row) =>
+                        maybe(row.tps_p50) === null
+                          ? "—"
+                          : num(row.tps_p50).toFixed(0),
+                    },
+                  ]
+                : []),
             ]}
             rows={latency}
           />
         </Panel>
       </Section>
-      <Section title="Errors and retries">
-        <Panel title="Call errors by class" signals={["provider.error_rate"]}>
+      <Section
+        title={
+          conformanceShown
+            ? "Errors, retries, and conformance"
+            : "Errors and retries"
+        }
+      >
+        <Panel
+          title="Call errors by class"
+          signals={["provider.error_rate", "provider.stream_disconnects"]}
+        >
           <DataTable
             columns={[
               {
@@ -290,6 +335,40 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
             ]}
             rows={retries}
             empty="No model calls in the selected range."
+          />
+        </Panel>
+        <Panel
+          title="Model conformance"
+          subtitle="Calls whose served model differs from the requested model"
+          signals={["provider.model_conformance"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              {
+                key: "harness",
+                label: "Harness",
+                render: (row) => <HarnessName value={row.harness} />,
+              },
+              {
+                key: "with_response_model",
+                label: "Calls with a served model",
+                numeric: true,
+              },
+              { key: "mismatched", label: "Mismatched", numeric: true },
+              {
+                key: "rate",
+                label: "Mismatch rate",
+                numeric: true,
+                render: (row) =>
+                  fmtPct(
+                    ratio(num(row.mismatched), num(row.with_response_model)),
+                    2,
+                  ),
+              },
+            ]}
+            rows={kpi.filter((row) => num(row.with_response_model) > 0)}
+            empty="No calls report a served model in the selected range."
           />
         </Panel>
       </Section>

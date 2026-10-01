@@ -20,8 +20,9 @@ a benchmark: harnesses are never ranked or compared against each other.
 
 - **One definition per signal.** Each signal has one question, unit, and formula.
 - **One route per producer.** Each harness reaches the signal by its own route and is
-  `aligned`, `differs` (the note says how), or `not emitted` (the note says why).
-  A harness that does not emit a signal is shown as not emitted, never as zero.
+  `aligned`, `differs` (the note says how), `not applicable`, or `not emitted` (the
+  note says why). A signal is shown only when every harness the machine enables
+  (`[harnesses] enabled`) reaches it; otherwise it is hidden there, never shown as zero.
 - **All is the union of each.** "All harnesses" aggregates the per-harness rows of the
   same signal. Counts are summed; ratios sum numerators and denominators before
   dividing (token-weighted, never an average of percentages). The Pipeline view checks
@@ -138,6 +139,7 @@ while the harness is otherwise active is a valid observation.
 | `claude.tool_result`       | Claude Code                             | logs   | rows   | `event_name = 'tool_result'`                                                                                                            | `tool_result` log with `success` and `error_type`.                                                                                                                                                 |
 | `codex.tool_decision`      | Codex app-server, Codex CLI, Codex exec | logs   | rows   | `event_name = 'codex.tool_decision'`                                                                                                    | `codex.tool_decision` log with `decision` and `source` (config or user).                                                                                                                           |
 | `claude.tool_decision`     | Claude Code                             | logs   | rows   | `event_name = 'tool_decision'`                                                                                                          | `tool_decision` log with `decision` and `source`.                                                                                                                                                  |
+| `codex.sandbox_outcome`    | Codex app-server, Codex CLI, Codex exec | logs   | events | `event_name = 'codex.sandbox_outcome'`                                                                                                  | `codex.sandbox_outcome` log with `outcome` for a sandboxed command.                                                                                                                                |
 | `codex.sampling`           | Codex app-server, Codex CLI, Codex exec | spans  | rows   | `name = 'run_sampling_request'`                                                                                                         | `run_sampling_request` span: one sampling step including retries, response processing, and in-flight tool draining.                                                                                |
 | `codex.try_sampling`       | Codex app-server, Codex CLI, Codex exec | spans  | rows   | `name = 'try_run_sampling_request'`                                                                                                     | `try_run_sampling_request` span: one attempt inside a sampling step.                                                                                                                               |
 | `codex.response_completed` | Codex app-server, Codex CLI, Codex exec | logs   | rows   | `event_name = 'codex.sse_event' AND attrs_string['event.kind'] = 'response.completed'`                                                  | `codex.sse_event` with `event.kind = 'response.completed'`: one per response stream, carrying `ttft_ms`, output tokens, and `error.message` when the stream fails.                                 |
@@ -205,17 +207,17 @@ Scope: system (not per harness).
 
 #### Project attribution (`pipeline.project_attribution`)
 
-- **Question:** Which share of each harness's tasks has a project from the session-context hooks?
+- **Question:** Which share of each harness's tasks has a Git project?
 - **Unit:** %
-- **Formula:** Per harness: 100 × tasks whose session the hooks recorded with a git project / tasks. The session takes its latest recorded project. Hook rejections (e.g. non-git workspace) and the unsynced inbox backlog are shown alongside.
+- **Formula:** Per harness: 100 × tasks whose session has a Git project / tasks. `facts sync` reads each session's working directory from the harness's own session store (session_stores.toml) and resolves its Git root on this machine. Sessions without a project (non-Git or missing workspace) and tasks whose session no store holds are shown alongside.
 
-| Harness          | Alignment | Route                | Note                                                                                                         |
-| ---------------- | --------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| omp              | aligned   | `omp.run`            | —                                                                                                            |
-| Codex app-server | aligned   | `codex.turn`         | Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter. |
-| Codex CLI        | aligned   | `codex.turn`         | Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter. |
-| Codex exec       | aligned   | `codex.turn`         | Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter. |
-| Claude Code      | aligned   | `claude.interaction` | —                                                                                                            |
+| Harness          | Alignment | Route                | Note                                                                                                                 |
+| ---------------- | --------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| omp              | aligned   | `omp.run`            | The `session` record (id, cwd) of `~/.omp/agent/sessions/*/*.jsonl`. Runs that keep no session file have no project. |
+| Codex app-server | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
+| Codex CLI        | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
+| Codex exec       | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
+| Claude Code      | aligned   | `claude.interaction` | The first transcript entry with `sessionId` and `cwd` in `~/.claude/projects/*/*.jsonl`.                             |
 
 #### All = Σ harnesses (`pipeline.recombination`)
 
@@ -237,7 +239,7 @@ Scope: system (not per harness).
 
 - **Question:** Does the data match what the registry says each harness emits?
 - **Unit:** state
-- **Formula:** Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, stray (explained or not), or not emitted.
+- **Formula:** Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, no events, not applicable, stray (explained or not), or not in use (a harness this machine does not enable; flagged when its routes still have rows). Signals hidden on this machine are listed separately.
 
 Scope: system (not per harness).
 
@@ -284,6 +286,20 @@ Scope: system (not per harness).
 | Codex CLI        | aligned   | `codex.usage`  | —                              |
 | Codex exec       | aligned   | `codex.usage`  | —                              |
 | Claude Code      | aligned   | `claude.usage` | Includes cache-creation input. |
+
+#### Cache creation (`usage.cache_creation`)
+
+- **Question:** How much input was written to cache?
+- **Unit:** tokens
+- **Formula:** Σ cache_creation_input. Part of input and uncached input, never of cached input.
+
+| Harness          | Alignment   | Route          | Note                                                                                                                       |
+| ---------------- | ----------- | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| omp              | aligned     | `omp.chat`     | `gen_ai.usage.cache_creation.input_tokens`; non-zero only on Anthropic chats.                                              |
+| Codex app-server | not emitted | —              | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Codex CLI        | not emitted | —              | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Codex exec       | not emitted | —              | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Claude Code      | aligned     | `claude.usage` | `cache_creation_tokens`.                                                                                                   |
 
 #### Output tokens (`usage.output_tokens`)
 
@@ -671,6 +687,20 @@ Scope: system (not per harness).
 | Codex exec       | aligned   | `codex.tool_decision`  | Sources are Config, User, and AutomatedReviewer (the approval reviewer model). |
 | Claude Code      | aligned   | `claude.tool_decision` | Sources are config and user_reject.                                            |
 
+#### Sandbox outcomes (`guard.sandbox`)
+
+- **Question:** How often do sandboxed commands get denied?
+- **Unit:** outcomes
+- **Formula:** count() of sandbox outcomes by outcome.
+
+| Harness          | Alignment   | Route                   | Note                                                        |
+| ---------------- | ----------- | ----------------------- | ----------------------------------------------------------- |
+| omp              | not emitted | —                       | omp has no sandbox, so there is no outcome to observe.      |
+| Codex app-server | aligned     | `codex.sandbox_outcome` | —                                                           |
+| Codex CLI        | aligned     | `codex.sandbox_outcome` | —                                                           |
+| Codex exec       | aligned     | `codex.sandbox_outcome` | —                                                           |
+| Claude Code      | not emitted | —                       | Claude Code emits no sandbox outcome, and no hook sees one. |
+
 #### Quality-gate bypass (`guard.gate_bypass`)
 
 - **Question:** How often did a command bypass a quality gate?
@@ -729,6 +759,20 @@ Scope: system (not per harness).
 | Codex exec       | differs   | `codex.response_completed` | Stream level: a non-empty `error.message` on `response.completed`.                |
 | Claude Code      | aligned   | `claude.llm_request`       | Span error or `success=false`.                                                    |
 
+#### Stream disconnects (`provider.stream_disconnects`)
+
+- **Question:** How often does a response stream break before completion?
+- **Unit:** calls
+- **Formula:** Completed-response records whose error says the stream disconnected before completion.
+
+| Harness          | Alignment   | Route                      | Note                                                                                                  |
+| ---------------- | ----------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| omp              | not emitted | —                          | Chat spans record errors but not stream state; guessing from error text would not be the same signal. |
+| Codex app-server | aligned     | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'.                                     |
+| Codex CLI        | aligned     | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'.                                     |
+| Codex exec       | aligned     | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'.                                     |
+| Claude Code      | not emitted | —                          | Requests record errors but not stream state; guessing from error text would not be the same signal.   |
+
 #### Model call latency (`provider.latency`)
 
 - **Question:** How long does a model call take?
@@ -757,6 +801,20 @@ Scope: system (not per harness).
 | Codex exec       | aligned   | `codex.response_completed` | `ttft_ms` on `response.completed`.               |
 | Claude Code      | aligned   | `claude.llm_request`       | `ttft_ms`.                                       |
 
+#### Output throughput (`provider.throughput`)
+
+- **Question:** Is generation speed degraded independently of response size?
+- **Unit:** tokens/s
+- **Formula:** P50 of output tokens / (duration − time to first token) for calls with both timings and positive generation time.
+
+| Harness          | Alignment   | Route                | Note                                                                                                                 |
+| ---------------- | ----------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| omp              | aligned     | `omp.chat`           | —                                                                                                                    |
+| Codex app-server | not emitted | —                    | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal. |
+| Codex CLI        | not emitted | —                    | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal. |
+| Codex exec       | not emitted | —                    | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal. |
+| Claude Code      | aligned     | `claude.llm_request` | —                                                                                                                    |
+
 #### Retries (`provider.retries`)
 
 - **Question:** How much extra traffic do retries create?
@@ -784,6 +842,20 @@ Scope: system (not per harness).
 | Codex CLI        | differs   | `codex.response_completed` | Every response stream has an outcome (error message or completion), so Codex has no unknown calls. |
 | Codex exec       | differs   | `codex.response_completed` | Every response stream has an outcome (error message or completion), so Codex has no unknown calls. |
 | Claude Code      | aligned   | `claude.llm_request`       | No `success` attribute.                                                                            |
+
+#### Model conformance (`provider.model_conformance`)
+
+- **Question:** Did the provider serve the requested model?
+- **Unit:** calls
+- **Formula:** Calls whose response model is set and differs from the requested model.
+
+| Harness          | Alignment   | Route      | Note                                                                                                                |
+| ---------------- | ----------- | ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| omp              | aligned     | `omp.chat` | `gen_ai.request.model` vs `gen_ai.response.model`.                                                                  |
+| Codex app-server | not emitted | —          | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model. |
+| Codex CLI        | not emitted | —          | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model. |
+| Codex exec       | not emitted | —          | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model. |
+| Claude Code      | not emitted | —          | LLM request spans carry only the requested model.                                                                   |
 
 ### Recurrence
 
@@ -833,15 +905,15 @@ Scope: system (not per harness).
 
 - **Question:** Is a repeated failure localized to one project?
 - **Unit:** %
-- **Formula:** Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the git repository the session-context hooks recorded for the session.
+- **Formula:** Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store.
 
-| Harness          | Alignment | Route                | Note                                                                                        |
-| ---------------- | --------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| omp              | aligned   | `omp.execute_tool`   | Session → project from the omp hook.                                                        |
-| Codex app-server | aligned   | `codex.tool_result`  | Session → project from the `codex-cli` / app-server hooks.                                  |
-| Codex CLI        | aligned   | `codex.tool_result`  | Session → project from the `codex-cli` / app-server hooks.                                  |
-| Codex exec       | aligned   | `codex.tool_result`  | Session → project from the `codex-cli` / app-server hooks.                                  |
-| Claude Code      | aligned   | `claude.tool_result` | Session → project from the Claude Code hook; interactions in a non-git workspace have none. |
+| Harness          | Alignment | Route                | Note |
+| ---------------- | --------- | -------------------- | ---- |
+| omp              | aligned   | `omp.execute_tool`   | —    |
+| Codex app-server | aligned   | `codex.tool_result`  | —    |
+| Codex CLI        | aligned   | `codex.tool_result`  | —    |
+| Codex exec       | aligned   | `codex.tool_result`  | —    |
+| Claude Code      | aligned   | `claude.tool_result` | —    |
 
 ### Intent and corrections
 

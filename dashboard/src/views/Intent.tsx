@@ -6,7 +6,7 @@ import {
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
 } from "../components";
 import {
   effortRank,
@@ -121,12 +121,10 @@ const pct = (row: Row, key: string) =>
   fmtPct(ratio(num(row[`${key}_n`]), num(row[`${key}_den`])));
 
 export default function Intent({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
   const kpi = data.kpi ?? [];
   const all = sumRows(kpi, KPI_FIELDS);
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],

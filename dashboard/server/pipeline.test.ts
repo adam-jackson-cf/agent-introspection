@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Registry, Row } from "../src/contracts";
+import { HARNESSES, type Row } from "../src/contracts";
 import { type Query } from "./clickhouse";
 import {
   contributions,
@@ -9,7 +9,14 @@ import {
   routeCountQueries,
   unroutedQuery,
 } from "./pipeline";
-import { counting, registry, withHookRoute } from "./test-fixtures";
+import {
+  counting,
+  enabling,
+  registry,
+  withHookRoute,
+  withTaskRoute,
+  withThroughput,
+} from "./test-fixtures";
 
 describe("coverage grid", () => {
   test("distinguishes healthy, idle, possible break, not applicable, and strays", async () => {
@@ -44,33 +51,7 @@ describe("coverage grid", () => {
   });
 
   test("an emitted route without rows is a possible break only while the harness is active", async () => {
-    const base = registry();
-    const withTasks: Registry = {
-      ...base,
-      signals: [...base.signals, { ...base.signals[0]!, signal: "task.count" }],
-      support: [
-        ...base.support,
-        ...base.support.map((entry) => ({
-          ...entry,
-          signal: "task.count",
-          route: entry.route === "codex.usage" ? "codex.turn" : entry.route,
-        })),
-      ],
-      routes: [
-        ...base.routes,
-        ...(["codex-app-server", "codex_cli_rs", "codex_exec"] as const).map(
-          (harness) => ({
-            route: "codex.turn",
-            harness,
-            harness_label: harness,
-            source: "spans" as const,
-            match: "name = 'session_task.turn'",
-            expect: "rows" as const,
-            description: "",
-          }),
-        ),
-      ],
-    };
+    const withTasks = withTaskRoute();
     const counts = counting(
       [{ harness: "codex_exec", t0: 0, u0: 0, t1: 0, u1: 0 }],
       [{ harness: "codex_exec", t0: 4, u0: 4 }],
@@ -103,7 +84,9 @@ describe("coverage grid", () => {
     expect(Object.keys(queries).sort()).toEqual(["hooks", "logs", "spans"]);
     expect(queries.hooks).toContain("FROM introspection.hook_rows WHERE");
     expect(queries.hooks).not.toContain("FINAL");
-    expect(queries.hooks).toContain("countIf(event_type = 'turn_stop') AS t0");
+    expect(queries.hooks).toContain(
+      "countIf((event_type = 'turn_stop') AND ts >= {start:DateTime64(3, 'UTC')}) AS t0",
+    );
     expect(queries.spans).toContain("FROM introspection.spans FINAL");
 
     const counts = counting(
@@ -121,7 +104,10 @@ describe("coverage grid", () => {
     expect(cell).toMatchObject({ state: "healthy", own: 7 });
     expect(
       contributions(reg, counts, "effort")["effort.reasoning_tokens"],
-    ).toMatchObject({ "claude-code": 7, "oh-my-pi": 10 });
+    ).toMatchObject({
+      "claude-code": { state: "rows", rows: 7 },
+      "oh-my-pi": { state: "rows", rows: 10 },
+    });
   });
 
   test("unrouted rows include hook events no hook route claims", () => {
@@ -135,19 +121,89 @@ describe("coverage grid", () => {
     expect(sql).not.toContain("hook_rows FINAL");
   });
 
-  test("contributions count each harness's own route and omit harnesses it is not applicable to", async () => {
+  test("contribution chips reuse the coverage state for each enabled harness", async () => {
     const counts = counting(
-      [{ harness: "oh-my-pi", t0: 10, u0: 10 }],
-      [{ harness: "codex_exec", t0: 2, u0: 2 }],
+      [{ harness: "oh-my-pi", t0: 10, u0: 10, f0: "" }],
+      [{ harness: "codex_exec", t0: 2, u0: 2, f0: "2026-09-24" }],
     );
     expect(contributions(registry(), counts, "cache")).toEqual({
       "usage.input_tokens": {
-        "oh-my-pi": 10,
-        "codex-app-server": 0,
-        codex_cli_rs: 0,
-        codex_exec: 2,
+        "oh-my-pi": { state: "rows", rows: 10, from: null },
+        "codex-app-server": { state: "no activity", rows: 0, from: null },
+        codex_cli_rs: { state: "no activity", rows: 0, from: null },
+        codex_exec: { state: "rows", rows: 2, from: "2026-09-24" },
+        "claude-code": { state: "not applicable", rows: 0, from: null },
       },
     });
+  });
+
+  test("a route with no rows while its harness is active is route missing", async () => {
+    const reg = withTaskRoute();
+    const counts = counting(
+      [{ harness: "codex_exec", t0: 0, u0: 0, t1: 0, u1: 0 }],
+      [{ harness: "codex_exec", t0: 4, u0: 4 }],
+      reg,
+    );
+    expect(
+      contributions(reg, counts, "cache")["task.count"]?.codex_exec,
+    ).toEqual({ state: "route missing", rows: 0, from: null });
+  });
+
+  test("chips and coverage cover only the harnesses this machine enables", async () => {
+    const reg = enabling(registry(), ["oh-my-pi", "claude-code"]);
+    const counts = counting(
+      [{ harness: "oh-my-pi", t0: 10, u0: 10 }],
+      [{ harness: "codex_exec", t0: 2, u0: 2 }],
+      reg,
+    );
+    expect(
+      Object.keys(contributions(reg, counts, "cache")["usage.input_tokens"]!),
+    ).toEqual(["oh-my-pi", "claude-code"]);
+    const cells = Object.fromEntries(
+      coverageGrid(reg, counts).map((row) => [row.harness, row.state]),
+    );
+    expect(cells).toMatchObject({
+      "oh-my-pi": "healthy",
+      "codex-app-server": "not in use",
+      codex_exec: "not in use, rows present",
+    });
+  });
+
+  test("a signal an enabled harness does not emit is hidden from chips and coverage", async () => {
+    const everywhere = enabling(withThroughput(), [...HARNESSES]);
+    expect(everywhere.hidden).toEqual([
+      {
+        signal: "provider.throughput",
+        view: "provider",
+        title: "Output throughput",
+        missing: "Codex app-server, Codex CLI, Codex exec",
+        note: "no per-call duration",
+      },
+    ]);
+    const counts = counting([{ harness: "oh-my-pi", t0: 10, u0: 10 }], []);
+    expect(contributions(everywhere, counts, "provider")).toEqual({});
+    expect(
+      coverageGrid(everywhere, counts).some(
+        (row) => row.signal === "provider.throughput",
+      ),
+    ).toBe(false);
+
+    const noCodex = enabling(withThroughput(), ["oh-my-pi", "claude-code"]);
+    expect(noCodex.hidden).toEqual([]);
+    expect(
+      contributions(noCodex, counts, "provider")["provider.throughput"],
+    ).toMatchObject({ "oh-my-pi": { state: "rows", rows: 10 } });
+  });
+
+  test("route counts scan history before the window to date each route's first row", () => {
+    const { spans } = routeCountQueries(registry());
+    expect(spans).toContain("WHERE ts < {end:DateTime64(3, 'UTC')}");
+    expect(spans).toContain(
+      "countIf((name = 'chat') AND ts >= {start:DateTime64(3, 'UTC')}) AS t0",
+    );
+    expect(spans).toContain(
+      "if(countIf((name = 'chat') AND ts < {start:DateTime64(3, 'UTC')}) = 0, toString(toDate(minIf(ts, name = 'chat'))), '') AS f0",
+    );
   });
 });
 

@@ -47,12 +47,6 @@ NON_PACKAGE_DIRECTORY_PARTS = frozenset({".github", "fixtures", "scripts", "src"
 # but run the subprocess. Files absent from this map may not call subprocess at all.
 # Tests are out of scope for this rule.
 SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
-    ".agents/skills/introspection-onboarding/scripts/adapters/codex-app-server/install.py": (
-        frozenset({"_run_command"})
-    ),
-    ".agents/skills/introspection-onboarding/scripts/adapters/codex-cli/adapter.py": (
-        frozenset({"_run_agent_introspection"})
-    ),
     "scripts/check-dependency-audit.py": frozenset({"_run"}),
     "scripts/check-python-mypy.py": frozenset({"_mypy"}),
     "scripts/check-runner-failure-propagation.py": frozenset({"_run"}),
@@ -64,7 +58,8 @@ SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "src/agent_introspection/classify.py": frozenset({"_run_omp_token"}),
     "src/agent_introspection/drafting.py": frozenset({"run_codex"}),
     "src/agent_introspection/facts.py": frozenset({"run", "_run_password_command"}),
-    "src/agent_introspection/projects.py": frozenset({"_launchctl"}),
+    "src/agent_introspection/schedule.py": frozenset({"_launchctl"}),
+    "src/agent_introspection/sessions.py": frozenset({"_run_git"}),
 }
 # Files allowed to call importlib.import_module (PYQ221).
 DYNAMIC_IMPORT_ADAPTER_ALLOWLIST: frozenset[str] = frozenset()

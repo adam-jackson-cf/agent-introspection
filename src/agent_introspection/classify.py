@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_introspection.facts import DATABASE, SqlRunner
-from agent_introspection.projects import insert_statements
+from agent_introspection.inbox import insert_statements
 
 JEV_MODEL = "~typesafe/jev-latest"
 # OpenRouter rejects versioned selectors, so the resolved model is checked instead.

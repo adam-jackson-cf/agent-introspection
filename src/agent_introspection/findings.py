@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from agent_introspection.facts import DATABASE, SqlRunner
+from agent_introspection.facts import DATABASE, SqlRunner, enabled_filter
 from agent_introspection.json_types import JsonObject
 
 DETECTOR_ID = "facts.failure_cluster"
@@ -79,7 +79,7 @@ FROM {DATABASE}.tool_calls_snapshot AS c
 LEFT JOIN {DATABASE}.task_outcomes_snapshot AS t
     ON t.harness = c.harness AND t.task_id = c.task_id
 LEFT JOIN {DATABASE}.session_project AS p ON p.session_id = c.session_id
-WHERE {_LONDON_WEEK.format(ts="c.ts")}
+WHERE {_LONDON_WEEK.format(ts="c.ts")} AND {enabled_filter("c.harness")}
     AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
     AND NOT match(p.project_root, '{EVALUATION_PATH}')
     AND NOT match(c.failure_signature, '{EVALUATION_PATH}')
@@ -99,7 +99,7 @@ SELECT p.project AS project, l.correction_kind_next AS correction_kind,
     toUnixTimestamp64Nano(toDateTime64(max(l.start_ts), 9)) AS last_seen_ns
 FROM {DATABASE}.task_labels_snapshot AS l
 INNER JOIN {DATABASE}.session_project AS p ON p.session_id = l.session_id
-WHERE {_LONDON_WEEK.format(ts="l.start_ts")}
+WHERE {_LONDON_WEEK.format(ts="l.start_ts")} AND {enabled_filter("l.harness")}
     AND l.corrected_next = 1 AND l.correction_kind_next NOT IN ('', 'none')
     AND p.project != '' AND NOT match(p.project_root, '{EVALUATION_PATH}')
 GROUP BY project, correction_kind

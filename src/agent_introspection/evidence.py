@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent_introspection.facts import DATABASE, SqlRunner, sql_string
+from agent_introspection.facts import DATABASE, SqlRunner, enabled_filter, sql_string
 
 WINDOW_DAYS = 14
 _C = f"{DATABASE}.tool_calls_snapshot"
@@ -33,6 +33,7 @@ def _cluster(tool_family: str, failure_class: str, alias: str = "") -> str:
         f"{alias}tool_family = {sql_string(tool_family)}"
         f" AND {alias}failure_class = {sql_string(failure_class)}"
         f" AND {alias}outcome = 'failed' AND {alias}ts > now() - INTERVAL {WINDOW_DAYS} DAY"
+        f" AND {enabled_filter(f'{alias}harness')}"
     )
 
 
@@ -66,7 +67,7 @@ FROM {_C} WHERE {cluster} GROUP BY signature ORDER BY failures DESC LIMIT 5""",
         'moved to another tool') AS next_step,
     count() AS failures
 FROM (
-    SELECT tool_family, failure_class, outcome,
+    SELECT harness, tool_family, failure_class, outcome,
         leadInFrame(tool_family) OVER w AS next_family,
         leadInFrame(outcome) OVER w AS next_outcome,
         leadInFrame(failure_class) OVER w AS next_class,
@@ -96,6 +97,7 @@ def correction_queries(project: str, correction_kind: str) -> dict[str, str]:
         f"l.corrected_next = 1 AND l.correction_kind_next = {sql_string(correction_kind)}"
         f" AND p.project = {sql_string(project)}"
         f" AND l.start_ts > now() - INTERVAL {WINDOW_DAYS} DAY"
+        f" AND {enabled_filter('l.harness')}"
     )
     source = f"{_L} AS l INNER JOIN {DATABASE}.session_project AS p ON p.session_id = l.session_id"
     tasks = f"(harness, task_id) IN (SELECT l.harness, l.task_id FROM {source} WHERE {corrected})"
@@ -108,7 +110,7 @@ FROM {source} WHERE {corrected} GROUP BY day, harness ORDER BY day, harness""",
     countIf(l.corrected_next = 1 AND l.correction_kind_next = {sql_string(correction_kind)})
         AS this_kind
 FROM {source} WHERE p.project = {sql_string(project)}
-    AND l.start_ts > now() - INTERVAL {WINDOW_DAYS} DAY
+    AND l.start_ts > now() - INTERVAL {WINDOW_DAYS} DAY AND {enabled_filter("l.harness")}
 GROUP BY harness""",
         "task_types": f"""SELECT l.task_type AS task_type, l.effort AS effort,
     count() AS corrected_tasks, countIf(l.sentiment_next = 'frustrated') AS frustrated_next

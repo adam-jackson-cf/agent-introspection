@@ -102,8 +102,9 @@ onboarding ──> operations (health gate) ──> improvement loop
 - **Signal and registry**: a dashboard measure, defined once in
   [`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml) with the
   route that reaches it for each harness.
-- **Parity rule**: every signal must be reached by every harness it can exist for; a
-  signal some harness cannot produce is excluded with a reason, never shown as zero.
+- **Parity rule**: a signal is shown only when every harness this machine enables
+  (`[harnesses] enabled`) reaches it; a signal an enabled harness does not emit is
+  hidden here with a reason, never shown as zero.
 - **Session-context and activity hooks**: harness hooks that write records to a local
   inbox. The first attributes sessions to Git projects; the second closes signals the
   producers' own telemetry lacks.
@@ -127,7 +128,7 @@ onboarding ──> operations (health gate) ──> improvement loop
 - [docs/references/dashboard-companion.md](docs/references/dashboard-companion.md): server
   binding, environment variables, and how views aggregate harnesses.
 - [docs/references/hooks-and-attribution.md](docs/references/hooks-and-attribution.md):
-  project attribution, activity hooks, prompt labels, and Codex Desktop limits.
+  project attribution from the harness session stores, activity hooks, and prompt labels.
 - [docs/references/proposal-lifecycle.md](docs/references/proposal-lifecycle.md):
   candidate selection, drafting with Codex, success metrics, applying, and evaluation.
 - [docs/hook-events.md](docs/hook-events.md): the hook event record contract.

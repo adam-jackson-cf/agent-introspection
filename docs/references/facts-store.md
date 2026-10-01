@@ -26,9 +26,13 @@ whether that route is aligned or differs, or why it is not emitted. `facts insta
 validates it and loads it into `introspection.signal_*` tables; every panel's info note
 is rendered from those tables.
 
-Every signal must be reached by every harness it can exist for; `facts install` rejects
-a registry cell marked `not emitted`, and a signal some harness cannot produce is listed
-under `[[excluded]]` with its reason instead of being shown.
+Parity is judged over the harnesses this machine uses: config `[harnesses] enabled`
+(registry harness keys, or `codex` for the three Codex surfaces; absent means every
+harness). `facts install` rejects unknown keys and loads the list into
+`introspection.harnesses`. A signal is shown only when every enabled harness reaches it;
+a signal an enabled harness does not emit (`not emitted`) is hidden on this machine and
+listed in the Pipeline view. A signal no harness produces is listed under `[[excluded]]`.
+The findings detectors, evidence packs, and evaluations count only enabled harnesses.
 
 ## Steps
 

@@ -1,12 +1,13 @@
 import { BarList, DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
+  useVisible,
 } from "../components";
 import {
   fmtCount,
@@ -21,25 +22,64 @@ import {
   sumRows,
 } from "../format";
 
-export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
-  const decisions = data.decisions ?? [];
-  const decided = sumRows(decisions, ["n"]).n!;
-  const rejected = sumRows(
-    decisions.filter((row) => num(row.rejected) === 1),
-    ["n"],
-  ).n!;
+/**
+ * Sandbox denials where every enabled harness has a sandbox; elsewhere the slot
+ * shows who decides approvals.
+ */
+function SandboxOrDecisionsKpi(props: {
+  sandboxShown: boolean;
+  sandbox: Row[];
+  decisions: Row[];
+}) {
+  const { sandboxShown, sandbox, decisions } = props;
+  if (sandboxShown)
+    return (
+      <Kpi
+        title="Sandbox denials"
+        value={fmtCount(
+          sumRows(
+            sandbox.filter((row) => row.outcome === "denied"),
+            ["n"],
+          ).n!,
+        )}
+        detail={`${fmtCount(sumRows(sandbox, ["n"]).n!)} sandbox outcomes`}
+        signals={["guard.sandbox"]}
+      />
+    );
   const byUser = sumRows(
     decisions.filter((row) =>
       String(row.source).toLowerCase().startsWith("user"),
     ),
     ["n"],
   ).n!;
+  return (
+    <Kpi
+      title="Approval decisions"
+      value={fmtCount(sumRows(decisions, ["n"]).n!)}
+      detail={`${fmtCount(byUser)} decided by the user`}
+      signals={["guard.decisions"]}
+    />
+  );
+}
+
+/** Sandbox panels pair with the approval panels only where every enabled harness has a sandbox. */
+const sandboxLayout = (shown: boolean) =>
+  shown
+    ? { span: 6 as const, approvals: "Who approves, and what is denied?" }
+    : { span: 12 as const, approvals: "Who approves?" };
+
+export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
+  const selected = useSelectedHarnesses();
+  const sandboxShown = useVisible("guard.sandbox");
+  const decisions = data.decisions ?? [];
+  const decided = sumRows(decisions, ["n"]).n!;
+  const rejected = sumRows(
+    decisions.filter((row) => num(row.rejected) === 1),
+    ["n"],
+  ).n!;
   const bypass = sumRows(data.bypass ?? [], ["commands", "bypass", "tasks"]);
   const churn = sumRows(data.churn_summary ?? [], ["tasks", "pairs"]);
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
@@ -50,6 +90,14 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
     ["rejected", "decisions"],
     (sums) => ratio(sums.rejected!, sums.decisions!),
   );
+  const deniedDaily = pivotDaily(
+    data.sandbox_daily ?? [],
+    (row) => String(row.harness),
+    ["denied"],
+    (sums) => sums.denied!,
+  );
+  const sandbox = data.sandbox ?? [];
+  const layout = sandboxLayout(sandboxShown);
   const sources = [
     ...decisions
       .reduce((map, row) => {
@@ -72,11 +120,10 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
           detail={`${fmtCount(rejected)} of ${fmtCount(decided)} approval decisions`}
           signals={["guard.rejections", "guard.decisions"]}
         />
-        <Kpi
-          title="Approval decisions"
-          value={fmtCount(decided)}
-          detail={`${fmtCount(byUser)} decided by the user`}
-          signals={["guard.decisions"]}
+        <SandboxOrDecisionsKpi
+          sandboxShown={sandboxShown}
+          sandbox={sandbox}
+          decisions={decisions}
         />
         <Kpi
           title="Quality-gate bypass"
@@ -96,7 +143,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
           title="Daily rejection rate"
           subtitle="Rejected / all approval decisions, per harness"
           signals={["guard.rejections"]}
-          span={12}
+          span={layout.span}
         >
           <DailyChart
             rows={rejectionDaily}
@@ -116,13 +163,36 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
             rows={rejectionDaily}
           />
         </Panel>
+        <Panel
+          title="Daily sandbox denials"
+          subtitle="Stacked by harness"
+          signals={["guard.sandbox"]}
+        >
+          <DailyChart
+            rows={deniedDaily}
+            series={series}
+            kind="stack"
+            format={fmtCount}
+          />
+          <TableView
+            columns={[
+              { key: "day", label: "Day" },
+              ...series.map((entry) => ({
+                key: entry.key,
+                label: entry.label,
+                numeric: true,
+              })),
+            ]}
+            rows={deniedDaily}
+          />
+        </Panel>
       </Section>
-      <Section title="Who approves?">
+      <Section title={layout.approvals}>
         <Panel
           title="Approval decisions by source"
           subtitle="Config policy, the user, or the automated approval reviewer"
           signals={["guard.decisions"]}
-          span={12}
+          span={layout.span}
         >
           <BarList
             items={sources.map(([key, entry]) => ({
@@ -147,6 +217,21 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               { key: "n", label: "Decisions", numeric: true },
             ]}
             rows={decisions}
+          />
+        </Panel>
+        <Panel title="Sandbox outcomes by tool" signals={["guard.sandbox"]}>
+          <DataTable
+            columns={[
+              {
+                key: "harness",
+                label: "Harness",
+                render: (row) => <HarnessName value={row.harness} />,
+              },
+              { key: "outcome", label: "Outcome" },
+              { key: "tool", label: "Tool" },
+              { key: "n", label: "Outcomes", numeric: true },
+            ]}
+            rows={sandbox}
           />
         </Panel>
       </Section>

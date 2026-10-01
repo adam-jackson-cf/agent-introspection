@@ -14,9 +14,19 @@ import {
   SNAPSHOT_DAYS,
   type Query,
 } from "./server/clickhouse";
-import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
+import { HARNESS_FILTER, SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
+import { panelContribution } from "./src/components";
 
-import { batched, END, HOST, registry, START } from "./server/test-fixtures";
+import {
+  batched,
+  enabling,
+  END,
+  HOST,
+  registry,
+  registryRows,
+  START,
+  withThroughput,
+} from "./server/test-fixtures";
 
 describe("request handling", () => {
   test("rejects untrusted hosts and non-GET methods", async () => {
@@ -65,15 +75,7 @@ describe("request handling", () => {
       seen.push({ sql, params });
       const reg = registry();
       return sql.includes("FROM introspection.signals")
-        ? batched(
-            [
-              reg.signals,
-              reg.support,
-              reg.routes,
-              reg.strays,
-              reg.exclusions,
-            ].map((rows) => rows as unknown as Row[]),
-          )
+        ? registryRows(reg)
         : [];
     };
     const app = createApp({ query, workflow: () => ({}) });
@@ -214,15 +216,7 @@ describe("snapshot horizon", () => {
       seen.push(sql);
       const reg = registry();
       return sql.includes("FROM introspection.signals")
-        ? batched(
-            [
-              reg.signals,
-              reg.support,
-              reg.routes,
-              reg.strays,
-              reg.exclusions,
-            ].map((rows) => rows as unknown as Row[]),
-          )
+        ? registryRows(reg)
         : [];
     };
     const app = createApp({ query, workflow: () => ({}), now: () => now });
@@ -399,15 +393,11 @@ describe("sqliteWorkflow", () => {
 describe("registry", () => {
   test("serves the excluded signals with the registry and in the Pipeline view", async () => {
     const reg = registry();
-    const registryRows = batched(
-      [reg.signals, reg.support, reg.routes, reg.strays, reg.exclusions].map(
-        (rows) => rows as unknown as Row[],
-      ),
-    );
+    const rows = registryRows(reg);
     const seen: string[] = [];
     const query: Query = async (sql) => {
       seen.push(sql);
-      return sql.includes("FROM introspection.signals") ? registryRows : [];
+      return sql.includes("FROM introspection.signals") ? rows : [];
     };
     const app = createApp({ query, workflow: () => ({}) });
     const served = (await (
@@ -428,6 +418,99 @@ describe("registry", () => {
     ).json()) as { data: Record<string, Row[]> };
     expect(view.data.exclusions).toEqual(reg.exclusions as unknown as Row[]);
   });
+
+  test("loads this machine's harnesses and derives the signals hidden here", async () => {
+    const reg = enabling(withThroughput(), [
+      "oh-my-pi",
+      "codex_cli_rs",
+      "claude-code",
+    ]);
+    const rows = registryRows(reg);
+    const seen: string[] = [];
+    const query: Query = async (sql) => {
+      seen.push(sql);
+      return sql.includes("FROM introspection.signals") ? rows : [];
+    };
+    const app = createApp({ query, workflow: () => ({}) });
+    const served = (await (
+      await app(
+        new Request("http://127.0.0.1:4173/api/registry", { headers: HOST }),
+      )
+    ).json()) as Registry;
+    expect(seen[0]).toContain(
+      "SELECT harness, label, enabled FROM introspection.harnesses",
+    );
+    expect(served.harnesses).toEqual(reg.harnesses);
+    expect(served.hidden).toEqual([
+      {
+        signal: "provider.throughput",
+        view: "provider",
+        title: "Output throughput",
+        missing: "Codex CLI",
+        note: "no per-call duration",
+      },
+    ]);
+
+    const pipeline = (await (
+      await app(
+        new Request(
+          `http://127.0.0.1:4173/api/view?view=pipeline&start=${START}&end=${END}&harness=`,
+          { headers: HOST },
+        ),
+      )
+    ).json()) as { data: Record<string, Row[]> };
+    expect(pipeline.data.hidden).toEqual(served.hidden as unknown as Row[]);
+    const disabled = await app(
+      new Request(
+        `http://127.0.0.1:4173/api/view?view=cache&start=${START}&end=${END}&harness=codex_exec`,
+        { headers: HOST },
+      ),
+    );
+    expect(disabled.status).toBe(400);
+  });
+
+  test("a machine with no enabled harness is reported as not installed", async () => {
+    const reg = enabling(registry(), []);
+    const app = createApp({
+      query: async (sql) =>
+        sql.includes("FROM introspection.signals") ? registryRows(reg) : [],
+    });
+    const response = await app(
+      new Request("http://127.0.0.1:4173/api/registry", { headers: HOST }),
+    );
+    expect(response.status).toBe(503);
+  });
+});
+
+describe("panel chips", () => {
+  const chip = (state: string, rows = 0, from: string | null = null) =>
+    ({ state, rows, from }) as never;
+
+  test("rows win, with the measured signal's start day; otherwise the most telling state", () => {
+    expect(
+      panelContribution(
+        {
+          a: { "oh-my-pi": chip("rows", 3, "2026-09-24") },
+          b: { "oh-my-pi": chip("rows", 9) },
+        },
+        ["a", "b"],
+        "oh-my-pi",
+      ),
+    ).toEqual({ state: "rows", rows: 9, from: "2026-09-24" });
+    expect(
+      panelContribution(
+        {
+          a: { codex_exec: chip("no activity") },
+          b: { codex_exec: chip("route missing") },
+        },
+        ["a", "b"],
+        "codex_exec",
+      ),
+    ).toEqual({ state: "route missing", rows: 0, from: null });
+    expect(panelContribution({}, ["a"], "claude-code").state).toBe(
+      "not applicable",
+    );
+  });
 });
 
 describe("view queries", () => {
@@ -443,7 +526,22 @@ describe("view queries", () => {
     );
   });
 
-  test("excluded signals are not queried", () => {
+  test("All is the union of the enabled harnesses in every windowed view query", () => {
+    expect(HARNESS_FILTER).toBe(
+      "harness IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1) AND ({harness:String} = '' OR harness = {harness:String})",
+    );
+    for (const queries of Object.values(VIEW_QUERIES))
+      for (const sql of Object.values(queries))
+        if (sql.includes("{harness:String}"))
+          expect(sql).toContain(
+            "IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)",
+          );
+    expect(VIEW_QUERIES.intent.repeated).toContain(
+      "l.harness IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)",
+    );
+  });
+
+  test("signals hidden on some machines are still queried, for machines that show them", () => {
     const text = all.join("\n");
     for (const column of [
       "cache_creation_input",
@@ -452,7 +550,7 @@ describe("view queries", () => {
       "sandbox_outcome",
       "tps_p50",
     ])
-      expect(text).not.toContain(column);
+      expect(text).toContain(column);
   });
 
   test("intent queries read task_labels snapshots with bound parameters", () => {

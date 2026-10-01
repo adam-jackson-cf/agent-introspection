@@ -11,6 +11,7 @@ import {
   ViewNav,
 } from "./app-parts";
 import { filterQuery, lastDays, presetFor, readFilters } from "./app-state";
+import { enabledHarnesses } from "./harness-scope";
 
 const locationTitle = (kind: string, viewTitle: string) => {
   if (kind === "view") return viewTitle;
@@ -44,6 +45,20 @@ export default function App() {
       navigate(viewHref(location.view.id, next), next);
   };
   const setRange = (days: number) => change({ ...filters, ...lastDays(days) });
+  const harnesses = data.registry ? enabledHarnesses(data.registry) : [];
+  // A link can name a harness this machine does not use; fall back to All.
+  const stale =
+    data.registry !== null &&
+    filters.harness !== "" &&
+    !harnesses.includes(filters.harness);
+  useEffect(() => {
+    if (stale && location.kind === "view")
+      navigate(
+        viewHref(location.view.id, { ...filters, harness: "" }),
+        { ...filters, harness: "" },
+        true,
+      );
+  });
 
   const nav = (
     <ViewNav
@@ -76,6 +91,7 @@ export default function App() {
           {location.kind === "view" && (
             <FilterBar
               filters={filters}
+              harnesses={harnesses}
               custom={custom}
               setCustom={setCustom}
               setRange={setRange}

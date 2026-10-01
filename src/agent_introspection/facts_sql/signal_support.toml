@@ -12,11 +12,15 @@
 #   differs      the producer reaches it by a different route; `note` says how
 #   not applicable  the signal cannot exist for the harness by construction
 #                   (headless Codex exec has no user to interrupt, steer, or follow up)
+#   not emitted  the producer has no route, natively or through an activity hook
+#                (docs/hook-events.md); `note` says why
 #
-# Parity rule: a harness-scoped signal must be reached by every harness, directly,
-# by a different route, or through an activity hook (docs/hook-events.md). A signal
-# some harness cannot produce is not a signal: it is listed under [[excluded]] with
-# the reason and left off the dashboard. `facts install` rejects `not emitted`.
+# Visibility rule: parity is judged over the harnesses this machine uses (config
+# `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`).
+# A harness-scoped signal is shown only when every enabled harness reaches it
+# (aligned, differs, or not applicable); when an enabled harness does not emit it,
+# the signal is hidden on that machine and listed with the reason. A signal no
+# harness produces is listed under [[excluded]] and never shown.
 #
 # Route `match` predicates run against rows of one harness in `introspection.spans`,
 # `introspection.logs`, or, for source `hooks`, `introspection.hook_rows` (activity-hook
@@ -156,6 +160,14 @@ harnesses = ["claude-code"]
 source = "logs"
 match = "event_name = 'tool_decision'"
 description = "`tool_decision` log with `decision` and `source`."
+
+[[route]]
+id = "codex.sandbox_outcome"
+expect = "events"
+harnesses = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+source = "logs"
+match = "event_name = 'codex.sandbox_outcome'"
+description = "`codex.sandbox_outcome` log with `outcome` for a sandboxed command."
 
 [[route]]
 id = "codex.sampling"
@@ -343,13 +355,13 @@ claude-code = { route = "claude.usage", alignment = "aligned" }
 id = "pipeline.project_attribution"
 view = "pipeline"
 title = "Project attribution"
-question = "Which share of each harness's tasks has a project from the session-context hooks?"
+question = "Which share of each harness's tasks has a Git project?"
 unit = "%"
-formula = "Per harness: 100 × tasks whose session the hooks recorded with a git project / tasks. The session takes its latest recorded project. Hook rejections (e.g. non-git workspace) and the unsynced inbox backlog are shown alongside."
+formula = "Per harness: 100 × tasks whose session has a Git project / tasks. `facts sync` reads each session's working directory from the harness's own session store (session_stores.toml) and resolves its Git root on this machine. Sessions without a project (non-Git or missing workspace) and tasks whose session no store holds are shown alongside."
 [signal.support]
-codex = { route = "codex.turn", alignment = "aligned", note = "Codex CLI and exec sessions come from the `codex-cli` hook; app-server sessions from the app-server adapter." }
-oh-my-pi = { route = "omp.run", alignment = "aligned" }
-claude-code = { route = "claude.interaction", alignment = "aligned" }
+codex = { route = "codex.turn", alignment = "aligned", note = "`session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`." }
+oh-my-pi = { route = "omp.run", alignment = "aligned", note = "The `session` record (id, cwd) of `~/.omp/agent/sessions/*/*.jsonl`. Runs that keep no session file have no project." }
+claude-code = { route = "claude.interaction", alignment = "aligned", note = "The first transcript entry with `sessionId` and `cwd` in `~/.claude/projects/*/*.jsonl`." }
 
 [[signal]]
 id = "pipeline.recombination"
@@ -375,7 +387,7 @@ view = "pipeline"
 title = "Coverage grid"
 question = "Does the data match what the registry says each harness emits?"
 unit = "state"
-formula = "Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, stray (explained or not), or not emitted."
+formula = "Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, no events, not applicable, stray (explained or not), or not in use (a harness this machine does not enable; flagged when its routes still have rows). Signals hidden on this machine are listed separately."
 scope = "system"
 
 # ---------------------------------------------------------------------------
@@ -417,6 +429,18 @@ formula = "Σ input_tokens − Σ cached_input."
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Includes cache-creation input." }
 claude-code = { route = "claude.usage", alignment = "aligned", note = "Includes cache-creation input." }
+
+[[signal]]
+id = "usage.cache_creation"
+view = "cache"
+title = "Cache creation"
+question = "How much input was written to cache?"
+unit = "tokens"
+formula = "Σ cache_creation_input. Part of input and uncached input, never of cached input."
+[signal.support]
+codex = { alignment = "not emitted", note = "Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.cache_creation.input_tokens`; non-zero only on Anthropic chats." }
+claude-code = { route = "claude.usage", alignment = "aligned", note = "`cache_creation_tokens`." }
 
 [[signal]]
 id = "usage.output_tokens"
@@ -763,6 +787,18 @@ oh-my-pi = { route = "hook.approval", alignment = "differs", note = "`tool_appro
 claude-code = { route = "claude.tool_decision", alignment = "aligned", note = "Sources are config and user_reject." }
 
 [[signal]]
+id = "guard.sandbox"
+view = "guardrails"
+title = "Sandbox outcomes"
+question = "How often do sandboxed commands get denied?"
+unit = "outcomes"
+formula = "count() of sandbox outcomes by outcome."
+[signal.support]
+codex = { route = "codex.sandbox_outcome", alignment = "aligned" }
+oh-my-pi = { alignment = "not emitted", note = "omp has no sandbox, so there is no outcome to observe." }
+claude-code = { alignment = "not emitted", note = "Claude Code emits no sandbox outcome, and no hook sees one." }
+
+[[signal]]
 id = "guard.gate_bypass"
 view = "guardrails"
 title = "Quality-gate bypass"
@@ -815,6 +851,18 @@ oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Span error statu
 claude-code = { route = "claude.llm_request", alignment = "aligned", note = "Span error or `success=false`." }
 
 [[signal]]
+id = "provider.stream_disconnects"
+view = "provider"
+title = "Stream disconnects"
+question = "How often does a response stream break before completion?"
+unit = "calls"
+formula = "Completed-response records whose error says the stream disconnected before completion."
+[signal.support]
+codex = { route = "codex.response_completed", alignment = "aligned", note = "`error.message` starting 'stream disconnected before completion'." }
+oh-my-pi = { alignment = "not emitted", note = "Chat spans record errors but not stream state; guessing from error text would not be the same signal." }
+claude-code = { alignment = "not emitted", note = "Requests record errors but not stream state; guessing from error text would not be the same signal." }
+
+[[signal]]
 id = "provider.latency"
 view = "provider"
 title = "Model call latency"
@@ -839,6 +887,18 @@ oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.response
 claude-code = { route = "claude.llm_request", alignment = "aligned", note = "`ttft_ms`." }
 
 [[signal]]
+id = "provider.throughput"
+view = "provider"
+title = "Output throughput"
+question = "Is generation speed degraded independently of response size?"
+unit = "tokens/s"
+formula = "P50 of output tokens / (duration − time to first token) for calls with both timings and positive generation time."
+[signal.support]
+codex = { alignment = "not emitted", note = "Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned" }
+claude-code = { route = "claude.llm_request", alignment = "aligned" }
+
+[[signal]]
 id = "provider.retries"
 view = "provider"
 title = "Retries"
@@ -861,6 +921,18 @@ formula = "Calls with no success flag, error, or finish reason."
 codex = { route = "codex.response_completed", alignment = "differs", note = "Every response stream has an outcome (error message or completion), so Codex has no unknown calls." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "No `gen_ai.response.finish_reasons`." }
 claude-code = { route = "claude.llm_request", alignment = "aligned", note = "No `success` attribute." }
+
+[[signal]]
+id = "provider.model_conformance"
+view = "provider"
+title = "Model conformance"
+question = "Did the provider serve the requested model?"
+unit = "calls"
+formula = "Calls whose response model is set and differs from the requested model."
+[signal.support]
+codex = { alignment = "not emitted", note = "Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model." }
+oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.request.model` vs `gen_ai.response.model`." }
+claude-code = { alignment = "not emitted", note = "LLM request spans carry only the requested model." }
 
 # ---------------------------------------------------------------------------
 # V8 Recurrence
@@ -908,11 +980,11 @@ view = "recurrence"
 title = "Project concentration"
 question = "Is a repeated failure localized to one project?"
 unit = "%"
-formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the git repository the session-context hooks recorded for the session."
+formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store."
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned", note = "Session → project from the `codex-cli` / app-server hooks." }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "Session → project from the omp hook." }
-claude-code = { route = "claude.tool_result", alignment = "aligned", note = "Session → project from the Claude Code hook; interactions in a non-git workspace have none." }
+codex = { route = "codex.tool_result", alignment = "aligned" }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+claude-code = { route = "claude.tool_result", alignment = "aligned" }
 
 # ---------------------------------------------------------------------------
 # V10 Intent and corrections (Jev labels of submitted prompts)
@@ -1035,44 +1107,9 @@ formula = "Proposals by selected tier (tool, script, skill, guidance) and approv
 scope = "system"
 
 # ---------------------------------------------------------------------------
-# Excluded signals: at least one harness can produce them neither natively nor
-# through an activity hook, so they are left off the dashboard (parity rule).
+# Excluded signals: no harness produces them, natively or through an activity
+# hook, so they are never shown.
 # ---------------------------------------------------------------------------
-
-[[excluded]]
-id = "usage.cache_creation"
-view = "cache"
-title = "Cache creation"
-missing = ["codex-app-server", "codex_cli_rs", "codex_exec"]
-reason = "Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes."
-
-[[excluded]]
-id = "guard.sandbox"
-view = "guardrails"
-title = "Sandbox outcomes"
-missing = ["oh-my-pi"]
-reason = "omp has no sandbox, so there is no outcome to observe."
-
-[[excluded]]
-id = "provider.stream_disconnects"
-view = "provider"
-title = "Stream disconnects"
-missing = ["oh-my-pi", "claude-code"]
-reason = "omp chat spans and Claude Code requests record errors but not stream state; guessing from error text would not be the same signal."
-
-[[excluded]]
-id = "provider.throughput"
-view = "provider"
-title = "Output throughput"
-missing = ["codex-app-server", "codex_cli_rs", "codex_exec"]
-reason = "Codex completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal."
-
-[[excluded]]
-id = "provider.model_conformance"
-view = "provider"
-title = "Model conformance"
-missing = ["codex-app-server", "codex_cli_rs", "codex_exec"]
-reason = "Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model."
 
 [[excluded]]
 id = "intervene.rule_adherence"

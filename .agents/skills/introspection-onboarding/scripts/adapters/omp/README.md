@@ -1,28 +1,8 @@
-# OMP adapter
+# omp activity extension
 
-`adapter.ts` is an OMP extension adapter. It uses OMP's extension API directly; unlike shell and Python adapters, it must remain TypeScript because it registers native lifecycle callbacks with OMP.
-
-## Native input
-
-The extension reads only `context.sessionManager.getSessionId()`, `context.cwd`, and the lifecycle callback timestamp. It registers `session_start` and `session_shutdown`; the latter normalizes to `session_end`. A missing or malformed session ID, workspace, or timestamp produces a bounded rejection rather than a partial runtime call.
-
-## Normalization
-
-The extension launches [`../../session-context-runtime.sh`](../../session-context-runtime.sh) with the shared five-field contract. Verify registration end to end with the onboarding skill's end-to-end validation workflow.
-
-## Attribution boundary
-
-OMP is supported only when a fresh proof establishes that `getSessionId()` equals the SigNoz `gen_ai.conversation.id` source correlation. The extension must not infer that equality from its CWD, local session artifacts, or telemetry content.
-
-Runtime exit statuses 0 (recorded), 64 (usage error or recorded workspace
-rejection), and 65 (recorded Git rejection) are all accepted; any other status is
-an adapter error.
-
-## Activity hooks
-
-`activity.ts` is a separate omp extension. Each handler builds a small JSON envelope
+`activity.ts` is an omp extension. Each handler builds a small JSON envelope
 (`session_id` from `getSessionId()`, `cwd`, and the fields below) and spawns
-`~/.local/lib/agent-introspection/session-context-runtime-v1/activity-shim.sh omp <event>` detached; override the path with
+`~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh omp <event>` detached; override the path with
 `AGENT_INTROSPECTION_SHIM`. Handlers never block, throw, or return a result.
 
 | omp event                             | Record                                                | Envelope fields                      |
@@ -44,16 +24,16 @@ labels the prompt with Jev; the facts store never keeps its text.
 omp does not load this extension from ambient discovery: list it under `extensions:`
 in `~/.omp/agent/config.yml`, then restart omp sessions.
 
-Install (the shim from `../../activity-shim.sh` and the extension beside the runtime):
+Install the shim and the extension, link it, and register it:
 
 ```sh
-R=~/.local/lib/agent-introspection/session-context-runtime-v1
+R=~/.local/lib/agent-introspection/activity-hooks-v1
+mkdir -p "$R/omp"
 install -m 0755 ../../activity-shim.sh "$R/activity-shim.sh"
-mkdir -p "$R/adapters/omp"
-install -m 0644 adapter.ts "$R/adapters/omp/adapter.ts"
-install -m 0644 activity.ts "$R/adapters/omp/activity.ts"
-ln -sfn "$R/adapters/omp/adapter.ts" ~/.omp/agent/extensions/agent-introspection.ts
-ln -sfn "$R/adapters/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts
+install -m 0644 activity.ts "$R/omp/activity.ts"
+ln -sfn "$R/omp/activity.ts" ~/.omp/agent/extensions/agent-introspection-activity.ts
+# then add ~/.omp/agent/extensions/agent-introspection-activity.ts under `extensions:`
+# in ~/.omp/agent/config.yml and restart omp sessions
 ```
 
-Remove with `rm ~/.omp/agent/extensions/agent-introspection-activity.ts`.
+Remove the link and the `config.yml` entry to uninstall.

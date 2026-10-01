@@ -7,7 +7,7 @@ then, only when the user wants a live check, run one short session.
 
 - Each changed file parses (JSON, TOML) and has a backup; print no values.
 - Every introspection hook points at a managed path under
-  `~/.local/lib/agent-introspection/session-context-runtime-v1/`, and the managed copies
+  `~/.local/lib/agent-introspection/activity-hooks-v1/`, and the managed copies
   match the repo's `scripts/`.
 - The settings in the harness configuration workflow's table are present for each
   harness in use, in every Codex root, and omp's `config.yml` lists `activity.ts`.
@@ -20,8 +20,8 @@ then, only when the user wants a live check, run one short session.
    that fails (for example reading a missing file), and let the turn finish. For Codex
    exec, run one `codex exec` prompt.
 2. After the next minute's `facts sync` (or run it), check:
-   - `introspection.session_projects FINAL` has the session with its project (a
-     non-Git workspace appears only in `session_project_rejections`);
+   - `introspection.session_projects FINAL` has the session with `status = 'attributed'`
+     and its project (or the reason it has none, such as `non_git_workspace`);
    - the prompt event (`user_prompt`, `codex.user_prompt`, `omp.user_prompt`) reached
      SigNoz with text, and `introspection.prompt_labels` has a `labelled` row for it,
      while `introspection.logs` holds no `prompt` key;

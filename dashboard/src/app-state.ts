@@ -61,7 +61,9 @@ export const isRegistry = (value: unknown): value is Registry =>
   Array.isArray(value.support) &&
   Array.isArray(value.routes) &&
   Array.isArray(value.strays) &&
-  Array.isArray(value.exclusions);
+  Array.isArray(value.exclusions) &&
+  Array.isArray(value.harnesses) &&
+  Array.isArray(value.hidden);
 
 export async function getJson(
   url: string,

@@ -25,7 +25,7 @@ from typing import Any
 
 PRODUCER = "claude-code"
 SHIM = "activity-shim.sh"
-MANAGED_RUNTIME = Path(".local/lib/agent-introspection/session-context-runtime-v1")
+MANAGED_RUNTIME = Path(".local/lib/agent-introspection/activity-hooks-v1")
 # Tool events take a tool-name matcher; the others take none.
 EVENTS = {
     "PreToolUse": "*",

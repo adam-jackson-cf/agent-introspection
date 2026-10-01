@@ -1,12 +1,13 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
+  useVisible,
 } from "../components";
 import {
   fmtCount,
@@ -21,12 +22,20 @@ import {
   sumRows,
 } from "../format";
 
-const TOKEN_FIELDS = ["input", "cached", "output", "operations", "sessions"];
+const TOKEN_FIELDS = [
+  "input",
+  "cached",
+  "creation",
+  "output",
+  "operations",
+  "sessions",
+];
 
 const utilization = (row: Row) => ratio(num(row.cached), num(row.input));
 
 export default function Cache({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
+  const creationShown = useVisible("usage.cache_creation");
   const kpi = data.kpi ?? [];
   const all = sumRows(kpi, TOKEN_FIELDS);
   const daily = data.daily ?? [];
@@ -38,9 +47,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       cached: sums.cached!,
       output: sums.output!,
     }));
-  const harnesses = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  );
+  const harnesses = selected;
   const utilizationDaily = pivotDaily(
     daily,
     (row) => String(row.harness),
@@ -75,8 +82,12 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Uncached input"
           value={fmtCount(all.input! - all.cached!)}
-          detail={`${fmtPct(ratio(all.input! - all.cached!, all.input!))} of input`}
-          signals={["usage.uncached_input"]}
+          detail={
+            creationShown
+              ? `incl. ${fmtCount(all.creation!)} written to cache`
+              : `${fmtPct(ratio(all.input! - all.cached!, all.input!))} of input`
+          }
+          signals={["usage.uncached_input", "usage.cache_creation"]}
         />
         <Kpi
           title="Output tokens"
@@ -147,6 +158,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
           signals={[
             "usage.input_tokens",
             "usage.cache_utilization",
+            "usage.cache_creation",
             "usage.operations",
             "usage.active_sessions",
           ]}
@@ -183,6 +195,16 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => fmtCount(num(row.input) - num(row.cached)),
               },
+              ...(creationShown
+                ? [
+                    {
+                      key: "creation",
+                      label: "Cache writes",
+                      numeric: true,
+                      render: (row: Row) => fmtCount(num(row.creation)),
+                    },
+                  ]
+                : []),
               {
                 key: "output",
                 label: "Output",

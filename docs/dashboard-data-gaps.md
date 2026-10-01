@@ -9,20 +9,25 @@ record gaps in the data itself. Definitions and routes are in
 [Hook Events](hook-events.md); the evidence for each finding is in the
 [Dashboard v3 Plan](dashboard-v3-plan.md#findings-log).
 
-**Parity rule.** Every dashboard signal is produced by every harness it can exist for,
-natively or through an activity hook. A signal that some harness cannot produce is
-excluded, never shown as "not emitted", and `facts install` rejects a registry that
-breaks the rule.
+**Visibility rule.** Parity is judged over the harnesses a machine uses (config
+`[harnesses] enabled`), not every known harness. A signal is shown when every enabled
+harness produces it, natively or through an activity hook, or cannot have it by
+construction; a signal an enabled harness does not emit is hidden on that machine and
+listed in the Pipeline view, never shown as zero. A signal no harness produces is
+excluded everywhere.
 
 Legend: ✓ the harness reaches the shared definition directly; ≈ it reaches it by a
 different route (see its note); — the signal cannot exist for that harness by
-construction (headless Codex exec has no user to interrupt, steer, or follow up).
+construction (headless Codex exec has no user to interrupt, steer, or follow up); ✗ the
+harness does not emit it, so the signal is hidden wherever that harness is enabled.
 
 <!-- BEGIN GENERATED FROM signal_support.toml -->
 
 ## Harness support matrix
 
-51 per-harness signals across 5 harnesses: 255 cells, 157 aligned (✓), 91 reached by a different route (≈), 7 not applicable by construction (—). Every signal is reached by every harness it can exist for; a signal some harness cannot produce is excluded (below).
+56 per-harness signals across 5 harnesses: 280 cells, 168 aligned (✓), 91 reached by a different route (≈), 7 not applicable by construction (—), 14 not emitted (✗).
+
+Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
 | View                   | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
 | ---------------------- | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
@@ -32,6 +37,7 @@ construction (headless Codex exec has no user to interrupt, steer, or follow up)
 | Cache efficiency       | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
 | Cache efficiency       | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Cache efficiency       | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency       | Cache creation               | ✓   | ✗                | ✗         | ✗          | ✓           |
 | Cache efficiency       | Output tokens                | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Cache efficiency       | Input cache utilization      | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Cache efficiency       | Completed operations         | ≈   | ≈                | ≈         | ≈          | ≈           |
@@ -59,14 +65,18 @@ construction (headless Codex exec has no user to interrupt, steer, or follow up)
 | Friction               | Recovery after failure       | ≈   | ≈                | ≈         | ≈          | ≈           |
 | Guardrails             | Tool approval decisions      | ≈   | ✓                | ✓         | ✓          | ✓           |
 | Guardrails             | Rejected tool calls          | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Guardrails             | Sandbox outcomes             | ✗   | ✓                | ✓         | ✓          | ✗           |
 | Guardrails             | Quality-gate bypass          | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Guardrails             | Command churn                | ≈   | ≈                | ≈         | ≈          | ≈           |
 | Provider               | Model calls                  | ✓   | ≈                | ≈         | ≈          | ✓           |
 | Provider               | Call error rate              | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider               | Stream disconnects           | ✗   | ✓                | ✓         | ✓          | ✗           |
 | Provider               | Model call latency           | ✓   | ≈                | ≈         | ≈          | ✓           |
 | Provider               | Time to first token          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Provider               | Output throughput            | ✓   | ✗                | ✗         | ✗          | ✓           |
 | Provider               | Retries                      | ≈   | ≈                | ≈         | ≈          | ✓           |
 | Provider               | Unknown outcomes             | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider               | Model conformance            | ✓   | ✗                | ✗         | ✗          | ✗           |
 | Recurrence             | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
 | Recurrence             | Recurring failure signatures | ✓   | ✓                | ✓         | ✓          | ≈           |
 | Recurrence             | Actionable repeats           | ✓   | ✓                | ✓         | ✓          | ≈           |
@@ -77,6 +87,27 @@ construction (headless Codex exec has no user to interrupt, steer, or follow up)
 | Intent and corrections | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
 | Intent and corrections | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
 | Intent and corrections | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
+
+## Signals a harness does not emit
+
+Each is hidden on a machine that enables the harness.
+
+| Signal             | Harness          | Why                                                                                                                        |
+| ------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Cache creation     | Codex app-server | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Cache creation     | Codex CLI        | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Cache creation     | Codex exec       | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes. |
+| Sandbox outcomes   | omp              | omp has no sandbox, so there is no outcome to observe.                                                                     |
+| Sandbox outcomes   | Claude Code      | Claude Code emits no sandbox outcome, and no hook sees one.                                                                |
+| Stream disconnects | omp              | Chat spans record errors but not stream state; guessing from error text would not be the same signal.                      |
+| Stream disconnects | Claude Code      | Requests record errors but not stream state; guessing from error text would not be the same signal.                        |
+| Output throughput  | Codex app-server | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal.       |
+| Output throughput  | Codex CLI        | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal.       |
+| Output throughput  | Codex exec       | Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal.       |
+| Model conformance  | Codex app-server | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model.        |
+| Model conformance  | Codex CLI        | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model.        |
+| Model conformance  | Codex exec       | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model.        |
+| Model conformance  | Claude Code      | LLM request spans carry only the requested model.                                                                          |
 
 ## Signals not applicable to a harness
 
@@ -190,17 +221,12 @@ These are emitted, but the route differs from the shared definition; the note sa
 
 ## Excluded signals
 
-At least one harness can produce these neither natively nor through an activity
-hook, so they are left off the dashboard.
+No harness can produce these, natively or through an activity hook, so they are
+never shown.
 
-| Signal                                             | View             | Missing for                                               | Reason                                                                                                                                                    |
-| -------------------------------------------------- | ---------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cache creation (`usage.cache_creation`)            | Cache efficiency | Codex app-server, Codex CLI, Codex exec                   | Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes.                                |
-| Sandbox outcomes (`guard.sandbox`)                 | Guardrails       | omp                                                       | omp has no sandbox, so there is no outcome to observe.                                                                                                    |
-| Stream disconnects (`provider.stream_disconnects`) | Provider         | omp, Claude Code                                          | omp chat spans and Claude Code requests record errors but not stream state; guessing from error text would not be the same signal.                        |
-| Output throughput (`provider.throughput`)          | Provider         | Codex app-server, Codex CLI, Codex exec                   | Codex completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal.                                |
-| Model conformance (`provider.model_conformance`)   | Provider         | Codex app-server, Codex CLI, Codex exec                   | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model.                                       |
-| Rule adherence (`intervene.rule_adherence`)        | Interventions    | omp, Codex app-server, Codex CLI, Codex exec, Claude Code | No producer emits rule triggers. Each applied intervention is instead evaluated against its own structured success metric (Post-intervention recurrence). |
+| Signal                                      | View          | Missing for                                               | Reason                                                                                                                                                    |
+| ------------------------------------------- | ------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rule adherence (`intervene.rule_adherence`) | Interventions | omp, Codex app-server, Codex CLI, Codex exec, Claude Code | No producer emits rule triggers. Each applied intervention is instead evaluated against its own structured success metric (Post-intervention recurrence). |
 
 <!-- END GENERATED FROM signal_support.toml -->
 
@@ -208,13 +234,13 @@ hook, so they are left off the dashboard.
 
 These signals are emitted, but not for every row.
 
-| Gap                          | Harnesses             | Extent                                                                                                                     | Effect                                                                                                                                                                      |
-| ---------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tool call → task attribution | Codex                 | 93% of app-server, 99.7% of exec, and 54% of CLI tool calls fall inside an exported turn span                              | Task-level tool signals (tasks affected, repeats, loops, recovery, churn, recurrence) undercount Codex CLI. Some CLI turns are never exported as `session_task.turn` (F13). |
-| Task token usage             | Codex CLI             | TUI turns often omit `codex.turn.token_usage.*`                                                                            | Per-task reasoning and output are below usage totals (55% lower over 30 days).                                                                                              |
-| Project attribution          | All                   | 98% Codex exec, 97% Codex CLI, 82% Codex app-server, 72% Claude Code, 54% omp of 90-day tasks have a hook-recorded project | Project concentration and project breakdowns cover only attributed sessions. Sessions in non-Git workspaces are rejected by the hooks.                                      |
-| Reasoning effort             | Claude Code           | `effort` set on nearly every request from 2026-09-28, rarely before                                                        | Older Claude Code tasks show `unset`.                                                                                                                                       |
-| Rare user events             | Codex CLI, Codex exec | No `turn/interrupt` in 90 days; exec is headless and cannot be interrupted or steered                                      | Interrupt and steer rates are 0 or "no events" there, which is a valid observation, not a break.                                                                            |
+| Gap                          | Harnesses             | Extent                                                                                                                                                             | Effect                                                                                                                                                                                                                            |
+| ---------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool call → task attribution | Codex                 | 93% of app-server, 99.7% of exec, and 54% of CLI tool calls fall inside an exported turn span                                                                      | Task-level tool signals (tasks affected, repeats, loops, recovery, churn, recurrence) undercount Codex CLI. Some CLI turns are never exported as `session_task.turn` (F13).                                                       |
+| Task token usage             | Codex CLI             | TUI turns often omit `codex.turn.token_usage.*`                                                                                                                    | Per-task reasoning and output are below usage totals (55% lower over 30 days).                                                                                                                                                    |
+| Project attribution          | All                   | Of the last 30 days' tasks, 99% Claude Code, 97% Codex exec, 85% Codex CLI, 74% Codex app-server, and 30% omp have a project (2026-10-01, from the session stores) | Tasks whose session no store holds (omp batch runs that keep no session file; Codex sessions Codex has pruned) and sessions whose workspace is gone with no matching remote have no project; the Pipeline view shows each reason. |
+| Reasoning effort             | Claude Code           | `effort` set on nearly every request from 2026-09-28, rarely before                                                                                                | Older Claude Code tasks show `unset`.                                                                                                                                                                                             |
+| Rare user events             | Codex CLI, Codex exec | No `turn/interrupt` in 90 days; exec is headless and cannot be interrupted or steered                                                                              | Interrupt and steer rates are 0 or "no events" there, which is a valid observation, not a break.                                                                                                                                  |
 
 ## Gaps from the activity hooks
 
@@ -247,6 +273,3 @@ These signals are emitted, but not for every row.
 - **Mislabelled sessions.** Claude Code sessions exported as `oh-my-pi` on 2026-08-24,
   08-28, 09-01, 09-02, and 09-13, and Docker build spans under `oh-my-pi`, count for
   neither harness (F5).
-- **Codex Desktop hook boundary.** The Codex global session hooks also run in Codex
-  CLI and cannot tell the two apart, so the Desktop hook adapter is not installed
-  in a configuration root shared with Codex CLI.
