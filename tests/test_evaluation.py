@@ -13,6 +13,7 @@ from agent_introspection.proposals import (
     create_proposal,
     transition_proposal,
 )
+from tests.conftest import OpenWorkflow
 from tests.test_proposals import (
     PASSED_VALIDATION,
     SUCCESS_METRIC,
@@ -25,9 +26,11 @@ CORRECTION = {"project": "example", "correction_kind": "ignored", "harnesses": [
 
 
 def applied_proposal(
-    subject: dict[str, Any] = CLUSTER, metric: dict[str, Any] = SUCCESS_METRIC
+    open_workflow: OpenWorkflow,
+    subject: dict[str, Any] = CLUSTER,
+    metric: dict[str, Any] = SUCCESS_METRIC,
 ) -> tuple[sqlite3.Connection, str, datetime]:
-    connection = proposal_database()
+    connection = proposal_database(open_workflow)
     connection.execute("UPDATE findings SET subject = ?", (json.dumps(subject),))
     connection.commit()
     proposal_id = create_proposal(
@@ -80,9 +83,9 @@ def events(connection: sqlite3.Connection, proposal_id: str) -> list[tuple[int, 
     ],
 )
 def test_due_proposal_gets_one_immutable_evaluated_event(
-    baseline: tuple[int, int], after: tuple[int, int], expected: str
+    baseline: tuple[int, int], after: tuple[int, int], expected: str, open_workflow: OpenWorkflow
 ) -> None:
-    connection, proposal_id, applied_at = applied_proposal()
+    connection, proposal_id, applied_at = applied_proposal(open_workflow)
     statements, run = facts(baseline, after)
 
     result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
@@ -114,8 +117,8 @@ def state(connection: sqlite3.Connection, proposal_id: str) -> str:
     )
 
 
-def test_proposal_is_not_evaluated_before_its_window_elapses() -> None:
-    connection, proposal_id, applied_at = applied_proposal()
+def test_proposal_is_not_evaluated_before_its_window_elapses(open_workflow: OpenWorkflow) -> None:
+    connection, proposal_id, applied_at = applied_proposal(open_workflow)
     statements, run = facts()
 
     result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=13))
@@ -127,8 +130,8 @@ def test_proposal_is_not_evaluated_before_its_window_elapses() -> None:
     assert events(connection, proposal_id)[-1][1] == "applied"
 
 
-def test_windows_older_than_the_snapshot_read_the_live_views() -> None:
-    connection, _, applied_at = applied_proposal()
+def test_windows_older_than_the_snapshot_read_the_live_views(open_workflow: OpenWorkflow) -> None:
+    connection, _, applied_at = applied_proposal(open_workflow)
     statements, run = facts((10, 5), (10, 1))
 
     evaluation.evaluate_due(run, connection, applied_at + timedelta(days=200))
@@ -138,9 +141,9 @@ def test_windows_older_than_the_snapshot_read_the_live_views() -> None:
     assert all("_snapshot" not in sql for sql in statements)
 
 
-def test_correction_findings_use_the_correction_task_rate() -> None:
+def test_correction_findings_use_the_correction_task_rate(open_workflow: OpenWorkflow) -> None:
     metric = SUCCESS_METRIC | {"metric": "correction_task_rate"}
-    connection, _, applied_at = applied_proposal(CORRECTION, metric)
+    connection, _, applied_at = applied_proposal(open_workflow, CORRECTION, metric)
     statements, run = facts((20, 6), (20, 2))
 
     result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
@@ -154,8 +157,8 @@ def test_correction_findings_use_the_correction_task_rate() -> None:
     )
 
 
-def test_cluster_rates_count_only_the_enabled_harnesses() -> None:
-    connection, _, applied_at = applied_proposal()
+def test_cluster_rates_count_only_the_enabled_harnesses(open_workflow: OpenWorkflow) -> None:
+    connection, _, applied_at = applied_proposal(open_workflow)
     statements, run = facts((20, 6), (20, 2))
 
     evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
@@ -165,8 +168,8 @@ def test_cluster_rates_count_only_the_enabled_harnesses() -> None:
     assert all(sql.count(enabled) == 2 for sql in statements)
 
 
-def test_legacy_free_text_metrics_are_skipped() -> None:
-    connection, proposal_id, applied_at = applied_proposal()
+def test_legacy_free_text_metrics_are_skipped(open_workflow: OpenWorkflow) -> None:
+    connection, proposal_id, applied_at = applied_proposal(open_workflow)
     connection.execute(
         "INSERT INTO proposals VALUES ('legacy', 'finding-1', 'applied', ?, 'a', 'b', 1)",
         (json.dumps({"predicted_success_metric": "fewer failures"}),),
@@ -182,8 +185,10 @@ def test_legacy_free_text_metrics_are_skipped() -> None:
     ]
 
 
-def test_cluster_query_ignores_matching_failures_after_the_window_end() -> None:
-    connection, _, applied_at = applied_proposal()
+def test_cluster_query_ignores_matching_failures_after_the_window_end(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection, _, applied_at = applied_proposal(open_workflow)
     statements, run = facts((10, 5), (10, 1))
 
     evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))

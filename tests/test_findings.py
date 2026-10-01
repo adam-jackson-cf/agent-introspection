@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agent_introspection import evidence, findings
 from agent_introspection.facts import SqlRunner
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
 
 
 def window(*rows: dict[str, object], corrections: tuple[dict[str, object], ...] = ()) -> SqlRunner:
@@ -59,8 +59,10 @@ def states(connection: sqlite3.Connection) -> dict[str, tuple[str, int]]:
     return result
 
 
-def test_refresh_promotes_recurring_signatures_by_the_actionable_rule() -> None:
-    connection = connect_workflow(":memory:")
+def test_refresh_promotes_recurring_signatures_by_the_actionable_rule(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = open_workflow(":memory:")
 
     result = findings.refresh(
         window(row("typo path", 3, 2, 2), row("five in three", 5, 3, 1), row("two tasks", 2, 2, 1)),
@@ -75,8 +77,10 @@ def test_refresh_promotes_recurring_signatures_by_the_actionable_rule() -> None:
     }
 
 
-def test_refresh_versions_changes_and_marks_vanished_findings_dormant() -> None:
-    connection = connect_workflow(":memory:")
+def test_refresh_versions_changes_and_marks_vanished_findings_dormant(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = open_workflow(":memory:")
     findings.refresh(window(row("steady", 3, 2, 2), row("gone", 3, 2, 2)), connection)
 
     result = findings.refresh(window(row("steady", 3, 2, 2), row("new", 2, 2, 1)), connection)
@@ -94,20 +98,22 @@ def test_refresh_versions_changes_and_marks_vanished_findings_dormant() -> None:
     }
 
 
-def test_existing_stores_gain_the_subject_column(tmp_path: Path) -> None:
+def test_existing_stores_gain_the_subject_column(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
     path = tmp_path / "old.sqlite3"
     old = sqlite3.connect(path)
     old.execute("CREATE TABLE findings (id TEXT PRIMARY KEY, fingerprint TEXT)")
     old.commit()
     old.close()
 
-    connection = connect_workflow(path)
+    connection = open_workflow(path)
 
     assert "subject" in {column[1] for column in connection.execute("PRAGMA table_info(findings)")}
 
 
-def test_dormant_findings_clear_their_window_counts() -> None:
-    connection = connect_workflow(":memory:")
+def test_dormant_findings_clear_their_window_counts(open_workflow: OpenWorkflow) -> None:
+    connection = open_workflow(":memory:")
     findings.refresh(window(row("gone", 3, 2, 2)), connection)
 
     findings.refresh(window(), connection)
@@ -117,8 +123,8 @@ def test_dormant_findings_clear_their_window_counts() -> None:
     ).fetchone() == ("dormant", 0, 0, 0)
 
 
-def test_subject_records_the_cluster_and_its_impact() -> None:
-    connection = connect_workflow(":memory:")
+def test_subject_records_the_cluster_and_its_impact(open_workflow: OpenWorkflow) -> None:
+    connection = open_workflow(":memory:")
 
     findings.refresh(window(row("Path '…' not found", 4, 3, 2, unclean_tasks=1)), connection)
 
@@ -142,8 +148,10 @@ def test_the_same_cluster_across_harnesses_is_one_finding() -> None:
     )
 
 
-def test_repeated_corrections_become_findings_of_their_own_detector() -> None:
-    connection = connect_workflow(":memory:")
+def test_repeated_corrections_become_findings_of_their_own_detector(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = open_workflow(":memory:")
 
     result = findings.refresh(
         window(
@@ -165,8 +173,8 @@ def test_repeated_corrections_become_findings_of_their_own_detector() -> None:
     }
 
 
-def test_findings_from_the_retired_detector_go_dormant() -> None:
-    connection = connect_workflow(":memory:")
+def test_findings_from_the_retired_detector_go_dormant(open_workflow: OpenWorkflow) -> None:
+    connection = open_workflow(":memory:")
     connection.execute(
         "INSERT INTO findings (id, fingerprint, category, trend_state, detector_id, "
         "detector_version, first_seen_ns, last_seen_ns, occurrence_count, "
@@ -198,8 +206,8 @@ def test_detectors_count_only_the_enabled_harnesses() -> None:
     assert f"c.harness {enabled}" in cluster["projects"]
 
 
-def test_generic_failure_classes_never_become_actionable() -> None:
-    connection = connect_workflow(":memory:")
+def test_generic_failure_classes_never_become_actionable(open_workflow: OpenWorkflow) -> None:
+    connection = open_workflow(":memory:")
 
     findings.refresh(
         window(
@@ -217,8 +225,8 @@ def test_generic_failure_classes_never_become_actionable() -> None:
     }
 
 
-def test_refresh_reports_only_active_actionable_findings() -> None:
-    connection = connect_workflow(":memory:")
+def test_refresh_reports_only_active_actionable_findings(open_workflow: OpenWorkflow) -> None:
+    connection = open_workflow(":memory:")
     findings.refresh(window(row("typo path", 3, 2, 2)), connection)
     connection.execute("UPDATE findings SET is_active = 0, replaced_by_finding_id = id")
     connection.commit()

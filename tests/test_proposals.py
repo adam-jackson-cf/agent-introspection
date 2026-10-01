@@ -16,7 +16,7 @@ from agent_introspection.proposals import (
     create_proposal,
     transition_proposal,
 )
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
 
 SUCCESS_METRIC: dict[str, Any] = {
     "metric": "cluster_task_rate",
@@ -36,9 +36,9 @@ PASSED_VALIDATION = {"validation": {"status": "passed", "checks": ["quality comm
 
 
 def proposal_database(
-    state: str = "actionable", path: Path | str = ":memory:"
+    open_workflow: OpenWorkflow, state: str = "actionable", path: Path | str = ":memory:"
 ) -> sqlite3.Connection:
-    connection = connect_workflow(path)
+    connection: sqlite3.Connection = open_workflow(path)
     connection.execute(
         """
         INSERT INTO findings (
@@ -91,8 +91,10 @@ def proposal_input() -> ProposalInput:
     )
 
 
-def test_only_actionable_findings_can_create_one_pending_proposal() -> None:
-    connection = proposal_database()
+def test_only_actionable_findings_can_create_one_pending_proposal(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
     proposal_id = create_proposal(connection, proposal_input())
     assert connection.execute(
         "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
@@ -104,11 +106,13 @@ def test_only_actionable_findings_can_create_one_pending_proposal() -> None:
         == "created"
     )
     with pytest.raises(ValueError, match="actionable"):
-        create_proposal(proposal_database("isolated"), proposal_input())
+        create_proposal(proposal_database(open_workflow, "isolated"), proposal_input())
 
 
-def test_approval_is_a_decision_and_application_requires_separate_explicit_request() -> None:
-    connection = proposal_database()
+def test_approval_is_a_decision_and_application_requires_separate_explicit_request(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -256,20 +260,22 @@ def test_non_skill_interventions_reject_a_handoff() -> None:
     ],
 )
 def test_proposal_counts_must_match_the_finding(
-    field: str, mismatched: Callable[[], ProposalInput]
+    field: str, mismatched: Callable[[], ProposalInput], open_workflow: OpenWorkflow
 ) -> None:
-    connection = proposal_database()
+    connection = proposal_database(open_workflow)
     with pytest.raises(ValueError, match=field):
         create_proposal(connection, mismatched())
     assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
     assert connection.execute("SELECT COUNT(*) FROM proposal_events").fetchone() == (0,)
 
 
-def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> None:
+def test_concurrent_decisions_cannot_overwrite_each_other(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
     path = tmp_path / "workflow.sqlite3"
-    first = proposal_database(path=path)
+    first = proposal_database(open_workflow, path=path)
     proposal_id = create_proposal(first, proposal_input())
-    second = connect_workflow(path, busy_timeout_ms=0)
+    second = open_workflow(path, busy_timeout_ms=0)
     competing: list[BaseException | None] = []
 
     def decide_elsewhere(statement: str) -> None:
@@ -350,8 +356,10 @@ def test_free_text_success_metric_is_rejected_but_readable_as_legacy() -> None:
     assert metric.harnesses == ("codex_exec",)
 
 
-def test_success_metric_must_match_the_finding_kind_and_harnesses() -> None:
-    connection = proposal_database()
+def test_success_metric_must_match_the_finding_kind_and_harnesses(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
     connection.execute(
         "UPDATE findings SET subject = ?",
         (json.dumps({"project": "example", "correction_kind": "ignored", "harnesses": ["omp"]}),),

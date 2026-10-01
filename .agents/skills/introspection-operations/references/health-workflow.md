@@ -19,8 +19,8 @@ without bypassing a failed check.
    hook failures.
 5. Dashboard Pipeline view, for the window in question:
    - source parity (last 7 days) and All = Σ harnesses recombination;
-   - sanitization: no forbidden keys (including tool-intent keys), no status message
-     over 160 characters, no home paths, and no raw text in `hook_events`;
+   - sanitization: no forbidden keys (including tool-intent keys), no stored diagnostic
+     text (status message, failure signature) over 160 characters (new rows are capped at 80), no home paths, and no raw text in `hook_events`;
    - coverage grid: a boundary route with no rows is a possible break; an `events`
      route with no rows is valid; rows under a `not applicable` cell or unclaimed rows
      need a registered stray or a fix;

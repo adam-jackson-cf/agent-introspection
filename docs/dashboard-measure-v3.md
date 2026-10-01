@@ -89,7 +89,8 @@ interactions without model calls (slash commands) are not tasks.
 | `command_head`, `command_sub`                    | Codex normalized command (also from JavaScript `exec` code); Claude Code `bash_argv0` and command class.                                                      |
 | `gate_bypass`                                    | Codex: `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign` anywhere in the arguments.                                                                       |
 | `targets`                                        | Codex files: patch headers, `path` arguments, path-like command arguments (inferred); home as `~`.                                                            |
-| `failure_signature`                              | Normalized first error line (Codex, omp) or error class (Claude Code).                                                                                        |
+| `failure_signature`                              | Normalized first error line, first 80 characters (Codex, omp) or error class (Claude Code).                                                                   |
+| `failure_signature_hash`                         | First 16 hex of SHA-256 over the full normalized line; empty when a source has none (Claude Code `error_type` fallback).                                      |
 | `arguments_hash`                                 | Codex argument identity for repeats and loops.                                                                                                                |
 | `task_id`                                        | Codex: the user turn in the session whose span contains the call; omp: root run of the trace; Claude Code: interaction of the trace. Empty when unattributed. |
 | `workdir`                                        | Codex working directory, home as `~`.                                                                                                                         |
@@ -231,7 +232,7 @@ Scope: system (not per harness).
 
 - **Question:** Is any raw prompt, command, argument, output, or identity text stored?
 - **Unit:** rows
-- **Formula:** Count of fact rows holding a dropped key (prompt, user_prompt, arguments, output, content, tool intent, identity keys), a status message over 160 characters, or a home-directory path. Expected 0.
+- **Formula:** Count of fact rows holding a dropped key (prompt, user_prompt, arguments, output, content, tool intent, identity keys), stored diagnostic text (status message, failure signature) over 160 characters (the hard backstop; new rows are capped at 80, older rows at 160), or a home-directory path. Expected 0.
 
 Scope: system (not per harness).
 
@@ -519,7 +520,7 @@ Scope: system (not per harness).
 
 - **Question:** Which normalized failures repeat?
 - **Unit:** signature
-- **Formula:** Failed calls grouped by tool and normalized failure signature (home → ~, digit and hex runs → N, 160 characters).
+- **Formula:** Failed calls grouped by tool and the hash of the full normalized failure line (home → ~, digit and hex runs → N); the stored text is the first 80 characters, so failures sharing a prefix stay distinct.
 
 | Harness          | Alignment | Route               | Note                                                                                                                                            |
 | ---------------- | --------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1074,7 +1075,7 @@ The Pipeline view runs these checks for the selected window:
 - **All = Σ harnesses:** direct All aggregates equal the sum of per-harness
   aggregates for usage, tasks, tools, and model calls, including harness-scoped
   session counts.
-- **Sanitization:** 0 rows hold dropped keys, status messages over 160 characters,
+- **Sanitization:** 0 rows hold dropped keys, diagnostic text over 160 characters (new rows are capped at 80),
   or home-directory paths.
 - **Coverage grid:** per signal × harness, the registry's alignment versus rows on the
   route and on other harnesses' routes: healthy, idle, no events, possible break, not

@@ -392,7 +392,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               { key: "source", label: "Table" },
               { key: "rows", label: "Rows", numeric: true },
               { key: "forbidden_keys", label: "Dropped keys", numeric: true },
-              { key: "long_status", label: "Status > 160", numeric: true },
+              { key: "long_status", label: "Text > 160", numeric: true },
               { key: "home_paths", label: "Home paths", numeric: true },
             ]}
             rows={sanitization}

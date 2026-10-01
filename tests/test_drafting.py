@@ -9,7 +9,7 @@ from agent_introspection import candidates, drafting
 from agent_introspection.drafting import CodexResult, DraftingError, DraftRequest
 from agent_introspection.findings import CORRECTION_DETECTOR_ID, DETECTOR_ID
 from agent_introspection.review import PROPOSAL_LIMITS, create_review_session
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
 from tests.test_proposals import proposal_input
 
 
@@ -63,8 +63,8 @@ def facts_runner(
     return statements, run
 
 
-def store(tmp_path: Path) -> sqlite3.Connection:
-    connection = connect_workflow(tmp_path / "workflow.sqlite3")
+def store(open_workflow: OpenWorkflow, tmp_path: Path) -> sqlite3.Connection:
+    connection: sqlite3.Connection = open_workflow(tmp_path / "workflow.sqlite3")
     insert_finding(connection, "a-low", impact=5, last_seen_ns=10)
     insert_finding(connection, "b-old", impact=9, last_seen_ns=1)
     insert_finding(connection, "c-new", impact=9, last_seen_ns=5)
@@ -74,8 +74,9 @@ def store(tmp_path: Path) -> sqlite3.Connection:
 
 def test_next_finding_is_the_highest_impact_most_recent_cluster_without_a_proposal(
     tmp_path: Path,
+    open_workflow: OpenWorkflow,
 ) -> None:
-    connection = store(tmp_path)
+    connection = store(open_workflow, tmp_path)
     insert_finding(connection, "e-proposed", impact=50, last_seen_ns=9)
     connection.execute(
         "INSERT INTO proposals VALUES ('p1', 'e-proposed', 'pending', '{}', 'now', 'now', 1)"
@@ -91,8 +92,9 @@ def test_next_finding_is_the_highest_impact_most_recent_cluster_without_a_propos
 
 def test_candidate_carries_the_finding_evidence_and_most_frequent_project_root(
     tmp_path: Path,
+    open_workflow: OpenWorkflow,
 ) -> None:
-    connection = store(tmp_path)
+    connection = store(open_workflow, tmp_path)
     statements, run = facts_runner()
 
     exported = candidates.export(connection, run, reserved_model_budget=1000)
@@ -106,8 +108,10 @@ def test_candidate_carries_the_finding_evidence_and_most_frequent_project_root(
     assert any("project = 'example'" in sql for sql in statements)
 
 
-def test_oversized_evidence_is_trimmed_to_the_review_input_limit(tmp_path: Path) -> None:
-    connection = store(tmp_path)
+def test_oversized_evidence_is_trimmed_to_the_review_input_limit(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
+    connection = store(open_workflow, tmp_path)
     _, run = facts_runner(signature_rows=200)
     finding = candidates.next_finding(connection)
     assert finding is not None
@@ -129,8 +133,10 @@ def test_candidate_that_cannot_fit_is_rejected() -> None:
         candidates.fit_candidate(candidate, PROPOSAL_LIMITS.max_input_characters)
 
 
-def test_dry_run_prints_the_command_without_reserving_a_session(tmp_path: Path) -> None:
-    connection = store(tmp_path)
+def test_dry_run_prints_the_command_without_reserving_a_session(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
+    connection = store(open_workflow, tmp_path)
     _, run = facts_runner(root=str(tmp_path))
 
     def forbidden(_command: list[str], _prompt: str) -> CodexResult:
@@ -220,8 +226,10 @@ def fake_codex(calls: list[list[str]], *, fail: bool = False) -> drafting.CodexR
     return run
 
 
-def test_draft_imports_the_codex_answer_with_its_thread_and_usage(tmp_path: Path) -> None:
-    connection = store(tmp_path)
+def test_draft_imports_the_codex_answer_with_its_thread_and_usage(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
+    connection = store(open_workflow, tmp_path)
     connection.execute(
         "UPDATE findings SET subject = json_set(subject, '$.harnesses', json('[\"codex_exec\"]'))"
     )
@@ -250,8 +258,9 @@ def test_draft_imports_the_codex_answer_with_its_thread_and_usage(tmp_path: Path
 
 def test_failed_codex_run_creates_nothing_and_leaves_the_session_exported(
     tmp_path: Path,
+    open_workflow: OpenWorkflow,
 ) -> None:
-    connection = store(tmp_path)
+    connection = store(open_workflow, tmp_path)
     _, run = facts_runner()
 
     with pytest.raises(DraftingError, match="usage limit"):
@@ -261,8 +270,10 @@ def test_failed_codex_run_creates_nothing_and_leaves_the_session_exported(
     assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
 
 
-def test_metric_harnesses_must_come_from_the_finding(tmp_path: Path) -> None:
-    connection = store(tmp_path)
+def test_metric_harnesses_must_come_from_the_finding(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
+    connection = store(open_workflow, tmp_path)
     _, run = facts_runner()
     calls: list[list[str]] = []
     connection.execute(
@@ -287,8 +298,10 @@ def test_parse_events_requires_a_thread_and_usage() -> None:
         drafting.provenance(parsed)
 
 
-def test_correction_candidate_uses_its_own_project_root(tmp_path: Path) -> None:
-    connection = store(tmp_path)
+def test_correction_candidate_uses_its_own_project_root(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
+    connection = store(open_workflow, tmp_path)
     insert_finding(connection, "f-correction", impact=20, last_seen_ns=1)
     subject = {
         "project": "corrected-project",

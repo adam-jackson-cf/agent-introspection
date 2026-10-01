@@ -48,7 +48,7 @@ Every record shares one envelope; `event_type` selects the fields in `attrs`.
 | `event_type`       | Producers        | Hook                                  | `attrs`                                                                                                                                                                                                                                       |
 | ------------------ | ---------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tool_call`        | claude-code, omp | Claude `PreToolUse`; omp `tool_call`  | `tool_use_id`, `tool_name`, `arguments_hash`, `arguments_length`, `command_head`, `command_sub`, `targets` (list, home as `~`, at most 20), `gate_bypass` (0/1), `workdir` (the `workdir`/`cwd` argument, else the hook's `cwd`; home as `~`) |
-| `tool_failure`     | claude-code      | `PostToolUseFailure`                  | `tool_use_id`, `tool_name`, `failure_signature` (most specific diagnostic line, digits as `N`, ≤ 160 chars), `interrupted` (0/1)                                                                                                              |
+| `tool_failure`     | claude-code      | `PostToolUseFailure`                  | `tool_use_id`, `tool_name`, `failure_signature` (most specific diagnostic line, digits as `N`, ≤ 80 chars), `failure_signature_hash` (16 hex of SHA-256 over the uncapped normalized line), `interrupted` (0/1)                               |
 | `prompt_submitted` | claude-code      | `UserPromptSubmit`                    | `prompt_id`, `prompt_length`, `turn_open` (0/1: a turn was still running, see [Turn state](#turn-state)); used to infer interrupts and steers                                                                                                 |
 | `turn_stop`        | claude-code      | `Stop`                                | `prompt_id`, `reasoning_tokens` (sum of `thinking_tokens` over the turn's assistant messages in the transcript), `response_model`                                                                                                             |
 | `turn_failure`     | claude-code      | `StopFailure`                         | `prompt_id`, `error_class`                                                                                                                                                                                                                    |
@@ -75,11 +75,15 @@ thing for every harness:
   is compared only within one harness, so it need not equal Codex's `cityHash64`.
 - `failure_signature`: the stack trace's final exception line, else the first
   diagnostic line that is not a generic header or frame, else the first diagnostic
-  line; home as `~`, digit and hex runs as `N`, at most 160 characters.
+  line; home as `~`, digit and hex runs as `N`, at most 80 characters.
+- `failure_signature_hash`: first 16 hex digits of SHA-256 over the full normalized
+  line (after redaction, home and digit normalization, before the 80-character cap);
+  empty when the signature is empty. The ClickHouse projections compute the same value
+  with `lower(substring(hex(SHA256(line)), 1, 16))`.
 
-Parity notes: ClickHouse measures `arguments_length` and the 160-character cap in
-bytes; `hooks.py` measures `arguments_length` in UTF-8 bytes and caps the signature
-in characters. `command_sub` is kept only for tools whose second token is a
+Parity notes: ClickHouse measures `arguments_length` in bytes and caps the signature in
+characters (`substringUTF8`), as `hooks.py` does; `hooks.py` measures `arguments_length`
+in UTF-8 bytes. `command_sub` is kept only for tools whose second token is a
 subcommand (`hooks.SUBCOMMAND_HEADS`, mirrored in the SQL), so `echo word` keeps none.
 
 ## Turn state

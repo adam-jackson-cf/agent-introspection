@@ -223,7 +223,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Project concentration"
-          subtitle="Where each repeated signature occurs; project from the harness session stores"
+          subtitle="Where each repeated signature occurs (first 80 characters shown, grouped by a hash of the full line); project from the harness session stores"
           signals={["recur.project_concentration"]}
           span={12}
         >

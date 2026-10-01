@@ -669,6 +669,19 @@ describe("view queries", () => {
       "l.corrected_next AS corrected_next",
     );
   });
+
+  test("failure signatures group by the full-line hash so a shared prefix does not merge", () => {
+    const tools = VIEW_QUERIES.tools.signatures;
+    expect(tools).toContain("any(failure_signature) AS signature");
+    expect(tools).toContain(
+      "if(failure_signature_hash != '', failure_signature_hash, failure_signature) AS signature_key",
+    );
+    expect(tools).toContain("GROUP BY harness, tool, signature_key");
+    const concentration = VIEW_QUERIES.recurrence.concentration;
+    expect(concentration).toContain("any(signature) AS signature");
+    expect(concentration).toContain("GROUP BY harness, signature_key, project");
+    expect(concentration).toContain("GROUP BY harness, signature_key HAVING");
+  });
 });
 
 describe("ClickHouse address", () => {

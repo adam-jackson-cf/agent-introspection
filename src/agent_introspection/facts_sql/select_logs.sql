@@ -87,10 +87,10 @@ WITH
             output_lines
         )
     ) AS error_line,
-    -- The signature is capped at 160 characters. When the keyword lies past the cap,
+    -- The signature is capped at 80 characters. When the keyword lies past the cap,
     -- keep the line from the keyword on, so the signature is always diagnostic.
     if(
-        match(substring(error_line, 1, 160), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        match(substringUTF8(error_line, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         error_line,
         extract(error_line, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
     ) AS error_window,
@@ -129,7 +129,7 @@ SELECT
                     'x.arguments_hash', toString(cityHash64(args)),
                     'x.failure_signature', if(
                         failed,
-                        substring(
+                        substringUTF8(
                             replaceRegexpAll(
                                 replaceRegexpAll(
                                     replaceRegexpAll(
@@ -170,10 +170,15 @@ SELECT
                                 ),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'
-                            ),
+                            ) AS error_normalised,
                             1,
-                            160
+                            80
                         ),
+                        ''
+                    ),
+                    'x.failure_signature_hash', if(
+                        failed AND error_normalised != '',
+                        lower(substring(hex(SHA256(error_normalised)), 1, 16)),
                         ''
                     )
                 ),

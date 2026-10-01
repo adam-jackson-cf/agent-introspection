@@ -15,7 +15,7 @@ from agent_introspection.proposals import (
     transition_proposal,
 )
 from agent_introspection.review import create_review_session
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
 from tests.test_drafting import facts_runner, insert_finding
 from tests.test_proposals import proposal_database, proposal_input
 
@@ -81,10 +81,10 @@ def test_candidates_export_reports_no_candidates_without_actionable_findings(
 
 
 def test_proposal_create_persists_nothing_when_a_proposal_insert_fails(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     envelope = create_review_session(
         connection, candidates=[{"id": "finding-1"}], reserved_model_budget=100
     )
@@ -139,10 +139,13 @@ def test_proposal_create_persists_nothing_when_a_proposal_insert_fails(
     ],
 )
 def test_mark_applied_rejects_unsuccessful_validation_before_any_transition(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path, evidence: dict[str, object]
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    evidence: dict[str, object],
+    open_workflow: OpenWorkflow,
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -171,16 +174,16 @@ def test_mark_applied_rejects_unsuccessful_validation_before_any_transition(
     )
     assert main([*arguments, "--actor", "user", "--input-json", str(source)]) == 0
     assert json.loads(capsys.readouterr().out) == {"proposal_id": proposal_id, "status": "applied"}
-    assert connect_workflow(tmp_path / "workflow.sqlite3").execute(
+    assert open_workflow(tmp_path / "workflow.sqlite3").execute(
         "SELECT state FROM proposals WHERE id = ?", (proposal_id,)
     ).fetchone() == ("applied",)
 
 
 def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -230,10 +233,10 @@ def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
 
 
 def test_proposal_create_rejects_a_proposal_for_an_unreviewed_finding(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     envelope = create_review_session(
         connection, candidates=[{"id": "reviewed"}], reserved_model_budget=100
     )
@@ -304,10 +307,13 @@ def test_facts_install_creates_the_workflow_store(
 
 
 def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    open_workflow: OpenWorkflow,
 ) -> None:
     config = str(config_file(tmp_path))
-    connection = connect_workflow(tmp_path / "workflow.sqlite3")
+    connection = open_workflow(tmp_path / "workflow.sqlite3")
     insert_finding(connection, "a-low", impact=3, last_seen_ns=9)
     insert_finding(connection, "b-high", impact=8, last_seen_ns=2)
     insert_finding(
@@ -327,10 +333,13 @@ def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
 
 
 def test_proposal_draft_dry_run_and_evaluate_commands(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    open_workflow: OpenWorkflow,
 ) -> None:
     config = str(config_file(tmp_path))
-    connection = connect_workflow(tmp_path / "workflow.sqlite3")
+    connection = open_workflow(tmp_path / "workflow.sqlite3")
     insert_finding(connection, "a-cluster", impact=3, last_seen_ns=9)
     _, run = facts_runner()
     monkeypatch.setattr(facts, "runner", lambda _config: run)

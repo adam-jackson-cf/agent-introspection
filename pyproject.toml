@@ -31,6 +31,8 @@ addopts = "-ra"
 testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]
 pythonpath = ["src", "."]
+# A leaked SQLite connection surfaces as an unraisable ResourceWarning at GC time.
+filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.ruff]
 line-length = 100

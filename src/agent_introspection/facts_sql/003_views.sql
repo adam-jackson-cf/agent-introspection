@@ -498,6 +498,7 @@ FROM (
         toUInt8(attrs_string['x.gate_bypass'] = '1') AS gate_bypass,
         JSONExtract(if(attrs_string['x.targets'] = '', '[]', attrs_string['x.targets']), 'Array(String)') AS targets,
         attrs_string['x.failure_signature'] AS failure_signature,
+        attrs_string['x.failure_signature_hash'] AS failure_signature_hash,
         attrs_string['x.arguments_hash'] AS arguments_hash,
         attrs_string['mcp_server'] AS mcp_server,
         if(l.ts <= t.turn_end, t.turn_id, '') AS task_id,
@@ -539,7 +540,12 @@ FROM (
         JSONExtract(if(hc.hc_targets = '', '[]', hc.hc_targets), 'Array(String)'),
         if(
             has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error',
-            substring(replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'), 1, 160),
+            substringUTF8(replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'), 1, 80),
+            ''
+        ),
+        if(
+            has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error',
+            attrs_string['x.status_hash'],
             ''
         ),
         hc.hc_arguments_hash,
@@ -570,6 +576,7 @@ FROM (
         hc.hc_gate_bypass,
         JSONExtract(if(hc.hc_targets = '', '[]', hc.hc_targets), 'Array(String)'),
         if(l.attrs_string['success'] = 'false', coalesce(nullIf(hf.hf_signature, ''), l.attrs_string['error_type']), ''),
+        if(l.attrs_string['success'] = 'false' AND hf.hf_signature != '', hf.hf_signature_hash, ''),
         hc.hc_arguments_hash,
         '',
         i.interaction_span,
@@ -577,7 +584,10 @@ FROM (
     FROM introspection.logs AS l FINAL
     LEFT JOIN introspection.hook_tool_calls AS hc ON hc.hc_tool_use_id = l.attrs_string['tool_use_id']
     LEFT JOIN (
-        SELECT attrs_string['tool_use_id'] AS hf_tool_use_id, any(attrs_string['failure_signature']) AS hf_signature
+        SELECT
+            attrs_string['tool_use_id'] AS hf_tool_use_id,
+            any(attrs_string['failure_signature']) AS hf_signature,
+            any(attrs_string['failure_signature_hash']) AS hf_signature_hash
         FROM introspection.hook_events FINAL
         WHERE producer = 'claude-code' AND event_type = 'tool_failure'
         GROUP BY hf_tool_use_id

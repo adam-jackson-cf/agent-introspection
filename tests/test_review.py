@@ -3,11 +3,12 @@ import sqlite3
 import pytest
 
 from agent_introspection.review import ReviewEnvelope, create_review_session, import_model_output
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
 
 
-def review_database() -> sqlite3.Connection:
-    return connect_workflow(":memory:")
+def review_database(open_workflow: OpenWorkflow) -> sqlite3.Connection:
+    connection: sqlite3.Connection = open_workflow(":memory:")
+    return connection
 
 
 def output_for(envelope: ReviewEnvelope) -> dict[str, object]:
@@ -37,8 +38,10 @@ def provenance(envelope: ReviewEnvelope, *, token_count: object = 100) -> dict[s
     }
 
 
-def test_review_sessions_enforce_per_call_batch_and_candidate_limits() -> None:
-    connection = review_database()
+def test_review_sessions_enforce_per_call_batch_and_candidate_limits(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = review_database(open_workflow)
     first = create_review_session(
         connection, candidates=[{"id": "c0"}], reserved_model_budget=1_000
     )
@@ -64,8 +67,10 @@ def test_review_sessions_enforce_per_call_batch_and_candidate_limits() -> None:
         )
 
 
-def test_arbitrary_unprovenanced_or_over_budget_model_json_is_rejected() -> None:
-    connection = review_database()
+def test_arbitrary_unprovenanced_or_over_budget_model_json_is_rejected(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -91,8 +96,8 @@ def test_arbitrary_unprovenanced_or_over_budget_model_json_is_rejected() -> None
         import_model_output(connection, document, provenance=provenance(envelope))
 
 
-def test_valid_output_is_imported_once_with_budget_ledger() -> None:
-    connection = review_database()
+def test_valid_output_is_imported_once_with_budget_ledger(open_workflow: OpenWorkflow) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -111,8 +116,10 @@ def test_valid_output_is_imported_once_with_budget_ledger() -> None:
         import_model_output(connection, document, provenance=provenance(envelope))
 
 
-def test_complete_token_components_are_charged_when_token_count_understates_them() -> None:
-    connection = review_database()
+def test_complete_token_components_are_charged_when_token_count_understates_them(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -130,8 +137,8 @@ def test_complete_token_components_are_charged_when_token_count_understates_them
     ).fetchall() == [("consumed", -100), ("reserved", 100)]
 
 
-def test_complete_token_components_over_budget_are_rejected() -> None:
-    connection = review_database()
+def test_complete_token_components_over_budget_are_rejected(open_workflow: OpenWorkflow) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -162,9 +169,12 @@ def test_complete_token_components_over_budget_are_rejected() -> None:
     ],
 )
 def test_review_tokens_remain_nullable_without_synthetic_zeroes(
-    components: dict[str, int], availability: str, expected_fields: dict[str, int]
+    components: dict[str, int],
+    availability: str,
+    expected_fields: dict[str, int],
+    open_workflow: OpenWorkflow,
 ) -> None:
-    connection = review_database()
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -190,8 +200,8 @@ def test_review_tokens_remain_nullable_without_synthetic_zeroes(
     )
 
 
-def test_invalid_token_component_rolls_back_the_import() -> None:
-    connection = review_database()
+def test_invalid_token_component_rolls_back_the_import(open_workflow: OpenWorkflow) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -217,8 +227,10 @@ def test_invalid_token_component_rolls_back_the_import() -> None:
         {"total_tokens": 1},
     ],
 )
-def test_total_tokens_requires_complete_matching_components(token_fields: dict[str, int]) -> None:
-    connection = review_database()
+def test_total_tokens_requires_complete_matching_components(
+    token_fields: dict[str, int], open_workflow: OpenWorkflow
+) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -238,8 +250,10 @@ def test_total_tokens_requires_complete_matching_components(token_fields: dict[s
     ).fetchone() == ("exported", 1)
 
 
-def test_export_rolls_back_when_its_budget_reservation_cannot_be_persisted() -> None:
-    connection = review_database()
+def test_export_rolls_back_when_its_budget_reservation_cannot_be_persisted(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = review_database(open_workflow)
     connection.execute(
         """
         CREATE TRIGGER fail_review_budget
@@ -266,8 +280,9 @@ def test_export_rolls_back_when_its_budget_reservation_cannot_be_persisted() -> 
 @pytest.mark.parametrize("token_count", [-1, 0, True, 1.5, "1.5", "50"])
 def test_token_count_must_be_a_positive_integer_within_the_reserved_budget(
     token_count: object,
+    open_workflow: OpenWorkflow,
 ) -> None:
-    connection = review_database()
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection,
         candidates=[{"id": "c1"}],
@@ -292,8 +307,10 @@ def test_token_count_must_be_a_positive_integer_within_the_reserved_budget(
     ).fetchall() == [("reserved", 100)]
 
 
-def test_partial_token_components_are_charged_against_the_budget() -> None:
-    connection = review_database()
+def test_partial_token_components_are_charged_against_the_budget(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection, candidates=[{"id": "c1"}], reserved_model_budget=100
     )
@@ -311,8 +328,10 @@ def test_partial_token_components_are_charged_against_the_budget() -> None:
 
 
 @pytest.mark.parametrize("member", [None, 7, "c1"])
-def test_non_object_model_results_are_rejected_with_value_error(member: object) -> None:
-    connection = review_database()
+def test_non_object_model_results_are_rejected_with_value_error(
+    member: object, open_workflow: OpenWorkflow
+) -> None:
+    connection = review_database(open_workflow)
     envelope = create_review_session(
         connection, candidates=[{"id": "c1"}], reserved_model_budget=1_000
     )

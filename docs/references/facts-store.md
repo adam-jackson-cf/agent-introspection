@@ -24,9 +24,14 @@ prefixes (`sk-`, `ghp_`, `xox*-`, `AKIA`) and any run of 20+ `[A-Za-z0-9_-]` cha
 containing both letters and digits replaced with `[REDACTED]` in both the hook and the
 SQL projections (`hooks.REDACTIONS` is the single list; the SQL mirrors it in order).
 This is pattern-based and best-effort: an unlabelled short credential in free text can
-still be stored, which is why only one capped diagnostic line is kept and the facts
-store stays on this machine. `facts install` replaces the registry tables only after
-every route predicate validates.
+still be stored, which is why only one diagnostic line, capped at 80 characters, is kept
+and the facts store stays on this machine. Beside the capped text, a 16-hex-character
+SHA-256 of the full normalized line (after redaction, home → `~`, digits → `N`, before the
+cap) is stored (`x.failure_signature_hash` on Codex logs, `x.status_hash` on span
+attributes, `failure_signature_hash` on hook events) and exposed as
+`tool_calls.failure_signature_hash`, so failures sharing an 80-character prefix stay
+distinct without storing more text; it is empty when there is no signature. `facts
+install` replaces the registry tables only after every route predicate validates.
 
 The views `usage_events`, `task_outcomes`, `tool_calls`, `user_signals`, `model_calls`,
 and `task_labels` normalize omp, Codex, and Claude Code telemetry, joined with the

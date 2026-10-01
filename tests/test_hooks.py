@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -174,8 +175,40 @@ def test_tool_failure_record(tmp_path: Path) -> None:
         "tool_use_id": "tu-9",
         "tool_name": "Bash",
         "failure_signature": "ValueError: bad N",
+        "failure_signature_hash": hashlib.sha256(b"ValueError: bad N").hexdigest()[:16],
         "interrupted": 1,
     }
+
+
+def test_failure_signature_is_capped_at_80_characters() -> None:
+    assert hooks.SIGNATURE_CHARS == 80
+    signature = hooks.failure_signature("ValueError: " + "x" * 200)
+    assert signature == ("ValueError: " + "x" * 200)[:80]
+    assert len(signature) == 80
+
+
+def test_signature_hash_distinguishes_lines_sharing_the_capped_prefix(tmp_path: Path) -> None:
+    prefix = "ValueError: " + "x" * 80
+    attrs = []
+    for suffix in (" alpha", " beta"):
+        envelope = {"session_id": SESSION, "tool_use_id": "tu", "error": prefix + suffix}
+        (item,) = hooks.normalize("claude-code", "PostToolUseFailure", envelope, context(tmp_path))
+        attrs.append(item["attrs"])
+    a, b = attrs
+
+    assert a["failure_signature"] == b["failure_signature"]
+    assert a["failure_signature_hash"] != b["failure_signature_hash"]
+    assert re.fullmatch(r"[0-9a-f]{16}", a["failure_signature_hash"])
+
+
+def test_signature_hash_covers_the_redacted_line_not_the_raw_text() -> None:
+    one = hooks.normalized_failure_line("Error: login failed password=hunterONE at /Users/me/a 12")
+    two = hooks.normalized_failure_line("Error: login failed password=hunterTWO at /Users/you/a 99")
+
+    assert one == two == "Error: login failed password=[REDACTED] at ~/a N"
+    assert hooks.signature_hash(one) == hooks.signature_hash(two)
+    assert hooks.signature_hash(one) == hashlib.sha256(one.encode()).hexdigest()[:16]
+    assert hooks.signature_hash("") == ""
 
 
 # --- Prompts ----------------------------------------------------------------------

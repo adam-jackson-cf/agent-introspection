@@ -568,16 +568,18 @@ export function recombine(results: Record<string, Row[]>): Row[] {
 // A home path is `/Users/<name>`; the bare `/Users/` directory names nobody.
 const SANITIZATION = `SELECT 'spans' AS source, count() AS rows,
     countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})) AS forbidden_keys,
-    countIf(length(status_message) > 160) AS long_status,
+    countIf(lengthUTF8(status_message) > 160) AS long_status,
     countIf(match(name, '/Users/[A-Za-z0-9._-]+') OR match(status_message, '/Users/[A-Za-z0-9._-]+')) AS home_paths
 FROM introspection.spans
 UNION ALL
-SELECT 'logs', count(), countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})), 0,
+SELECT 'logs', count(), countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})),
+    countIf(lengthUTF8(attrs_string['x.failure_signature']) > 160),
     countIf(match(attrs_string['x.workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['x.targets'], '/Users/[A-Za-z0-9._-]+')
         OR match(attrs_string['x.failure_signature'], '/Users/[A-Za-z0-9._-]+'))
 FROM introspection.logs
 UNION ALL
-SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORBIDDEN_KEYS})), 0,
+SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORBIDDEN_KEYS})),
+    countIf(lengthUTF8(attrs_string['failure_signature']) > 160),
     countIf(match(attrs_string['workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['targets'], '/Users/[A-Za-z0-9._-]+')
         OR match(attrs_string['failure_signature'], '/Users/[A-Za-z0-9._-]+'))
 FROM introspection.hook_events`;

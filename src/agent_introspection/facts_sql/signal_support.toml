@@ -378,7 +378,7 @@ view = "pipeline"
 title = "Sanitization"
 question = "Is any raw prompt, command, argument, output, or identity text stored?"
 unit = "rows"
-formula = "Count of fact rows holding a dropped key (prompt, user_prompt, arguments, output, content, tool intent, identity keys), a status message over 160 characters, or a home-directory path. Expected 0."
+formula = "Count of fact rows holding a dropped key (prompt, user_prompt, arguments, output, content, tool intent, identity keys), stored diagnostic text (status message, failure signature) over 160 characters (the hard backstop; new rows are capped at 80, older rows at 160), or a home-directory path. Expected 0."
 scope = "system"
 
 [[signal]]
@@ -636,7 +636,7 @@ view = "tools"
 title = "Failure signature"
 question = "Which normalized failures repeat?"
 unit = "signature"
-formula = "Failed calls grouped by tool and normalized failure signature (home → ~, digit and hex runs → N, 160 characters)."
+formula = "Failed calls grouped by tool and the hash of the full normalized failure line (home → ~, digit and hex runs → N); the stored text is the first 80 characters, so failures sharing a prefix stay distinct."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: first error-like output line." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "First error-like line of the span status message." }

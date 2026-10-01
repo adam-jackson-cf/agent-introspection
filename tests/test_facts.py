@@ -427,10 +427,10 @@ def test_attribute_filter_evaluator_rejects_a_retaining_predicate() -> None:
 
 def test_span_projection_normalizes_status() -> None:
     select = facts.render_select("select_spans.sql", "1")
-    status = select.split("AS status_message")[0].rsplit("substring(", 1)[1]
-    assert "'~'" in status
-    assert "'N'" in status
-    assert "160" in status
+    normalising = select.split("AS status_normalised")[0]
+    assert "'~'" in normalising
+    assert "'N'" in normalising
+    assert "substringUTF8(status_normalised, 1, 80) AS status_message" in select
 
 
 def test_span_projection_keeps_only_the_codex_spans_the_facts_use() -> None:
@@ -580,27 +580,53 @@ def test_span_sweep_keys_on_end_time_so_long_spans_are_loaded() -> None:
 
 
 @pytest.mark.parametrize(
-    ("select_file", "line", "window", "stored"),
+    ("select_file", "line", "window", "normalised"),
     [
-        ("select_spans.sql", "status_line", "status_window", "AS status_message"),
-        ("select_logs.sql", "error_line", "error_window", "'x.failure_signature'"),
+        ("select_spans.sql", "status_line", "status_window", "status_normalised"),
+        ("select_logs.sql", "error_line", "error_window", "error_normalised"),
     ],
 )
 def test_capped_text_starts_at_the_keyword_when_it_lies_past_the_cap(
-    select_file: str, line: str, window: str, stored: str
+    select_file: str, line: str, window: str, normalised: str
 ) -> None:
     select = facts.render_select(select_file, "1")
 
     chosen = select.split(f"AS {window}")[0].rsplit("if(", 1)[1]
-    assert f"match(substring({line}, 1, 160), '(?i)(error|fail" in chosen
+    assert f"match(substringUTF8({line}, 1, 80), '(?i)(error|fail" in chosen
     assert f"extract({line}, '(?i)((error|fail" in chosen
     assert ".*)')" in chosen
-    if stored.startswith("AS"):
-        capped = select.split(stored)[0].rsplit("substring(", 1)[1]
-    else:
-        capped = select.split(stored)[1].split("'x.")[0]
-    assert window in capped
-    assert f"({line}," not in capped
+    assert "160" not in select
+    assert f"{window}," in select.split(f"AS {window}")[1].split(f"AS {normalised}")[0]
+
+
+def test_span_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
+    select = facts.render_select("select_spans.sql", "1")
+
+    assert "substringUTF8(status_normalised, 1, 80) AS status_message" in select
+    assert "'x.status_hash', lower(substring(hex(SHA256(status_normalised)), 1, 16))" in select
+    assert "status_normalised = ''" in select
+
+
+def test_log_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
+    select = facts.render_select("select_logs.sql", "1")
+
+    signature = select.split("'x.failure_signature', if(")[1]
+    signature = signature.split("'x.failure_signature_hash'")[0]
+    assert re.search(r"AS error_normalised,\s+1,\s+80\s*\)", signature)
+    digest = select.split("'x.failure_signature_hash', if(")[1].split("\n                ),")[0]
+    assert "failed AND error_normalised != ''" in digest
+    assert "lower(substring(hex(SHA256(error_normalised)), 1, 16))" in digest
+
+
+def test_tool_calls_view_exposes_the_failure_signature_hash_for_every_source() -> None:
+    views = facts._sql("003_views.sql")
+    view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]
+
+    assert "attrs_string['x.failure_signature_hash'] AS failure_signature_hash" in view
+    assert "attrs_string['x.status_hash']" in view
+    assert "hf.hf_signature_hash" in view
+    assert "1, 80)" in view
+    assert "1, 160" not in view
 
 
 def test_split_statements_ignores_semicolons_in_literals_identifiers_and_comments() -> None:

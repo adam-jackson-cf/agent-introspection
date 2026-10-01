@@ -161,7 +161,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Failure signatures"
-          subtitle="Normalized first error line (digits → N, home → ~)"
+          subtitle="Normalized error line, first 80 characters shown (digits → N, home → ~); grouped by a hash of the full line"
           signals={["tools.failure_signature"]}
         >
           <DataTable

@@ -4,8 +4,9 @@
 -- emitted h2/tokio frame spans), so only the task, sampling, and user-signal span
 -- names below are kept, plus `handle_responses` spans that carry token usage. Status messages can
 -- hold raw tool output, so only a normalized first error line is kept: home
--- directories become `~`, digit and hex runs become `N`, capped at 160
--- characters. Span names get the same home-directory redaction.
+-- directories become `~`, digit and hex runs become `N`, capped at 80
+-- characters; `x.status_hash` keeps 16 hex chars of SHA-256 over the uncapped
+-- normalized line. Span names get the same home-directory redaction.
 WITH
     arrayFilter(l -> l != '', splitByChar('\n', distributed_signoz_index_v3.status_message)) AS status_lines,
     -- Only a diagnostic line is kept; with none the stored status is empty, so
@@ -29,10 +30,10 @@ WITH
             status_lines
         )
     ) AS status_line,
-    -- The stored text is capped at 160 characters. When the keyword lies past the cap,
+    -- The stored text is capped at 80 characters. When the keyword lies past the cap,
     -- keep the line from the keyword on, so the stored text is always diagnostic.
     if(
-        match(substring(status_line, 1, 160), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        match(substringUTF8(status_line, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         status_line,
         extract(status_line, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
     ) AS status_window
@@ -46,7 +47,6 @@ SELECT
     duration_nano AS duration_ns,
     has_error,
     status_code_string AS status_code,
-    substring(
         replaceRegexpAll(
             replaceRegexpAll(
                 replaceRegexpAll(
@@ -87,19 +87,24 @@ SELECT
             ),
             '[0-9a-f]{8,}|\\d+',
             'N'
-        ),
-        1,
-        160
-    ) AS status_message,
+        ) AS status_normalised,
+    substringUTF8(status_normalised, 1, 80) AS status_message,
     -- omp renamed its `pi.gen_ai.*` attributes to `omp.gen_ai.*` on 2026-09-29; both
     -- are stored under the original `pi.gen_ai.*` names so every view reads one key.
     -- Tool intent text is dropped under any prefix.
-    mapFilter(
-        (k, v) -> k NOT IN (
-            'gen_ai.tool.description', 'user_prompt', 'prompt', 'user.email',
-            'user.account_id', 'user.account_uuid', 'user.id', 'organization.id'
-        ) AND NOT endsWith(k, '.tool.call.intent'),
-        mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_string)
+    mapUpdate(
+        mapFilter(
+            (k, v) -> k NOT IN (
+                'gen_ai.tool.description', 'user_prompt', 'prompt', 'user.email',
+                'user.account_id', 'user.account_uuid', 'user.id', 'organization.id'
+            ) AND NOT endsWith(k, '.tool.call.intent'),
+            mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_string)
+        ),
+        if(
+            status_normalised = '',
+            CAST(map(), 'Map(LowCardinality(String), String)'),
+            CAST(map('x.status_hash', lower(substring(hex(SHA256(status_normalised)), 1, 16))), 'Map(LowCardinality(String), String)')
+        )
     ) AS attrs_string,
     mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_number) AS attrs_number,
     mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_bool) AS attrs_bool,

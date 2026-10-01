@@ -109,7 +109,7 @@ For Codex `codex.tool_result`, the loader derives the following fields and disca
 | `x.targets`                                                 | Files from `apply_patch` headers, `path` arguments, and path-like command arguments (a slash or a known file extension; inferred), with the home directory shown as `~`; at most 20.                                    |
 | `x.workdir`                                                 | Working directory, with the home directory shown as `~`.                                                                                                                                                                |
 | `x.exit_code`                                               | Parsed from `Process exited with code N` / `Exit code: N`. Codex reports `success=true` for non-zero exits.                                                                                                             |
-| `x.failure_signature`                                       | For failed calls: the first error-like output line, with digits and hex runs replaced by `N`, capped at 160 characters.                                                                                                 |
+| `x.failure_signature`                                       | For failed calls: the first error-like output line, with digits and hex runs replaced by `N`, capped at 80 characters; `x.failure_signature_hash` holds a 16-hex SHA-256 of the uncapped normalised line.               |
 | `x.arguments_hash`, `x.arguments_length`, `x.output_length` | For repeat detection and size.                                                                                                                                                                                          |
 
 Prompt text (`prompt`, `user_prompt`) and identity keys (`user.email`, account,
@@ -305,9 +305,9 @@ view parity unchanged.
 **F3. Raw tool output was stored in omp span status messages (D4).** Evidence: 1,084
 `execute_tool` spans held `status_message` up to 51,390 characters, and 22,598 held
 `pi.gen_ai.tool.call.intent` text. Fix: the span loader keeps a normalized first error
-line (≤ 160 characters) and drops the intent key. Backfill, then `OPTIMIZE … FINAL`,
+line (≤ 80 characters now; 160 when this was written) and drops the intent key. Backfill, then `OPTIMIZE … FINAL`,
 purged the old versions. Validated: Pipeline sanitization shows 0 dropped keys, 0
-status > 160, 0 home paths in both tables.
+status > 160 characters, 0 home paths in both tables.
 
 **F4. omp does emit cache creation.** Evidence: `gen_ai.usage.cache_creation.input_tokens`
 is present on every omp chat span (71 non-zero, 164K tokens); input ≥ cache read +

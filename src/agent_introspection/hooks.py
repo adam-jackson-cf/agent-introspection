@@ -43,7 +43,7 @@ LOG = DATA_DIR / "hooks.log"
 TURN_STALE_SECONDS = 6 * 3600
 MAX_TARGETS = 20
 TARGET_CHARS = 300
-SIGNATURE_CHARS = 160
+SIGNATURE_CHARS = 80
 PRODUCERS = ("claude-code", "omp")
 
 type Record = dict[str, Any]
@@ -253,15 +253,25 @@ def _error_line(output: str) -> str:
     return diagnostic[0] if diagnostic else ""
 
 
-def failure_signature(output: str) -> str:
-    """Return the most specific diagnostic line, home as ``~``, digits as ``N``, capped."""
+def normalized_failure_line(output: str) -> str:
+    """Return the most specific diagnostic line, redacted, home as ``~``, digits ``N``, uncapped."""
     line = _error_line(output)
     if not _DIAGNOSTIC.search(line[:SIGNATURE_CHARS]):
         tail = _DIAGNOSTIC_TAIL.search(line)
         line = tail.group(1) if tail else ""
     for pattern, repl in _REDACTORS:
         line = pattern.sub(repl, line)
-    return _DIGITS.sub("N", _HOME_ANYWHERE.sub("~", line))[:SIGNATURE_CHARS]
+    return _DIGITS.sub("N", _HOME_ANYWHERE.sub("~", line))
+
+
+def failure_signature(output: str) -> str:
+    """Return the normalized diagnostic line capped at ``SIGNATURE_CHARS`` characters."""
+    return normalized_failure_line(output)[:SIGNATURE_CHARS]
+
+
+def signature_hash(line: str) -> str:
+    """Return 16 hex digits of SHA-256 over a full normalized line; empty for an empty line."""
+    return hashlib.sha256(line.encode()).hexdigest()[:16] if line else ""
 
 
 # --- Records ----------------------------------------------------------------------
@@ -337,10 +347,12 @@ def tool_call_attrs(envelope: Envelope) -> Attrs:
 
 def tool_failure_attrs(envelope: Envelope) -> Attrs:
     """Derive ``tool_failure`` attributes; the error text becomes a signature only."""
+    line = normalized_failure_line(_text(envelope, "error"))
     return {
         "tool_use_id": _text(envelope, "tool_use_id"),
         "tool_name": _text(envelope, "tool_name"),
-        "failure_signature": failure_signature(_text(envelope, "error")),
+        "failure_signature": line[:SIGNATURE_CHARS],
+        "failure_signature_hash": signature_hash(line),
         "interrupted": int(envelope.get("is_interrupt") is True),
     }
 

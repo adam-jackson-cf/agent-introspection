@@ -188,11 +188,12 @@ FROM ${C} WHERE ${inWindow("ts")} GROUP BY day, harness ORDER BY day, harness`,
     countIf(outcome = 'failed') AS failed,
     uniqExactIf(task_id, task_id != '' AND outcome = 'failed') AS failed_tasks
 FROM ${C} WHERE ${inWindow("ts")} GROUP BY harness, tool ORDER BY failed DESC, calls DESC LIMIT 30`,
-    signatures: `SELECT harness, tool, failure_signature AS signature, count() AS occurrences,
+    signatures: `SELECT harness, tool, any(failure_signature) AS signature, count() AS occurrences,
     uniqExactIf(task_id, task_id != '') AS tasks, uniqExact(session_id) AS sessions,
-    toString(max(ts)) AS last_seen, any(session_id) AS example_session
+    toString(max(ts)) AS last_seen, any(session_id) AS example_session,
+    if(failure_signature_hash != '', failure_signature_hash, failure_signature) AS signature_key
 FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != ''
-GROUP BY harness, tool, signature ORDER BY occurrences DESC LIMIT 30`,
+GROUP BY harness, tool, signature_key ORDER BY occurrences DESC LIMIT 30`,
     repeat_summary: `SELECT harness, uniqExactIf(task_id, attempts >= 2) AS repeat_tasks, uniqExact(task_id) AS tasks,
     sumIf(attempts, attempts >= 2) AS repeated_attempts
 FROM (
@@ -352,15 +353,16 @@ FROM (
     GROUP BY tool_family, failure_class
 )`,
     actionable: clusters(LONDON_WEEK_OF("c"), ACTIONABLE),
-    concentration: `SELECT harness, signature, sum(n) AS occurrences, sumIf(n, project != '') AS attributed,
+    concentration: `SELECT harness, any(signature) AS signature, sum(n) AS occurrences, sumIf(n, project != '') AS attributed,
     maxIf(n, project != '') AS top_count, argMaxIf(project, n, project != '') AS top_project,
     uniqExactIf(project, project != '') AS projects
 FROM (
-    SELECT c.harness AS harness, c.failure_signature AS signature, p.project AS project, count() AS n
+    SELECT c.harness AS harness, if(c.failure_signature_hash != '', c.failure_signature_hash, c.failure_signature) AS signature_key,
+        any(c.failure_signature) AS signature, p.project AS project, count() AS n
     FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
     WHERE ${inWindowOf("c", "ts")} AND c.outcome = 'failed' AND c.failure_signature != ''
-    GROUP BY harness, signature, project
-) GROUP BY harness, signature HAVING attributed > 0 AND occurrences >= 3
+    GROUP BY harness, signature_key, project
+) GROUP BY harness, signature_key HAVING attributed > 0 AND occurrences >= 3
 ORDER BY occurrences DESC LIMIT 200`,
     daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, count() AS failures,
     uniqExact(tool_family, failure_class) AS clusters
