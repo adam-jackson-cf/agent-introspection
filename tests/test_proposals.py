@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -9,11 +10,20 @@ from agent_introspection.interventions import InterventionType
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
+    SuccessMetric,
     TransitionProposalRequest,
     create_proposal,
     transition_proposal,
 )
 from agent_introspection.workflow import connect_workflow
+
+SUCCESS_METRIC: dict[str, Any] = {
+    "metric": "cluster_task_rate",
+    "harnesses": ["codex_exec"],
+    "baseline_days": 14,
+    "evaluation_days": 14,
+    "max_ratio": 0.5,
+}
 
 PASSED_VALIDATION = {"validation": {"status": "passed", "checks": ["quality command passed"]}}
 
@@ -70,7 +80,7 @@ def proposal_input() -> ProposalInput:
         rejected_alternatives=["new tool", "bespoke script"],
         validation_criteria=["quality command passes before mutation"],
         rollback_criteria=["restore prior tool configuration"],
-        predicted_success_metric="zero bypass observations in seven days",
+        predicted_success_metric=dict(SUCCESS_METRIC),
     )
 
 
@@ -252,3 +262,54 @@ def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> Non
     assert first.execute(
         "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
     ).fetchone() == ("rejected", 2)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"metric": "fewer failures"}, "metric must be one of"),
+        ({"harnesses": []}, "harnesses"),
+        ({"harnesses": ["codex_exec", "codex_exec"]}, "harnesses"),
+        ({"baseline_days": 6}, "baseline_days"),
+        ({"evaluation_days": 7.5}, "evaluation_days"),
+        ({"evaluation_days": True}, "evaluation_days"),
+        ({"max_ratio": 0}, "max_ratio"),
+        ({"max_ratio": 1.2}, "max_ratio"),
+        ({"extra": 1}, "exactly"),
+    ],
+)
+def test_success_metric_must_be_a_structured_task_rate(
+    change: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(proposal_input(), predicted_success_metric=SUCCESS_METRIC | change)
+
+
+def test_free_text_success_metric_is_rejected_but_readable_as_legacy() -> None:
+    with pytest.raises(ValueError, match="must be an object"):
+        replace(proposal_input(), predicted_success_metric="zero bypasses in seven days")  # type: ignore[arg-type]
+    assert SuccessMetric.from_payload({"predicted_success_metric": "zero bypasses"}) is None
+    metric = SuccessMetric.from_payload(
+        {"predicted_success_metric": SUCCESS_METRIC | {"max_ratio": 1}}
+    )
+    assert metric is not None
+    assert metric.max_ratio == 1.0
+    assert metric.harnesses == ("codex_exec",)
+
+
+def test_success_metric_must_match_the_finding_kind_and_harnesses() -> None:
+    connection = proposal_database()
+    connection.execute(
+        "UPDATE findings SET subject = ?",
+        (json.dumps({"project": "example", "correction_kind": "ignored", "harnesses": ["omp"]}),),
+    )
+    connection.commit()
+    with pytest.raises(ValueError, match="must be correction_task_rate"):
+        create_proposal(connection, proposal_input())
+    correction = SUCCESS_METRIC | {"metric": "correction_task_rate"}
+    with pytest.raises(ValueError, match="not in the finding"):
+        create_proposal(connection, replace(proposal_input(), predicted_success_metric=correction))
+    create_proposal(
+        connection,
+        replace(proposal_input(), predicted_success_metric=correction | {"harnesses": ["omp"]}),
+    )

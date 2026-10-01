@@ -57,3 +57,15 @@ CREATE OR REPLACE TABLE introspection.signal_strays
 )
 ENGINE = MergeTree
 ORDER BY stray;
+
+-- Signals left off the dashboard because at least one harness cannot produce them.
+CREATE OR REPLACE TABLE introspection.signal_exclusions
+(
+    signal String,
+    view LowCardinality(String),
+    title String,
+    missing String,
+    reason String
+)
+ENGINE = MergeTree
+ORDER BY signal;

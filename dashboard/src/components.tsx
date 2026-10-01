@@ -39,10 +39,10 @@ const supportFor = (registry: Registry, signal: string, harness: Harness) =>
 
 /**
  * The panel's measured signal is listed first; the rest only describe it (for
- * example the effort dimension). Returns the registry entries when no selected
- * harness emits the measured signal.
+ * example the effort dimension). Returns the registry entries when the measured
+ * signal is not applicable to any selected harness.
  */
-export function notEmitted(
+export function notApplicable(
   context: ViewContextValue,
   signals: string[],
 ): SignalSupport[] | null {
@@ -52,27 +52,29 @@ export function notEmitted(
     supportFor(context.registry, measured, harness),
   );
   return entries.length > 0 &&
-    entries.every((entry) => entry?.alignment === "not emitted")
+    entries.every((entry) => entry?.alignment === "not applicable")
     ? (entries as SignalSupport[])
     : null;
 }
 
-type ContributionState = "rows" | "no rows" | "not emitted";
+type ContributionState = "rows" | "no rows" | "not applicable";
 
 function contributionState(
   context: ViewContextValue,
   signals: string[],
   harness: Harness,
 ): { state: ContributionState; rows: number } {
-  const emitted = signals.filter(
+  const applicable = signals.filter(
     (signal) =>
       supportFor(context.registry, signal, harness)?.alignment !==
-      "not emitted",
+      "not applicable",
   );
-  if (emitted.length === 0) return { state: "not emitted", rows: 0 };
+  if (applicable.length === 0) return { state: "not applicable", rows: 0 };
   const rows = Math.max(
     0,
-    ...emitted.map((signal) => context.contributions[signal]?.[harness] ?? 0),
+    ...applicable.map(
+      (signal) => context.contributions[signal]?.[harness] ?? 0,
+    ),
   );
   return { state: rows > 0 ? "rows" : "no rows", rows };
 }
@@ -97,7 +99,7 @@ export function Contributors({ signals }: { signals: string[] }) {
         return (
           <li
             key={harness}
-            className={`contributor contributor-${state.replace(" ", "-")}`}
+            className={`contributor contributor-${state.replaceAll(" ", "-")}`}
             title={
               state === "rows"
                 ? `${HARNESS_LABEL[harness]}: ${fmtCount(rows)} rows on its route`
@@ -156,7 +158,7 @@ export function InfoNote({ signals }: { signals: string[] }) {
                         <th scope="row">{HARNESS_LABEL[harness]}</th>
                         <td>
                           <span
-                            className={`alignment ${support.alignment.replace(" ", "-")}`}
+                            className={`alignment ${support.alignment.replaceAll(" ", "-")}`}
                           >
                             {support.alignment}
                           </span>
@@ -164,7 +166,7 @@ export function InfoNote({ signals }: { signals: string[] }) {
                         <td>
                           {route?.description ?? ""}
                           {support.note && <em>{support.note}</em>}
-                          {support.alignment !== "not emitted" && (
+                          {support.alignment !== "not applicable" && (
                             <small>
                               {fmtCount(rows ?? 0)} rows on this route in the
                               window
@@ -203,11 +205,11 @@ class Boundary extends Component<
   }
 }
 
-export function NotEmittedNotice({ entries }: { entries: SignalSupport[] }) {
+export function NotApplicableNotice({ entries }: { entries: SignalSupport[] }) {
   const notes = [...new Set(entries.map((entry) => entry.note))];
   return (
-    <div className="not-emitted" role="status">
-      <b>Not emitted</b>
+    <div className="not-applicable" role="status">
+      <b>Not applicable</b>
       {notes.map((note) => (
         <p key={note}>{note}</p>
       ))}
@@ -217,9 +219,9 @@ export function NotEmittedNotice({ entries }: { entries: SignalSupport[] }) {
 
 /**
  * Panel frame shared by every view: title, contributors, and an info note
- * rendered from the signal support registry. When every selected harness does
- * not emit the panel's signals, the body is replaced by the registry's reason,
- * never by zero.
+ * rendered from the signal support registry. When the panel's signal is not
+ * applicable to any selected harness, the body is replaced by the registry's
+ * reason, never by zero.
  */
 export function Panel({
   title,
@@ -237,7 +239,7 @@ export function Panel({
   const context = useView();
   const [open, setOpen] = useState(false);
   const noteId = useId();
-  const missing = notEmitted(context, signals);
+  const missing = notApplicable(context, signals);
   return (
     <article className="panel" data-span={span}>
       <header className="panel-head">
@@ -260,7 +262,7 @@ export function Panel({
       <Contributors signals={signals} />
       <div className="panel-body">
         <Boundary label={title}>
-          {missing ? <NotEmittedNotice entries={missing} /> : children}
+          {missing ? <NotApplicableNotice entries={missing} /> : children}
         </Boundary>
       </div>
       {open && (

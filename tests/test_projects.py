@@ -60,7 +60,13 @@ def test_sync_loads_events_and_rejections_then_removes_only_loaded_files(tmp_pat
 
     result = projects.sync(lambda sql: executed.append(sql) or "", inbox=inbox)
 
-    assert result == {"events": 1, "rejections": 1, "ledger_events": 0, "invalid": 1}
+    assert result == {
+        "events": 1,
+        "rejections": 1,
+        "hook_events": 0,
+        "ledger_events": 0,
+        "invalid": 1,
+    }
     rows = parsed_rows(executed)
     assert rows["session_projects"][0]["project_root"] == "~/Projects/dashboard"
     assert rows["session_projects"][0]["session_id"] == "019a-session"
@@ -177,3 +183,33 @@ def test_launchd_job_keeps_a_selected_configuration() -> None:
         "facts",
         "sync",
     ]
+
+
+def test_scheduled_job_path_follows_the_connection_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_introspection.config import SigNozConfig
+
+    found = {"docker": "/opt/docker/bin/docker", "security": "/usr/bin/security"}
+    monkeypatch.setattr(projects.shutil, "which", found.get)
+    assert projects._job_path(SigNozConfig()) == ["/opt/docker/bin"]
+    command = SigNozConfig(
+        clickhouse_url="http://localhost:8123", clickhouse_password_command=("security", "-w")
+    )
+    assert projects._job_path(command) == ["/usr/bin"]
+    variable = SigNozConfig(clickhouse_url="http://localhost:8123", clickhouse_password_env="CH")
+    with pytest.raises(RuntimeError, match="clickhouse_password_command"):
+        projects._job_path(variable)
+
+
+def test_password_command_output_is_the_password_and_never_in_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_introspection.config import ConfigurationError, SigNozConfig
+
+    ok = SigNozConfig(clickhouse_url="https://ch", clickhouse_password_command=("echo", "s3cret"))
+    assert facts.clickhouse_password(ok) == "s3cret"
+    failing = SigNozConfig(
+        clickhouse_url="https://ch", clickhouse_password_command=("sh", "-c", "echo leak; exit 3")
+    )
+    with pytest.raises(ConfigurationError) as error:
+        facts.clickhouse_password(failing)
+    assert "leak" not in str(error.value)

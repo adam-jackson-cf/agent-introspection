@@ -1,189 +1,137 @@
 # Agent Introspection
 
-Agent Introspection surfaces the same signals from every agent harness on this machine (omp, Codex app-server/CLI/exec, and Claude Code) so one person can explore model usage and agent process and find problems and improvements. Producer telemetry in the local SigNoz instance is materialized into ClickHouse facts, and a React companion shows question-led views over them. Findings and intervention proposals, with their approval history, live in a small SQLite workflow store.
+**One local view of model usage and agent process across omp, Codex, and Claude Code,
+with approval-gated proposals to fix recurring problems.**
 
-It never applies a proposal. Approval records a decision only; entering `applying` requires a separate explicit user request.
+![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg?style=flat-square)
+![Dashboard](https://img.shields.io/badge/dashboard-bun%20%2B%20react-lightgrey.svg?style=flat-square)
+![Primary CLI](https://img.shields.io/badge/cli-agent--introspection-orange.svg?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-local%20self--hosted%20SigNoz-purple.svg?style=flat-square)
 
-## Requirements
+> **Local only.** Agent Introspection runs on one machine, for one person, against a
+> self-hosted SigNoz already installed on that same machine. It never installs or starts
+> SigNoz, and it refuses any ClickHouse or collector address that is not local. See
+> [SigNoz Connection](docs/references/signoz-connection.md) for the exact limits.
+
+## Quick Install
+
+Prerequisites:
 
 - Python 3.12 or newer and `uv`
-- OrbStack with the existing SigNoz Compose project
-- `docker --context orbstack` access to `signoz-clickhouse`
+- A self-hosted SigNoz running on this machine, with ClickHouse 24.10 or later
+- Local access to its ClickHouse: `docker exec` into its container, or its HTTP
+  interface at a local address
 - Bun, for the dashboard companion
 
-## Development
+Bootstrap the environment and check the SigNoz connection:
 
-```sh
+```bash
 uv sync
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src
-uv run pytest
+mkdir -p ~/.config/agent-introspection
+cp config.example.toml ~/.config/agent-introspection/config.toml  # then set [signoz]
+uv run agent-introspection facts preflight
+uv tool install --force --reinstall .   # standalone copy the launchd job and hooks run
 ```
 
-Install the Git pre-commit trigger and run the complete quality suite with:
+`facts preflight` is read-only: it checks the ClickHouse version, the SigNoz columns the
+projections read, grants, and recent producer data, and exits non-zero on any failure.
 
-```sh
-uv run pre-commit install
-uv run pre-commit run --all-files
-```
+## Quick Start
 
-Both pre-commit and CI use `scripts/run-ci-quality-gates.sh`. Run it directly for
-the same check-only quality suite, including the independent dashboard package:
+Build the facts store, load the first minute of data, and open the dashboard:
 
-```sh
-bash scripts/run-ci-quality-gates.sh
-```
-
-## Dashboard facts
-
-The dashboard reads ClickHouse-materialized facts; see the
-[Dashboard v3 Plan](docs/dashboard-v3-plan.md). Refreshable materialized views copy
-curated producer spans and logs from SigNoz into the durable `introspection`
-database every minute, with raw prompt, command, argument, and output text and
-identity keys removed. The views `usage_events`, `task_outcomes`, `tool_calls`,
-`user_signals`, and `model_calls` normalize omp, Codex, and Claude Code telemetry;
-a snapshot table of each view holds its last 91 days, rebuilt right after every minute
-load; windows starting more than 90 days ago read the live views.
-
-The signal support registry,
-[`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml),
-defines each dashboard signal once and records, per harness, the route that
-reaches it, whether that route is aligned or differs, or why it is not emitted.
-`facts install` validates it and loads it into `introspection.signal_*` tables;
-every panel's info note is rendered from those tables.
-
-```sh
-uv run agent-introspection facts install           # tables, loaders, views, snapshots, registry
-uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
-uv run agent-introspection facts status            # loader state and per-harness freshness
-```
-
-## Dashboard companion
-
-The React companion is an independent Bun package in `dashboard/`. Its package
-commands, which are included in the canonical quality suite, are:
-
-```sh
+```bash
+agent-introspection facts install             # tables, loaders, views, snapshots, registry
+agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
+agent-introspection facts sync                # projects + hook events, labels, findings, evaluations
+agent-introspection facts status              # loader state and per-harness freshness
 bun install --cwd dashboard --frozen-lockfile
-bun run --cwd dashboard check
-bun run --cwd dashboard test
-bun run --cwd dashboard lint
-bun run --cwd dashboard format:check
 bun run --cwd dashboard build
-bun run --cwd dashboard start
+bun run --cwd dashboard start                 # http://127.0.0.1:4173
 ```
 
-The server binds only to `127.0.0.1:4173`. It queries ClickHouse over HTTP at
-`http://signoz-clickhouse.orb.local:8123`, the address OrbStack gives the SigNoz
-container on this Mac only (no published port; override with
-`INTROSPECTION_CLICKHOUSE_URL`). Every statement runs read-only with the window
-and harness bound as query parameters. The Interventions view also reads findings
-and proposals from the workflow SQLite store (`INTROSPECTION_WORKFLOW_DB`).
+This materializes the harnesses' SigNoz telemetry into the `introspection` ClickHouse
+database and serves the React companion on loopback. Its Pipeline view shows loader
+freshness, harness parity, and project attribution. Harness hooks, prompt export, and the
+every-minute `facts sync` schedule complete a full install; the `introspection-onboarding`
+skill runs them in order.
 
-Each view answers one question, outcome first: KPI tiles, daily trends,
-breakdowns, exemplar tables, and a session drill-down. The harness selector shows
-All or one harness. All is the union of every harness's rows for the same signal,
-and ratios are aggregated before division. A harness that does not emit a signal
-shows the registry's reason, never zero. Harnesses are never ranked against each
-other.
+## What Agent Introspection Does
 
-## CLI
+Agent Introspection surfaces the same signals from every agent harness on this machine
+(omp, Codex app-server/CLI/exec, and Claude Code) so one person can explore model usage
+and agent process and find problems and improvements. It turns recurring problems into
+intervention proposals with an approval history, and never applies a proposal itself:
+approval records a decision only, and applying requires a separate explicit user request.
 
-```sh
-uv run agent-introspection facts install             # tables, loaders, views, snapshots, registry
-uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
-uv run agent-introspection facts status              # loader state and per-harness freshness
-uv run agent-introspection facts sync-projects       # hook inbox -> introspection.session_projects
-uv run agent-introspection facts findings            # promote recurring failures into findings
-uv run agent-introspection facts sync                # both of the above
-uv tool install --force --reinstall .                # standalone copy the launchd job runs
-agent-introspection facts schedule install           # run `facts sync` every minute (launchd)
-uv run agent-introspection facts schedule status
-uv run agent-introspection candidates export --reserved-model-budget <tokens>
-uv run agent-introspection proposal list
+- `src/agent_introspection/`: the `agent-introspection` CLI; its `facts_sql/` holds the
+  ClickHouse projections, views, and the signal support registry.
+- `dashboard/`: an independent Bun + React package serving question-led views
+  (outcome-first KPIs, trends, breakdowns, exemplars, session drill-down) over the facts.
+- Workflow store: a SQLite file holding findings, proposals, review sessions, and their
+  immutable event history.
+- `.agents/skills/`: agent skills that install, operate, and improve the system (below).
+
+### Agent skills
+
+`.agents/skills/` holds four skills for coding agents working on or with this
+repository. Each `SKILL.md` is a short index an agent loads when a request matches its
+`description`; it links to step workflows under `references/`, which the agent opens
+only as needed. The skills route to each other instead of overlapping.
+
+| Skill | Purpose | Use when |
+| --- | --- | --- |
+| [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md) | Connect to the local SigNoz, run the ordered install, and install and validate harness hooks and prompt export. Ships the hook runtime, shim, and per-harness adapters in `scripts/`. | Installing or reinstalling, onboarding a harness, closing a signal gap with a new hook, validating hook configuration or end-to-end capture. |
+| [`introspection-operations`](.agents/skills/introspection-operations/SKILL.md) | Keep the facts store healthy and change signals safely under the parity rule. | Checking loaders, freshness, parity, the coverage grid, the hook inbox, or prompt labels; reinstalling or backfilling facts; adding, changing, closing, or excluding a signal or registry route. |
+| [`introspection-improvement`](.agents/skills/introspection-improvement/SKILL.md) | Run the improvement loop: discover findings, draft a proposal, record the user's decision, mark it applied, evaluate the result. | Finding what goes wrong with agents, turning findings into proposals, reviewing or approving one, marking one applied, checking whether a fix worked. |
+| [`python-conventions`](.agents/skills/python-conventions/SKILL.md) | Naming, package structure, object choice, and this repository's Python quality gates. | Writing or refactoring Python in `src/`, `tests/`, `scripts/`, or `.agents` adapters. |
+
+```text
+onboarding ──> operations (health gate) ──> improvement loop
+  install        facts + signal changes        findings → proposal → decision → evaluation
 ```
 
-All command results are structured JSON on stdout. Diagnostics are written to stderr and failures use stable non-zero exit codes.
+## Core Concepts
 
-## Proposal lifecycle
+- **Harness / producer**: an agent runtime whose telemetry is read: omp, Codex
+  (app-server, CLI, exec), or Claude Code.
+- **Facts store**: the `introspection` database inside SigNoz's ClickHouse, with
+  sanitized spans and logs, normalized fact views, and 91-day snapshots. Prompt,
+  command, argument, and output text never enter it.
+- **Signal and registry**: a dashboard measure, defined once in
+  [`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml) with the
+  route that reaches it for each harness.
+- **Parity rule**: every signal must be reached by every harness it can exist for; a
+  signal some harness cannot produce is excluded with a reason, never shown as zero.
+- **Session-context and activity hooks**: harness hooks that write records to a local
+  inbox. The first attributes sessions to Git projects; the second closes signals the
+  producers' own telemetry lacks.
+- **Prompt labels**: Jev classifications of each prompt's task type, correction kind,
+  and sentiment. Only labels are stored.
+- **Finding**: a recurring problem the facts already prove: a failure cluster or a
+  repeated correction.
+- **Proposal**: one evidence-backed intervention for a finding, moving
+  `pending` → `approved` or `rejected` → `applying` → `applied`, then evaluated once.
 
-A proposal moves `pending` → `approved` or `rejected` → `applying` → `applied`, and
-every transition appends an immutable event. `proposal decide` records an approval or
-rejection only. Nothing is applied by this tool.
+## Go Deeper
 
-After you have applied an approved proposal yourself, record it with validation
-evidence:
-
-```sh
-uv run agent-introspection proposal mark-applied <proposal-id> --actor <name> \
-  --input-json evidence.json
-```
-
-`evidence.json` must report a passed validation with at least one named check:
-
-```json
-{"validation": {"status": "passed", "checks": ["uv run pytest", "quality gates"]}}
-```
-
-Any other shape, such as a missing `validation`, a `status` other than `passed`, or
-an empty or blank `checks` list, exits with code 50 and leaves the proposal unchanged.
-The command moves an `approved` proposal through `applying` to `applied` in one
-transaction, so a failure never leaves it stuck in `applying`, and a proposal changed
-by another process meanwhile is rejected rather than overwritten.
-
-## Project attribution
-
-The session-context hooks installed in Claude Code, Codex, and omp write one JSON
-record per session event into `~/.local/share/agent-introspection/session-context-inbox`:
-the native session ID and the Git project it runs in, or a rejection such as a
-non-Git workspace. The `com.adamjackson.agent-introspection.projects` LaunchAgent runs
-`facts sync` every minute from the standalone `uv tool` install: it inserts the records
-into `introspection.session_projects`, removes each file once ClickHouse has it, and then
-promotes recurring failure signatures into workflow findings. The
-dashboard joins facts to `introspection.session_project` (the latest project per
-session) by session ID; the Pipeline view shows the attributed share of tasks per
-harness, rejections, and the inbox backlog.
-
-Findings, proposals, and review sessions live in the SQLite workflow store at
-`~/.local/share/agent-introspection/introspection.sqlite3`. The retired scan ledger is
-archived at `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`.
-
-What the dashboard cannot show, per harness and per signal, is listed in
-[Dashboard Data Gaps](docs/dashboard-data-gaps.md).
-
-## Codex Desktop Attribution
-
-Codex Desktop attribution uses documented global `SessionStart` and `SessionEnd`
-hooks. The hook emits only the native session ID, absolute workspace, lifecycle
-event, and timestamp to the local session-context runtime. The shared runtime
-resolves the canonical Git workspace; the hook never inspects or forwards
-prompts, responses, or transcripts. User hooks require interactive
-review/trust and are never automatically approved.
-Codex's active configuration root is `$CODEX_HOME` when it is set to a non-empty absolute path; otherwise it is `~/.codex`. Global hooks live at `<codex-root>/hooks.json`, and trust state lives at `<codex-root>/config.toml`.
-
-**Producer boundary is not qualified.** These global hooks also run in Codex CLI,
-and their documented native envelope does not distinguish CLI from Desktop.
-A real CLI run emitted a `codex-app-server` end record, which the retired scanner
-quarantined. The two newly added global Desktop registrations were rolled back,
-preserving unrelated hooks, trust settings, runtime bytes, and evidence.
-Do not install the Desktop adapter into a configuration root shared with Codex CLI
-until an authoritative producer boundary is available.
-
-Changing projects within a live Codex Desktop thread is unsupported by design.
-Attribution uses the workspace supplied at the thread's lifecycle boundary.
-Supporting mid-thread project changes would require complex inspection or
-interposition of app-server protocol traffic. This is considered rare, so the
-additional complexity is not justified.
-
-## Local SigNoz
-
-The canonical Compose override is `ops/signoz/docker-compose.override.yaml`. It binds the UI and OTLP listeners to loopback, disables tokenizer and API-key authentication, and enables impersonation for this single-user workstation. Root-user values are injected from the connected Infisical project at runtime:
-
-```sh
-infisical run --env=dev -- docker --context orbstack compose \
-  --project-directory "$HOME/.local/share/codex-observability/signoz/deploy/docker" \
-  up --detach --force-recreate signoz
-```
-
-Never start this configuration without the loopback-only override and disabled OrbStack LAN port exposure.
+- [docs/references/development.md](docs/references/development.md): quality gates,
+  pre-commit, and the dashboard package commands.
+- [docs/references/signoz-connection.md](docs/references/signoz-connection.md): local-only
+  limits, docker and HTTP connection modes, and required ClickHouse grants.
+- [docs/references/cli-reference.md](docs/references/cli-reference.md): every
+  `agent-introspection` command and its output contract.
+- [docs/references/facts-store.md](docs/references/facts-store.md): how producer
+  telemetry becomes fact views, snapshots, and registry tables.
+- [docs/references/dashboard-companion.md](docs/references/dashboard-companion.md): server
+  binding, environment variables, and how views aggregate harnesses.
+- [docs/references/hooks-and-attribution.md](docs/references/hooks-and-attribution.md):
+  project attribution, activity hooks, prompt labels, and Codex Desktop limits.
+- [docs/references/proposal-lifecycle.md](docs/references/proposal-lifecycle.md):
+  candidate selection, drafting with Codex, success metrics, applying, and evaluation.
+- [docs/hook-events.md](docs/hook-events.md): the hook event record contract.
+- [docs/dashboard-data-gaps.md](docs/dashboard-data-gaps.md): what the dashboard cannot
+  show, per harness and signal.
+- [docs/dashboard-v3-plan.md](docs/dashboard-v3-plan.md): the dashboard plan and findings
+  log.

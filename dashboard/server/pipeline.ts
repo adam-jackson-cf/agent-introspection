@@ -2,6 +2,7 @@ import type {
   Contributions,
   Harness,
   Registry,
+  RouteSource,
   Row,
   SignalRoute,
 } from "../src/contracts";
@@ -10,7 +11,7 @@ import { batch, live, type Query } from "./clickhouse";
 import { inWindow } from "./views";
 
 type Params = Record<string, string>;
-type Source = "spans" | "logs";
+type Source = RouteSource;
 type RouteCounts = {
   /** route → harness → rows matching the route predicate. */
   total: Map<string, Map<string, number>>;
@@ -20,7 +21,23 @@ type RouteCounts = {
 
 const WINDOW =
   "ts >= {start:DateTime64(3, 'UTC')} AND ts < {end:DateTime64(3, 'UTC')}";
-const SOURCES: Source[] = ["spans", "logs"];
+const SOURCES: Source[] = ["spans", "logs", "hooks"];
+/**
+ * The relation each route source's predicates run against. Activity hooks are
+ * read through `hook_rows`, a view that resolves each event's harness, so it
+ * takes no FINAL (the view already reads `hook_events` FINAL).
+ */
+const SOURCE_RELATION: Record<Source, string> = {
+  spans: "introspection.spans FINAL",
+  logs: "introspection.logs FINAL",
+  hooks: "introspection.hook_rows",
+};
+/** The event or span name column of each source, for unrouted-row reporting. */
+const NAME_COLUMN: Record<Source, string> = {
+  spans: "name",
+  logs: "event_name",
+  hooks: "event_type",
+};
 /** Codex spans the loader keeps; mirrors select_spans.sql, including its usage predicate. */
 const CODEX_SPAN_NAMES =
   "'session_task.turn', 'session_task.run', 'run_sampling_request', 'try_run_sampling_request', 'turn/start', 'turn/interrupt', 'turn/steer'";
@@ -28,7 +45,10 @@ const CODEX_LOADED = `(name IN (${CODEX_SPAN_NAMES}) OR (name = 'handle_response
 const SERVICES =
   "'codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code'";
 const FORBIDDEN_KEYS =
-  "['prompt', 'user_prompt', 'arguments', 'output', 'content', 'user.email', 'user.account_id', 'user.account_uuid', 'user.id', 'organization.id', 'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent']";
+  "['prompt', 'user_prompt', 'arguments', 'output', 'content', 'user.email', 'user.account_id', 'user.account_uuid', 'user.id', 'organization.id', 'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent', 'omp.gen_ai.tool.call.intent']";
+/** Raw-text keys the activity hooks must never store (docs/hook-events.md). */
+const HOOK_FORBIDDEN_KEYS =
+  "['prompt', 'user_prompt', 'tool_input', 'tool_response', 'arguments', 'output', 'content', 'message']";
 
 const routePredicates = (registry: Registry, source: Source) => {
   const unique = new Map<string, string>();
@@ -62,7 +82,7 @@ export function routeCountQueries(registry: Registry): Record<string, string> {
       `countIf((${match}) AND NOT (${stray})) AS u${index}`,
     ]);
     queries[source] =
-      `SELECT harness, ${columns.join(", ")} FROM introspection.${source} FINAL WHERE ${WINDOW} GROUP BY harness`;
+      `SELECT harness, ${columns.join(", ")} FROM ${SOURCE_RELATION[source]} WHERE ${WINDOW} GROUP BY harness`;
   }
   return queries;
 }
@@ -130,17 +150,18 @@ export type CoverageState =
   | "idle"
   | "possible break"
   | "no events"
-  | "not emitted"
+  | "not applicable"
   | "stray (explained)"
   | "stray (unexplained)";
 
 /**
  * Coverage grid: registry alignment versus data per signal × harness. A harness
- * is active when any of its routes has rows in the window, so an emitted route
- * without rows is a possible break only while the harness is otherwise active,
- * and only for routes that must have rows; a rare-event route reports no events.
- * Rows on another harness's route of the same signal are stray: explained when
- * a registered stray covers them, unexplained otherwise.
+ * is active when any of its routes has rows in the window, so a route without
+ * rows is a possible break only while the harness is otherwise active, and only
+ * for routes that must have rows; a rare-event route reports no events. Rows on
+ * another harness's route of the same signal are stray: explained when a
+ * registered stray covers them, unexplained otherwise. A signal that is not
+ * applicable to a harness should have no rows at all, so any rows flag it.
  */
 export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
   const active = new Set<string>();
@@ -177,12 +198,12 @@ export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
         unexplained += counts.unexplained.get(route)?.get(harness) ?? 0;
       }
       const state: CoverageState =
-        support.alignment === "not emitted"
-          ? unexplained > 0
+        support.alignment === "not applicable"
+          ? unexplained > 0 || own > 0
             ? "stray (unexplained)"
             : foreign > 0
               ? "stray (explained)"
-              : "not emitted"
+              : "not applicable"
           : own > 0
             ? unexplained > 0
               ? "stray (unexplained)"
@@ -220,9 +241,8 @@ export function unroutedQuery(registry: Registry): string {
     const claimed = registry.routes
       .filter((route) => route.source === source)
       .map((route) => `(harness = '${route.harness}' AND (${route.match}))`);
-    const nameColumn = source === "spans" ? "name" : "event_name";
-    return `SELECT '${source}' AS source, harness, ${nameColumn} AS name, count() AS n
-FROM introspection.${source} FINAL
+    return `SELECT '${source}' AS source, harness, toString(${NAME_COLUMN[source]}) AS name, count() AS n
+FROM ${SOURCE_RELATION[source]}
 WHERE ${WINDOW} AND NOT (${claimed.join(" OR ") || "0"}) AND NOT (${strayCondition(registry, source)})
 GROUP BY harness, name`;
   });
@@ -428,16 +448,22 @@ export function recombine(results: Record<string, Row[]>): Row[] {
   );
 }
 
+// A home path is `/Users/<name>`; the bare `/Users/` directory names nobody.
 const SANITIZATION = `SELECT 'spans' AS source, count() AS rows,
     countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})) AS forbidden_keys,
     countIf(length(status_message) > 160) AS long_status,
-    countIf(position(name, '/Users/') > 0 OR position(status_message, '/Users/') > 0) AS home_paths
+    countIf(match(name, '/Users/[A-Za-z0-9._-]+') OR match(status_message, '/Users/[A-Za-z0-9._-]+')) AS home_paths
 FROM introspection.spans
 UNION ALL
 SELECT 'logs', count(), countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})), 0,
-    countIf(position(attrs_string['x.workdir'], '/Users/') > 0 OR position(attrs_string['x.targets'], '/Users/') > 0
-        OR position(attrs_string['x.failure_signature'], '/Users/') > 0)
-FROM introspection.logs`;
+    countIf(match(attrs_string['x.workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['x.targets'], '/Users/[A-Za-z0-9._-]+')
+        OR match(attrs_string['x.failure_signature'], '/Users/[A-Za-z0-9._-]+'))
+FROM introspection.logs
+UNION ALL
+SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORBIDDEN_KEYS})), 0,
+    countIf(match(attrs_string['workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['targets'], '/Users/[A-Za-z0-9._-]+')
+        OR match(attrs_string['failure_signature'], '/Users/[A-Za-z0-9._-]+'))
+FROM introspection.hook_events`;
 
 /** Share of tasks whose session has a hook-recorded project, per harness. */
 const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks, countIf(p.project != '') AS attributed
@@ -460,6 +486,8 @@ const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, source, count()
     SELECT ts, harness, 'spans' AS source FROM introspection.spans FINAL WHERE ${inWindow("ts")}
     UNION ALL
     SELECT ts, harness, 'logs' FROM introspection.logs FINAL WHERE ${inWindow("ts")}
+    UNION ALL
+    SELECT ts, harness, 'hooks' FROM introspection.hook_rows WHERE ${inWindow("ts")}
 ) GROUP BY day, harness, source ORDER BY day`;
 
 export async function pipelineData(
@@ -499,5 +527,6 @@ export async function pipelineData(
     project_rejections: results.project_rejections!,
     project_sync: results.project_sync!,
     strays: registry.strays.map((entry) => ({ ...entry })),
+    exclusions: registry.exclusions.map((entry) => ({ ...entry })),
   };
 }

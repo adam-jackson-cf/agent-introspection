@@ -6,6 +6,7 @@ import pytest
 from agent_introspection import cli
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
+from agent_introspection.findings import CORRECTION_DETECTOR_ID
 from agent_introspection.proposals import (
     ProposalState,
     TransitionProposalRequest,
@@ -14,6 +15,7 @@ from agent_introspection.proposals import (
 )
 from agent_introspection.review import create_review_session
 from agent_introspection.workflow import connect_workflow
+from tests.test_drafting import facts_runner, insert_finding
 from tests.test_proposals import proposal_database, proposal_input
 
 
@@ -58,7 +60,7 @@ def test_facts_failures_exit_with_the_facts_code(
     def failing(_statement: str) -> str:
         raise FactsError("Code: 81. DB::Exception: Database introspection does not exist")
 
-    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: failing)
+    monkeypatch.setattr(cli.facts, "runner", lambda _config: failing)
 
     with pytest.raises(SystemExit) as raised:
         main(["--config", str(config_file(tmp_path)), "facts", "status"])
@@ -281,9 +283,56 @@ def test_schedule_install_passes_the_selected_configuration(
 def test_facts_install_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: lambda _sql: "")
+    monkeypatch.setattr(cli.facts, "runner", lambda _config: lambda _sql: "")
     monkeypatch.setattr(cli.facts, "install", lambda _run: {"installed": True})
 
     assert main(["--config", str(config_file(tmp_path)), "facts", "install"]) == 0
     assert json.loads(capsys.readouterr().out) == {"installed": True}
     assert (tmp_path / "workflow.sqlite3").exists()
+
+
+def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = str(config_file(tmp_path))
+    connection = connect_workflow(tmp_path / "workflow.sqlite3")
+    insert_finding(connection, "a-low", impact=3, last_seen_ns=9)
+    insert_finding(connection, "b-high", impact=8, last_seen_ns=2)
+    insert_finding(
+        connection, "c-correction", impact=6, last_seen_ns=9, detector_id=CORRECTION_DETECTOR_ID
+    )
+    _, run = facts_runner()
+    monkeypatch.setattr(cli.facts, "runner", lambda _config: run)
+
+    assert main(["--config", config, "candidates", "export", "--reserved-model-budget", "10"]) == 0
+
+    review = json.loads(capsys.readouterr().out)["review"]
+    assert review["ordered_candidate_ids"] == ["b-high"]
+    candidate = review["payload"]["candidates"][0]
+    assert candidate["finding"]["subject"]["impact"] == 8
+    assert candidate["project_root"] == "~/Projects/example"
+    assert "signatures" in candidate["evidence"]
+
+
+def test_proposal_draft_dry_run_and_evaluate_commands(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = str(config_file(tmp_path))
+    connection = connect_workflow(tmp_path / "workflow.sqlite3")
+    insert_finding(connection, "a-cluster", impact=3, last_seen_ns=9)
+    _, run = facts_runner()
+    monkeypatch.setattr(cli.facts, "runner", lambda _config: run)
+
+    argv = ["--config", config, "proposal", "draft", "--reserved-model-budget", "100", "--dry-run"]
+    assert main(argv) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "dry_run"
+    assert result["command_line"].startswith("codex exec --model gpt-5.5")
+    assert connection.execute("SELECT COUNT(*) FROM review_sessions").fetchone() == (0,)
+
+    assert main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00Z"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"evaluated": [], "skipped": []}
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00"])
+    assert raised.value.code == EXIT_VALIDATION

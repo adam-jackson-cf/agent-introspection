@@ -2,6 +2,25 @@
 path = "~/.local/share/agent-introspection/introspection.sqlite3"
 busy_timeout_ms = 5000
 
+# Configure exactly one connection mode to the SigNoz installed on this machine;
+# non-local addresses are refused.
+#
+# docker (default): the SigNoz ClickHouse container, found with `docker ps`.
 [signoz]
 clickhouse_container = "signoz-clickhouse"
-docker_context = "orbstack"
+# docker_context = "desktop-linux"   # optional; defaults to the current Docker context
+
+# http: ClickHouse's HTTP interface at a local address. Replace the two docker keys
+# above with these. A password, if any, is printed by a command (usable by the
+# scheduled sync) and never stored in this file.
+# clickhouse_url = "http://127.0.0.1:8123"   # ClickHouse's HTTP port, published on loopback
+# clickhouse_user = "default"
+# clickhouse_password_command = ["security", "find-generic-password", "-s", "signoz-clickhouse", "-w"]
+# otlp_endpoint = "http://localhost:4318"
+
+# The dashboard reads ClickHouse over HTTP only. In docker mode, give it the local
+# address of ClickHouse's HTTP interface (a port published on loopback, or a local
+# container name your runtime resolves, such as OrbStack's *.orb.local). In http mode
+# it uses [signoz] clickhouse_url. INTROSPECTION_CLICKHOUSE_URL overrides both.
+# [dashboard]
+# clickhouse_url = "http://127.0.0.1:8123"

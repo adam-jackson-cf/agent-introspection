@@ -248,7 +248,8 @@ note generated from the signal support registry.
 | V6 | Guardrails | Sandbox denials, approvals, gate bypass, command churn (M8, M10, M11). | ◐ mainly Codex |
 | V7 | Provider | Latency/TTFT, call errors, streaming disconnects, token throughput, unknown outcomes, model conformance (R1–R8, per call). | ◐ |
 | V8 | Recurrence | Files and signatures recurring across tasks, actionable repeats on a 7-day Europe/London window, project concentration (M13, M14, M16). | ✅ / ◐ project |
-| V9 | Interventions | Rule adherence, practice recurrence, post-intervention comparison, tier audit (M12, M15, M17, M18). | Needs rule and intervention records |
+| V9 | Intent and corrections | Task type, corrected by the next prompt, correction kinds, frustrated follow-ups, effort payoff by task type, repeated corrections by project (Jev prompt labels from the activity hooks). | ✅ from the hooks' install date |
+| V10 | Interventions | Findings and proposals, post-intervention evaluation against each proposal's structured success metric, practice recurrence (repeated corrections), tier audit (M15, M17, M18). Rule adherence (M12) is excluded. | ✅ |
 
 ## Phases
 
@@ -262,6 +263,7 @@ note generated from the signal support registry.
 | 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
 | 6 | V8 Recurrence, then V9 Interventions | Same | Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s) |
 | 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks moved to `docs/retired/`, then deleted on 2026-09-29 (kept at the archive tag); [Measure v3](dashboard-measure-v3.md) generated from the registry |
+| 8 | Closed loop and harness parity: activity hooks close native gaps; parity rule enforced by the registry; sharper failure signatures; failure-cluster and repeated-correction findings ranked by impact; evidence packs, Codex-drafted proposals with structured success metrics, and automatic evaluation; Jev prompt labels and the Intent view; skills rewritten; fresh cutover | Every harness-scoped signal reached by every harness it can exist for, or excluded; the loop runs discover → draft → decide → apply → evaluate | See F25–F31 and the cutover record |
 
 ## Findings log
 
@@ -456,6 +458,122 @@ load average fell to about 8.
 worktree changed to refresh snapshots every 5 minutes; the other known session on this
 repository said they were not its edits. Fix: replaced by the 90-day bound (F22) at the
 user's choice, keeping data under 2 minutes old.
+
+**F25. omp renamed its attributes, and the loader stopped reading them (2026-09-29).**
+Evidence: from 2026-09-29 14:48 UTC omp emits `omp.gen_ai.*` instead of `pi.gen_ai.*`
+(for example 4,904 `omp.gen_ai.request.reasoning.effort` and 8,119 `omp.gen_ai.tool.status`
+in the last 4 days, 0 `pi.` after the switch). Effort, interrupt and error flags, and tool
+status went `unset` or `unknown` for new omp rows. Fix: the span loader stores
+`omp.gen_ai.*` under the original `pi.gen_ai.*` names, so views are unchanged; the
+health workflow now checks for renames. Validated: the projection maps tool status and
+stop reasons for all omp spans of the last day.
+
+**F26. omp tool intent text leaked into the facts after the rename (D4).** Evidence: the
+drop list named `pi.gen_ai.tool.call.intent`; 7,602 spans since the rename carried
+`omp.gen_ai.tool.call.intent` text into `introspection.spans`. Fix: intent keys are
+dropped under any prefix, and the Pipeline sanitization check lists both names; the
+cutover re-projects and purges old row versions. Validated at cutover (see the record).
+
+**F27. SigNoz holds prompts only as a redacted placeholder.** Evidence: all 5,400
+`user_prompt` / `codex.user_prompt` events in 30 days carry `prompt` values matching
+`REDACTED`. Impact: task classification cannot read prompts from telemetry. Fix: the
+activity hooks pass each prompt to Jev at submission and keep only the labels
+(`prompt_label`); nothing is classified retroactively.
+
+**F28. First-line failure signatures were often generic.** Evidence: 8 of 74 recurrence
+findings were headers such as `Traceback (most recent call last):`, `ShellError`, or
+`triggerUncaughtException(`, merging unrelated failures. Fix: signatures take a stack
+trace's final exception line, else the first diagnostic line that is not a header or
+frame; Claude Code signatures come from `PostToolUseFailure` error text instead of
+`error_type`; findings group by tool family × failure class (quoted values and paths
+generalized), across harnesses. Validated: on 14 days of Codex failures,
+`Traceback`/`Script failed` headers resolve to lines such as `ModuleNotFoundError: No
+module named '…'`; the detector dry run gave 37 clusters, 16 actionable.
+
+**F29. Evaluation workloads became findings, and the export picked the oldest.**
+Evidence: 6 findings came from `/private/tmp/luna-eval-ws/N` workspaces, and
+`candidates export` ordered by `last_seen_ns` ascending. The loop had never run: 0
+review sessions and 0 proposals. Fix: evaluation workspaces are excluded, findings carry
+an impact score (affected tasks, unclean ones counted twice), export picks the highest
+impact and attaches a 14-day evidence pack, `proposal draft` runs the review in Codex,
+and `facts sync` evaluates applied proposals.
+
+**F30. Parity gaps: 39 not-emitted cells.** Evidence: the registry had 39 ✗ cells.
+Fix (the user's rule: a signal that a harness cannot produce is excluded, never shown as
+"not emitted"): activity hooks closed 20 (omp and Claude Code argument identity,
+targets, and gate bypass; Claude Code interrupts, steers, reasoning tokens, and
+delegations; omp steers, approvals, and retries); native routes closed 6 (Codex
+delegations from `codex.agent_communication` spawns, and Codex errored tasks inferred
+from the turn's last response stream); 2 are `not applicable` (headless Codex exec
+follow-up and clean completion); 11 belong to five excluded signals (sandbox outcomes,
+stream disconnects, output throughput, model conformance, and, from a `differs` cell
+that was always 0, cache creation). Rule adherence was replaced by per-proposal
+evaluation. `facts install` now rejects `not emitted`.
+
+**F31. `/models` polling looks like Codex activity.** Evidence: on 2026-09-29 Codex
+app-server logged 18,104 `codex.api_request` rows for `/models` against 12 prompts; real
+Codex tasks fell to 1–3 a day after 2026-09-25. No fact route reads `codex.api_request`,
+so signals are unaffected, but raw log volume no longer indicates use; the health
+workflow says to judge liveness from prompts and tasks.
+
+**F32. Cutover record (2026-09-30).** Steps, in the fresh cutover workflow's order:
+workflow store copied to `introspection.sqlite3.pre-2026-09-30`; CLI reinstalled;
+`facts install` (59 signals, 255 support cells, 6 snapshots; every route predicate,
+including the `hooks` source, validated in ClickHouse); `facts backfill --days 90`
+(417,164 spans and 335,166 logs re-projected from 2026-07-02); `OPTIMIZE … FINAL` on
+spans and logs; activity hooks installed for Claude Code (`~/.claude/settings.json`,
+6 events, backup kept), omp (extensions reinstalled under `adapters/omp/`, and
+`agent-introspection-activity.ts` registered in `~/.omp/agent/config.yml`, because
+omp's ambient discovery did not load it), and Codex (`UserPromptSubmit` in both the
+Orca account root and `~/.codex`, pending interactive trust). Validated: source parity
+exact for all five harnesses (7 days); every recombination check passes;
+sanitization 0 forbidden keys, 0 long status messages, 0 home paths in spans, logs,
+and hook events (the F26 intent text is gone); coverage grid 227 healthy, 7 not
+applicable, 6 no events, and 15 possible breaks, all Codex `hook.prompt_label` until
+the hook is trusted (that route was later replaced, F33); Claude Code and omp hook events land and join (`tool_call` →
+`tool_calls` by tool call ID; `prompt_label`, `tool_failure`, `turn_stop`); findings
+51 active (18 actionable failure clusters after generic classes were held at
+emerging), 81 retired findings dormant; `proposal draft --dry-run` exports the top
+cluster (omp `error: command not found: python`, impact 49) with a complete evidence
+pack. Two defects found and fixed during the cutover: the hook insert let ClickHouse
+infer the attrs objects as tuples (now a declared structure), and the `task_labels`
+snapshot recomputed `task_outcomes` (18 s per refresh; now reads the snapshot, under
+1 s). The dashboard read live views for "Last 90 days" because the window started a
+moment before the 90-day horizon; it now uses the snapshot's extra day, and 90-day
+views answer in 36–161 ms (Pipeline 1.4–2.2 s with its raw recount).
+
+**F33. Prompt labels moved from the hooks into the app (2026-09-30, the user's choice).**
+The producers now export prompt text to SigNoz: Claude Code `OTEL_LOG_USER_PROMPTS=1`,
+Codex `[otel] log_user_prompt = true` in both Codex roots, and an `omp.user_prompt`
+OTLP log from the omp activity extension (omp has no prompt-only option: its content
+capture keeps the first 16 messages of each chat cut to 240 characters, or the whole
+conversation). `facts sync` labels new prompts with Jev (retrying a failed decision up
+to three times) into `introspection.prompt_labels`; the Codex activity hook was
+removed from both roots, and the hooks keep only Claude Code's `prompt_submitted`.
+Consequence: prompt text is now stored in SigNoz's own tables for their 90-day
+retention (the facts store still drops it). The launchd job's PATH lacked
+`/opt/homebrew/bin`, so labelling was skipped for want of `omp token openrouter`; the
+job's PATH now includes omp's directory. Validated: one prompt each from omp, Codex
+exec, and a new Claude Code process reached SigNoz with text and was labelled
+(3 labels, $0.0001); `introspection.logs` holds no `prompt` key.
+
+**F34. Existing SigNoz installations.** The CLI reached ClickHouse only through
+`docker exec` into a local container. It now has an HTTP mode (`clickhouse_url`,
+`clickhouse_user`, and the password from `clickhouse_password_env` or
+`clickhouse_password_command`, the latter usable by the launchd job), a read-only
+`facts preflight` (ClickHouse ≥ 24.10, SigNoz table columns, grants, producer data),
+and dashboard basic auth. Validated: preflight passes against this Mac's SigNoz
+(ClickHouse 25.5.6.14).
+
+**F35. Local only, with no SigNoz installer (2026-09-30, the user's decision).** Agent
+Introspection runs on one machine against a self-hosted SigNoz already installed on
+it. The stack bootstrap workflow, `ops/signoz/docker-compose.override.yaml`, and
+`.infisical.json` were removed (the running SigNoz uses its own override under
+`~/.local/share/codex-observability/signoz/deploy/docker`, so nothing it depends on was
+removed). The config refuses any ClickHouse or OTLP address that is not loopback,
+`localhost`, or `*.orb.local`; SigNoz Cloud and multi-node ClickHouse are unsupported
+and called out in the README. The "fresh cutover" workflow is now the setup workflow:
+install, or reinstall after a breaking change, against the existing local SigNoz.
 
 ## Operations
 

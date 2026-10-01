@@ -13,6 +13,9 @@ const T = "introspection.task_outcomes_snapshot";
 const C = "introspection.tool_calls_snapshot";
 const S = "introspection.user_signals_snapshot";
 const M = "introspection.model_calls_snapshot";
+const L = "introspection.task_labels_snapshot";
+/** Activity-hook events with the harness resolved (a view: never FINAL). */
+const H = "introspection.hook_rows";
 /** Session → project from the harness session-context hooks. */
 export const P = "introspection.session_project";
 
@@ -33,12 +36,58 @@ const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
 const NOT_POLLING =
   "tool NOT IN ('wait', 'write_stdin', 'wait_agent', 'wait_threads', 'collaborationwait_agent', 'sleep', 'get_goal', 'get_usage_limits')";
 const APPROVALS = "('approved', 'approved_with_amendment', 'accept')";
-const OPERATION =
-  "trimBoth(multiIf(harness LIKE 'codex%', concat(tool, ' ', command_head, ' ', command_sub), harness = 'claude-code', concat(tool, ' ', command_head), tool))";
-/** Seven Europe/London calendar days ending on the window end. */
-const LONDON_WEEK = `toDate(ts, 'Europe/London') > toDate(${END}, 'Europe/London') - 7 AND ts < ${END} AND ${HARNESS_FILTER}`;
+/** Tool + command head + subcommand; omp and Claude Code take the command shape from the activity hooks. */
+const OPERATION = "trimBoth(concat(tool, ' ', command_head, ' ', command_sub))";
 const ACTIONABLE =
-  "(occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3)";
+  "(cluster_occurrences >= 3 AND cluster_tasks >= 2 AND cluster_days >= 2) OR (cluster_occurrences >= 5 AND cluster_tasks >= 3)";
+/**
+ * A project root or failure path under a temporary directory marks an evaluation
+ * workspace; mirrors findings.EVALUATION_PATH (a ClickHouse string literal).
+ */
+export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`;
+/**
+ * Headless Codex exec has no next prompt (registry: not applicable), so it stays
+ * out of next-prompt denominators instead of counting as never corrected.
+ */
+const NEXT_PROMPT = "harness != 'codex_exec'";
+
+/**
+ * Attributed tool failures with a failure class, outside evaluation workspaces,
+ * as findings.py reads them. `where` bounds the window over `c.ts`.
+ */
+const failures = (
+  where: string,
+) => `SELECT c.harness AS harness, c.tool_family AS tool_family,
+        c.failure_class AS failure_class, c.task_id AS task_id, c.ts AS ts, c.tool AS tool
+    FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
+    WHERE ${where} AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
+        AND NOT match(p.project_root, '${EVALUATION_PATH}')
+        AND NOT match(c.failure_signature, '${EVALUATION_PATH}')`;
+
+/**
+ * Failure clusters (tool family × failure class) with one row per harness, so All
+ * recombines from the harness rows; each row also carries its cluster's totals
+ * across the selected harnesses, which the thresholds apply to.
+ */
+const clusters = (where: string, having: string) => `WITH
+    f AS (${failures(where)}),
+    k AS (
+        SELECT tool_family, failure_class, count() AS cluster_occurrences,
+            uniqExact(harness, task_id) AS cluster_tasks,
+            uniqExact(toDate(ts, 'Europe/London')) AS cluster_days,
+            arraySort(groupUniqArray(harness)) AS harnesses
+        FROM f GROUP BY tool_family, failure_class HAVING ${having}
+        ORDER BY cluster_tasks DESC, cluster_occurrences DESC LIMIT 30
+    )
+SELECT f.harness AS harness, f.tool_family AS tool_family, f.failure_class AS failure_class,
+    count() AS occurrences, uniqExact(f.task_id) AS tasks, uniqExact(toDate(f.ts, 'Europe/London')) AS days,
+    any(k.cluster_occurrences) AS cluster_occurrences, any(k.cluster_tasks) AS cluster_tasks,
+    any(k.cluster_days) AS cluster_days, any(k.harnesses) AS harnesses,
+    arraySort(groupUniqArray(f.tool)) AS tools,
+    toString(min(f.ts)) AS first_seen, toString(max(f.ts)) AS last_seen
+FROM f INNER JOIN k ON k.tool_family = f.tool_family AND k.failure_class = f.failure_class
+GROUP BY harness, tool_family, failure_class
+ORDER BY cluster_tasks DESC, cluster_occurrences DESC, tool_family, failure_class, harness`;
 
 const TASK_OUTCOME_COLUMNS = `
     count() AS tasks,
@@ -48,17 +97,40 @@ const TASK_OUTCOME_COLUMNS = `
     sum(errored) AS errored_n, count(errored) AS errored_den,
     sum(quick_follow_up) AS follow_up_n, count(quick_follow_up) AS follow_up_den`;
 
+/**
+ * Reasoning spend rows grouped by `by` (from `harness`, `effort`, `day`): usage
+ * records for producers that report reasoning per call, and Claude Code tasks,
+ * whose reasoning the activity hooks report per turn (registry route
+ * hook.turn_stop), each task counting as one call.
+ */
+const REASONING_USAGE = `SELECT harness, effort, toString(toDate(ts)) AS day, count() AS calls,
+        sum(coalesce(reasoning_tokens, 0)) AS reasoning, sum(output_tokens) AS output
+    FROM ${U} WHERE ${inWindow("ts")} AND reasoning_tokens IS NOT NULL AND harness != 'claude-code'
+    GROUP BY harness, effort, day
+    UNION ALL
+    SELECT harness, effort, toString(toDate(start_ts)) AS day, count() AS calls,
+        sum(coalesce(reasoning_tokens, 0)) AS reasoning, sum(coalesce(output_tokens, 0)) AS output
+    FROM ${T} WHERE ${inWindow("start_ts")} AND harness = 'claude-code' AND reasoning_tokens IS NOT NULL
+    GROUP BY harness, effort, day`;
+
+/** Corrected-by-next-prompt numerator and denominator over task_labels rows. */
+const CORRECTED_N = `countIf(${NEXT_PROMPT} AND corrected_next = 1)`;
+const CORRECTED_DEN = `countIf(${NEXT_PROMPT} AND corrected_next IS NOT NULL)`;
+
+/** Seven Europe/London calendar days ending on the window end, over an alias's `ts`. */
+const LONDON_WEEK_OF = (alias: string) =>
+  `toDate(${alias}.ts, 'Europe/London') > toDate(${END}, 'Europe/London') - 7 AND ${alias}.ts < ${END} AND ({harness:String} = '' OR ${alias}.harness = {harness:String})`;
+
 export const VIEW_QUERIES: Record<Exclude<ViewId, "pipeline">, ViewQueries> = {
   cache: {
-    kpi: `SELECT harness, sum(input_tokens) AS input, sum(cached_input) AS cached,
-    sum(coalesce(cache_creation_input, 0)) AS creation, sum(output_tokens) AS output,
+    kpi: `SELECT harness, sum(input_tokens) AS input, sum(cached_input) AS cached, sum(output_tokens) AS output,
     count() AS operations, uniqExact(session_id) AS sessions
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
     daily: `SELECT toString(toDate(ts)) AS day, harness, sum(input_tokens) AS input,
     sum(cached_input) AS cached, sum(output_tokens) AS output
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY day, harness ORDER BY day, harness`,
     models: `SELECT harness, provider, model, count() AS operations, sum(input_tokens) AS input,
-    sum(cached_input) AS cached, sum(coalesce(cache_creation_input, 0)) AS creation, sum(output_tokens) AS output
+    sum(cached_input) AS cached, sum(output_tokens) AS output
 FROM ${U} WHERE ${inWindow("ts")} GROUP BY harness, provider, model ORDER BY input DESC LIMIT 40`,
     sessions: `SELECT harness, session_id, arrayStringConcat(arraySort(groupUniqArray(model)), ', ') AS models,
     count() AS operations, sum(input_tokens) AS input, sum(cached_input) AS cached, sum(output_tokens) AS output,
@@ -67,10 +139,9 @@ FROM ${U} WHERE ${inWindow("ts")} GROUP BY harness, session_id
 ORDER BY input - cached DESC LIMIT 20`,
   },
   effort: {
-    usage: `SELECT harness, effort, count() AS calls, sum(coalesce(reasoning_tokens, 0)) AS reasoning,
-    sum(output_tokens) AS output
-FROM ${U} WHERE ${inWindow("ts")} AND reasoning_tokens IS NOT NULL GROUP BY harness, effort
-ORDER BY harness, effort`,
+    usage: `SELECT harness, effort, sum(calls) AS calls, sum(reasoning) AS reasoning, sum(output) AS output FROM (
+    ${REASONING_USAGE}
+) GROUP BY harness, effort ORDER BY harness, effort`,
     outcomes: `SELECT harness, effort, ${TASK_OUTCOME_COLUMNS},
     countIf(effort IN ('high', 'xhigh')) AS heavy,
     quantileExact(0.5)(duration_seconds) AS p50_duration, quantileExact(0.9)(duration_seconds) AS p90_duration,
@@ -83,8 +154,9 @@ FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY harness, effort ORDER BY harnes
     sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,
     quantileExact(0.5)(duration_seconds) AS p50_duration, avg(model_steps) AS avg_steps
 FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day, effort ORDER BY day, effort`,
-    daily_reasoning: `SELECT toString(toDate(ts)) AS day, effort, sum(coalesce(reasoning_tokens, 0)) AS reasoning
-FROM ${U} WHERE ${inWindow("ts")} AND reasoning_tokens IS NOT NULL GROUP BY day, effort ORDER BY day, effort`,
+    daily_reasoning: `SELECT day, effort, sum(reasoning) AS reasoning FROM (
+    ${REASONING_USAGE}
+) GROUP BY day, effort ORDER BY day, effort`,
     model_effort: `SELECT harness, model, effort, count() AS tasks,
     sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,
     quantileExact(0.5)(duration_seconds) AS p50_duration, avg(model_steps) AS avg_steps,
@@ -190,15 +262,9 @@ GROUP BY harness, decision, source ORDER BY n DESC`,
     decisions_daily: `SELECT toString(toDate(ts)) AS day, harness, count() AS decisions,
     countIf(detail NOT IN ${APPROVALS}) AS rejected
 FROM ${S} WHERE ${inWindow("ts")} AND signal = 'tool_decision' GROUP BY day, harness ORDER BY day`,
-    sandbox: `SELECT harness, detail AS outcome, tool, count() AS n
-FROM ${S} WHERE ${inWindow("ts")} AND signal = 'sandbox_outcome'
-GROUP BY harness, outcome, tool ORDER BY n DESC LIMIT 30`,
-    sandbox_daily: `SELECT toString(toDate(ts)) AS day, harness, count() AS outcomes,
-    countIf(detail = 'denied') AS denied
-FROM ${S} WHERE ${inWindow("ts")} AND signal = 'sandbox_outcome' GROUP BY day, harness ORDER BY day`,
     bypass: `SELECT harness, countIf(command_head != '') AS commands, countIf(gate_bypass = 1) AS bypass,
     uniqExactIf(task_id, gate_bypass = 1 AND task_id != '') AS tasks
-FROM ${C} WHERE ${inWindow("ts")} AND harness LIKE 'codex%' GROUP BY harness ORDER BY harness`,
+FROM ${C} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
     bypass_calls: `SELECT toString(ts) AS at, harness, session_id, task_id, command_head, command_sub, outcome
 FROM ${C} WHERE ${inWindow("ts")} AND gate_bypass = 1 ORDER BY ts DESC LIMIT 25`,
     churn_summary: `SELECT harness, uniqExact(task_id) AS tasks, count() AS pairs FROM (
@@ -219,16 +285,11 @@ ORDER BY commands DESC, calls DESC LIMIT 25`,
   provider: {
     kpi: `SELECT harness, count() AS calls, countIf(outcome = 'failed') AS failed,
     countIf(outcome = 'cancelled') AS cancelled, countIf(outcome = 'unknown') AS unknown,
-    countIf(stream_disconnect = 1) AS disconnects, count(stream_disconnect) AS disconnect_den,
-    countIf(response_model != '' AND response_model != model) AS mismatched,
-    countIf(response_model != '') AS with_response_model,
     countIf(attempt > 1) AS retried, count(attempt) AS attempt_den
 FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness ORDER BY harness`,
     latency: `SELECT harness, model, count() AS calls,
     quantileExact(0.5)(duration_seconds) AS p50, quantileExact(0.95)(duration_seconds) AS p95,
-    quantileExact(0.5)(ttft_seconds) AS ttft_p50, quantileExact(0.95)(ttft_seconds) AS ttft_p95,
-    quantileExact(0.5)(if(duration_seconds > ttft_seconds AND output_tokens > 0,
-        output_tokens / (duration_seconds - ttft_seconds), NULL)) AS tps_p50
+    quantileExact(0.5)(ttft_seconds) AS ttft_p50, quantileExact(0.95)(ttft_seconds) AS ttft_p95
 FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness, model ORDER BY calls DESC LIMIT 30`,
     codex_sampling: `SELECT harness, attrs_string['model'] AS model,
     countIf(name = 'run_sampling_request') AS steps,
@@ -249,6 +310,10 @@ GROUP BY harness, model, error_class ORDER BY n DESC LIMIT 25`,
 FROM introspection.logs FINAL
 WHERE ${inWindow("ts")} AND harness = 'claude-code' AND event_name IN ('api_error', 'api_retries_exhausted')
 GROUP BY harness`,
+    omp_retries: `SELECT harness, count() AS retries
+FROM ${H}
+WHERE ${inWindow("ts")} AND harness = 'oh-my-pi' AND event_type = 'retry' AND attrs_string['phase'] = 'start'
+GROUP BY harness`,
   },
   recurrence: {
     targets: `SELECT target, arrayStringConcat(arraySort(groupUniqArray(harness)), ', ') AS harnesses,
@@ -263,21 +328,13 @@ FROM (
     FROM ${C} ARRAY JOIN targets AS target
     WHERE ${inWindow("ts")} AND task_id != '' GROUP BY harness, target
 ) GROUP BY harness ORDER BY harness`,
-    signatures: `SELECT harness, tool, failure_signature AS signature, count() AS occurrences,
-    uniqExact(task_id) AS tasks, uniqExact(toDate(ts, 'Europe/London')) AS days,
-    toString(min(ts)) AS first_seen, toString(max(ts)) AS last_seen
-FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
-GROUP BY harness, tool, signature HAVING tasks >= 2 ORDER BY tasks DESC, occurrences DESC LIMIT 30`,
-    signature_summary: `SELECT harness, count() AS signatures, countIf(tasks >= 2) AS recurring FROM (
-    SELECT harness, tool, failure_signature, uniqExact(task_id) AS tasks
-    FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
-    GROUP BY harness, tool, failure_signature
-) GROUP BY harness ORDER BY harness`,
-    actionable: `SELECT harness, tool, failure_signature AS signature, count() AS occurrences,
-    uniqExact(task_id) AS tasks, uniqExact(toDate(ts, 'Europe/London')) AS days,
-    toString(max(ts)) AS last_seen
-FROM ${C} WHERE ${LONDON_WEEK} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
-GROUP BY harness, tool, signature HAVING ${ACTIONABLE} ORDER BY occurrences DESC LIMIT 30`,
+    clusters: clusters(inWindowOf("c", "ts"), "cluster_tasks >= 2"),
+    cluster_summary: `SELECT count() AS clusters, countIf(tasks >= 2) AS recurring FROM (
+    SELECT tool_family, failure_class, uniqExact(harness, task_id) AS tasks
+    FROM (${failures(inWindowOf("c", "ts"))})
+    GROUP BY tool_family, failure_class
+)`,
+    actionable: clusters(LONDON_WEEK_OF("c"), ACTIONABLE),
     concentration: `SELECT harness, signature, sum(n) AS occurrences, sumIf(n, project != '') AS attributed,
     maxIf(n, project != '') AS top_count, argMaxIf(project, n, project != '') AS top_project,
     uniqExactIf(project, project != '') AS projects
@@ -289,15 +346,63 @@ FROM (
 ) GROUP BY harness, signature HAVING attributed > 0 AND occurrences >= 3
 ORDER BY occurrences DESC LIMIT 200`,
     daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, count() AS failures,
-    uniqExact(failure_signature) AS signatures
-FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != ''
+    uniqExact(tool_family, failure_class) AS clusters
+FROM (${failures(inWindowOf("c", "ts"))})
 GROUP BY day, harness ORDER BY day`,
   },
+  intent: {
+    kpi: `SELECT harness, sum(tasks) AS tasks, sum(labelled) AS labelled,
+    sum(corrected_n) AS corrected_n, sum(corrected_den) AS corrected_den,
+    sum(frustrated_n) AS frustrated_n, sum(frustrated_den) AS frustrated_den
+FROM (
+    SELECT harness, count() AS tasks, 0 AS labelled, 0 AS corrected_n, 0 AS corrected_den,
+        0 AS frustrated_n, 0 AS frustrated_den
+    FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY harness
+    UNION ALL
+    SELECT harness, 0, sum(labelled), ${CORRECTED_N}, ${CORRECTED_DEN},
+        countIf(${NEXT_PROMPT} AND sentiment_next = 'frustrated'), countIf(${NEXT_PROMPT} AND sentiment_next != '')
+    FROM ${L} WHERE ${inWindow("start_ts")} GROUP BY harness
+) GROUP BY harness ORDER BY harness`,
+    daily: `SELECT toString(toDate(start_ts)) AS day, harness, ${CORRECTED_N} AS corrected_n,
+    ${CORRECTED_DEN} AS corrected_den
+FROM ${L} WHERE ${inWindow("start_ts")} GROUP BY day, harness ORDER BY day, harness`,
+    task_types: `SELECT harness, task_type, count() AS tasks
+FROM ${L} WHERE ${inWindow("start_ts")} AND labelled = 1 AND task_type != ''
+GROUP BY harness, task_type ORDER BY harness, task_type`,
+    correction_kinds: `SELECT harness, correction_kind_next AS correction_kind, count() AS tasks
+FROM ${L} WHERE ${inWindow("start_ts")} AND ${NEXT_PROMPT} AND corrected_next = 1
+GROUP BY harness, correction_kind ORDER BY harness, correction_kind`,
+    effort_payoff: `SELECT harness, task_type, effort, count() AS tasks,
+    ${CORRECTED_N} AS corrected_n, ${CORRECTED_DEN} AS corrected_den,
+    sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den
+FROM ${L} WHERE ${inWindow("start_ts")} AND labelled = 1 AND task_type != ''
+GROUP BY harness, task_type, effort ORDER BY harness, task_type, effort`,
+    repeated: `SELECT p.project AS project, l.correction_kind_next AS correction_kind, l.harness AS harness,
+    count() AS tasks, uniqExact(l.session_id) AS sessions,
+    arraySort(groupUniqArrayIf(l.task_type, l.task_type != '')) AS task_types,
+    toString(max(l.start_ts)) AS last_seen
+FROM ${L} AS l INNER JOIN ${P} AS p ON p.session_id = l.session_id
+WHERE ${inWindowOf("l", "start_ts")} AND l.corrected_next = 1 AND l.correction_kind_next NOT IN ('', 'none')
+    AND p.project != '' AND NOT match(p.project_root, '${EVALUATION_PATH}')
+GROUP BY project, correction_kind, harness ORDER BY project, correction_kind, harness`,
+    recent: `SELECT l.harness AS harness, l.session_id AS session_id, l.task_id AS task_id,
+    toString(l.start_ts) AS started, l.task_type AS task_type, l.effort AS effort,
+    l.correction_kind_next AS correction_kind, l.sentiment_next AS sentiment_next, p.project AS project
+FROM ${L} AS l LEFT JOIN ${P} AS p ON p.session_id = l.session_id
+WHERE ${inWindowOf("l", "start_ts")} AND l.corrected_next = 1
+ORDER BY l.start_ts DESC LIMIT 25`,
+  },
   interventions: {
-    signature_daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, failure_signature AS signature,
+    cluster_daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, tool_family, failure_class,
     count() AS occurrences, uniqExact(task_id) AS tasks
-FROM ${C} WHERE ${inWindow("ts")} AND outcome = 'failed' AND failure_signature != '' AND task_id != ''
-GROUP BY day, harness, signature ORDER BY day`,
+FROM (${failures(inWindowOf("c", "ts"))})
+GROUP BY day, harness, tool_family, failure_class ORDER BY day`,
+    correction_daily: `SELECT toString(toDate(l.start_ts, 'Europe/London')) AS day, l.harness AS harness,
+    p.project AS project, if(l.corrected_next = 1, l.correction_kind_next, '') AS correction_kind,
+    count() AS tasks, countIf(l.corrected_next = 1) AS corrected
+FROM ${L} AS l INNER JOIN ${P} AS p ON p.session_id = l.session_id
+WHERE ${inWindowOf("l", "start_ts")} AND l.labelled = 1 AND p.project != ''
+GROUP BY day, harness, project, correction_kind ORDER BY day`,
     task_daily: `SELECT toString(toDate(start_ts, 'Europe/London')) AS day, harness, count() AS tasks
 FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day, harness ORDER BY day`,
   },
@@ -305,10 +410,18 @@ FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day, harness ORDER BY day`,
 
 /** Queries for one session's drill-down: tasks, usage, tool calls, and signals. */
 export const SESSION_QUERIES: ViewQueries = {
-  tasks: `SELECT task_id, toString(start_ts) AS started, duration_seconds, model, effort, model_steps,
-    output_tokens, reasoning_tokens, interrupted, steered, errored, quick_follow_up, clean_completion,
-    arrayStringConcat(friction_observed, ', ') AS observed
-FROM ${T} WHERE harness = {harness:String} AND session_id = {session:String} ORDER BY start_ts`,
+  tasks: `SELECT t.task_id AS task_id, toString(t.start_ts) AS started, t.duration_seconds AS duration_seconds,
+    t.model AS model, t.effort AS effort, t.model_steps AS model_steps, t.output_tokens AS output_tokens,
+    t.reasoning_tokens AS reasoning_tokens, t.interrupted AS interrupted, t.steered AS steered,
+    t.errored AS errored, t.quick_follow_up AS quick_follow_up, t.clean_completion AS clean_completion,
+    arrayStringConcat(t.friction_observed, ', ') AS observed,
+    l.task_type AS task_type, l.corrected_next AS corrected_next, l.correction_kind_next AS correction_kind
+FROM ${T} AS t
+LEFT JOIN (
+    SELECT task_id, task_type, corrected_next, correction_kind_next FROM ${L}
+    WHERE harness = {harness:String} AND session_id = {session:String}
+) AS l ON l.task_id = t.task_id
+WHERE t.harness = {harness:String} AND t.session_id = {session:String} ORDER BY t.start_ts`,
   usage: `SELECT model, effort, count() AS operations, sum(input_tokens) AS input, sum(cached_input) AS cached,
     sum(output_tokens) AS output, sum(reasoning_tokens) AS reasoning
 FROM ${U} WHERE harness = {harness:String} AND session_id = {session:String}

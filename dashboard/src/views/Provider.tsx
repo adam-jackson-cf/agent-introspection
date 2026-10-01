@@ -23,10 +23,6 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
     "failed",
     "cancelled",
     "unknown",
-    "disconnects",
-    "disconnect_den",
-    "mismatched",
-    "with_response_model",
     "retried",
     "attempt_den",
   ]);
@@ -41,6 +37,39 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
   }));
   const claudeRetries = data.claude_retries ?? [];
   const claudeKpi = kpi.find((row) => row.harness === "claude-code");
+  const ompKpi = kpi.find((row) => row.harness === "oh-my-pi");
+  const ompRetries = num(data.omp_retries?.[0]?.retries);
+  // One row per harness with its own retry route; zero is a valid observation
+  // for a harness with model calls, and a harness without calls has no row.
+  const retries: Row[] = [
+    ...codexRetries.map((row) => ({
+      harness: row.harness,
+      extra: row.extra,
+      route: `${fmtCount(row.attempts)} sampling attempts over ${fmtCount(row.steps)} steps`,
+    })),
+    ...(ompKpi
+      ? [
+          {
+            harness: "oh-my-pi",
+            extra: ompRetries,
+            route: "auto-retry starts (activity hook)",
+          },
+        ]
+      : []),
+    ...(claudeKpi
+      ? [
+          {
+            harness: "claude-code",
+            extra: num(claudeKpi.retried),
+            route: `requests with attempt > 1 · ${fmtCount(num(claudeRetries[0]?.failed_attempts))} failed attempts · ${fmtCount(num(claudeRetries[0]?.exhausted))} exhausted`,
+          },
+        ]
+      : []),
+  ];
+  const extraAttempts = retries.reduce(
+    (total, row) => total + num(row.extra),
+    0,
+  );
   const series = HARNESSES.filter(
     (harness) => filters.harness === "" || harness === filters.harness,
   ).map((harness) => ({
@@ -96,10 +125,10 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           signals={["provider.error_rate"]}
         />
         <Kpi
-          title="Stream disconnects"
-          value={fmtCount(all.disconnects!)}
-          detail={`of ${fmtCount(all.disconnect_den!)} response streams`}
-          signals={["provider.stream_disconnects"]}
+          title="Retries"
+          value={fmtCount(extraAttempts)}
+          detail="attempts beyond the first per logical call"
+          signals={["provider.retries"]}
         />
         <Kpi
           title="Unknown outcomes"
@@ -160,9 +189,9 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
       </Section>
       <Section title="Where does provider time go?">
         <Panel
-          title="Latency, time to first token, and throughput by model"
+          title="Latency and time to first token by model"
           subtitle="Codex latency is the sampling step (includes retries and tool draining); its calls are response streams"
-          signals={["provider.latency", "provider.ttft", "provider.throughput"]}
+          signals={["provider.latency", "provider.ttft"]}
           span={12}
         >
           <DataTable
@@ -203,25 +232,13 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => fmtSeconds(maybe(row.ttft_p95)),
               },
-              {
-                key: "tps_p50",
-                label: "P50 tokens/s",
-                numeric: true,
-                render: (row) =>
-                  maybe(row.tps_p50) === null
-                    ? "—"
-                    : num(row.tps_p50).toFixed(0),
-              },
             ]}
             rows={latency}
           />
         </Panel>
       </Section>
-      <Section title="Errors, retries, and conformance">
-        <Panel
-          title="Call errors by class"
-          signals={["provider.error_rate", "provider.stream_disconnects"]}
-        >
+      <Section title="Errors and retries">
+        <Panel title="Call errors by class" signals={["provider.error_rate"]}>
           <DataTable
             columns={[
               {
@@ -254,72 +271,16 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 label: "Harness",
                 render: (row) => <HarnessName value={row.harness} />,
               },
-              { key: "steps", label: "Sampling steps", numeric: true },
-              { key: "attempts", label: "Attempts", numeric: true },
-              { key: "extra", label: "Extra attempts", numeric: true },
-            ]}
-            rows={codexRetries}
-            empty="No Codex sampling steps in the selected range."
-          />
-          {claudeKpi && (
-            <DataTable
-              columns={[
-                {
-                  key: "harness",
-                  label: "Harness",
-                  render: (row) => <HarnessName value={row.harness} />,
-                },
-                { key: "retried", label: "Retried requests", numeric: true },
-                {
-                  key: "failed_attempts",
-                  label: "Failed attempts",
-                  numeric: true,
-                },
-                { key: "exhausted", label: "Retries exhausted", numeric: true },
-              ]}
-              rows={[
-                {
-                  harness: "claude-code",
-                  retried: claudeKpi.retried ?? 0,
-                  failed_attempts: claudeRetries[0]?.failed_attempts ?? 0,
-                  exhausted: claudeRetries[0]?.exhausted ?? 0,
-                },
-              ]}
-            />
-          )}
-        </Panel>
-        <Panel
-          title="Model conformance"
-          subtitle="Calls whose served model differs from the requested model"
-          signals={["provider.model_conformance"]}
-          span={12}
-        >
-          <DataTable
-            columns={[
               {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              {
-                key: "with_response_model",
-                label: "Calls with a served model",
+                key: "extra",
+                label: "Extra attempts",
                 numeric: true,
+                render: (row) => fmtCount(num(row.extra)),
               },
-              { key: "mismatched", label: "Mismatched", numeric: true },
-              {
-                key: "rate",
-                label: "Mismatch rate",
-                numeric: true,
-                render: (row) =>
-                  fmtPct(
-                    ratio(num(row.mismatched), num(row.with_response_model)),
-                    2,
-                  ),
-              },
+              { key: "route", label: "Measured as" },
             ]}
-            rows={kpi.filter((row) => num(row.with_response_model) > 0)}
-            empty="No calls report a served model in the selected range."
+            rows={retries}
+            empty="No model calls in the selected range."
           />
         </Panel>
       </Section>

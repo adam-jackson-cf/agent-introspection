@@ -15,7 +15,7 @@ def test_documented_defaults_are_canonical() -> None:
     )
     assert config.database.busy_timeout_ms == 5_000
     assert config.signoz.clickhouse_container == "signoz-clickhouse"
-    assert config.signoz.docker_context == "orbstack"
+    assert config.signoz.docker_context is None
 
 
 def test_parse_config_expands_paths_and_preserves_explicit_values(
@@ -81,3 +81,79 @@ def test_example_configuration_is_valid() -> None:
     example = Path(__file__).parents[1] / "config.example.toml"
 
     assert load_config(example).signoz.clickhouse_container == "signoz-clickhouse"
+
+
+def test_http_mode_reads_url_user_and_password_variable_name() -> None:
+    config = parse_config(
+        {
+            "signoz": {
+                "clickhouse_url": "http://signoz-clickhouse.orb.local:8123/",
+                "clickhouse_user": "introspection",
+                "clickhouse_password_env": "INTROSPECTION_CLICKHOUSE_PASSWORD",
+                "otlp_endpoint": "http://localhost:4318",
+            }
+        }
+    )
+
+    assert config.signoz.mode == "http"
+    assert config.signoz.clickhouse_url == "http://signoz-clickhouse.orb.local:8123"
+    assert config.signoz.clickhouse_user == "introspection"
+    assert config.signoz.clickhouse_password_env == "INTROSPECTION_CLICKHOUSE_PASSWORD"
+    assert config.signoz.otlp_endpoint == "http://localhost:4318"
+    assert parse_config({}).signoz.mode == "docker"
+
+
+@pytest.mark.parametrize(
+    ("signoz", "message"),
+    [
+        (
+            {"clickhouse_url": "http://localhost:8123", "clickhouse_container": "c"},
+            "exactly one connection mode",
+        ),
+        ({"clickhouse_user": "u"}, "need clickhouse_url"),
+        ({"clickhouse_url": "ftp://ch"}, "http:// or https://"),
+        ({"clickhouse_url": "http://user:secret@localhost:8123"}, "must not embed credentials"),
+        (
+            {"clickhouse_url": "http://localhost:8123", "clickhouse_password_env": "hunter 2"},
+            "name an environment variable",
+        ),
+        (
+            {"clickhouse_url": "http://localhost:8123", "clickhouse_database": "x"},
+            "unsupported keys",
+        ),
+    ],
+)
+def test_http_mode_rejects_mixed_modes_and_inline_secrets(
+    signoz: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        parse_config({"signoz": signoz})
+
+
+def test_password_command_is_an_argv_list_and_excludes_the_env_variable() -> None:
+    url = "http://127.0.0.1:8123"
+    config = parse_config(
+        {"signoz": {"clickhouse_url": url, "clickhouse_password_command": ["security", "-w"]}}
+    )
+    assert config.signoz.clickhouse_password_command == ("security", "-w")
+    for bad in ("security -w", [], ["security", ""]):
+        with pytest.raises(ConfigurationError, match="list of arguments"):
+            parse_config({"signoz": {"clickhouse_url": url, "clickhouse_password_command": bad}})
+    with pytest.raises(ConfigurationError, match="not both"):
+        parse_config(
+            {
+                "signoz": {
+                    "clickhouse_url": url,
+                    "clickhouse_password_env": "CH_PASSWORD",
+                    "clickhouse_password_command": ["security"],
+                }
+            }
+        )
+
+
+def test_dashboard_url_is_optional_and_local() -> None:
+    config = parse_config({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123/"}})
+    assert config.dashboard_clickhouse_url == "http://127.0.0.1:8123"
+    assert parse_config({}).dashboard_clickhouse_url is None
+    with pytest.raises(ConfigurationError, match="this machine"):
+        parse_config({"dashboard": {"clickhouse_url": "http://ch.example.com:8123"}})

@@ -20,6 +20,7 @@ import Cache from "./views/Cache";
 import Effort from "./views/Effort";
 import Friction from "./views/Friction";
 import Guardrails from "./views/Guardrails";
+import Intent from "./views/Intent";
 import Interventions from "./views/Interventions";
 import Pipeline from "./views/Pipeline";
 import Provider from "./views/Provider";
@@ -81,15 +82,14 @@ export const VIEWS: ViewSpec[] = [
     number: "V6",
     title: "Guardrails",
     question:
-      "How often do approvals, sandboxes, and quality gates block or get bypassed?",
+      "How often do approvals block tool calls, and how often are quality gates bypassed?",
     component: Guardrails,
   },
   {
     id: "provider",
     number: "V7",
     title: "Provider",
-    question:
-      "Are model calls failing, slow, disconnecting, retried, or served by a different model?",
+    question: "Are model calls failing, slow, or retried?",
     component: Provider,
   },
   {
@@ -101,8 +101,16 @@ export const VIEWS: ViewSpec[] = [
     component: Recurrence,
   },
   {
-    id: "interventions",
+    id: "intent",
     number: "V9",
+    title: "Intent and corrections",
+    question:
+      "What kind of work do users ask for, and how often does their next prompt correct the agent?",
+    component: Intent,
+  },
+  {
+    id: "interventions",
+    number: "V10",
     title: "Interventions",
     question:
       "Which findings became interventions, and did applied interventions reduce what they targeted?",
@@ -183,7 +191,8 @@ const isRegistry = (value: unknown): value is Registry =>
   Array.isArray(value.signals) &&
   Array.isArray(value.support) &&
   Array.isArray(value.routes) &&
-  Array.isArray(value.strays);
+  Array.isArray(value.strays) &&
+  Array.isArray(value.exclusions);
 
 async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
   const response = await fetch(url, { signal });
@@ -457,7 +466,7 @@ export default function App() {
               <p className="scope">
                 {filters.harness === ""
                   ? "All = the union of each harness's rows for the same signal"
-                  : "One harness: signals it does not emit say so, never zero"}
+                  : "One harness: signals not applicable to it say so, never zero"}
               </p>
             </div>
           )}

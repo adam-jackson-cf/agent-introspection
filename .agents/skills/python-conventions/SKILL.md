@@ -1,6 +1,6 @@
 ---
 name: "python-conventions"
-description: "Guide Python naming, package structure, and code-object choices. USE WHEN writing or refactoring Python code."
+description: "Guide Python naming, package structure, code-object choices, and this repository's Python quality gates. USE WHEN writing or refactoring Python code in agent-introspection (src/, tests/, scripts/, or .agents adapters)."
 ---
 
 # Guidance
@@ -29,3 +29,19 @@ Complements Ruff `pep8-naming`; does not replace deterministic lint checks.
 - Use a Protocol for structural contracts across implementations.
 - Use an Enum for a closed symbolic set.
 - Do not create a god class to centralize unrelated workflows.
+
+## Repository gates
+
+- Ruff (line length 100): docstrings that exist follow the numpy convention (missing
+  docstrings are not enforced); exceptions end in `Error`; complexity limits C901,
+  PLR0911 (at most 6 returns), PLR0912, PLR0913 (at most 5 arguments, keyword-only
+  ones included: pass a dataclass or `**overrides`), and PLR0915. Split a function
+  rather than suppress a rule.
+- `mypy --strict` over `agent_introspection`; tests are exempt from docstring rules.
+- Python under `.agents/skills/*/scripts` is in the quality scope.
+- `bash scripts/run-ci-quality-gates.sh` is the pre-commit and CI suite (it also checks
+  the dashboard). It lints only files git tracks, so also run `uv run ruff check .`,
+  `uv run ruff format --check .`, and `uv run pytest` before new files are added.
+- Keep derivations that exist in both SQL (`src/agent_introspection/facts_sql/`) and
+  Python identical, with a test that pins them (for example `hooks.py` and
+  `select_logs.sql`).

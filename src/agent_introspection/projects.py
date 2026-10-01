@@ -2,9 +2,11 @@
 
 The hooks installed in Claude Code, Codex, and omp write one JSON file per
 session event into the inbox: the session ID and the git project it runs in,
-or a rejection with its reason. ``sync`` copies those files into
-``introspection.session_projects`` / ``session_project_rejections`` and removes
-each file once ClickHouse has it. A launchd job runs ``facts sync`` every minute,
+or a rejection with its reason. The activity hooks (``hooks.py``) write
+normalized ``agent-introspection.hook-event/1`` records into the same inbox.
+``sync`` copies those files into ``introspection.session_projects`` /
+``session_project_rejections`` / ``hook_events`` and removes each file once
+ClickHouse has it. A launchd job runs ``facts sync`` every minute,
 which syncs projects and then refreshes workflow findings.
 """
 
@@ -22,6 +24,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from agent_introspection.config import SigNozConfig, load_config
 from agent_introspection.facts import DATABASE, SqlRunner, sql_string
 
 INBOX = Path.home() / ".local/share/agent-introspection/session-context-inbox"
@@ -30,10 +33,14 @@ PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
 LOG = Path.home() / ".local/share/agent-introspection/projects-sync.log"
 INTERVAL_SECONDS = 60
 # Rows per INSERT: about 400 bytes each stays under ClickHouse's 256 KiB query limit.
+# Larger rows (hook events with many targets) are also cut by encoded size.
 _CHUNK = 300
+_CHUNK_BYTES = 192 * 1024
 _HOME = re.compile(r"^/Users/[^/]+")
 
-type Row = dict[str, str]
+HOOK_EVENT_SCHEMA = "agent-introspection.hook-event/1"
+
+type Row = dict[str, Any]
 
 
 def _redact(root: str) -> str:
@@ -67,6 +74,35 @@ def rejection_row(document: dict[str, Any]) -> Row:
     }
 
 
+def hook_event_row(document: dict[str, Any]) -> Row:
+    """Flatten one activity-hook record into a ``hook_events`` row.
+
+    Numbers and 0/1 flags go to ``attrs_number``; text goes to ``attrs_string``,
+    with lists (targets) stored as JSON text.
+    """
+    attrs = document["attrs"]
+    if not isinstance(attrs, dict):
+        raise TypeError("attrs must be an object")
+    strings: dict[str, str] = {}
+    numbers: dict[str, float] = {}
+    for key, value in attrs.items():
+        if isinstance(value, bool | int | float):
+            numbers[str(key)] = float(value)
+        elif isinstance(value, str):
+            strings[str(key)] = value
+        else:
+            strings[str(key)] = json.dumps(value, ensure_ascii=False)
+    return {
+        "event_id": str(document["event_id"]),
+        "producer": str(document["producer"]),
+        "session_id": str(document["session_id"]),
+        "event_type": str(document["event_type"]),
+        "occurred_at": str(document["occurred_at"]),
+        "attrs_string": strings,
+        "attrs_number": numbers,
+    }
+
+
 def ledger_rows(ledger: Path) -> list[Row]:
     """Read the session-context events the retired scan had ingested."""
     connection = sqlite3.connect(f"file:{ledger}?mode=ro", uri=True)
@@ -89,32 +125,75 @@ def ledger_rows(ledger: Path) -> list[Row]:
     ]
 
 
+def _chunks(lines: list[str]) -> list[list[str]]:
+    chunks: list[list[str]] = []
+    size = 0
+    for line in lines:
+        if not chunks or len(chunks[-1]) >= _CHUNK or size + len(line) > _CHUNK_BYTES:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(line)
+        size += len(line) + 1
+    return chunks
+
+
+# Column types for tables whose rows JSON inference would misread: nested objects
+# would become tuples, not the Map columns the table declares.
+_STRUCTURES = {
+    "hook_events": (
+        "event_id String, producer String, session_id String, event_type String, "
+        "occurred_at DateTime64(6, 'UTC'), attrs_string Map(String, String), "
+        "attrs_number Map(String, Float64)"
+    ),
+    "prompt_labels": (
+        "harness String, session_id String, prompt_key String, prompt_id String, "
+        "ts DateTime64(9, 'UTC'), prompt_length UInt32, attempts UInt8, "
+        "classified_at DateTime64(3, 'UTC'), status String, reason String, "
+        "task_type String, task_type_confidence Float32, correction Float32, "
+        "correction_kind String, sentiment String, sentiment_confidence Float32, "
+        "classifier_model String, classifier_version UInt16, cost_usd Float64"
+    ),
+}
+
+
 def insert_statements(table: str, rows: list[Row]) -> list[str]:
     """Return chunked INSERTs that parse rows as JSONEachRow inside ClickHouse."""
+    structure = f"{sql_string(_STRUCTURES[table])}, " if table in _STRUCTURES else ""
+    columns = ", ".join(rows[0])
+    # Columns are selected by name, so the declared structure's order never matters.
     return [
-        f"INSERT INTO {DATABASE}.{table} ({', '.join(rows[0])}) "
-        f"SELECT * FROM format(JSONEachRow, "
-        + sql_string("\n".join(json.dumps(row) for row in rows[start : start + _CHUNK]))
+        f"INSERT INTO {DATABASE}.{table} ({columns}) "
+        f"SELECT {columns} FROM format(JSONEachRow, {structure}"
+        + sql_string("\n".join(chunk))
         # Hook timestamps are RFC 3339 with an offset.
         + ") SETTINGS date_time_input_format = 'best_effort'"
-        for start in range(0, len(rows), _CHUNK)
+        for chunk in _chunks([json.dumps(row) for row in rows])
     ]
 
 
-def _read_inbox(inbox: Path) -> tuple[list[tuple[Path, Row]], list[tuple[Path, Row]], int]:
-    events: list[tuple[Path, Row]] = []
-    rejections: list[tuple[Path, Row]] = []
+type Loaded = list[tuple[Path, Row]]
+
+
+def _read_inbox(inbox: Path) -> tuple[dict[str, Loaded], int]:
+    """Sort inbox files into rows per table; unreadable files are counted as invalid."""
+    loaded: dict[str, Loaded] = {
+        "session_projects": [],
+        "session_project_rejections": [],
+        "hook_events": [],
+    }
     invalid = 0
     for path in sorted(inbox.glob("*.json")):
         try:
             document = json.loads(path.read_text())
-            if "rejection_id" in document:
-                rejections.append((path, rejection_row(document)))
+            if document.get("schema") == HOOK_EVENT_SCHEMA:
+                loaded["hook_events"].append((path, hook_event_row(document)))
+            elif "rejection_id" in document:
+                loaded["session_project_rejections"].append((path, rejection_row(document)))
             else:
-                events.append((path, event_row(document)))
-        except (OSError, ValueError, KeyError, TypeError):
+                loaded["session_projects"].append((path, event_row(document)))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             invalid += 1
-    return events, rejections, invalid
+    return loaded, invalid
 
 
 def sync(run: SqlRunner, *, inbox: Path = INBOX, ledger: Path | None = None) -> dict[str, Any]:
@@ -123,20 +202,20 @@ def sync(run: SqlRunner, *, inbox: Path = INBOX, ledger: Path | None = None) -> 
     Files that fail to parse stay in the inbox and are counted as invalid.
     ``ledger`` imports the history the retired scan had already ingested.
     """
-    events, rejections, invalid = _read_inbox(inbox) if inbox.exists() else ([], [], 0)
+    loaded, invalid = _read_inbox(inbox)
     history = ledger_rows(ledger) if ledger is not None else []
-    for table, rows in (
-        ("session_projects", [row for _, row in events] + history),
-        ("session_project_rejections", [row for _, row in rejections]),
-    ):
+    for table, files in loaded.items():
+        rows = [row for _, row in files] + (history if table == "session_projects" else [])
         if rows:
             for statement in insert_statements(table, rows):
                 run(statement)
-    for path, _ in (*events, *rejections):
-        path.unlink(missing_ok=True)
+    for files in loaded.values():
+        for path, _ in files:
+            path.unlink(missing_ok=True)
     return {
-        "events": len(events),
-        "rejections": len(rejections),
+        "events": len(loaded["session_projects"]),
+        "rejections": len(loaded["session_project_rejections"]),
+        "hook_events": len(loaded["hook_events"]),
         "ledger_events": len(history),
         "invalid": invalid,
     }
@@ -165,20 +244,40 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(("launchctl", *args), capture_output=True, text=True, check=False)
 
 
-def schedule_install(config: Path | None = None) -> dict[str, Any]:
-    """Write and load the launchd job; the docker CLI directory joins its PATH."""
-    executable = Path(sys.executable).with_name("agent-introspection")
-    docker = shutil.which("docker")
-    if docker is None:
-        raise RuntimeError("docker CLI not found on PATH")
-    PLIST.parent.mkdir(parents=True, exist_ok=True)
-    PLIST.write_bytes(
-        plist(
-            executable,
-            (str(Path(docker).parent), "/usr/bin", "/bin", "/usr/sbin", "/sbin"),
-            config,
+def _job_path(signoz: SigNozConfig) -> list[str]:
+    """Return the tool directories the launchd job needs on PATH.
+
+    Docker mode needs the docker CLI. HTTP mode needs the password command's
+    executable, because launchd cannot pass the password variable to the job. omp's
+    directory lets prompt labelling read omp's stored OpenRouter credential
+    (`omp token openrouter`) when OPENROUTER_API_KEY is not set for the job.
+    """
+    required: list[str] = []
+    if signoz.mode == "docker":
+        required.append("docker")
+    elif signoz.clickhouse_password_env is not None:
+        raise RuntimeError(
+            "launchd cannot pass signoz.clickhouse_password_env to the job; "
+            "use signoz.clickhouse_password_command for a scheduled sync"
         )
-    )
+    elif signoz.clickhouse_password_command is not None:
+        required.append(signoz.clickhouse_password_command[0])
+    tools: list[str] = []
+    for name in required:
+        found = shutil.which(name)
+        if found is None:
+            raise RuntimeError(f"{name} not found on PATH")
+        tools.append(str(Path(found).parent))
+    omp = shutil.which("omp")
+    return [*tools, *([str(Path(omp).parent)] if omp else [])]
+
+
+def schedule_install(config: Path | None = None) -> dict[str, Any]:
+    """Write and load the launchd job that runs `facts sync` every minute."""
+    executable = Path(sys.executable).with_name("agent-introspection")
+    tools = _job_path(load_config(config).signoz)
+    PLIST.parent.mkdir(parents=True, exist_ok=True)
+    PLIST.write_bytes(plist(executable, (*tools, "/usr/bin", "/bin", "/usr/sbin", "/sbin"), config))
     domain = f"gui/{os.getuid()}"
     _launchctl("bootout", f"{domain}/{LABEL}")
     loaded = _launchctl("bootstrap", domain, str(PLIST))

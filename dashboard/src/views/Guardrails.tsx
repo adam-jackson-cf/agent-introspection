@@ -29,9 +29,10 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
     decisions.filter((row) => num(row.rejected) === 1),
     ["n"],
   ).n!;
-  const sandbox = data.sandbox ?? [];
-  const sandboxDenied = sumRows(
-    sandbox.filter((row) => row.outcome === "denied"),
+  const byUser = sumRows(
+    decisions.filter((row) =>
+      String(row.source).toLowerCase().startsWith("user"),
+    ),
     ["n"],
   ).n!;
   const bypass = sumRows(data.bypass ?? [], ["commands", "bypass", "tasks"]);
@@ -48,12 +49,6 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
     (row) => String(row.harness),
     ["rejected", "decisions"],
     (sums) => ratio(sums.rejected!, sums.decisions!),
-  );
-  const deniedDaily = pivotDaily(
-    data.sandbox_daily ?? [],
-    (row) => String(row.harness),
-    ["denied"],
-    (sums) => sums.denied!,
   );
   const sources = [
     ...decisions
@@ -78,10 +73,10 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
           signals={["guard.rejections", "guard.decisions"]}
         />
         <Kpi
-          title="Sandbox denials"
-          value={fmtCount(sandboxDenied)}
-          detail={`${fmtCount(sumRows(sandbox, ["n"]).n!)} sandbox outcomes`}
-          signals={["guard.sandbox"]}
+          title="Approval decisions"
+          value={fmtCount(decided)}
+          detail={`${fmtCount(byUser)} decided by the user`}
+          signals={["guard.decisions"]}
         />
         <Kpi
           title="Quality-gate bypass"
@@ -101,6 +96,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
           title="Daily rejection rate"
           subtitle="Rejected / all approval decisions, per harness"
           signals={["guard.rejections"]}
+          span={12}
         >
           <DailyChart
             rows={rejectionDaily}
@@ -120,35 +116,13 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
             rows={rejectionDaily}
           />
         </Panel>
-        <Panel
-          title="Daily sandbox denials"
-          subtitle="Stacked by harness"
-          signals={["guard.sandbox"]}
-        >
-          <DailyChart
-            rows={deniedDaily}
-            series={series}
-            kind="stack"
-            format={fmtCount}
-          />
-          <TableView
-            columns={[
-              { key: "day", label: "Day" },
-              ...series.map((entry) => ({
-                key: entry.key,
-                label: entry.label,
-                numeric: true,
-              })),
-            ]}
-            rows={deniedDaily}
-          />
-        </Panel>
       </Section>
-      <Section title="Who approves, and what is denied?">
+      <Section title="Who approves?">
         <Panel
           title="Approval decisions by source"
           subtitle="Config policy, the user, or the automated approval reviewer"
           signals={["guard.decisions"]}
+          span={12}
         >
           <BarList
             items={sources.map(([key, entry]) => ({
@@ -173,21 +147,6 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               { key: "n", label: "Decisions", numeric: true },
             ]}
             rows={decisions}
-          />
-        </Panel>
-        <Panel title="Sandbox outcomes by tool" signals={["guard.sandbox"]}>
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              { key: "outcome", label: "Outcome" },
-              { key: "tool", label: "Tool" },
-              { key: "n", label: "Outcomes", numeric: true },
-            ]}
-            rows={sandbox}
           />
         </Panel>
       </Section>

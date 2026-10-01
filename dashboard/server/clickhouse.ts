@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Row } from "../src/contracts";
 
 /** Runs one read-only statement and returns its rows. */
@@ -16,13 +19,69 @@ export class ClickHouseError extends Error {}
 
 const QUERY_TIMEOUT_MS = 10_000;
 
+/** Basic-auth credentials for an existing SigNoz ClickHouse. */
+export type Credentials = { user: string; password: string };
+
 /**
- * ClickHouse HTTP client. OrbStack exposes the SigNoz ClickHouse container at
- * `signoz-clickhouse.orb.local` to this Mac only, so no port is published and
- * the SigNoz stack is untouched. Every statement runs with `readonly=2` and
- * binds user input as query parameters, never as SQL text.
+ * Reads optional credentials from `INTROSPECTION_CLICKHOUSE_USER` and
+ * `INTROSPECTION_CLICKHOUSE_PASSWORD`. A password alone uses the `default` user.
  */
-export function clickhouse(baseUrl: string, fetchFn: Fetch = fetch): Query {
+export function credentialsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): Credentials | undefined {
+  const user = env.INTROSPECTION_CLICKHOUSE_USER;
+  const password = env.INTROSPECTION_CLICKHOUSE_PASSWORD;
+  if (!user && !password) return undefined;
+  return { user: user || "default", password: password ?? "" };
+}
+
+/**
+ * Where the local SigNoz ClickHouse's HTTP interface is: the
+ * `INTROSPECTION_CLICKHOUSE_URL` variable, else `[dashboard] clickhouse_url`, else the
+ * http mode's `[signoz] clickhouse_url` in the agent-introspection config
+ * (`AGENT_INTROSPECTION_CONFIG`, default `~/.config/agent-introspection/config.toml`).
+ * No address is assumed: container runtimes differ in how they expose ClickHouse.
+ */
+export function clickhouseUrl(
+  env: Record<string, string | undefined> = process.env,
+  readConfig: (path: string) => string | undefined = (path) =>
+    existsSync(path) ? readFileSync(path, "utf8") : undefined,
+): string {
+  if (env.INTROSPECTION_CLICKHOUSE_URL) return env.INTROSPECTION_CLICKHOUSE_URL;
+  const path =
+    env.AGENT_INTROSPECTION_CONFIG ||
+    join(env.HOME ?? homedir(), ".config/agent-introspection/config.toml");
+  const text = readConfig(path);
+  const config =
+    text === undefined ? {} : (Bun.TOML.parse(text) as ConfigDocument);
+  const url = config.dashboard?.clickhouse_url ?? config.signoz?.clickhouse_url;
+  if (typeof url === "string" && url !== "") return url;
+  throw new Error(
+    "No ClickHouse address for the dashboard: set INTROSPECTION_CLICKHOUSE_URL or " +
+      `[dashboard] clickhouse_url in ${path}`,
+  );
+}
+
+type ConfigDocument = {
+  dashboard?: { clickhouse_url?: unknown };
+  signoz?: { clickhouse_url?: unknown };
+};
+
+/**
+ * ClickHouse HTTP client for the local SigNoz ClickHouse, with basic-auth
+ * credentials when the server needs a login. Every statement runs with
+ * `readonly=2` and binds user input as query parameters, never as SQL text.
+ */
+export function clickhouse(
+  baseUrl: string,
+  fetchFn: Fetch = fetch,
+  credentials?: Credentials,
+): Query {
+  const headers: Record<string, string> = credentials
+    ? {
+        Authorization: `Basic ${btoa(`${credentials.user}:${credentials.password}`)}`,
+      }
+    : {};
   return async (sql, params = {}, signal) => {
     const url = new URL(baseUrl);
     url.searchParams.set("readonly", "2");
@@ -34,6 +93,7 @@ export function clickhouse(baseUrl: string, fetchFn: Fetch = fetch): Query {
     const timeout = AbortSignal.timeout(QUERY_TIMEOUT_MS);
     const response = await fetchFn(url, {
       method: "POST",
+      headers,
       body: sql,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });

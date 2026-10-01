@@ -345,7 +345,7 @@ a {
 .contributor small {
   color: var(--muted);
 }
-.contributor-not-emitted {
+.contributor-not-applicable {
   color: var(--muted);
 }
 
@@ -397,11 +397,11 @@ a {
 .alignment.differs {
   border-color: #6b5a2c;
 }
-.alignment.not-emitted {
+.alignment.not-applicable {
   color: var(--muted);
 }
 
-.not-emitted {
+.not-applicable {
   display: grid;
   gap: 3px;
   padding: 12px;
@@ -409,7 +409,7 @@ a {
   border-radius: 8px;
   color: var(--secondary);
 }
-.not-emitted p {
+.not-applicable p {
   margin: 0;
   color: var(--muted);
 }
@@ -812,4 +812,10 @@ select:focus-visible {
   .info-note th {
     width: 80px;
   }
+}
+
+.breakdown {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
 }

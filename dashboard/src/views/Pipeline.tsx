@@ -15,7 +15,7 @@ const STATE_MARK: Record<string, { mark: string; tone: string }> = {
   healthy: { mark: "✓", tone: "good" },
   "no events": { mark: "○", tone: "neutral" },
   idle: { mark: "○", tone: "neutral" },
-  "not emitted": { mark: "·", tone: "neutral" },
+  "not applicable": { mark: "·", tone: "neutral" },
   "stray (explained)": { mark: "≈", tone: "warning" },
   "possible break": { mark: "!", tone: "serious" },
   "stray (unexplained)": { mark: "✕", tone: "critical" },
@@ -86,7 +86,9 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
 }
 
 export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const { filters, registry } = useView();
+  const viewTitle = (view: string) =>
+    registry.signals.find((entry) => entry.view === view)?.view_title ?? view;
   const inScope = (row: Row) =>
     filters.harness === "" || row.harness === filters.harness;
   const loaders = data.loaders ?? [];
@@ -234,7 +236,7 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Fact rows per day"
-          subtitle="Curated spans and logs loaded per harness (UTC days)"
+          subtitle="Curated spans, logs, and activity-hook events loaded per harness (UTC days)"
           signals={["pipeline.freshness"]}
           span={12}
         >
@@ -424,7 +426,12 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) =>
+                  row.harness === "" ? (
+                    "unresolved (Codex hook)"
+                  ) : (
+                    <HarnessName value={row.harness} />
+                  ),
               },
               { key: "source", label: "Source" },
               {
@@ -436,6 +443,27 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
             ]}
             rows={(data.unrouted ?? []).filter(inScope)}
             empty="Every row is claimed by a route or a registered stray."
+          />
+        </Panel>
+        <Panel
+          title="Excluded signals"
+          subtitle="Signals left off the dashboard because at least one harness can produce them neither natively nor through an activity hook"
+          signals={["pipeline.coverage"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              { key: "title", label: "Signal" },
+              {
+                key: "view",
+                label: "View",
+                render: (row) => viewTitle(String(row.view)),
+              },
+              { key: "missing", label: "Missing for" },
+              { key: "reason", label: "Reason" },
+            ]}
+            rows={data.exclusions ?? []}
+            empty="No signal is excluded: every signal is reached by every harness it can exist for."
           />
         </Panel>
       </Section>

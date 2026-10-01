@@ -33,6 +33,11 @@ export default function Session({ response }: { response: SessionResponse }) {
                 { key: "model", label: "Model" },
                 { key: "effort", label: "Effort" },
                 {
+                  key: "task_type",
+                  label: "Task type",
+                  render: (row) => String(row.task_type ?? "") || "—",
+                },
+                {
                   key: "duration_seconds",
                   label: "Duration",
                   numeric: true,
@@ -69,6 +74,14 @@ export default function Session({ response }: { response: SessionResponse }) {
                   key: "clean_completion",
                   label: "Clean",
                   render: (row) => flag(row.clean_completion),
+                },
+                {
+                  key: "corrected_next",
+                  label: "Corrected next",
+                  render: (row) =>
+                    num(row.corrected_next) === 1 && row.correction_kind
+                      ? `yes (${String(row.correction_kind).replaceAll("_", " ")})`
+                      : flag(row.corrected_next),
                 },
                 { key: "observed", label: "Friction observed" },
               ]}

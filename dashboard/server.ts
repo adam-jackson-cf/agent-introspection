@@ -17,6 +17,8 @@ import {
 import {
   batch,
   clickhouse,
+  clickhouseUrl,
+  credentialsFromEnv,
   live,
   SNAPSHOT_DAYS,
   type Query,
@@ -26,9 +28,6 @@ import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 
 const ADDRESS = "127.0.0.1";
 const PORT = 4173;
-const CLICKHOUSE_URL =
-  process.env.INTROSPECTION_CLICKHOUSE_URL ??
-  "http://signoz-clickhouse.orb.local:8123";
 const WORKFLOW_DB =
   process.env.INTROSPECTION_WORKFLOW_DB ??
   join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
@@ -127,7 +126,7 @@ const params = (filters: Filters): Record<string, string> => ({
 });
 
 async function loadRegistry(query: Query): Promise<Registry> {
-  const { signals, support, routes, strays } = await batch(query, {
+  const { signals, support, routes, strays, exclusions } = await batch(query, {
     signals:
       "SELECT signal, view, view_title, title, question, unit, formula, scope FROM introspection.signals ORDER BY sort",
     support:
@@ -136,24 +135,84 @@ async function loadRegistry(query: Query): Promise<Registry> {
       "SELECT route, harness, harness_label, source, match, expect, description FROM introspection.signal_routes ORDER BY route, harness",
     strays:
       "SELECT stray, harness, source, match, reason FROM introspection.signal_strays ORDER BY stray",
+    exclusions:
+      "SELECT signal, view, title, missing, reason FROM introspection.signal_exclusions ORDER BY signal",
   });
   if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
-  return { signals, support, routes, strays } as unknown as Registry;
+  return {
+    signals,
+    support,
+    routes,
+    strays,
+    exclusions,
+  } as unknown as Registry;
 }
 
+/** Scalar fields of a finding subject (facts.failure_cluster or facts.repeated_correction). */
+const SUBJECT_SCALARS = [
+  "tool_family",
+  "failure_class",
+  "project",
+  "correction_kind",
+  "impact",
+  "sessions",
+];
+/** Array fields of a finding subject, read as JSON text and parsed after the query. */
+const SUBJECT_ARRAYS = ["harnesses", "tools", "task_types"];
+
 /**
- * A finding's harness, tool, and failure signature; NULL for findings without a
- * subject, or when the store predates the subject column and is not yet migrated.
+ * A finding's subject fields; NULL for findings without a subject, or when the
+ * store predates the subject column. Retired detectors' subjects named one
+ * `harness`, read here as a one-element `harnesses`.
  */
-const SUBJECT = (table: string, hasSubject: boolean) =>
-  ["harness", "tool", "signature"]
-    .map((field) =>
-      hasSubject
-        ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${field}') END AS ${field}`
-        : `NULL AS ${field}`,
-    )
-    .join(", ");
+const SUBJECT = (table: string, hasSubject: boolean) => {
+  const field = (path: string) =>
+    hasSubject
+      ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${path}') END`
+      : "NULL";
+  return [
+    ...SUBJECT_SCALARS.map((name) => `${field(name)} AS ${name}`),
+    ...SUBJECT_ARRAYS.filter((name) => name !== "harnesses").map(
+      (name) => `${field(name)} AS ${name}`,
+    ),
+    hasSubject
+      ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE coalesce(json_extract(${table}.subject, '$.harnesses'),
+          CASE WHEN json_extract(${table}.subject, '$.harness') IS NOT NULL
+            THEN json_array(json_extract(${table}.subject, '$.harness')) END) END AS harnesses`
+      : "NULL AS harnesses",
+  ].join(", ");
+};
+
+/** The latest proposal event of one type, or NULL (and NULL when the store has no events table). */
+const latestEvent = (hasEvents: boolean, type: string, expression: string) =>
+  hasEvents
+    ? `(SELECT ${expression} FROM proposal_events AS e WHERE e.proposal_id = p.id
+        AND e.event_type = '${type}' ORDER BY e.sequence DESC LIMIT 1)`
+    : "NULL";
+
+/** A structured success metric field; NULL for a legacy free-text metric. */
+const metricField = (path: string) =>
+  `CASE WHEN json_type(p.payload_json, '$.predicted_success_metric') = 'object'
+    THEN json_extract(p.payload_json, '$.predicted_success_metric.${path}') END`;
+
+/** Parses the JSON-array text columns of a workflow row into arrays. */
+function parseArrays(row: Row, keys: string[]): Row {
+  const out: Row = { ...row };
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value !== "string") continue;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      out[key] = Array.isArray(parsed)
+        ? parsed.map((item) => String(item))
+        : null;
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+}
 
 /** Opens the SQLite workflow store read-only for each request. */
 export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
@@ -173,21 +232,36 @@ export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
       const hasSubject = all("PRAGMA table_info(findings)").some(
         (row) => row.name === "subject",
       );
-      return {
-        findings:
-          all(`SELECT category, detector_id AS detector, trend_state AS state,
+      const hasEvents = tables.has("proposal_events");
+      const findings =
+        all(`SELECT category, detector_id AS detector, trend_state AS state,
             ${SUBJECT("findings", hasSubject)},
             occurrence_count AS occurrences, canonical_task_count AS tasks, local_day_count AS days,
             strftime('%Y-%m-%dT%H:%M:%SZ', first_seen_ns / 1e9, 'unixepoch') AS first_seen,
             strftime('%Y-%m-%dT%H:%M:%SZ', last_seen_ns / 1e9, 'unixepoch') AS last_seen
           FROM findings WHERE is_active = 1
-          ORDER BY trend_state = 'actionable' DESC, occurrence_count DESC, last_seen_ns DESC`),
-        proposals:
-          all(`SELECT p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
-            json_extract(p.payload_json, '$.target') AS target, f.category, p.created_at,
-            ${SUBJECT("f", hasSubject)},
-            CASE WHEN p.state = 'applied' THEN p.updated_at END AS applied_at
-          FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`),
+          ORDER BY trend_state = 'actionable' DESC, occurrence_count DESC, last_seen_ns DESC`);
+      const proposals =
+        all(`SELECT p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
+            json_extract(p.payload_json, '$.target') AS target, f.category, f.detector_id AS detector,
+            p.created_at, ${SUBJECT("f", hasSubject)},
+            ${metricField("metric")} AS metric,
+            ${metricField("harnesses")} AS metric_harnesses,
+            ${metricField("baseline_days")} AS baseline_days,
+            ${metricField("evaluation_days")} AS evaluation_days,
+            ${metricField("max_ratio")} AS max_ratio,
+            coalesce(${latestEvent(hasEvents, "applied", "e.created_at")},
+              CASE WHEN p.state = 'applied' THEN p.updated_at END) AS applied_at,
+            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.verdict')")} AS verdict,
+            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.ratio')")} AS evaluated_ratio,
+            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.baseline_rate')")} AS baseline_rate,
+            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.evaluation_rate')")} AS evaluation_rate
+          FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`);
+      return {
+        findings: findings.map((row) => parseArrays(row, SUBJECT_ARRAYS)),
+        proposals: proposals.map((row) =>
+          parseArrays(row, [...SUBJECT_ARRAYS, "metric_harnesses"]),
+        ),
       };
     } finally {
       db.close();
@@ -225,7 +299,10 @@ export function createApp(
   overrides: Partial<Dependencies> = {},
 ): (request: Request) => Promise<Response> {
   const dependencies: Dependencies = {
-    query: clickhouse(CLICKHOUSE_URL),
+    // Resolved only when no query is injected, so tests need no ClickHouse address.
+    query:
+      overrides.query ??
+      clickhouse(clickhouseUrl(), fetch, credentialsFromEnv()),
     workflow: sqliteWorkflow(),
     inbox: countInbox,
     assets: new Map(),
@@ -275,9 +352,11 @@ export function createApp(
     const bound = params(filters);
     const reg = await registry();
     const counts = await cachedRouteCounts(reg, bound);
+    // Snapshots keep one extra day (facts.SNAPSHOT_DAYS + 1), so a "Last 90 days"
+    // window whose start was computed a moment before this request still reads them.
     const withinSnapshots =
       Date.parse(filters.start) >=
-      dependencies.now().getTime() - SNAPSHOT_DAYS * 86_400_000;
+      dependencies.now().getTime() - (SNAPSHOT_DAYS + 1) * 86_400_000;
     let data: Record<string, Row[]>;
     if (id === "pipeline") {
       data = await pipelineData(query, reg, bound, counts, withinSnapshots);

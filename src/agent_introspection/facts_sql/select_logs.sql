@@ -18,8 +18,12 @@ WITH
         splitByRegexp('\\s+', cmd)
     ) AS cmd_tokens,
     if(empty(cmd_tokens), '', arrayElement(splitByChar('/', cmd_tokens[1]), -1)) AS command_head,
+    -- Only tools whose second token is a subcommand keep it, so a free-text argument
+    -- (`echo word`) never becomes a stored subcommand. Mirrors hooks.SUBCOMMAND_HEADS.
     if(
-        length(cmd_tokens) > 1 AND match(cmd_tokens[2], '^[a-z][a-z0-9:_.-]*$'),
+        length(cmd_tokens) > 1
+            AND command_head IN ('aws', 'brew', 'bun', 'bunx', 'cargo', 'claude', 'clawpatch', 'codegraph', 'codex', 'defaults', 'deno', 'docker', 'gcloud', 'gh', 'git', 'go', 'hdiutil', 'helm', 'infisical', 'just', 'kubectl', 'launchctl', 'make', 'npm', 'npx', 'omp', 'orca', 'pip', 'pipx', 'pnpm', 'poetry', 'security', 'systemctl', 'terraform', 'uv', 'volta', 'yarn')
+            AND match(cmd_tokens[2], '^[a-z][a-z0-9:_.-]*$'),
         cmd_tokens[2],
         ''
     ) AS command_sub,
@@ -61,9 +65,26 @@ WITH
     ) AS output_lines,
     -- Only a diagnostic line may become a signature; with none, the signature is
     -- empty rather than an arbitrary output line that could carry raw content.
-    arrayFirst(
-        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+    -- The most specific diagnostic line wins: the final exception line of a stack
+    -- trace (`ModuleNotFoundError: ...`), else the first diagnostic line that is not
+    -- a generic header or frame (`Traceback ...`, `Script failed`, `at ...`), else
+    -- the first diagnostic line.
+    arrayLast(
+        l -> match(l, '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(\\s*\\[[A-Z_]+\\])?(:|$)'),
         output_lines
+    ) AS exception_line,
+    arrayFirst(
+        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)')
+            AND NOT match(l, '^\\s*(Traceback \\(most recent call last\\):|triggerUncaughtException\\(|at |File "|node:internal|throw |raise |Script (failed|error:?)\\s*$|error: script "[^"]*" exited|={3,}|- Status: failed)'),
+        output_lines
+    ) AS specific_line,
+    multiIf(
+        exception_line != '', exception_line,
+        specific_line != '', specific_line,
+        arrayFirst(
+            l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+            output_lines
+        )
     ) AS error_line,
     -- The signature is capped at 160 characters. When the keyword lies past the cap,
     -- keep the line from the keyword on, so the signature is always diagnostic.

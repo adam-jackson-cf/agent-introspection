@@ -90,6 +90,76 @@ def require_successful_validation(evidence: dict[str, Any]) -> None:
         raise ValueError("validation evidence requires a non-empty list of passed checks")
 
 
+CLUSTER_TASK_RATE = "cluster_task_rate"
+CORRECTION_TASK_RATE = "correction_task_rate"
+SUCCESS_METRICS = (CLUSTER_TASK_RATE, CORRECTION_TASK_RATE)
+MIN_METRIC_WINDOW_DAYS = 7
+_SUCCESS_METRIC_KEYS = frozenset(
+    {"metric", "harnesses", "baseline_days", "evaluation_days", "max_ratio"}
+)
+
+
+@dataclass(frozen=True)
+class SuccessMetric:
+    """The finding's task rate after application against the rate before it.
+
+    Success means (matching tasks per task over ``evaluation_days`` after the proposal
+    was applied) <= ``max_ratio`` x (the same over ``baseline_days`` before), counted
+    only for ``harnesses``. ``cluster_task_rate`` matches tasks that hit a failure
+    cluster; ``correction_task_rate`` matches labelled tasks in the finding's project
+    whose next prompt was a correction of the finding's kind.
+    """
+
+    metric: str
+    harnesses: tuple[str, ...]
+    baseline_days: int
+    evaluation_days: int
+    max_ratio: float
+
+    @classmethod
+    def parse(cls, value: object) -> SuccessMetric:
+        """Validate a structured success metric; free-text metrics are rejected."""
+        if not isinstance(value, dict) or set(value) != _SUCCESS_METRIC_KEYS:
+            raise ValueError(
+                "predicted_success_metric must be an object with exactly "
+                f"{sorted(_SUCCESS_METRIC_KEYS)}"
+            )
+        if value["metric"] not in SUCCESS_METRICS:
+            raise ValueError(f"predicted_success_metric.metric must be one of {SUCCESS_METRICS}")
+        harnesses = value["harnesses"]
+        if (
+            not isinstance(harnesses, list)
+            or not harnesses
+            or not all(isinstance(item, str) and item.strip() for item in harnesses)
+            or len(set(harnesses)) != len(harnesses)
+        ):
+            raise ValueError("predicted_success_metric.harnesses must be unique harness names")
+        for key in ("baseline_days", "evaluation_days"):
+            days = value[key]
+            if isinstance(days, bool) or not isinstance(days, int) or days < MIN_METRIC_WINDOW_DAYS:
+                raise ValueError(
+                    f"predicted_success_metric.{key} must be an integer >= {MIN_METRIC_WINDOW_DAYS}"
+                )
+        ratio = value["max_ratio"]
+        if isinstance(ratio, bool) or not isinstance(ratio, int | float) or not 0 < ratio <= 1:
+            raise ValueError("predicted_success_metric.max_ratio must be in (0, 1]")
+        return cls(
+            value["metric"],
+            tuple(harnesses),
+            value["baseline_days"],
+            value["evaluation_days"],
+            float(ratio),
+        )
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> SuccessMetric | None:
+        """Read a stored proposal's metric; ``None`` for a legacy free-text metric."""
+        try:
+            return cls.parse(payload.get("predicted_success_metric"))
+        except ValueError:
+            return None
+
+
 @dataclass(frozen=True)
 class ProposalInput:
     finding_id: str
@@ -108,10 +178,11 @@ class ProposalInput:
     rejected_alternatives: list[str]
     validation_criteria: list[str]
     rollback_criteria: list[str]
-    predicted_success_metric: str
+    predicted_success_metric: dict[str, Any]
     create_skill_handoff: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        SuccessMetric.parse(self.predicted_success_metric)
         tiers = tuple(entry.get("tier") for entry in self.established_tool_audit)
         if tiers != CANONICAL_TIER_LABELS:
             raise ValueError("established-tool audit must evaluate the canonical tier order")
@@ -161,6 +232,60 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def metric_for_subject(subject: dict[str, Any]) -> str | None:
+    """Return the success metric a finding subject is measured by, if it has one."""
+    if "tool_family" in subject and "failure_class" in subject:
+        return CLUSTER_TASK_RATE
+    if "project" in subject and "correction_kind" in subject:
+        return CORRECTION_TASK_RATE
+    return None
+
+
+def _require_metric_matches_finding(proposal: ProposalInput, subject_json: str) -> None:
+    """Require the metric to measure the finding's kind over harnesses it was seen in."""
+    subject = json.loads(subject_json) if subject_json else {}
+    metric = SuccessMetric.parse(proposal.predicted_success_metric)
+    expected = metric_for_subject(subject)
+    if expected is not None and metric.metric != expected:
+        raise ValueError(f"success metric for this finding must be {expected}")
+    observed = subject.get("harnesses")
+    if not isinstance(observed, list):
+        return
+    unknown = sorted(set(metric.harnesses) - {str(item) for item in observed})
+    if unknown:
+        raise ValueError(f"success metric harnesses are not in the finding: {unknown}")
+
+
+def append_proposal_event(
+    connection: sqlite3.Connection,
+    proposal_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    """Append one immutable event after the proposal's latest, inside the caller's transaction."""
+    if not connection.in_transaction:
+        raise RuntimeError("appending a proposal event requires an open transaction")
+    sequence = connection.execute(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM proposal_events WHERE proposal_id = ?",
+        (proposal_id,),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        INSERT INTO proposal_events (
+            id, proposal_id, sequence, event_type, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            proposal_id,
+            sequence,
+            event_type,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            _now(),
+        ),
+    )
+
+
 def create_proposal(
     connection: sqlite3.Connection, proposal: ProposalInput, *, outer_transaction: bool = False
 ) -> str:
@@ -173,12 +298,13 @@ def create_proposal(
     payload = json.dumps(proposal.__dict__, sort_keys=True, separators=(",", ":"))
     with _transaction(connection, outer_transaction=outer_transaction):
         finding = connection.execute(
-            "SELECT trend_state FROM findings WHERE id = ?", (proposal.finding_id,)
+            "SELECT trend_state, subject FROM findings WHERE id = ?", (proposal.finding_id,)
         ).fetchone()
         if finding is None:
             raise KeyError(proposal.finding_id)
         if finding[0] != "actionable":
             raise ValueError("only actionable findings can produce proposals")
+        _require_metric_matches_finding(proposal, str(finding[1] or ""))
         connection.execute(
             """
             INSERT INTO proposals (

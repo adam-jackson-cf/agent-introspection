@@ -1,0 +1,114 @@
+id: ux-page
+version: 2
+kind: judgement
+purpose: >
+  Grades one Agent Introspection dashboard page against the UX principles in docs/ux/principles.md and the visual standard in
+  docs/ux/DESIGN.md. Score from the running page at 2560 × 1440 (screenshot) and its source. Cite the screenshot file
+  and code lines in each rationale. It ranks UX fixes; it never judges the domain logic behind the numbers.
+scale: {min: 0, max: 3}
+criteria:
+  - id: zoomed_out_first
+    weight: 0.20
+    question: (P0) Does the page open on its answer, with depth one deliberate step away (L1 → L2 in place → L3 page)?
+    anchors:
+      0: The page's answer isn't above the fold at 1330 px; the reader must scroll or click to learn what the page is telling them
+      1: Part of the answer is above the fold, but it's buried among controls, prose or L3 detail
+      2: The answer is at L1, but L2 detail sits in a long scroll away from what it explains, or L3 depth is open by default
+      3: The answer is at L1 with no scrolling; L2 sits in place beside what it explains; L3 is linked, not inlined
+  - id: number_clarity
+    weight: 0.15
+    question: (P1) Can every figure answer what, units, period, as-of and source, with uncertainty shown?
+    anchors:
+      0: Bare numbers with missing units or periods, or point estimates where a range or sample size exists
+      1: Units present but period, basis or freshness often unclear
+      2: Labelled with units and periods; freshness or source missing for some synced or external figures
+      3: Every figure carries label, unit, period and basis; freshness sits beside the figures it affects; the source is at L2; formats are consistent
+  - id: cognitive_load
+    weight: 0.15
+    question: (P2) Is the load low, with one primary visual per L1 zone, a short reading budget, grouped controls and no repetition?
+    anchors:
+      0: A wall of charts, tables or prose with no hierarchy; the same facts repeated in several forms
+      1: Clear sections, but L1 has several competing visuals or paragraphs, or controls sit far from what they change
+      2: Mostly calm; one or two lapses (a repeated callout, emoji as signal, an over-long label)
+      3: Within the L1 reading budget; one primary visual per zone; controls beside what they drive; nothing said twice at the same level
+  - id: consistency
+    weight: 0.10
+    question: (P3) Does the page use the shared components, DESIGN.md tokens, status words and vocabulary?
+    anchors:
+      0: Mostly one-off markup, colour literals and page-specific wording or state words
+      1: Shared components mixed with notable one-offs (hard-coded colours, custom cards, different words for the same state)
+      2: Shared components and tokens with minor deviations
+      3: Only shared components and tokens; every state uses its scale's word and colour; the same terms as every other page
+  - id: logic_in_source
+    weight: 0.05
+    question: (P4) Does the page only format results, with every number, state and threshold from the data source?
+    anchors:
+      0: The page computes its main figures or states itself
+      1: Several calculations or thresholds live in page code
+      2: One minor calculation or threshold lives in page code
+      3: The page only formats results from the data source
+  - id: layout_fit
+    weight: 0.10
+    question: (P6) Does the page fit the 2560 × 1440 reference screen as P6 describes, while keeping prose at a readable measure?
+    anchors:
+      0: The layout fights the reference screen (a narrow column on a wide screen, horizontal scroll on a phone), or text runs the full width
+      1: Fits the screen, but content stacks where P6 wants it side by side, or charts have the wrong proportions
+      2: Follows P6 with some stacking, over-tall charts or over-long text lines
+      3: Laid out as P6 describes; comparisons placed as P6 says; chart proportions within P6's range; prose capped at about 80 characters a line
+  - id: terminology
+    weight: 0.10
+    question: Does every expert term have an instant definition from the single source?
+    anchors:
+      0: Expert terms with no definitions anywhere on the page
+      1: Definitions only in a collapsed help section or native title tooltips
+      2: Most terms have instant definitions, but some are missing or defined on the page itself
+      3: Every expert term has an instant definition from the single source
+  - id: page_structure
+    weight: 0.05
+    question: Does the page follow the shared structure, built from the shared layout?
+    anchors:
+      0: The page has its own structure
+      1: The shared structure in a different order, or rebuilt in page code
+      2: The shared structure with one extra or missing part
+      3: The shared structure, built from the shared layout
+  - id: navigation
+    weight: 0.07
+    question: Is the page in the right group, and does it link to related pages at the point of need, with descriptive link text?
+    anchors:
+      0: Hard to find or misgrouped, with no links out
+      1: Correctly grouped, but related pages aren't linked where they're needed
+      2: Some point-of-need links; a few dead ends or vague link text
+      3: Every warning, figure or item that has a home elsewhere links to it with a descriptive label
+  - id: analysis_support
+    weight: 0.10
+    question: (A8) Can a reader go from the page's question to a conclusion on this page, with each panel saying how to read it?
+    anchors:
+      0: The page shows data but nothing connects it to the question; the reader must work out what to conclude
+      1: The headline figures relate to the question, but panels don't say what they measure, their denominator or which direction is worse
+      2: Most panels say how to read them, but a comparison the question needs is split across panels or scales, or a caveat sits away from its figure
+      3: The headline figures answer the question; every panel says how to read it; needed comparisons sit side by side on one scale; caveats sit beside their figures
+  - id: readability
+    weight: 0.10
+    question: (DESIGN.md Typography) Is every piece of text readable at the reference screen, using the type roles?
+    anchors:
+      0: Much of the text is below 12px, low contrast or tracked capitals
+      1: Body text is readable, but labels, ticks, table headers or captions fall below 12px or use tracked capitals
+      2: The type roles are used, with one or two places below 12px or with weak hierarchy
+      3: Every text uses its type role, nothing is below 12px, headings step clearly, and numbers use tabular figures
+  - id: data_viz
+    weight: 0.10
+    question: (DESIGN.md Charts, A1, A2) Do charts use the palettes by role, at readable proportions, with gaps and labels that let the reader compare?
+    anchors:
+      0: Charts reuse colours for different meanings, draw absent data as zero, or are too small to read
+      1: Palettes by role, but charts are cramped (under 280px high) or lack legends, units or readouts
+      2: Readable charts with one lapse (a non-harness series in a harness colour, a missing unit, a hard-to-compare stack)
+      3: Every chart uses its palette by role, is 280–360px high, labels its unit and series, shows gaps, and has a readout on every mark
+gates:
+  - {criterion: zoomed_out_first, at_most: 0, cap: Rework, reason: "Fails the overriding principle: the page doesn't open on its answer."}
+  - {criterion: number_clarity, at_most: 0, cap: Needs work, reason: "Numbers the reader can't interpret undermine every decision on the page."}
+band_order: [Exemplary, Good, Needs work, Rework]
+bands:
+  - {min: 85, label: Exemplary}
+  - {min: 65, label: Good}
+  - {min: 40, label: Needs work}
+  - {min: 0, label: Rework}

@@ -71,7 +71,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Reasoning tokens"
           value={fmtCount(totalReasoning)}
-          detail={`across ${fmtCount(spend.calls!)} model calls`}
+          detail={`across ${fmtCount(spend.calls!)} model calls (Claude Code: turns)`}
           signals={["effort.reasoning_tokens"]}
         />
         <Kpi
@@ -96,7 +96,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily reasoning tokens by effort"
-          subtitle="Model calls; unset means the provider default, not no reasoning"
+          subtitle="Model calls (Claude Code per turn); unset means the provider default, not no reasoning"
           signals={["effort.reasoning_tokens", "effort.level"]}
         >
           <DailyChart
@@ -283,7 +283,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Reasoning spend by effort"
-          subtitle="Model calls that report reasoning tokens"
+          subtitle="Model calls that report reasoning tokens; a Claude Code call is one turn, whose thinking tokens the Stop hook sums"
           signals={["effort.reasoning_tokens", "effort.reasoning_share"]}
           span={12}
         >

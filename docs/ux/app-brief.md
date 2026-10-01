@@ -1,0 +1,93 @@
+# App brief: Agent Introspection dashboard
+
+The decisions behind `docs/ux/DESIGN.md` and `docs/ux/principles.md`, built from [`discovery.md`](discovery.md) and the
+user's answers. Approved 2026-09-30. Rerun `setup-ux-standards` after changing an answer; it starts from
+this file.
+
+## Confirmed from evidence
+
+High-confidence findings that shape the standards. Nothing here was asked; correct any that are wrong.
+
+| Finding | Evidence (row ID and `file:line`) |
+| --- | --- |
+| One person uses it to explore model usage and agent process across omp, Codex app-server/CLI/exec and Claude Code, and to find problems and improvements | App purpose; `README.md:62-64` |
+| Second job: track findings, intervention proposals and approval history; the app never applies a proposal | DF5, AC8; `README.md:62-66` |
+| Ten question-led views V1–V10 in reading order (Pipeline, Cache efficiency, Reasoning effort, Tool failures, Friction, Guardrails, Provider, Recurrence, Intent and corrections, Interventions) plus Session drill-down | PG1–PG11; `dashboard/src/App.tsx` |
+| Read-only: numbers come from ClickHouse facts via a loopback Bun server; workflow state from SQLite | DF3, DF5; `dashboard/server.ts:23-38` |
+| History exists: snapshots for the last 90 days, live views for older windows | DF4; `dashboard/server/clickhouse.ts:48-64` |
+| Private data: raw prompt, command, argument and output text is removed at materialisation; session UI masks prompt detail | DF7, V1DF5; `dashboard/server/pipeline.ts:24-28` |
+| Tokens live in 15 CSS custom properties (`dashboard/src/styles.css:3-17`) plus TS constants in `dashboard/src/format.ts`; 85 colour literals sit outside them | TK1–TK19 |
+| Coverage status scale, 7 levels: healthy (good), no events, idle, not emitted (neutral), stray (explained) (warning), possible break (serious), stray (unexplained) (critical) | V2ST1; `dashboard/src/views/Pipeline.tsx:14-22` |
+| Route alignment scale, 3 levels: aligned, differs, not emitted | STS2; `dashboard/src/contracts.ts:30-48` |
+| Parity/recombination match, 2 levels: healthy, possible break | V2ST2; `dashboard/src/views/Pipeline.tsx:315-347` |
+| Harness palette (categorical, colour follows the harness, never rank): omp `#3987e5`, Codex app-server `#d95926`, Codex CLI `#199e70`, Codex exec `#c98500`, Claude Code `#d55181` | CP1; `dashboard/src/format.ts:3-14` |
+| Effort palette (ordinal low → xhigh blue ramp) with mixed and unset set apart (neutral) | CP3; `dashboard/src/format.ts:25-45` |
+| Dark theme, purple accent, Inter 13 px, tabular numbers, 12-column panel grid, content max 1540 px, charts 170 px high | TK1, LA3–LA5; `dashboard/src/styles.css:3-19,157` |
+| Every panel shows registry provenance behind an `i` button; missing values render "—", unsupported signals a not-emitted notice | CO1, CO3, AC5 |
+
+## Questions and answers
+
+One row per low-confidence finding, conflict, module decision or missing required fact. **Basis** marks the
+proposed default as `observed`, `inferred` or `guessed`. "There is no X" is a valid answer.
+
+| # | Question | What it appears to be, and why (evidence) | Proposed default | Basis | Answer |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Who is the user, and how expert? | README says "one person" (`README.md:62-64`); views use unexplained terms (TTFT, sandbox, stray) | You alone; expert in agent, token, cache and telemetry vocabulary → `dense` | guessed | Default accepted: expert, dense |
+| 2 | Reference viewport, and are phones in scope? | Content caps at 1540 px (`styles.css:157`); breakpoints at 1050 px and 640 px (`styles.css:744,787`); earlier draft used 1440 × 1000 (R05) | 1440 × 1000 desktop; narrow windows stack as today; phones out of scope | guessed | 2560 × 1440 window reference (half the user's 5120 × 1440 monitor); content left-aligned against the sidebar (no gap), adapting up to 2560px and down to 1024px so it works on any monitor; phones out of scope |
+| 3 | Visual direction: document as-is or change? | Dark surfaces, purple accent, Inter (TK1) | `document`: keep it, change only values that fail contrast | inferred | `revise`, scoped: improve layout, styling, font readability and data viz; keep the dark theme, purple accent, Inter and harness palette |
+| 4 | verdict module: add a generated verdict sentence above "At a glance"? | Every view opens with 4 KPIs but no sentence; only Pipeline has a status scale (V1/V2 Notes) | Not adopted: views are question-led explorations with no page-level status; keep the KPI strip under page-skeleton | inferred | Default accepted: not adopted |
+| 5 | deltas module: show change vs an earlier period on key figures? | 90-day history exists (DF4); only Interventions compares pre/post (V1DF4) | Adopt (planned), baseline "the previous window of the same length"; backlog item, no code now | inferred | Not adopted: historical comparison is covered by the time-range filter (any window up to and beyond 90 days) |
+| 6 | action-hub module: one ranked list of next actions? | Recurrence marks actionable repeats (V2VO3); Interventions shows actionable findings and proposals (V1ST1); next step today is the CLI `candidates export` (V1AC2) | Not adopted: the dashboard is read-only and actions happen in the CLI workflow; Recurrence links to Interventions | inferred | Default accepted: not adopted |
+| 7 | term-definitions module | Registry `InfoNote` per panel (CO3); native `title` on contributors and coverage cells (CO2, V2AC1) | Adopt (exists): the signal registry is the single source; replace native `title` tooltips with styled popovers | observed | Adopted (exists); improve the info `i` overlays and replace native `title` tooltips with styled popovers |
+| 8 | page-skeleton module | V1–V10 share heading + question, filters, "At a glance" (4 KPIs), "Daily trend", question-led sections, detail tables; Session differs | Adopt (exists) with that order; Session exempt | observed | Default accepted |
+| 9 | navigation module | Sidebar of 10 views in reading order (AC1) | Adopt (exists) | observed | Default accepted |
+| 10 | `not emitted` appears in both the coverage and alignment scales. Same meaning? | STS1, STS2 | Same meaning (harness never produces the signal); one definition | inferred | Keep the label as it is |
+| 11 | Parity/recombination reuse `healthy` / `possible break` for a match check | V2ST2 | Rename to `match` / `mismatch` so the coverage words keep one meaning | inferred | Keep `healthy` / `possible break` as they are |
+| 12 | Non-harness series reuse harness colours (Friction interrupt/steer, `SERIES`) | V1TK2, TK6 | Give non-harness series their own palette so a colour never means two things | inferred | Default accepted (colour only; no label changes) |
+| 13 | "TTFT" vs "time to first token" | V2VO1 | Spell out once per page with "(TTFT)", abbreviation in tables | inferred | Keep the labels as they are |
+| 14 | "project" vs "working directory" | V2VO4 | "project" in UI | inferred | Keep the labels as they are |
+| 15 | "harness" (UI) vs "producer" (docs) | VO1 | "harness" in UI | observed | Keep the labels as they are |
+
+## Pattern modules
+
+| Module | Decision (`adopted (exists)`, `adopted (planned)`, or `not applicable because …`) | Evidence or answer |
+| --- | --- | --- |
+| verdict | not applicable because views are question-led explorations with no page-level status scale except Pipeline; the headline figures stay under page-skeleton | Q4 |
+| deltas | not applicable because the time-range filter already lets the user compare any historical window (user answer) | Q5 |
+| action-hub | not applicable because the dashboard is read-only and next actions happen in the CLI workflow | Q6 |
+| term-definitions | adopted (exists) | Q7 |
+| page-skeleton | adopted (exists) | Q8 |
+| navigation | adopted (exists) | Q9 |
+
+## App principles
+
+| ID | Principle | Evidence (row IDs) | Approved |
+| --- | --- | --- | --- |
+| A1 | Absent data is never shown as zero: "—" for missing values, a not-emitted notice for unsupported signals | CO1, V1CP3, V1DF3 | yes |
+| A2 | A harness keeps one colour everywhere; colour never encodes rank | CP1, TK5 | yes |
+| A3 | Every page answers one stated question; its sections are sub-questions | PG1–PG9, PG11 | yes |
+| A4 | The dashboard is read-only and never applies a proposal | DF5, AC8 | yes |
+| A5 | Every aggregate that names sessions links to the session evidence | AC6, V1AC1, V2AC3 | yes |
+| A6 | Every panel states its provenance from the signal registry | CO3, AC5, DF2 | yes |
+| A7 | Ratios aggregate numerator and denominator before dividing; "All" is the union of harnesses | VO6, V1DF2 | yes |
+| — | Raw prompt, command, argument and output text is never displayed | DF7, V1DF5 | yes, written as core principle P5 |
+| A8 | Each page leads the reader from its question to a conclusion (from the user's stated review focus) | PG1–PG9, PG11, V1/V2 Notes | yes |
+| A9 | Labels and wording stay as they are; standards change layout, styling, type and data viz, not language | User answer to Q10–Q15 | yes |
+
+## Derived
+
+| Value | Result | Rule |
+| --- | --- | --- |
+| P6 variant | `panoramic` rules for height and prose, with content left-anchored to the sidebar and capped at 2560px (user answer; overrides the variant's no-cap rule) | `panoramic` ≥ 2560 px wide; `desktop` 1280–2559 px, desktop only; `mobile-first` when phones are in scope |
+| Fold budget | ~1330 px (1440 − menu bar and browser chrome) | Viewport height minus browser chrome; L1 fits inside it |
+| Baseline review | `run` | `run` for an existing app, `skip` for a new build |
+| Density | `dense` | `dense` for expert users, `guided` for mixed or novice |
+| Visual direction | `revise` (layout, type readability, data viz; identity kept) | `document` by default; `revise` when the user asks for changes; `new` for a new build |
+| Status scales | coverage 7: healthy, no events, idle, not emitted, stray (explained), possible break, stray (unexplained); alignment 3: aligned, differs, not emitted; parity match 2: healthy, possible break | Each scale's words in order, with its level count |
+| Chart palettes | harness: categorical; non-harness series: categorical; effort: ordinal + neutral (mixed, unset) | Each palette's role |
+| Screenshot folder | `docs/ux/reviews/captures/` (git-ignored) | `docs/ux/reviews/captures/`, git-ignored |
+
+## User focus
+
+The user's priorities, 2026-09-30: better layout, styling and font readability; better data viz; and a review of
+how each page's UX supports analysing its data for the page's task and the conclusions a reader should draw.

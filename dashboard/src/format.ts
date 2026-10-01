@@ -1,16 +1,16 @@
 import { HARNESSES, type Harness, type Row } from "./contracts";
+import { EFFORT_TOKENS, HARNESS_TOKENS } from "./tokens";
 
 /**
- * Harness identity colors: the dark-mode categorical slots 1–5 of the dataviz
- * reference palette, validated on the panel surface #13161c (all checks pass).
- * Color follows the harness everywhere; it never follows rank.
+ * Harness identity colors: categorical `cat-1`…`cat-5` in docs/ux/DESIGN.md, read from
+ * the token mirror. Color follows the harness everywhere; it never follows rank.
  */
 export const HARNESS_COLOR: Record<Harness, string> = {
-  "oh-my-pi": "#3987e5",
-  "codex-app-server": "#d95926",
-  codex_cli_rs: "#199e70",
-  codex_exec: "#c98500",
-  "claude-code": "#d55181",
+  "oh-my-pi": HARNESS_TOKENS[0],
+  "codex-app-server": HARNESS_TOKENS[1],
+  codex_cli_rs: HARNESS_TOKENS[2],
+  codex_exec: HARNESS_TOKENS[3],
+  "claude-code": HARNESS_TOKENS[4],
 };
 export const HARNESS_LABEL: Record<Harness, string> = {
   "oh-my-pi": "omp",
@@ -19,13 +19,17 @@ export const HARNESS_LABEL: Record<Harness, string> = {
   codex_exec: "Codex exec",
   "claude-code": "Claude Code",
 };
-/** Categorical slots for non-harness series, in fixed order. */
-export const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"];
+/**
+ * Categorical slots for non-harness series, in fixed order. They still reuse
+ * the harness tokens; DESIGN.md assigns non-harness series `cat-6`…`cat-8`
+ * (PART_TOKENS), which is an open item in the UX review backlog.
+ */
+export const SERIES = [...HARNESS_TOKENS];
 
 /**
- * Effort is ordinal: one blue ramp low → xhigh (validated as an ordinal ramp on
- * #13161c). The data holds low, medium, high, xhigh, unset, and mixed; unset
- * (provider default) and mixed sit apart from the ramp.
+ * Effort is ordinal: one blue ramp low → xhigh (`seq-effort-*` in DESIGN.md).
+ * The data holds low, medium, high, xhigh, unset, and mixed; unset (provider
+ * default) and mixed sit apart from the ramp.
  */
 export const EFFORT_ORDER = [
   "low",
@@ -35,14 +39,7 @@ export const EFFORT_ORDER = [
   "mixed",
   "unset",
 ];
-export const EFFORT_COLOR: Record<string, string> = {
-  low: "#184f95",
-  medium: "#2a78d6",
-  high: "#6da7ec",
-  xhigh: "#b7d3f6",
-  mixed: "#9085e9",
-  unset: "#6b7280",
-};
+export const EFFORT_COLOR: Record<string, string> = { ...EFFORT_TOKENS };
 export const effortRank = (effort: string) => {
   const index = EFFORT_ORDER.indexOf(effort);
   return index === -1 ? EFFORT_ORDER.length : index;

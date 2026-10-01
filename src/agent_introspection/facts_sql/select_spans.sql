@@ -9,10 +9,25 @@
 WITH
     arrayFilter(l -> l != '', splitByChar('\n', distributed_signoz_index_v3.status_message)) AS status_lines,
     -- Only a diagnostic line is kept; with none the stored status is empty, so
-    -- arbitrary raw output never reaches the durable table.
-    arrayFirst(
-        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+    -- arbitrary raw output never reaches the durable table. The most specific line
+    -- wins, as in the log projection: a stack trace's final exception line, else the
+    -- first diagnostic line that is not a generic header or frame, else the first.
+    arrayLast(
+        l -> match(l, '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(\\s*\\[[A-Z_]+\\])?(:|$)'),
         status_lines
+    ) AS exception_line,
+    arrayFirst(
+        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)')
+            AND NOT match(l, '^\\s*(Traceback \\(most recent call last\\):|triggerUncaughtException\\(|at |File "|node:internal|throw |raise |Script (failed|error:?)\\s*$|error: script "[^"]*" exited|={3,}|- Status: failed)'),
+        status_lines
+    ) AS specific_line,
+    multiIf(
+        exception_line != '', exception_line,
+        specific_line != '', specific_line,
+        arrayFirst(
+            l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+            status_lines
+        )
     ) AS status_line,
     -- The stored text is capped at 160 characters. When the keyword lies past the cap,
     -- keep the line from the keyword on, so the stored text is always diagnostic.
@@ -36,15 +51,18 @@ SELECT
         1,
         160
     ) AS status_message,
+    -- omp renamed its `pi.gen_ai.*` attributes to `omp.gen_ai.*` on 2026-09-29; both
+    -- are stored under the original `pi.gen_ai.*` names so every view reads one key.
+    -- Tool intent text is dropped under any prefix.
     mapFilter(
         (k, v) -> k NOT IN (
-            'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent', 'user_prompt', 'prompt', 'user.email',
+            'gen_ai.tool.description', 'user_prompt', 'prompt', 'user.email',
             'user.account_id', 'user.account_uuid', 'user.id', 'organization.id'
-        ),
-        attributes_string
+        ) AND NOT endsWith(k, '.tool.call.intent'),
+        mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_string)
     ) AS attrs_string,
-    attributes_number AS attrs_number,
-    attributes_bool AS attrs_bool,
+    mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_number) AS attrs_number,
+    mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_bool) AS attrs_bool,
     now64(3) AS loaded_at
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE serviceName IN ('codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code')

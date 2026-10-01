@@ -116,9 +116,10 @@ facts without the harness.
 
 ## 3. Producer routes
 
-Each route names the rows of one or more harnesses in `introspection.spans` or
-`introspection.logs` that carry a signal. For an `events` route, no rows while
-the harness is otherwise active is a valid observation.
+Each route names the rows of one or more harnesses in `introspection.spans`,
+`introspection.logs`, or, for source `hooks`, the activity-hook events in
+`introspection.hook_rows` that carry a signal. For an `events` route, no rows
+while the harness is otherwise active is a valid observation.
 
 | Route | Harnesses | Source | Expect | Predicate | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -137,11 +138,22 @@ the harness is otherwise active is a valid observation.
 | `claude.tool_result` | Claude Code | logs | rows | `event_name = 'tool_result'` | `tool_result` log with `success` and `error_type`. |
 | `codex.tool_decision` | Codex app-server, Codex CLI, Codex exec | logs | rows | `event_name = 'codex.tool_decision'` | `codex.tool_decision` log with `decision` and `source` (config or user). |
 | `claude.tool_decision` | Claude Code | logs | rows | `event_name = 'tool_decision'` | `tool_decision` log with `decision` and `source`. |
-| `codex.sandbox_outcome` | Codex app-server, Codex CLI, Codex exec | logs | events | `event_name = 'codex.sandbox_outcome'` | `codex.sandbox_outcome` log with `outcome` for a sandboxed command. |
 | `codex.sampling` | Codex app-server, Codex CLI, Codex exec | spans | rows | `name = 'run_sampling_request'` | `run_sampling_request` span: one sampling step including retries, response processing, and in-flight tool draining. |
 | `codex.try_sampling` | Codex app-server, Codex CLI, Codex exec | spans | rows | `name = 'try_run_sampling_request'` | `try_run_sampling_request` span: one attempt inside a sampling step. |
 | `codex.response_completed` | Codex app-server, Codex CLI, Codex exec | logs | rows | `event_name = 'codex.sse_event' AND attrs_string['event.kind'] = 'response.completed'` | `codex.sse_event` with `event.kind = 'response.completed'`: one per response stream, carrying `ttft_ms`, output tokens, and `error.message` when the stream fails. |
 | `claude.api_error` | Claude Code | logs | events | `event_name IN ('api_error', 'api_retries_exhausted')` | `api_error` (one per failed attempt) and `api_retries_exhausted` logs. |
+| `codex.agent_spawn` | Codex app-server, Codex CLI, Codex exec | logs | events | `event_name = 'codex.agent_communication' AND attrs_string['kind'] = 'spawn'` | `codex.agent_communication` spawn send: a subagent thread started from `sender_thread_id`. |
+| `claude.user_prompt` | Claude Code | logs | rows | `event_name = 'user_prompt'` | `user_prompt` log, one per submitted prompt; its text (exported with `OTEL_LOG_USER_PROMPTS=1`) is labelled by `facts sync` with Jev and never stored in the facts. |
+| `codex.user_prompt` | Codex app-server, Codex CLI, Codex exec | logs | rows | `event_name = 'codex.user_prompt'` | `codex.user_prompt` log, one per submitted prompt; its text (exported with `[otel] log_user_prompt = true`) is labelled by `facts sync` with Jev and never stored in the facts. |
+| `omp.user_prompt` | omp | logs | rows | `event_name = 'omp.user_prompt'` | `omp.user_prompt` log sent by the omp activity extension on `before_agent_start` (omp exports no prompt event of its own); labelled by `facts sync` with Jev. |
+| `hook.prompt_submitted` | Claude Code | hooks | rows | `event_type = 'prompt_submitted'` | Activity hook `prompt_submitted`: prompt ID, length, and whether a turn was still running. |
+| `hook.tool_call` | omp, Claude Code | hooks | rows | `event_type = 'tool_call'` | Activity hook `tool_call` (Claude Code `PreToolUse`, omp `tool_call`): command head and subcommand, targets, gate-bypass flag, and argument hash derived from the arguments, which are not stored. |
+| `hook.tool_failure` | Claude Code | hooks | events | `event_type = 'tool_failure'` | Activity hook `tool_failure` (Claude Code `PostToolUseFailure`): the most specific diagnostic line of the error, normalized. |
+| `hook.turn_stop` | Claude Code | hooks | rows | `event_type = 'turn_stop'` | Activity hook `turn_stop` (Claude Code `Stop`): thinking tokens summed over the turn's assistant messages in the transcript, and the served model. |
+| `hook.subagent_start` | Claude Code | hooks | events | `event_type = 'subagent_start'` | Activity hook `subagent_start` (Claude Code `SubagentStart`) with the parent prompt ID. |
+| `hook.approval` | omp | hooks | events | `event_type = 'approval'` | Activity hook `approval` (omp `tool_approval_resolved`); omp's default approval mode approves without asking, so decisions are rare. |
+| `hook.retry` | omp | hooks | events | `event_type = 'retry'` | Activity hook `retry` (omp `auto_retry_start` / `auto_retry_end`) with the attempt number. |
+| `hook.steer` | omp | hooks | events | `event_type = 'steer'` | Activity hook `steer` (omp `input` while the agent is running). |
 
 ### Registered strays
 
@@ -273,20 +285,6 @@ Scope: system (not per harness).
 | Codex exec | aligned | `codex.usage` | — |
 | Claude Code | aligned | `claude.usage` | Includes cache-creation input. |
 
-#### Cache creation (`usage.cache_creation`)
-
-- **Question:** How much input was written to cache?
-- **Unit:** tokens
-- **Formula:** Σ cache_creation_input. Part of input and uncached input, never of cached input.
-
-| Harness | Alignment | Route | Note |
-| --- | --- | --- | --- |
-| omp | aligned | `omp.chat` | `gen_ai.usage.cache_creation.input_tokens`; non-zero only on Anthropic chats. |
-| Codex app-server | differs | `codex.usage` | `cache_write_token_count` is reported but has been 0 on every event since 2026-08-24. |
-| Codex CLI | differs | `codex.usage` | `cache_write_token_count` is reported but has been 0 on every event since 2026-08-24. |
-| Codex exec | differs | `codex.usage` | `cache_write_token_count` is reported but has been 0 on every event since 2026-08-24. |
-| Claude Code | aligned | `claude.usage` | `cache_creation_tokens`. |
-
 #### Output tokens (`usage.output_tokens`)
 
 - **Question:** How many tokens were generated?
@@ -357,7 +355,7 @@ Scope: system (not per harness).
 | Codex app-server | aligned | `codex.usage` | `reasoning_token_count`. |
 | Codex CLI | aligned | `codex.usage` | `reasoning_token_count`. |
 | Codex exec | aligned | `codex.usage` | `reasoning_token_count`. |
-| Claude Code | not emitted | — | Claude Code emits no separate thinking-token count; thinking is inside output_tokens. |
+| Claude Code | differs | `hook.turn_stop` | Per turn, not per call: the `Stop` hook sums `thinking_tokens` over the turn's assistant messages in the transcript. From the activity hooks' install date; earlier rows have no value. |
 
 #### Reasoning share of output (`effort.reasoning_share`)
 
@@ -371,7 +369,7 @@ Scope: system (not per harness).
 | Codex app-server | aligned | `codex.usage` | — |
 | Codex CLI | aligned | `codex.usage` | — |
 | Codex exec | aligned | `codex.usage` | — |
-| Claude Code | not emitted | — | No reasoning-token field. |
+| Claude Code | differs | `hook.turn_stop` | Per turn: thinking tokens from the `Stop` hook over the turn's output tokens. From the activity hooks' install date; earlier rows have no value. |
 
 #### Requested effort (`effort.level`)
 
@@ -455,7 +453,7 @@ Scope: system (not per harness).
 | Codex app-server | differs | `codex.turn` | `codex.turn.token_usage.reasoning_output_tokens`; Codex CLI TUI turns often omit token usage. |
 | Codex CLI | differs | `codex.turn` | `codex.turn.token_usage.reasoning_output_tokens`; Codex CLI TUI turns often omit token usage. |
 | Codex exec | differs | `codex.turn` | `codex.turn.token_usage.reasoning_output_tokens`; Codex CLI TUI turns often omit token usage. |
-| Claude Code | not emitted | — | No reasoning-token field. |
+| Claude Code | differs | `hook.turn_stop` | Thinking tokens summed over the turn's assistant messages by the `Stop` hook. From the activity hooks' install date; earlier rows have no value. |
 
 #### Delegations per task (`task.delegations`)
 
@@ -466,10 +464,10 @@ Scope: system (not per harness).
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
 | omp | aligned | `omp.subagent` | `invoke_agent <agent>` spans in the trace, advisors excluded. |
-| Codex app-server | not emitted | — | Codex subagents run as separate threads and appear as separate tasks. |
-| Codex CLI | not emitted | — | Codex subagents run as separate threads and appear as separate tasks. |
-| Codex exec | not emitted | — | Codex subagents run as separate threads and appear as separate tasks. |
-| Claude Code | not emitted | — | Subagent completions are logged without a task link. |
+| Codex app-server | differs | `codex.agent_spawn` | Subagent spawns (`codex.agent_communication`) sent from the turn's thread during the turn; the subagent threads still also appear as separate tasks. |
+| Codex CLI | differs | `codex.agent_spawn` | Subagent spawns (`codex.agent_communication`) sent from the turn's thread during the turn; the subagent threads still also appear as separate tasks. |
+| Codex exec | differs | `codex.agent_spawn` | Subagent spawns (`codex.agent_communication`) sent from the turn's thread during the turn; the subagent threads still also appear as separate tasks. |
+| Claude Code | aligned | `hook.subagent_start` | `SubagentStart` hook events with the task's prompt ID. From the activity hooks' install date; earlier rows have no value. |
 
 ### Tool failures
 
@@ -513,7 +511,7 @@ Scope: system (not per harness).
 | Codex app-server | aligned | `codex.tool_result` | `x.failure_signature`: first error-like output line. |
 | Codex CLI | aligned | `codex.tool_result` | `x.failure_signature`: first error-like output line. |
 | Codex exec | aligned | `codex.tool_result` | `x.failure_signature`: first error-like output line. |
-| Claude Code | differs | `claude.tool_result` | `error_type` only: an error class, not the message. |
+| Claude Code | differs | `hook.tool_failure` | Most specific diagnostic line of the `PostToolUseFailure` error; before the hooks, and when the hook has no error text, the `error_type` class. |
 
 #### Tasks affected by failures (`tools.tasks_affected`)
 
@@ -537,11 +535,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | Tool spans carry no argument identity. |
+| omp | differs | `hook.tool_call` | Hash of the canonical tool arguments from the `tool_call` hook, joined by tool call ID. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | aligned | `codex.tool_result` | `x.arguments_hash` over the raw arguments. |
 | Codex CLI | aligned | `codex.tool_result` | `x.arguments_hash` over the raw arguments. |
 | Codex exec | aligned | `codex.tool_result` | `x.arguments_hash` over the raw arguments. |
-| Claude Code | not emitted | — | Tool results carry sizes, not argument identity. |
+| Claude Code | differs | `hook.tool_call` | Hash of the canonical `tool_input` from the `PreToolUse` hook, joined by `tool_use_id`. From the activity hooks' install date; earlier rows have no value. |
 
 #### Tool loops (`tools.loops`)
 
@@ -551,11 +549,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | Tool spans carry no argument identity. |
+| omp | differs | `hook.tool_call` | Argument hash from the `tool_call` hook. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | aligned | `codex.tool_result` | Ordered by call time within the task. |
 | Codex CLI | aligned | `codex.tool_result` | Ordered by call time within the task. |
 | Codex exec | aligned | `codex.tool_result` | Ordered by call time within the task. |
-| Claude Code | not emitted | — | Tool results carry no argument identity. |
+| Claude Code | differs | `hook.tool_call` | Argument hash from the `PreToolUse` hook. From the activity hooks' install date; earlier rows have no value. |
 
 ### Friction
 
@@ -570,8 +568,8 @@ Scope: system (not per harness).
 | omp | differs | `omp.run` | The run has an aborted chat stop reason (`stop_reason.aborted.count > 0`). |
 | Codex app-server | aligned | `codex.interrupt` | The turn's `turn.id` appears on a `turn/interrupt` span. |
 | Codex CLI | aligned | `codex.interrupt` | The turn's `turn.id` appears on a `turn/interrupt` span. |
-| Codex exec | differs | `codex.interrupt` | Headless: no user can interrupt, so the value is always 0. |
-| Claude Code | not emitted | — | Claude Code emits no interrupt event. |
+| Codex exec | not applicable | — | Headless: no user can interrupt. |
+| Claude Code | differs | `hook.prompt_submitted` | Inferred: the task's prompt reached the `UserPromptSubmit` hook but no `Stop` or `StopFailure` followed (Claude Code runs no Stop hook on a user interrupt). From the activity hooks' install date; earlier rows have no value. |
 
 #### Steered tasks (`friction.steer`)
 
@@ -581,11 +579,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | omp emits no steer event. |
+| omp | differs | `hook.steer` | The `input` hook fired while the run was active. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | aligned | `codex.steer` | The turn's `turn.id` appears on a `turn/steer` span. |
 | Codex CLI | aligned | `codex.steer` | The turn's `turn.id` appears on a `turn/steer` span. |
-| Codex exec | differs | `codex.steer` | Headless: no user can steer, so the value is always 0. |
-| Claude Code | not emitted | — | Claude Code emits no steer event; queued prompts are separate interactions. |
+| Codex exec | not applicable | — | Headless: no user can steer. |
+| Claude Code | differs | `hook.prompt_submitted` | Inferred: another prompt reached the `UserPromptSubmit` hook while the interaction was running. From the activity hooks' install date; earlier rows have no value. |
 
 #### Errored tasks (`friction.error`)
 
@@ -596,9 +594,9 @@ Scope: system (not per harness).
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
 | omp | aligned | `omp.run` | The run has an error chat stop reason. |
-| Codex app-server | not emitted | — | Turn spans carry no terminal error status. |
-| Codex CLI | not emitted | — | Turn spans carry no terminal error status. |
-| Codex exec | not emitted | — | Turn spans carry no terminal error status. |
+| Codex app-server | differs | `codex.response_completed` | Inferred: the last response stream of the turn failed (`error.message` on `response.completed`); turn spans carry no terminal status. |
+| Codex CLI | differs | `codex.response_completed` | Inferred: the last response stream of the turn failed (`error.message` on `response.completed`); turn spans carry no terminal status. |
+| Codex exec | differs | `codex.response_completed` | Inferred: the last response stream of the turn failed (`error.message` on `response.completed`); turn spans carry no terminal status. |
 | Claude Code | differs | `claude.llm_request` | Any LLM request in the interaction with an error or status ≥ 400. |
 
 #### Quick follow-up (`friction.quick_follow_up`)
@@ -612,7 +610,7 @@ Scope: system (not per harness).
 | omp | aligned | `omp.run` | — |
 | Codex app-server | aligned | `codex.turn` | — |
 | Codex CLI | aligned | `codex.turn` | — |
-| Codex exec | not emitted | — | Headless one-shot runs: nobody can follow up. |
+| Codex exec | not applicable | — | Headless one-shot runs: nobody can follow up. |
 | Claude Code | aligned | `claude.interaction` | — |
 
 #### Clean completion (`friction.clean_completion`)
@@ -624,10 +622,10 @@ Scope: system (not per harness).
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
 | omp | aligned | `omp.run` | Observes interrupt, error, and follow-up. |
-| Codex app-server | differs | `codex.turn` | Observes interrupt and follow-up; task errors are not emitted. |
-| Codex CLI | differs | `codex.turn` | Observes interrupt and follow-up; task errors are not emitted. |
-| Codex exec | not emitted | — | Headless: follow-up is unobservable, so clean completion is NULL. |
-| Claude Code | differs | `claude.interaction` | Observes error and follow-up; interrupts are not emitted. |
+| Codex app-server | differs | `codex.turn` | Observes interrupt, follow-up, and the inferred error (last response stream failed). |
+| Codex CLI | differs | `codex.turn` | Observes interrupt, follow-up, and the inferred error (last response stream failed). |
+| Codex exec | not applicable | — | Headless: follow-up is unobservable, so clean completion is NULL. |
+| Claude Code | differs | `claude.interaction` | Observes error and follow-up, and the inferred interrupt once the activity hooks cover the session. |
 
 #### Recovery after failure (`friction.recovery`)
 
@@ -637,11 +635,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | differs | `omp.execute_tool` | Operation = tool name only (no argument identity). |
+| omp | differs | `omp.execute_tool` | Operation = tool + command head + subcommand from the `tool_call` hook; tool name only before the hooks. |
 | Codex app-server | differs | `codex.tool_result` | Operation = tool + command head + subcommand. |
 | Codex CLI | differs | `codex.tool_result` | Operation = tool + command head + subcommand. |
 | Codex exec | differs | `codex.tool_result` | Operation = tool + command head + subcommand. |
-| Claude Code | differs | `claude.tool_result` | Operation = tool name + bash argv0. |
+| Claude Code | differs | `claude.tool_result` | Operation = tool + command head + subcommand from the `PreToolUse` hook; tool + bash argv0 before the hooks. |
 
 ### Guardrails
 
@@ -653,7 +651,7 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | omp emits no approval decisions. |
+| omp | differs | `hook.approval` | `tool_approval_resolved` hook (approved or rejected, source user); omp's default mode approves without asking, so decisions are rare. |
 | Codex app-server | aligned | `codex.tool_decision` | `decision`, `source` (config or user). |
 | Codex CLI | aligned | `codex.tool_decision` | `decision`, `source` (config or user). |
 | Codex exec | aligned | `codex.tool_decision` | `decision`, `source` (config or user). |
@@ -667,25 +665,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | omp emits no approval decisions. |
+| omp | differs | `hook.approval` | `tool_approval_resolved` with approved = false. |
 | Codex app-server | aligned | `codex.tool_decision` | Sources are Config, User, and AutomatedReviewer (the approval reviewer model). |
 | Codex CLI | aligned | `codex.tool_decision` | Sources are Config, User, and AutomatedReviewer (the approval reviewer model). |
 | Codex exec | aligned | `codex.tool_decision` | Sources are Config, User, and AutomatedReviewer (the approval reviewer model). |
 | Claude Code | aligned | `claude.tool_decision` | Sources are config and user_reject. |
-
-#### Sandbox outcomes (`guard.sandbox`)
-
-- **Question:** How often do sandboxed commands get denied?
-- **Unit:** outcomes
-- **Formula:** count() of sandbox outcomes by outcome.
-
-| Harness | Alignment | Route | Note |
-| --- | --- | --- | --- |
-| omp | not emitted | — | omp has no sandbox. |
-| Codex app-server | aligned | `codex.sandbox_outcome` | — |
-| Codex CLI | aligned | `codex.sandbox_outcome` | — |
-| Codex exec | aligned | `codex.sandbox_outcome` | — |
-| Claude Code | not emitted | — | Claude Code emits no sandbox outcome. |
 
 #### Quality-gate bypass (`guard.gate_bypass`)
 
@@ -695,11 +679,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | Command text is not emitted in a normalized form. |
+| omp | aligned | `hook.tool_call` | `gate_bypass` matched over the arguments by the `tool_call` hook. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | aligned | `codex.tool_result` | `x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered. |
 | Codex CLI | aligned | `codex.tool_result` | `x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered. |
 | Codex exec | aligned | `codex.tool_result` | `x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered. |
-| Claude Code | not emitted | — | Only `bash_argv0` is emitted, not flags. |
+| Claude Code | aligned | `hook.tool_call` | `gate_bypass` matched over `tool_input` by the `PreToolUse` hook. From the activity hooks' install date; earlier rows have no value. |
 
 #### Command churn (`guard.command_churn`)
 
@@ -709,11 +693,11 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | Tool spans carry no target. |
+| omp | differs | `hook.tool_call` | Targets from the `tool_call` hook (edit paths, `path` arguments, path-like command arguments). From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | differs | `codex.tool_result` | Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension). |
 | Codex CLI | differs | `codex.tool_result` | Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension). |
 | Codex exec | differs | `codex.tool_result` | Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension). |
-| Claude Code | not emitted | — | Tool results carry no target. |
+| Claude Code | differs | `hook.tool_call` | Targets from the `PreToolUse` hook (`file_path`, edit paths, path-like command arguments). From the activity hooks' install date; earlier rows have no value. |
 
 ### Provider
 
@@ -745,20 +729,6 @@ Scope: system (not per harness).
 | Codex exec | differs | `codex.response_completed` | Stream level: a non-empty `error.message` on `response.completed`. |
 | Claude Code | aligned | `claude.llm_request` | Span error or `success=false`. |
 
-#### Stream disconnects (`provider.stream_disconnects`)
-
-- **Question:** How often does a response stream break before completion?
-- **Unit:** calls
-- **Formula:** Completed-response records whose error says the stream disconnected before completion.
-
-| Harness | Alignment | Route | Note |
-| --- | --- | --- | --- |
-| omp | not emitted | — | Chat spans record errors but not stream state. |
-| Codex app-server | aligned | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'. |
-| Codex CLI | aligned | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'. |
-| Codex exec | aligned | `codex.response_completed` | `error.message` starting 'stream disconnected before completion'. |
-| Claude Code | not emitted | — | No stream-state field. |
-
 #### Model call latency (`provider.latency`)
 
 - **Question:** How long does a model call take?
@@ -787,20 +757,6 @@ Scope: system (not per harness).
 | Codex exec | aligned | `codex.response_completed` | `ttft_ms` on `response.completed`. |
 | Claude Code | aligned | `claude.llm_request` | `ttft_ms`. |
 
-#### Output throughput (`provider.throughput`)
-
-- **Question:** Is generation speed degraded independently of response size?
-- **Unit:** tokens/s
-- **Formula:** P50 of output tokens / (duration − time to first token) for calls with both timings and positive generation time.
-
-| Harness | Alignment | Route | Note |
-| --- | --- | --- | --- |
-| omp | aligned | `omp.chat` | — |
-| Codex app-server | not emitted | — | Completed responses carry TTFT but no call duration. |
-| Codex CLI | not emitted | — | Completed responses carry TTFT but no call duration. |
-| Codex exec | not emitted | — | Completed responses carry TTFT but no call duration. |
-| Claude Code | aligned | `claude.llm_request` | — |
-
 #### Retries (`provider.retries`)
 
 - **Question:** How much extra traffic do retries create?
@@ -809,7 +765,7 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | No attempt or retry identity. |
+| omp | differs | `hook.retry` | `auto_retry_start` hook events: one per retry of a failed chat. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | differs | `codex.try_sampling` | `try_run_sampling_request` spans beyond one per `run_sampling_request`. |
 | Codex CLI | differs | `codex.try_sampling` | `try_run_sampling_request` spans beyond one per `run_sampling_request`. |
 | Codex exec | differs | `codex.try_sampling` | `try_run_sampling_request` spans beyond one per `run_sampling_request`. |
@@ -829,20 +785,6 @@ Scope: system (not per harness).
 | Codex exec | differs | `codex.response_completed` | Every response stream has an outcome (error message or completion), so Codex has no unknown calls. |
 | Claude Code | aligned | `claude.llm_request` | No `success` attribute. |
 
-#### Model conformance (`provider.model_conformance`)
-
-- **Question:** Did the provider serve the requested model?
-- **Unit:** calls
-- **Formula:** Calls whose response model is set and differs from the requested model.
-
-| Harness | Alignment | Route | Note |
-| --- | --- | --- | --- |
-| omp | aligned | `omp.chat` | `gen_ai.request.model` vs `gen_ai.response.model`. |
-| Codex app-server | not emitted | — | No response model. |
-| Codex CLI | not emitted | — | No response model. |
-| Codex exec | not emitted | — | No response model. |
-| Claude Code | not emitted | — | No response model. |
-
 ### Recurrence
 
 #### Recurring targets (`recur.targets`)
@@ -853,17 +795,17 @@ Scope: system (not per harness).
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
-| omp | not emitted | — | Tool spans carry no target. |
+| omp | differs | `hook.tool_call` | Targets from the `tool_call` hook, home as ~. From the activity hooks' install date; earlier rows have no value. |
 | Codex app-server | differs | `codex.tool_result` | `x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~. |
 | Codex CLI | differs | `codex.tool_result` | `x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~. |
 | Codex exec | differs | `codex.tool_result` | `x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~. |
-| Claude Code | not emitted | — | Tool results carry no target. |
+| Claude Code | differs | `hook.tool_call` | Targets from the `PreToolUse` hook, home as ~. From the activity hooks' install date; earlier rows have no value. |
 
 #### Recurring failure signatures (`recur.signatures`)
 
 - **Question:** Which failure signatures recur across tasks and days?
 - **Unit:** tasks
-- **Formula:** Failure signatures seen in ≥2 tasks, with occurrences, tasks, and days.
+- **Formula:** Failure clusters (tool family × failure class: the signature with quoted values and paths generalized) seen in ≥2 tasks, with occurrences, tasks, and days.
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
@@ -871,13 +813,13 @@ Scope: system (not per harness).
 | Codex app-server | aligned | `codex.tool_result` | — |
 | Codex CLI | aligned | `codex.tool_result` | — |
 | Codex exec | aligned | `codex.tool_result` | — |
-| Claude Code | differs | `claude.tool_result` | Signature is the `error_type` class only. |
+| Claude Code | differs | `hook.tool_failure` | Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks. |
 
 #### Actionable repeats (`recur.actionable`)
 
 - **Question:** Which repeated failures cross the evidence threshold for intervention?
 - **Unit:** signatures
-- **Formula:** Over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks.
+- **Formula:** Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a project or path under a temporary directory) are excluded.
 
 | Harness | Alignment | Route | Note |
 | --- | --- | --- | --- |
@@ -885,7 +827,7 @@ Scope: system (not per harness).
 | Codex app-server | aligned | `codex.tool_result` | — |
 | Codex CLI | aligned | `codex.tool_result` | — |
 | Codex exec | aligned | `codex.tool_result` | — |
-| Claude Code | differs | `claude.tool_result` | Signature is the `error_type` class only. |
+| Claude Code | differs | `hook.tool_failure` | Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks. |
 
 #### Project concentration (`recur.project_concentration`)
 
@@ -901,37 +843,115 @@ Scope: system (not per harness).
 | Codex exec | aligned | `codex.tool_result` | Session → project from the `codex-cli` / app-server hooks. |
 | Claude Code | aligned | `claude.tool_result` | Session → project from the Claude Code hook; interactions in a non-git workspace have none. |
 
+### Intent and corrections
+
+#### Labelled tasks (`intent.labelled`)
+
+- **Question:** Which share of tasks has a Jev-labelled prompt?
+- **Unit:** %
+- **Formula:** 100 × tasks whose starting prompt has a label in `prompt_labels` / tasks. `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start`. Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted. |
+| Codex app-server | aligned | `codex.user_prompt` | `codex.user_prompt` text (`log_user_prompt = true`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted. |
+| Codex CLI | aligned | `codex.user_prompt` | `codex.user_prompt` text (`log_user_prompt = true`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted. |
+| Codex exec | aligned | `codex.user_prompt` | `codex.user_prompt` text (`log_user_prompt = true`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted. |
+| Claude Code | aligned | `claude.user_prompt` | `user_prompt` text (`OTEL_LOG_USER_PROMPTS=1`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted. |
+
+#### Task type (`intent.task_type`)
+
+- **Question:** What kind of work do users ask for?
+- **Unit:** tasks
+- **Formula:** Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | Prompt event sent by the omp activity extension. |
+| Codex app-server | aligned | `codex.user_prompt` | — |
+| Codex CLI | aligned | `codex.user_prompt` | — |
+| Codex exec | aligned | `codex.user_prompt` | — |
+| Claude Code | aligned | `claude.user_prompt` | — |
+
+#### Corrected by the next prompt (`intent.corrected`)
+
+- **Question:** How often does the user's next prompt correct the task's work?
+- **Unit:** %
+- **Formula:** 100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | Prompt event sent by the omp activity extension. |
+| Codex app-server | aligned | `codex.user_prompt` | — |
+| Codex CLI | aligned | `codex.user_prompt` | — |
+| Codex exec | not applicable | — | Headless one-shot runs have no next prompt. |
+| Claude Code | aligned | `claude.user_prompt` | — |
+
+#### Correction kinds (`intent.correction_kind`)
+
+- **Question:** What went wrong when users corrected the agent?
+- **Unit:** tasks
+- **Formula:** Corrected tasks by Jev correction kind: ignored instruction, wrong approach, wrong scope, incomplete, incorrect result.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | Prompt event sent by the omp activity extension. |
+| Codex app-server | aligned | `codex.user_prompt` | — |
+| Codex CLI | aligned | `codex.user_prompt` | — |
+| Codex exec | not applicable | — | Headless one-shot runs have no next prompt. |
+| Claude Code | aligned | `claude.user_prompt` | — |
+
+#### Frustrated follow-ups (`intent.frustration`)
+
+- **Question:** How often is the user's next prompt frustrated?
+- **Unit:** %
+- **Formula:** 100 × tasks whose next prompt within 10 minutes Jev scores as frustrated / tasks with a labelled next prompt.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | Prompt event sent by the omp activity extension. |
+| Codex app-server | aligned | `codex.user_prompt` | — |
+| Codex CLI | aligned | `codex.user_prompt` | — |
+| Codex exec | not applicable | — | Headless one-shot runs have no next prompt. |
+| Claude Code | aligned | `claude.user_prompt` | — |
+
+#### Effort payoff by task type (`intent.effort_payoff`)
+
+- **Question:** For which kinds of work does heavier reasoning effort reduce corrections?
+- **Unit:** %
+- **Formula:** Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks; compare efforts within one task type, never across harnesses.
+
+| Harness | Alignment | Route | Note |
+| --- | --- | --- | --- |
+| omp | differs | `omp.user_prompt` | Prompt event sent by the omp activity extension. |
+| Codex app-server | aligned | `codex.user_prompt` | — |
+| Codex CLI | aligned | `codex.user_prompt` | — |
+| Codex exec | differs | `codex.user_prompt` | Task type only; corrections and clean completion are not applicable to headless runs. |
+| Claude Code | aligned | `claude.user_prompt` | — |
+
 ### Interventions
 
 #### Findings and proposals (`intervene.findings`)
 
 - **Question:** Which findings and intervention proposals exist, and in what state?
 - **Unit:** records
-- **Formula:** Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each (harness, tool, failure signature) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring.
+- **Formula:** Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) and each repeated correction (project × correction kind) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order.
 
 Scope: system (not per harness).
 
 #### Post-intervention recurrence (`intervene.post_recurrence`)
 
-- **Question:** Did an applied intervention reduce the failure signature it targeted?
+- **Question:** Did an applied intervention reduce what it targeted?
 - **Unit:** per task
-- **Formula:** For each applied intervention: occurrences / attributed tasks in equal pre and post windows around its application time. Needs applied interventions.
-
-Scope: system (not per harness).
-
-#### Rule adherence (`intervene.rule_adherence`)
-
-- **Question:** Are skill and workflow rules followed when their trigger is present?
-- **Unit:** %
-- **Formula:** Unsupported: needs a versioned rule registry with deterministic triggers and observable required actions. No producer emits rule triggers.
+- **Formula:** For each applied proposal, its structured success metric: tasks with the finding's cluster (or correction) per task over the evaluation window after application, against the baseline window before; validated when the ratio is at most the metric's max_ratio, inconclusive with too few tasks. `facts sync` records the verdict as an immutable proposal event.
 
 Scope: system (not per harness).
 
 #### Uncodified practice recurrence (`intervene.practice_recurrence`)
 
-- **Question:** Which successful operation sequences recur often enough to codify?
-- **Unit:** sequences
-- **Formula:** Unsupported: needs ordered operations with an explicit successful task outcome. No producer emits explicit task success, and clean completion is a friction proxy, not success.
+- **Question:** Which corrections do users keep repeating, so the practice should be codified?
+- **Unit:** findings
+- **Formula:** Repeated-correction findings: in one project, ≥ 2 tasks in ≥ 2 sessions over 7 Europe/London days whose next prompt Jev read as a correction of the same kind (ignored instruction, wrong approach, wrong scope, incomplete, incorrect result).
 
 Scope: system (not per harness).
 

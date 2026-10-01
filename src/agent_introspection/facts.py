@@ -9,16 +9,20 @@ each dashboard signal. The dashboard reads small aggregates from the snapshots.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import subprocess
 import tomllib
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any, cast
 
-from agent_introspection.config import AppConfig
+from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig
 
 DATABASE = "introspection"
 _QUERY_TIMEOUT_SECONDS = 600.0
@@ -128,12 +132,16 @@ SNAPSHOTS = (
     Snapshot("tool_calls", "(harness, ts)"),
     Snapshot("user_signals", "(harness, ts)"),
     Snapshot("model_calls", "(harness, ts)"),
+    Snapshot("task_labels", "(harness, start_ts)"),
 )
 
 REGISTRY_FILE = "signal_support.toml"
-_ALIGNMENTS = ("aligned", "differs", "not emitted")
+_ALIGNMENTS = ("aligned", "differs", "not applicable")
 _HARNESS_GROUPS = {"codex": ("codex-app-server", "codex_cli_rs", "codex_exec")}
-_SOURCES = ("spans", "logs")
+# Route predicates run against the table (or, for activity hooks, the view that
+# resolves each hook event's harness) named for their source.
+SOURCE_TABLES = {"spans": "spans", "logs": "logs", "hooks": "hook_rows"}
+_SOURCES = tuple(SOURCE_TABLES)
 
 type Row = dict[str, str | int]
 
@@ -144,12 +152,13 @@ class RegistryError(ValueError):
 
 @dataclass(frozen=True)
 class Registry:
-    """Rows for the four registry tables, in file order."""
+    """Rows for the five registry tables, in file order."""
 
     signals: list[Row]
     routes: list[Row]
     support: list[Row]
     strays: list[Row]
+    excluded: list[Row]
 
 
 def _sql(name: str) -> str:
@@ -212,7 +221,7 @@ def _parse_routes(
         route = _text(entry, "id", "route")
         _require(route not in covered_by, f"duplicate route {route}")
         source = _text(entry, "source", route)
-        _require(source in _SOURCES, f"{route}: source must be spans or logs")
+        _require(source in _SOURCES, f"{route}: source must be one of {', '.join(_SOURCES)}")
         expect = entry.get("expect", "rows")
         _require(expect in ("rows", "events"), f"{route}: expect must be rows or events")
         covered = cast(list[str], entry.get("harnesses", []))
@@ -240,7 +249,7 @@ def _parse_strays(entries: list[dict[str, Any]], harnesses: dict[str, str]) -> l
         harness = _text(entry, "harness", stray)
         _require(harness in harnesses, f"{stray}: unknown harness")
         source = _text(entry, "source", stray)
-        _require(source in _SOURCES, f"{stray}: source must be spans or logs")
+        _require(source in _SOURCES, f"{stray}: source must be one of {', '.join(_SOURCES)}")
         rows.append(
             {
                 "stray": stray,
@@ -277,11 +286,16 @@ def _parse_support(
     for harness, label in harnesses.items():
         value = expanded[harness]
         alignment = value.get("alignment", "")
+        _require(
+            alignment != "not emitted",
+            f"{signal}/{harness}: not emitted breaks harness parity; close the gap with a "
+            "route (native or activity hook) or move the signal to [[excluded]]",
+        )
         _require(alignment in _ALIGNMENTS, f"{signal}/{harness}: unknown alignment")
         route = value.get("route", "")
         note = value.get("note", "")
-        if alignment == "not emitted":
-            _require(route == "", f"{signal}/{harness}: not emitted has no route")
+        if alignment == "not applicable":
+            _require(route == "", f"{signal}/{harness}: not applicable has no route")
         else:
             _require(harness in covered_by.get(route, []), f"{signal}/{harness}: bad route")
         _require(
@@ -296,6 +310,28 @@ def _parse_support(
                 "unit": unit,
                 "alignment": alignment,
                 "note": note,
+            }
+        )
+    return rows
+
+
+def _parse_excluded(
+    entries: list[dict[str, Any]], harnesses: dict[str, str], views: dict[str, str]
+) -> list[Row]:
+    rows: list[Row] = []
+    for entry in entries:
+        signal = _text(entry, "id", "excluded")
+        view = _text(entry, "view", signal)
+        _require(view in views, f"{signal}: unknown view {view}")
+        missing = cast(list[str], entry.get("missing", []))
+        _require(bool(missing) and set(missing) <= set(harnesses), f"{signal}: unknown harness")
+        rows.append(
+            {
+                "signal": signal,
+                "view": view,
+                "title": _text(entry, "title", signal),
+                "missing": ", ".join(harnesses[harness] for harness in missing),
+                "reason": _text(entry, "reason", signal),
             }
         )
     return rows
@@ -336,11 +372,18 @@ def parse_registry(document: dict[str, Any]) -> Registry:
             _require(not declared, f"{signal}: system signals have no per-harness support")
         else:
             support.extend(_parse_support(signal, unit, declared, harnesses, covered_by))
+    excluded = _parse_excluded(document.get("excluded", []), harnesses, views)
+    listed = {row["signal"] for row in signals}
+    _require(
+        not listed & {row["signal"] for row in excluded},
+        "a signal cannot be both listed and excluded",
+    )
     return Registry(
         signals=signals,
         routes=routes,
         support=support,
         strays=_parse_strays(document.get("stray", []), harnesses),
+        excluded=excluded,
     )
 
 
@@ -361,6 +404,7 @@ def registry_statements(registry: Registry) -> list[str]:
         "signal_routes": registry.routes,
         "signal_support": registry.support,
         "signal_strays": registry.strays,
+        "signal_exclusions": registry.excluded,
     }
     return [
         f"INSERT INTO {DATABASE}.{table} SELECT * FROM format(JSONEachRow, "
@@ -375,7 +419,7 @@ def route_check_statements(registry: Registry) -> list[str]:
     """Return one no-row query per route and stray predicate so ClickHouse validates it."""
     predicates = {(str(r["source"]), str(r["match"])) for r in [*registry.routes, *registry.strays]}
     return [
-        f"SELECT countIf({match}) FROM {DATABASE}.{source} WHERE 0 FORMAT Null"
+        f"SELECT countIf({match}) FROM {DATABASE}.{SOURCE_TABLES[source]} WHERE 0 FORMAT Null"
         for source, match in sorted(predicates)
     ]
 
@@ -418,10 +462,11 @@ def backfill_statements(target: str, start: datetime, end: datetime) -> list[str
 
 def docker_runner(config: AppConfig) -> SqlRunner:
     """Return a runner that executes multi-statement SQL through ``clickhouse-client``."""
+    # Without a configured context, docker uses the current one (`docker context show`).
+    context = config.signoz.docker_context
     prefix = (
         "docker",
-        "--context",
-        config.signoz.docker_context,
+        *(("--context", context) if context is not None else ()),
         "exec",
         "-i",
         config.signoz.clickhouse_container,
@@ -451,6 +496,144 @@ def docker_runner(config: AppConfig) -> SqlRunner:
         return completed.stdout
 
     return run
+
+
+_QUOTES = frozenset("'\"`")
+
+
+def _skip_quoted(sql: str, start: int) -> int:
+    """Return the index just past the literal or identifier opened at ``start``."""
+    quote = sql[start]
+    index = start + 1
+    while index < len(sql):
+        char = sql[index]
+        # A backslash escape or a doubled quote both skip two characters.
+        if char == "\\" or (char == quote and sql[index + 1 : index + 2] == quote):
+            index += 2
+        elif char == quote:
+            return index + 1
+        else:
+            index += 1
+    return index
+
+
+def _skip_comment(sql: str, start: int) -> int:
+    """Return the index just past a comment at ``start``, or ``start`` if none."""
+    if sql.startswith("--", start):
+        end = sql.find("\n", start)
+        return len(sql) if end < 0 else end + 1
+    if sql.startswith("/*", start):
+        end = sql.find("*/", start + 2)
+        return len(sql) if end < 0 else end + 2
+    return start
+
+
+def split_statements(sql: str) -> list[str]:
+    """Split multi-statement SQL on top-level ``;``.
+
+    Semicolons inside string literals, quoted identifiers, and comments do not split.
+    Pieces holding only whitespace and comments are dropped.
+    """
+    statements: list[str] = []
+    start = index = 0
+    has_code = False
+    while index < len(sql):
+        char = sql[index]
+        skipped = _skip_comment(sql, index)
+        if skipped != index:
+            index = skipped
+            continue
+        if char == ";":
+            if has_code:
+                statements.append(sql[start:index].strip())
+            start, index, has_code = index + 1, index + 1, False
+            continue
+        has_code = has_code or not char.isspace()
+        index = _skip_quoted(sql, index) if char in _QUOTES else index + 1
+    if has_code:
+        statements.append(sql[start:].strip())
+    return statements
+
+
+def _exception_line(text: str) -> str:
+    lines = text.strip().splitlines()
+    return next((line for line in lines if "DB::Exception" in line), lines[-1] if lines else "")
+
+
+def clickhouse_password(signoz: SigNozConfig) -> str:
+    """Return the HTTP-mode password from its environment variable or command.
+
+    Neither the value nor the command's output is ever logged or put in an error.
+    """
+    if signoz.clickhouse_password_env is not None:
+        if not os.environ.get(signoz.clickhouse_password_env):
+            raise ConfigurationError(
+                f"environment variable {signoz.clickhouse_password_env} "
+                "(signoz.clickhouse_password_env) is not set"
+            )
+        return os.environ[signoz.clickhouse_password_env]
+    if signoz.clickhouse_password_command is not None:
+        try:
+            result = subprocess.run(
+                signoz.clickhouse_password_command,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ConfigurationError("signoz.clickhouse_password_command could not run") from exc
+        password = result.stdout.strip()
+        if result.returncode != 0 or not password:
+            raise ConfigurationError(
+                f"signoz.clickhouse_password_command printed no password (exit {result.returncode})"
+            )
+        return password
+    return ""
+
+
+def http_runner(config: AppConfig) -> SqlRunner:
+    """Return a runner that executes SQL over the ClickHouse HTTP interface.
+
+    Each statement goes in its own POST, because the HTTP interface runs one statement
+    per request, and outputs are concatenated like ``clickhouse-client --multiquery``.
+    The password comes from the environment variable the config names; it is never
+    logged or included in errors.
+    """
+    signoz = config.signoz
+    if signoz.clickhouse_url is None:
+        raise ConfigurationError("signoz.clickhouse_url is not configured")
+    password = clickhouse_password(signoz)
+    token = base64.b64encode(f"{signoz.clickhouse_user}:{password}".encode()).decode()
+    # wait_end_of_query buffers the result, so a failure mid-query is an HTTP error.
+    url = f"{signoz.clickhouse_url}/?wait_end_of_query=1"
+
+    def execute(statement: str) -> str:
+        request = urllib.request.Request(
+            url,
+            data=statement.encode(),
+            method="POST",
+            headers={"Authorization": f"Basic {token}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=_QUERY_TIMEOUT_SECONDS) as response:
+                return cast(bytes, response.read()).decode()
+        except urllib.error.HTTPError as exc:
+            raise FactsError(_exception_line(exc.read().decode(errors="replace"))) from None
+        except TimeoutError as exc:
+            raise FactsError("ClickHouse statement timed out") from exc
+        except urllib.error.URLError as exc:
+            raise FactsError(f"ClickHouse HTTP request failed: {exc.reason}") from None
+
+    def run(sql: str) -> str:
+        return "".join(execute(statement) for statement in split_statements(sql))
+
+    return run
+
+
+def runner(config: AppConfig) -> SqlRunner:
+    """Return the SQL runner for the configured connection mode."""
+    return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
 
 
 def install(run: SqlRunner) -> dict[str, Any]:

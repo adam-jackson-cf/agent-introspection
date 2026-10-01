@@ -1,6 +1,7 @@
 .DS_Store
 .enaible/
 .tmp/
+docs/ux/reviews/captures/
 .mypy_cache/
 .pytest_cache/
 pytest-of-*/

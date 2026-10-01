@@ -21,14 +21,7 @@ import {
   sumRows,
 } from "../format";
 
-const TOKEN_FIELDS = [
-  "input",
-  "cached",
-  "creation",
-  "output",
-  "operations",
-  "sessions",
-];
+const TOKEN_FIELDS = ["input", "cached", "output", "operations", "sessions"];
 
 const utilization = (row: Row) => ratio(num(row.cached), num(row.input));
 
@@ -82,8 +75,8 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Uncached input"
           value={fmtCount(all.input! - all.cached!)}
-          detail={`incl. ${fmtCount(all.creation!)} written to cache`}
-          signals={["usage.uncached_input", "usage.cache_creation"]}
+          detail={`${fmtPct(ratio(all.input! - all.cached!, all.input!))} of input`}
+          signals={["usage.uncached_input"]}
         />
         <Kpi
           title="Output tokens"
@@ -154,7 +147,6 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
           signals={[
             "usage.input_tokens",
             "usage.cache_utilization",
-            "usage.cache_creation",
             "usage.operations",
             "usage.active_sessions",
           ]}
@@ -190,12 +182,6 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 label: "Uncached",
                 numeric: true,
                 render: (row) => fmtCount(num(row.input) - num(row.cached)),
-              },
-              {
-                key: "creation",
-                label: "Cache writes",
-                numeric: true,
-                render: (row) => fmtCount(num(row.creation)),
               },
               {
                 key: "output",

@@ -9,6 +9,7 @@ export const VIEW_IDS = [
   "guardrails",
   "provider",
   "recurrence",
+  "intent",
   "interventions",
 ] as const;
 export type ViewId = (typeof VIEW_IDS)[number];
@@ -33,7 +34,10 @@ export type Filters = {
 export type Scalar = string | number | boolean | null;
 export type Row = Record<string, Scalar | Scalar[]>;
 
-export type Alignment = "aligned" | "differs" | "not emitted";
+/** `not applicable`: the signal cannot exist for the harness by construction. */
+export type Alignment = "aligned" | "differs" | "not applicable";
+/** Where a route predicate runs: `introspection.spans`, `.logs`, or `.hook_rows`. */
+export type RouteSource = "spans" | "logs" | "hooks";
 
 export type SignalDefinition = {
   signal: string;
@@ -57,7 +61,7 @@ export type SignalRoute = {
   route: string;
   harness: Harness;
   harness_label: string;
-  source: "spans" | "logs";
+  source: RouteSource;
   match: string;
   /** `events`: zero rows while the harness is active is a valid observation. */
   expect: "rows" | "events";
@@ -66,8 +70,17 @@ export type SignalRoute = {
 export type SignalStray = {
   stray: string;
   harness: Harness;
-  source: "spans" | "logs";
+  source: RouteSource;
   match: string;
+  reason: string;
+};
+/** A signal left off the dashboard because at least one harness cannot produce it. */
+export type SignalExclusion = {
+  signal: string;
+  view: string;
+  title: string;
+  /** Labels of the harnesses that cannot produce it, comma-separated. */
+  missing: string;
   reason: string;
 };
 export type Registry = {
@@ -75,6 +88,7 @@ export type Registry = {
   support: SignalSupport[];
   routes: SignalRoute[];
   strays: SignalStray[];
+  exclusions: SignalExclusion[];
 };
 
 /** Rows on each harness's own route of a signal in the selected window. */

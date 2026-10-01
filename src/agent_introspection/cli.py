@@ -8,24 +8,19 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
-from agent_introspection import facts, findings, projects
+from agent_introspection import candidates as candidate_export
+from agent_introspection import classify, drafting, evaluation, facts, findings, preflight, projects
 from agent_introspection.config import AppConfig, ConfigurationError, load_config
 from agent_introspection.proposals import (
-    ProposalInput,
     ProposalState,
     TransitionProposalRequest,
-    create_proposal,
     immediate_transaction,
     require_successful_validation,
     transition_proposal,
-)
-from agent_introspection.review import (
-    create_review_session,
-    import_model_output,
-    validate_model_output,
 )
 from agent_introspection.workflow import connect_workflow
 
@@ -68,27 +63,15 @@ def _open(args: argparse.Namespace) -> sqlite3.Connection:
 
 
 def _candidates_export(args: argparse.Namespace) -> dict[str, Any]:
+    run = facts.runner(_config(args))
     connection = _open(args)
     try:
-        rows = connection.execute(
-            """
-            SELECT f.id, f.category, f.trend_state, f.fingerprint, f.subject
-            FROM findings f
-            LEFT JOIN proposals p ON p.finding_id = f.id
-            WHERE f.trend_state = 'actionable' AND p.id IS NULL
-            ORDER BY f.last_seen_ns, f.id LIMIT 1
-            """
-        ).fetchall()
-        if not rows:
-            return {"status": "no_candidates"}
-        candidates = [{"id": str(row[0]), "fields": list(row[1:])} for row in rows]
-        envelope = create_review_session(
+        return candidate_export.export(
             connection,
-            candidates=candidates,
+            run,
             reserved_model_budget=args.reserved_model_budget,
             batch_id=args.batch_id,
         )
-        return {"status": "exported", "review": envelope.as_dict()}
     finally:
         connection.close()
 
@@ -100,30 +83,30 @@ def _proposal_create(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("proposal creation requires provenance")
     connection = _open(args)
     try:
-        # The review import and its proposals commit together or not at all, so a
-        # failed proposal insert never leaves the review consumed without proposals.
-        with immediate_transaction(connection):
-            results = validate_model_output(connection, document, provenance=provenance)
-            proposal_inputs: list[ProposalInput] = []
-            for result in results:
-                payload = result.get("proposal")
-                if not isinstance(payload, dict):
-                    raise ValueError("proposal result requires a proposal object")
-                proposal_input = ProposalInput(**payload)
-                if proposal_input.finding_id != result.get("candidate_id"):
-                    raise ValueError("proposal finding_id must match its reviewed candidate_id")
-                finding = connection.execute(
-                    "SELECT trend_state FROM findings WHERE id = ?", (proposal_input.finding_id,)
-                ).fetchone()
-                if finding is None or finding[0] != "actionable":
-                    raise ValueError("only actionable findings can produce proposals")
-                proposal_inputs.append(proposal_input)
-            import_model_output(connection, document, provenance=provenance, outer_transaction=True)
-            proposal_ids = [
-                create_proposal(connection, value, outer_transaction=True)
-                for value in proposal_inputs
-            ]
+        proposal_ids = drafting.import_proposals(connection, document, provenance)
         return {"status": "created", "proposal_ids": proposal_ids}
+    finally:
+        connection.close()
+
+
+def _proposal_draft(args: argparse.Namespace) -> dict[str, Any]:
+    run = facts.runner(_config(args))
+    connection = _open(args)
+    try:
+        request = drafting.DraftRequest(args.reserved_model_budget, args.batch_id, args.dry_run)
+        return drafting.draft(connection, run, request)
+    finally:
+        connection.close()
+
+
+def _proposal_evaluate(args: argparse.Namespace) -> dict[str, Any]:
+    now = datetime.fromisoformat(args.now) if args.now is not None else None
+    if now is not None and now.tzinfo is None:
+        raise ValueError("--now must include a UTC offset")
+    run = facts.runner(_config(args))
+    connection = _open(args)
+    try:
+        return evaluation.evaluate_due(run, connection, now)
     finally:
         connection.close()
 
@@ -251,26 +234,63 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
 def _facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "schedule":
         return _schedule_command(args)
-    run = facts.docker_runner(_config(args))
-    if args.facts_command == "install":
-        result = facts.install(run)
-        # The dashboard reads the workflow store, so install creates and migrates it too.
-        _open(args).close()
-        return result
-    if args.facts_command == "backfill":
-        return facts.backfill(run, days=args.days)
-    if args.facts_command == "sync-projects":
-        ledger = Path(args.ledger).expanduser() if args.ledger is not None else None
-        return projects.sync(run, ledger=ledger)
-    if args.facts_command in ("findings", "sync"):
-        synced = projects.sync(run) if args.facts_command == "sync" else None
-        connection = _open(args)
-        try:
-            refreshed = findings.refresh(run, connection)
-        finally:
-            connection.close()
-        return refreshed if synced is None else {"projects": synced, "findings": refreshed}
-    return facts.status(run)
+    config = _config(args)
+    run = facts.runner(config)
+    handlers: dict[str, Callable[[], dict[str, Any]]] = {
+        "preflight": lambda: preflight.preflight(run, config),
+        "install": lambda: _install(args, run),
+        "backfill": lambda: facts.backfill(run, days=args.days),
+        "sync-projects": lambda: projects.sync(
+            run, ledger=Path(args.ledger).expanduser() if args.ledger is not None else None
+        ),
+        "findings": lambda: _findings(args, run),
+        "sync": lambda: _sync(args, run),
+        "classify": lambda: _labels(run, days=args.days, limit=args.limit),
+        "status": lambda: facts.status(run),
+    }
+    return handlers[args.facts_command]()
+
+
+def _install(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
+    result = facts.install(run)
+    # The dashboard reads the workflow store, so install creates and migrates it too.
+    _open(args).close()
+    return result
+
+
+def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
+    connection = _open(args)
+    try:
+        return findings.refresh(run, connection)
+    finally:
+        connection.close()
+
+
+def _labels(run: facts.SqlRunner, *, days: int = 2, limit: int = 60) -> dict[str, Any]:
+    """Label exported prompts with Jev; Jev being unavailable never fails the sync."""
+    try:
+        return classify.run(run, days=days, limit=limit)
+    except classify.JevUnavailableError as exc:
+        _diagnostic(f"prompt labels skipped: {exc}")
+        return {"status": "skipped", "reason": str(exc)}
+
+
+def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
+    """Drain the inbox, label prompts, promote findings, and evaluate due proposals."""
+    synced = projects.sync(run)
+    labels = _labels(run)
+    connection = _open(args)
+    try:
+        refreshed = findings.refresh(run, connection)
+        evaluated = evaluation.evaluate_due(run, connection)
+    finally:
+        connection.close()
+    return {
+        "projects": synced,
+        "labels": labels,
+        "findings": refreshed,
+        "evaluations": evaluated,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -279,6 +299,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     facts_parser = commands.add_parser("facts").add_subparsers(dest="facts_command", required=True)
+    facts_parser.add_parser("preflight", help="read-only checks before facts install")
     facts_parser.add_parser("install")
     backfill = facts_parser.add_parser("backfill")
     backfill.add_argument("--days", type=int, default=90)
@@ -287,6 +308,9 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--ledger", help="import session-context history from a retired ledger")
     facts_parser.add_parser("findings")
     facts_parser.add_parser("sync")
+    classify_parser = facts_parser.add_parser("classify", help="label exported prompts now")
+    classify_parser.add_argument("--days", type=int, default=2)
+    classify_parser.add_argument("--limit", type=int, default=60)
     schedule = facts_parser.add_parser("schedule").add_subparsers(
         dest="schedule_command", required=True
     )
@@ -317,6 +341,16 @@ def _parser() -> argparse.ArgumentParser:
     applied.add_argument("proposal_id")
     applied.add_argument("--actor", required=True)
     applied.add_argument("--input-json", required=True)
+    draft = proposal.add_parser("draft")
+    draft.add_argument("--batch-id")
+    draft.add_argument("--reserved-model-budget", type=int, required=True)
+    draft.add_argument("--dry-run", action="store_true")
+    evaluate = proposal.add_parser("evaluate")
+    evaluate.add_argument("--now", help="ISO 8601 instant with offset (default: now)")
+
+    hook = commands.add_parser("hook", help="normalize one activity-hook envelope from stdin")
+    hook.add_argument("producer", help="claude-code, codex, or omp")
+    hook.add_argument("event", help="the native hook event name")
     return parser
 
 
@@ -326,6 +360,8 @@ _PROPOSAL_HANDLERS: dict[str, Handler] = {
     "show": _proposal_show,
     "decide": _proposal_decide,
     "mark-applied": _proposal_mark_applied,
+    "draft": _proposal_draft,
+    "evaluate": _proposal_evaluate,
 }
 
 
@@ -344,6 +380,11 @@ def _fail(code: int, exc: BaseException) -> NoReturn:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "hook":
+        from agent_introspection import hooks
+
+        # Hooks never fail the harness: failures go to the hook log, never stdout.
+        return hooks.main(args.producer, args.event)
     try:
         result = _dispatch(args)
     except ConfigurationError as exc:
@@ -359,4 +400,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         _fail(EXIT_INTERNAL, exc)
     _emit(result)
-    return 0
+    # A failed preflight still prints every check, then exits non-zero.
+    failed = getattr(args, "facts_command", None) == "preflight" and not result["passed"]
+    return EXIT_FACTS if failed else 0

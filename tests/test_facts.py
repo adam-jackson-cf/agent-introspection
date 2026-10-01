@@ -45,7 +45,7 @@ def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> N
     assert first("DROP VIEW IF EXISTS introspection.refresh_") < first(
         "DROP VIEW IF EXISTS introspection.load_spans"
     )
-    assert statements[-1].startswith("INSERT INTO introspection.signal_strays")
+    assert statements[-1].startswith("INSERT INTO introspection.signal_exclusions")
 
 
 def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() -> None:
@@ -61,7 +61,9 @@ def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() ->
         name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
     }
     # session_project is a small lookup joined at query time, not a fact view.
-    assert {s.view for s in facts.SNAPSHOTS} == fact_views - {"session_project"}
+    # Lookup views (latest project, hook tool details, hook harness) are not snapshotted.
+    helpers = {"session_project", "hook_rows", "hook_tool_calls"}
+    assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
 
 
 def _document(**support: dict[str, str]) -> dict[str, Any]:
@@ -86,6 +88,13 @@ def _document(**support: dict[str, str]) -> dict[str, Any]:
                 "match": "1",
                 "description": "d",
             },
+            {
+                "id": "claude.usage",
+                "harnesses": ["claude-code"],
+                "source": "hooks",
+                "match": "1",
+                "description": "d",
+            },
         ],
         "signal": [
             {
@@ -105,10 +114,10 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
     registry = facts.parse_registry(
         _document(
             codex={"route": "codex.usage", "alignment": "aligned"},
-            codex_exec={"alignment": "not emitted", "note": "headless"},
+            codex_exec={"alignment": "not applicable", "note": "headless"},
             **{
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "no field"},
+                "claude-code": {"route": "claude.usage", "alignment": "differs", "note": "n"},
             },
         )
     )
@@ -118,9 +127,9 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
     assert by_harness["codex_exec"] == {
         **by_harness["codex_exec"],
         "route": "",
-        "alignment": "not emitted",
+        "alignment": "not applicable",
     }
-    assert len(registry.routes) == 4
+    assert len(registry.routes) == 5
 
 
 @pytest.mark.parametrize(
@@ -131,7 +140,7 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "omp.chat", "alignment": "aligned"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"route": "claude.usage", "alignment": "aligned"},
             },
             "bad route",
         ),
@@ -139,7 +148,7 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "codex.usage", "alignment": "differs"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"route": "claude.usage", "alignment": "aligned"},
             },
             "needs a note",
         ),
@@ -147,9 +156,17 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "codex.usage", "alignment": "aligned"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted"},
+                "claude-code": {"alignment": "not applicable"},
             },
             "needs a note",
+        ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not emitted", "note": "no field"},
+            },
+            "breaks harness parity",
         ),
     ],
 )
@@ -171,7 +188,11 @@ def test_repo_registry_gives_every_harness_signal_a_record_for_every_harness() -
 
 def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
     registry = facts.Registry(
-        signals=[], routes=[], support=[], strays=[{"stray": "x", "match": "name = 'a\\b'"}]
+        signals=[],
+        routes=[],
+        support=[],
+        strays=[{"stray": "x", "match": "name = 'a\\b'"}],
+        excluded=[],
     )
 
     (statement,) = facts.registry_statements(registry)
@@ -196,7 +217,11 @@ def test_backfill_splits_the_range_into_utc_days_ending_at_now() -> None:
 
 _ATTRIBUTE_FILTER = re.compile(
     r"mapFilter\(\s*\(\s*(?P<key>\w+)\s*,\s*\w+\s*\)\s*->\s*(?P<subject>\w+)\s+"
-    r"(?P<negated>NOT\s+)?IN\s*\((?P<keys>[^()]*)\)\s*,\s*attributes_string\s*\)"
+    r"(?P<negated>NOT\s+)?IN\s*\((?P<keys>[^()]*)\)"
+    r"(?:\s+AND\s+NOT\s+endsWith\(\s*(?P<suffix_subject>\w+)\s*,\s*'(?P<suffix>[^']+)'\s*\))?"
+    r"\s*,\s*(?P<source>attributes_string|mapApply\(.*?'\^(?P<old>[^']+)',\s*'(?P<new>[^']+)'\),"
+    r"\s*v\)\s*,\s*attributes_string\))\s*\)",
+    re.DOTALL,
 )
 
 
@@ -204,14 +229,26 @@ def _filter_attributes(select: str, attributes: dict[str, str]) -> dict[str, str
     """Apply the projection's ``mapFilter`` predicate to ``attributes``, as ClickHouse would.
 
     The predicate must be a lambda over the key testing membership in a tuple of string
-    literals; any other shape fails loudly rather than being approximated.
+    literals, optionally excluding a key suffix, over the attributes or a prefix-renaming
+    ``mapApply`` of them; any other shape fails loudly rather than being approximated.
     """
     (match,) = _ATTRIBUTE_FILTER.finditer(select)
     assert match["subject"] == match["key"], "predicate must test the attribute key"
+    assert match["suffix_subject"] in (None, match["key"]), "suffix must test the attribute key"
     listed = re.findall(r"'([^']*)'", match["keys"])
     assert re.fullmatch(r"[\s,]*", re.sub(r"'[^']*'", "", match["keys"])), "keys must be literals"
+    if match["old"] is not None:
+        old = match["old"].replace("\\\\", "\\").replace("\\.", ".")
+        attributes = {
+            (match["new"] + k[len(old) :] if k.startswith(old) else k): v
+            for k, v in attributes.items()
+        }
     keep_listed = match["negated"] is None
-    return {k: v for k, v in attributes.items() if (k in listed) == keep_listed}
+    return {
+        k: v
+        for k, v in attributes.items()
+        if (k in listed) == keep_listed and not (match["suffix"] and k.endswith(match["suffix"]))
+    }
 
 
 _HARMLESS = {"gen_ai.tool.name": "bash", "session.id": "s1", "model": "m", "event.name": "e"}
@@ -231,6 +268,7 @@ _HARMLESS = {"gen_ai.tool.name": "bash", "session.id": "s1", "model": "m", "even
                 "prompt",
                 "gen_ai.tool.description",
                 "pi.gen_ai.tool.call.intent",
+                "omp.gen_ai.tool.call.intent",
                 "user.email",
                 "user.id",
                 "organization.id",
@@ -397,3 +435,103 @@ def test_capped_text_starts_at_the_keyword_when_it_lies_past_the_cap(
         capped = select.split(stored)[1].split("'x.")[0]
     assert window in capped
     assert f"({line}," not in capped
+
+
+def test_split_statements_ignores_semicolons_in_literals_identifiers_and_comments() -> None:
+    sql = (
+        "-- header; with a semicolon\n"
+        "CREATE TABLE t (a String) ENGINE = Memory;\n"
+        "SELECT 'a;b', 'it''s;', 'esc\\';', `x;y`, \"z;w\" /* c; */ FROM t;\n"
+        "-- trailing comment only;\n"
+    )
+
+    assert facts.split_statements(sql) == [
+        "-- header; with a semicolon\nCREATE TABLE t (a String) ENGINE = Memory",
+        "SELECT 'a;b', 'it''s;', 'esc\\';', `x;y`, \"z;w\" /* c; */ FROM t",
+    ]
+
+
+def test_split_statements_matches_the_statement_count_of_every_install_file() -> None:
+    for name in ("001_tables.sql", "002_registry.sql", "003_views.sql"):
+        text = facts._sql(name)
+        heads = re.findall(r"^(?:CREATE|DROP|INSERT|ALTER)\b", text, flags=re.MULTILINE)
+
+        assert len(facts.split_statements(text)) == len(heads)
+    for statement in facts.install_statements():
+        if not statement.startswith("--"):
+            assert facts.split_statements(statement) == [statement.strip()]
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def _http_config(password_env: str | None = "CH_PASSWORD") -> AppConfig:
+    from agent_introspection.config import parse_config
+
+    signoz: dict[str, str] = {"clickhouse_url": "http://localhost:8123", "clickhouse_user": "facts"}
+    if password_env is not None:
+        signoz["clickhouse_password_env"] = password_env
+    return parse_config({"signoz": signoz})
+
+
+def test_http_runner_sends_one_statement_per_request_with_basic_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import base64
+    import urllib.request
+
+    requests: list[Any] = []
+
+    def fake_urlopen(request: Any, timeout: float) -> _Response:
+        requests.append((request, timeout))
+        return _Response(b"1\n")
+
+    monkeypatch.setenv("CH_PASSWORD", "s3cret")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    assert facts.http_runner(_http_config())("SELECT 1;\nSELECT ';';") == "1\n1\n"
+    assert [request.data for request, _ in requests] == [b"SELECT 1", b"SELECT ';'"]
+    request, timeout = requests[0]
+    assert request.full_url == "http://localhost:8123/?wait_end_of_query=1"
+    expected = base64.b64encode(b"facts:s3cret").decode()
+    assert request.get_header("Authorization") == f"Basic {expected}"
+    assert timeout == 600.0
+    assert facts.runner(_http_config()).__qualname__.startswith("http_runner")
+    assert facts.runner(AppConfig()).__qualname__.startswith("docker_runner")
+
+
+def test_http_runner_surfaces_the_exception_line_and_never_the_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import urllib.error
+    import urllib.request
+
+    from agent_introspection.config import ConfigurationError
+
+    def failing(request: Any, timeout: float) -> _Response:
+        body = io.BytesIO(b"Code: 497. DB::Exception: facts: Not enough privileges\ntrace")
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, body)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(urllib.request, "urlopen", failing)
+    monkeypatch.setenv("CH_PASSWORD", "s3cret")
+
+    with pytest.raises(FactsError, match="Code: 497") as raised:
+        facts.http_runner(_http_config())("SELECT 1")
+    assert "s3cret" not in str(raised.value)
+
+    monkeypatch.delenv("CH_PASSWORD")
+    with pytest.raises(ConfigurationError, match="CH_PASSWORD") as missing:
+        facts.http_runner(_http_config())
+    assert "s3cret" not in str(missing.value)

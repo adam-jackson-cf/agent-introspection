@@ -11,7 +11,10 @@ const runtimePath = resolve(
 
 type LifecycleEvent = "session_start" | "session_end";
 type NativeLifecycleEvent = "session_start" | "session_shutdown";
-const BOUNDED_REJECTION_STATUS = 65;
+// The runtime exits 0 when it recorded the event, 64 for a usage error or a
+// recorded workspace rejection, and 65 for a recorded Git-resolution rejection.
+// A rejection is a bounded, recorded outcome, not an adapter failure.
+const ACCEPTED_RUNTIME_STATUSES: ReadonlySet<number | null> = new Set([0, 64, 65]);
 
 interface OmpExtensionContext {
   cwd: unknown;
@@ -92,7 +95,7 @@ function emitLifecycleEvent(
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0 && result.status !== BOUNDED_REJECTION_STATUS) {
+  if (!ACCEPTED_RUNTIME_STATUSES.has(result.status)) {
     throw new Error(`OMP session-context runtime exited with status ${result.status}`);
   }
 }

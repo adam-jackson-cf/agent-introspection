@@ -1,41 +1,39 @@
 ---
 name: "introspection-onboarding"
-description: "Configure and validate canonical Agent Introspection project attribution; USE WHEN onboarding producers, validating managed session-context capture, or verifying project attribution."
+description: "Install, reinstall, or validate Agent Introspection on this machine against the self-hosted SigNoz already running here: the SigNoz connection, the facts store, the launchd sync, and each harness's telemetry, hooks, and prompt export (omp, Codex, Claude Code). USE WHEN installing or reinstalling Agent Introspection, onboarding or re-checking a harness, or proving capture end to end. Local only: it never installs SigNoz."
 ---
 
-# Task
+# Onboarding
 
-## Procedure
+## Rules
 
-- Select only the workflows required by the request; do not execute this index from top to bottom.
-- Load a linked workflow only when its stated operation applies.
-- Preserve explicit capability boundaries and leave unsupported attribution unresolved.
-- For Codex global configuration, use `$CODEX_HOME` when it is set to a non-empty absolute path; otherwise use `~/.codex`. Global hooks are at `<codex-root>/hooks.json`, and trust state is at `<codex-root>/config.toml`.
+- Local only: Agent Introspection runs on this machine against a SigNoz already
+  installed here. It never installs, starts, or reconfigures SigNoz; without one, stop
+  and say so. Assume no container runtime; ask how ClickHouse is reached.
+- Back up every file before changing it, show the diff first, and keep unrelated hooks
+  and settings (for example Orca's and Codex Computer Use's).
+- Never print or write a secret; check presence only.
+- Confirm with the user before turning on prompt export: prompt text is then kept in
+  SigNoz for its retention. The facts store never keeps it.
+- Never install the Codex Desktop (`codex-app-server`) session-context hooks into a
+  Codex root that Codex CLI also uses: they cannot tell the two apart.
 
-## Workflow index
+## Workflows
 
-### Telemetry foundation
+- [Setup](references/setup-workflow.md): connect to the local SigNoz, then install or
+  reinstall in order (facts, harnesses, schedule, first sync).
+- [Harness configuration](references/harness-configuration-workflow.md): choose the
+  harnesses to include (never assume any), explore an unknown one, and configure each
+  known one's OTLP export, session-context hook, activity hooks, and prompt export.
+- [Validation](references/validation-workflow.md): check configuration without running
+  anything, then prove a live session end to end.
 
-- [Stack bootstrap](references/stack-bootstrap-workflow.md): prove local SigNoz ingestion before producer onboarding.
-- [Canonical session-context contract](references/canonical-schema-workflow.md): resolve the authoritative event and project identity contract before creating or validating attribution.
-
-### Producer capture
-
-- [Producer discovery](references/producer-discovery-workflow.md): classify requested producers by their installed native lifecycle capabilities and documented trusted global hook surfaces.
-- [Producer configuration](references/producer-implementation-workflow.md): configure only documented native local-command hooks, including trusted global SessionStart/SessionEnd hooks for Codex app-server.
-- [Managed runtime installation](references/session-hook-runtime-workflow.md): install the stable versioned managed runtime used by supported producers.
-- [Session-context configuration validation](references/session-context-validation-workflow.md): validate producer configuration without triggering capture.
-
-### Verification and escalation
-
-- [End-to-end validation](references/end-to-end-validation-workflow.md): verify producer, inbox, `session_projects`, and dashboard-facing project attribution.
-- [Unresolved producer escalation](references/upstream-escalation-workflow.md): record missing native capabilities without adding inferred attribution.
+Closing a signal gap with a new hook event is a code change: see the
+`introspection-operations` change workflow.
 
 ## Output
 
-- Selected workflows and producer capability classifications
-- Baseline window, denominator, unmatched cohorts, and evidence provenance
-- Accepted and rejected attribution counts with rejection reasons
-- Managed runtime, project sync job, `session_projects` rows, and dashboard verification evidence
-- Before-and-after attribution percentages using the same denominator
-- Unsupported boundaries and unresolved risks
+- Steps run, with evidence (preflight, install, sync results, validation rows).
+- Files changed, with backup paths, and any step the user must do (for example
+  trusting a Codex hook).
+- Per harness: what is captured, and any gap with its reason.

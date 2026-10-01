@@ -14,8 +14,16 @@ It invokes [`../../session-context-runtime.sh`](../../session-context-runtime.sh
 codex-cli SESSION_ID session_context OCCURRED_AT WORKSPACE
 ```
 
-`session_context` is supported only for Codex CLI. The scanner resolves it from exactly one accepted Codex CLI context record for the same producer and correlation ID; it does not create a lifecycle interval.
+`session_context` is supported only for Codex CLI. `facts sync` stores each record in `introspection.session_projects`, and the dashboard takes the session's latest recorded project; no lifecycle interval is created. Codex app-server and exec share session IDs with this hook, so their sessions are attributed through it too.
 
 ## Attribution boundary
 
 The native `thread-id` must equal the SigNoz Codex CLI source correlation. Do not turn `agent-turn-complete` into an inferred start, end, or workspace-change event.
+
+## Prompt export
+
+Codex needs no activity hook: tool, approval, interrupt, steer, retry, and delegation
+signals are native. Task-type and correction labels come from Codex's own
+`codex.user_prompt` events once `log_user_prompt = true` is set under `[otel]` in each
+`<codex-root>/config.toml` (`$CODEX_HOME` when set to a non-empty absolute path, else
+`~/.codex`); `facts sync` labels them with Jev. See `docs/hook-events.md`, Prompt export.
