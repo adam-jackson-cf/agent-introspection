@@ -137,3 +137,5 @@ onboarding ──> operations (health gate) ──> improvement loop
   show, per harness and signal.
 - [docs/dashboard-v3-plan.md](docs/dashboard-v3-plan.md): the dashboard plan and findings
   log.
+- [docs/decision-models-plan.md](docs/decision-models-plan.md): proposed Decision models
+  page and jev-guard OpenTelemetry capture.
