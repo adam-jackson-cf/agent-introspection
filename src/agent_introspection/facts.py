@@ -33,7 +33,7 @@ DATABASE = "introspection"
 VERIFY_DATABASE = f"{DATABASE}_verify"
 _DATABASE_REFERENCE = re.compile(rf"\b{DATABASE}(?=[.;])")
 _REFRESH_SCHEDULE = re.compile(
-    r"REFRESH EVERY \d+ (?:MINUTE|HOUR|DAY)(?: OFFSET \d+ (?:MINUTE|HOUR))?"
+    r"REFRESH EVERY \d+ (?:MINUTE|HOUR|DAY)((?: OFFSET \d+ (?:MINUTE|HOUR))?)"
 )
 _REFRESH_TARGET = re.compile(r"(\bTO [\w.]+)\nAS\b")
 _QUERY_TIMEOUT_SECONDS = 600.0
@@ -203,7 +203,21 @@ BACKFILL_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_thre
 # tables overlap the boundary, so between rebuilds no row is missed or repeated:
 # history built yesterday still reaches the boundary, recent always starts before it.
 SNAPSHOT_SCHEDULE = "EVERY 10 MINUTE"
-HISTORY_SCHEDULE = "EVERY 1 DAY OFFSET 30 MINUTE"
+# Each history refresher scans the most data, and the server kills a query when total
+# server RSS (not one query's memory) passes its limit. So history refreshers run one at
+# a time, 10 minutes apart from 00:35 UTC, and never on a :x0 minute, where the recent
+# refreshers, the hourly sweeps and the minute loaders also fire. Offsets are minute-only
+# because `_REFRESH_SCHEDULE` rewrites a single-unit OFFSET for `facts verify`. A view
+# that DEPENDS ON another must come later in SNAPSHOTS: ClickHouse waits only for a
+# dependency whose offset is earlier in the same period.
+HISTORY_FIRST_OFFSET_MINUTES = 35
+HISTORY_OFFSET_STEP_MINUTES = 10
+# A failed refresh backs off 30 s to 5 min, instead of the default 100-200 ms that
+# re-enters the same memory burst.
+REFRESH_RETRY_SETTINGS = (
+    "refresh_retries = 5, refresh_retry_initial_backoff_ms = 30000, "
+    "refresh_retry_max_backoff_ms = 300000"
+)
 HISTORY_END_DAYS = 6
 BOUNDARY_DAYS = 7
 RECENT_START_DAYS = 8
@@ -254,6 +268,13 @@ SNAPSHOTS = (
     Snapshot("model_call_attempts", "(harness, ts)"),
     Snapshot("task_labels", "(harness, start_ts)", "start_ts", "004_labels.sql", "task_outcomes"),
 )
+
+
+def history_schedule(snapshot: Snapshot) -> str:
+    """Return the daily schedule of a snapshot's history refresher, staggered by position."""
+    offset = HISTORY_FIRST_OFFSET_MINUTES + HISTORY_OFFSET_STEP_MINUTES * SNAPSHOTS.index(snapshot)
+    return f"EVERY 1 DAY OFFSET {offset} MINUTE"
+
 
 REGISTRY_FILE = "signal_support.toml"
 _ALIGNMENTS = ("aligned", "differs", "not applicable", "not emitted")
@@ -354,6 +375,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         return (
             f"CREATE MATERIALIZED VIEW {DATABASE}.{snapshot_refreshers(snapshot)[part]}\n"
             f"REFRESH {schedule} DEPENDS ON {', '.join(waits)}\n"
+            f"SETTINGS {REFRESH_RETRY_SETTINGS}\n"
             f"TO {table}\nAS SELECT * FROM {base} WHERE {keep}\n"
             f"SETTINGS {REFRESH_SETTINGS}, {filters}"
         )
@@ -374,7 +396,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         f"SELECT * FROM {recent} WHERE {column} >= {boundary}",
         refresher(
             0,
-            HISTORY_SCHEDULE,
+            history_schedule(snapshot),
             history,
             f"{column} < {_days_before_today(HISTORY_END_DAYS)}",
             SNAPSHOT_FILTERS,
@@ -953,7 +975,7 @@ def verify_statements(enabled: Sequence[str] | None = None) -> list[str]:
         statement = _DATABASE_REFERENCE.sub(VERIFY_DATABASE, statement)
         if not _REFRESH_SCHEDULE.search(statement):
             return statement
-        yearly = _REFRESH_SCHEDULE.sub("REFRESH EVERY 1 YEAR", statement)
+        yearly = _REFRESH_SCHEDULE.sub(r"REFRESH EVERY 1 YEAR\1", statement)
         return _REFRESH_TARGET.sub(r"\1 EMPTY\nAS", yearly, count=1)
 
     return [

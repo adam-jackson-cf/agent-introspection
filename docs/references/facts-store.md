@@ -81,7 +81,7 @@ through one `<view>_snapshot` view:
   logs up to 7 days, span and log sweeps over 3 days, prompt labels over 2 days). It is
   rebuilt every 10 minutes after the minute loaders, reading one extra day of spans and
   logs so rows near its start are computed with their neighbours.
-- `<view>_history` holds the older days and is rebuilt once a day at 00:30 UTC.
+- `<view>_history` holds the older days and is rebuilt once a day, between 00:35 and 01:35 UTC, one view at a time.
 - `<view>_snapshot` takes rows from history before the start of today minus 7 days (UTC)
   and from recent after it. Both tables overlap that boundary, so between rebuilds no
   row is missed or repeated.

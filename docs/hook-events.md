@@ -75,13 +75,13 @@ freshness and sanitization) therefore selects a family by `service.name`,
 
 ### Lag
 
-| Stage                             | Typical lag                                                                                            |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Hook to SigNoz (online)           | seconds (one batch from the hook process)                                                              |
-| Hook to SigNoz (offline or timer) | up to the timer interval (1 minute), or the outage                                                     |
-| SigNoz to `hook_events`           | up to 1 minute (loader), 30-minute window by arrival time                                              |
-| Late records                      | hourly sweep re-reads the last 3 days by arrival time                                                  |
-| Hook-derived facts in snapshots   | up to the 10-minute recent rebuild; hooks more than 8 days late wait for the 00:30 UTC history rebuild |
+| Stage                             | Typical lag                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Hook to SigNoz (online)           | seconds (one batch from the hook process)                                                        |
+| Hook to SigNoz (offline or timer) | up to the timer interval (1 minute), or the outage                                               |
+| SigNoz to `hook_events`           | up to 1 minute (loader), 30-minute window by arrival time                                        |
+| Late records                      | hourly sweep re-reads the last 3 days by arrival time                                            |
+| Hook-derived facts in snapshots   | up to the 10-minute rebuild; hooks over 8 days late wait for the 00:35-01:35 UTC history rebuild |
 
 ## Record
 

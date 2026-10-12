@@ -160,6 +160,12 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     for refresher in refreshers:
         assert "REFRESH EVERY 1 YEAR" in refresher
         assert " EMPTY\nAS" in refresher
+        if "APPEND" not in refresher:
+            assert facts.REFRESH_RETRY_SETTINGS in refresher
+    # A rejected history offset must fail in the scratch database, so it survives.
+    history = [s for s in refreshers if "_history\nREFRESH" in s]
+    assert len(history) == len(facts.SNAPSHOTS)
+    assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in history)
 
 
 def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> None:
@@ -180,7 +186,7 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
 
 def _refresher_settings(refresher: str) -> dict[str, str]:
     """Return a snapshot refresher's own settings, without its table-filter map."""
-    clause = refresher.split("SETTINGS ", 1)[1].split(", additional")[0]
+    clause = refresher.rsplit("SETTINGS ", 1)[1].split(", additional")[0]
     return dict(part.split(" = ", 1) for part in clause.split(", "))
 
 
@@ -221,15 +227,36 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
     assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
 
 
-@pytest.mark.parametrize("hour", [0, 0.4, 0.6, 12, 23.9])
+def test_history_refreshers_run_one_at_a_time_off_the_shared_ten_minute_marks() -> None:
+    offsets: list[int] = []
+    for snapshot in facts.SNAPSHOTS:
+        statements = facts.snapshot_statements(snapshot)
+        history, recent = [s for s in statements if s.startswith("CREATE MATERIALIZED VIEW")]
+        match = re.search(r"REFRESH EVERY 1 DAY OFFSET (\d+) MINUTE DEPENDS", history)
+        assert match
+        offsets.append(int(match.group(1)))
+        for refresher in (history, recent):
+            assert f"\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\nTO " in refresher
+    # Strictly increasing in SNAPSHOTS order (so a dependency, which must come earlier
+    # in that order, builds first) and never on a minute shared with other refreshers.
+    assert all(a < b for a, b in itertools.pairwise(offsets))
+    assert len(set(offsets)) == len(offsets)
+    assert all(offset % 10 == 5 for offset in offsets)
+
+
+@pytest.mark.parametrize("hour", [0, 0.4, 0.6, 1.5, 1.7, 12, 23.9])
 def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float) -> None:
-    """History rebuilds daily at 00:30 UTC and recent every 10 minutes; whenever the
-    dashboard reads, the boundary must lie inside both parts or rows go missing."""
+    """History views rebuild daily from 00:35 to 01:35 UTC and recent every 10 minutes;
+    whenever the dashboard reads, the boundary must lie inside both parts or rows go missing."""
     day = timedelta(days=1)
     now = datetime(2026, 10, 2, tzinfo=UTC) + timedelta(hours=hour)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Before today's 00:30 build, history is yesterday's; recent may be 10 minutes old.
-    history_built = today + timedelta(minutes=30)
+    # Before the last history build, history may be yesterday's; recent may be 10 minutes old.
+    last_offset = max(
+        facts.HISTORY_FIRST_OFFSET_MINUTES + facts.HISTORY_OFFSET_STEP_MINUTES * index
+        for index in range(len(facts.SNAPSHOTS))
+    )
+    history_built = today + timedelta(minutes=last_offset)
     if history_built > now:
         history_built -= day
     recent_built = now - timedelta(minutes=10)
