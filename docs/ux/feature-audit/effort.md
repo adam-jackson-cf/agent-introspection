@@ -171,3 +171,7 @@ No old row removed. New since baseline: EFF-F04, F24-F29, F31 (itemised chrome),
 - `task.delegations` (C2) is displayed: outcomes table (EFF-F17) column "Delegations / task" = `Σ delegations ÷ count(delegations)` per row, "—" without data; the signal is in the panel's signal list so its info note and contributors work (`Effort.tsx:219-221,260-270`; `views.ts:154` adds `delegations_den`).
 
 **Totals:** features 31 signals 26 ui calcs 17 removed since baseline 0 new since baseline 34
+
+## Batch C changes (2026-10-12)
+
+- DC10: Daily clean completion by effort and Daily median task duration by effort become Clean completion by effort (Wilson 95% interval, fixed 0-100 axis) and Task duration by effort (median with 25th-75th percentile whisker, log axis) over the whole window (`effort.intervals`). A hollow dot marks fewer tasks than the minimum sample; a harness that cannot produce clean completion (Codex exec) reads "not applicable". Each chart has a table twin with n, value, low, high.

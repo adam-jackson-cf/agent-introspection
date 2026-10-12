@@ -45,17 +45,17 @@ Every record shares one envelope; `event_type` selects the fields in `attrs`.
 }
 ```
 
-| `event_type`       | Producers        | Hook                                  | `attrs`                                                                                                                                                                                                                                       |
-| ------------------ | ---------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool_call`        | claude-code, omp | Claude `PreToolUse`; omp `tool_call`  | `tool_use_id`, `tool_name`, `arguments_hash`, `arguments_length`, `command_head`, `command_sub`, `targets` (list, home as `~`, at most 20), `gate_bypass` (0/1), `workdir` (the `workdir`/`cwd` argument, else the hook's `cwd`; home as `~`) |
-| `tool_failure`     | claude-code      | `PostToolUseFailure`                  | `tool_use_id`, `tool_name`, `failure_signature` (most specific diagnostic line, digits as `N`, ≤ 80 chars), `failure_signature_hash` (16 hex of SHA-256 over the uncapped normalized line), `interrupted` (0/1)                               |
-| `prompt_submitted` | claude-code      | `UserPromptSubmit`                    | `prompt_id`, `prompt_length`, `turn_open` (0/1: a turn was still running, see [Turn state](#turn-state)); used to infer interrupts and steers                                                                                                 |
-| `turn_stop`        | claude-code      | `Stop`                                | `prompt_id`, `reasoning_tokens` (sum of `thinking_tokens` over the turn's assistant messages in the transcript), `response_model`                                                                                                             |
-| `turn_failure`     | claude-code      | `StopFailure`                         | `prompt_id`, `error_class`                                                                                                                                                                                                                    |
-| `subagent_start`   | claude-code      | `SubagentStart`                       | `agent_id`, `agent_type`, `prompt_id`                                                                                                                                                                                                         |
-| `approval`         | omp              | `tool_approval_resolved`              | `tool_use_id`, `tool_name`, `approved` (0/1)                                                                                                                                                                                                  |
-| `retry`            | omp              | `auto_retry_start` / `auto_retry_end` | `attempt`, `phase` (`start`/`end`), `success` (0/1 on end)                                                                                                                                                                                    |
-| `steer`            | omp              | `input` while the agent is not idle   | `prompt_length`                                                                                                                                                                                                                               |
+| `event_type`       | Producers        | Hook                                                          | `attrs`                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ---------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool_call`        | claude-code, omp | Claude `PreToolUse`; omp `tool_call`                          | `tool_use_id`, `tool_name`, `arguments_hash`, `arguments_length`, `command_head`, `command_sub`, `segments`, `verification_kinds` (list, sorted), `gate_run` (0/1), `targets` (list, home as `~`, at most 20), `gate_bypass` (0/1), `workdir` (the `workdir`/`cwd` argument, else the hook's `cwd`; home as `~`) |
+| `tool_failure`     | claude-code, omp | Claude `PostToolUseFailure`; omp `tool_result` with `isError` | `tool_use_id`, `tool_name`, `failure_signature` (most specific diagnostic line, digits as `N`, ≤ 80 chars), `failure_signature_hash` (16 hex of SHA-256 over the uncapped normalized line), `interrupted` (0/1), `exit_code` (when the harness reports one)                                                      |
+| `prompt_submitted` | claude-code      | `UserPromptSubmit`                                            | `prompt_id`, `prompt_length`, `turn_open` (0/1: a turn was still running, see [Turn state](#turn-state)); used to infer interrupts and steers                                                                                                                                                                    |
+| `turn_stop`        | claude-code      | `Stop`                                                        | `prompt_id`, `reasoning_tokens` (sum of `thinking_tokens` over the turn's assistant messages in the transcript), `response_model`                                                                                                                                                                                |
+| `turn_failure`     | claude-code      | `StopFailure`                                                 | `prompt_id`, `error_class`                                                                                                                                                                                                                                                                                       |
+| `subagent_start`   | claude-code      | `SubagentStart`                                               | `agent_id`, `agent_type`, `prompt_id`                                                                                                                                                                                                                                                                            |
+| `approval`         | omp              | `tool_approval_resolved`                                      | `tool_use_id`, `tool_name`, `approved` (0/1)                                                                                                                                                                                                                                                                     |
+| `retry`            | omp              | `auto_retry_start` / `auto_retry_end`                         | `attempt`, `phase` (`start`/`end`), `success` (0/1 on end)                                                                                                                                                                                                                                                       |
+| `steer`            | omp              | `input` while the agent is not idle                           | `prompt_length`                                                                                                                                                                                                                                                                                                  |
 
 Codex emits tool identity, approvals, interrupts, steers, retries, and delegations
 (`codex.agent_communication` spawn) natively, so it has no activity hook.
@@ -65,8 +65,21 @@ Codex emits tool identity, approvals, interrupts, steers, retries, and delegatio
 `hooks.py` mirrors the log projection's Codex derivations so the fields mean the same
 thing for every harness:
 
-- `command_head` / `command_sub`: first command token after environment assignments,
-  basename only; the second token when it looks like a subcommand.
+- `command_head` / `command_sub`: the program and subcommand of the significant segment,
+  from `command_shape.py` (mirrored in `facts_sql/command_shape.sql`). The command splits
+  on `&&`, `||`, `;`, `|`, and newlines (quotes are not honoured); leading environment
+  assignments, `env`, and `exec` are dropped; `cd`, `export`, `set`, and `source`
+  segments are skipped; up to three wrappers (`uv run`, `npx`, `sudo`, `python -m`,
+  `bash script.sh`, `bash -c "..."`, ...) are unwrapped, each along with the flags that
+  follow it. The head is the basename of the resolved program; the subcommand is the
+  second token when it looks like one, the script name for `npm run <script>`, and the
+  file name for `python file.py`.
+- `segments`: the number of non-empty command segments.
+- `verification_kinds`: sorted distinct kinds over all segments (`unit_test`,
+  `integration_e2e`, `smoke`, `lint_format`, `typecheck`, `ci_remote`), from program names
+  and package-script aliases. `gate_run` is 1 for a full local gate (CI or check-all
+  scripts, `pre-commit`, `npm run check`, `make ci`); it is a flag, not a kind. The
+  command text is not stored.
 - `targets`: file paths from edit tools, `path`/`file_path` arguments, and path-like
   command arguments (a slash or a known file extension).
 - `gate_bypass`: `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign` anywhere in
@@ -84,7 +97,7 @@ thing for every harness:
 Parity notes: ClickHouse measures `arguments_length` in bytes and caps the signature in
 characters (`substringUTF8`), as `hooks.py` does; `hooks.py` measures `arguments_length`
 in UTF-8 bytes. `command_sub` is kept only for tools whose second token is a
-subcommand (`hooks.SUBCOMMAND_HEADS`, mirrored in the SQL), so `echo word` keeps none.
+subcommand (`command_shape.SUBCOMMAND_HEADS`, rendered into the SQL), so `echo word` keeps none.
 
 ## Turn state
 

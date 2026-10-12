@@ -1,13 +1,18 @@
 import { DailyChart, DataTable, TableView, type Series } from "../charts";
+import {
+  IntervalChart,
+  logExtent,
+  type IntervalGroup,
+} from "../charts-interval";
 import type { Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   RateValue,
-  rateSeriesColumns,
   Section,
   SessionLink,
+  useView,
 } from "../components";
 import { OTHER_TOKEN } from "../tokens";
 import {
@@ -16,6 +21,9 @@ import {
   fmtCount,
   fmtPct,
   fmtSeconds,
+  HARNESS_COLOR,
+  isHarness,
+  HARNESS_LABEL,
   maybe,
   num,
 } from "../format";
@@ -61,31 +69,109 @@ function dailyViews(data: Record<string, Row[]>) {
     mixDaily: byDay(dailyTasks, (row) => ({
       [String(row.effort)]: row.tasks,
     })),
-    cleanDaily: byDay(dailyTasks, (row) => ({
-      [String(row.effort)]: maybe(row.clean_rate),
-      [`${String(row.effort)}_n`]: row.clean_den,
-    })),
-    durationDaily: byDay(dailyTasks, (row) => ({
-      [String(row.effort)]: maybe(row.p50_duration),
-    })),
     taskSeries: effortSeries(dailyTasks),
     spendSeries: effortSeries(reasoning),
   };
 }
+
+/** Interval rows grouped by harness, in the server's registry order; `read` maps one row. */
+function intervalGroups(
+  rows: Row[],
+  read: (row: Row) => { n: number; value: unknown; lo: unknown; hi: unknown },
+): IntervalGroup[] {
+  const groups = new Map<string, IntervalGroup>();
+  for (const row of rows) {
+    const harness = String(row.harness);
+    if (!isHarness(harness)) continue;
+    const group = groups.get(harness) ?? {
+      key: harness,
+      label: HARNESS_LABEL[harness],
+      color: HARNESS_COLOR[harness],
+      rows: [],
+    };
+    const { n, value, lo, hi } = read(row);
+    group.rows.push({
+      key: String(row.effort),
+      label: String(row.effort),
+      n,
+      value: maybe(value),
+      lo: maybe(lo),
+      hi: maybe(hi),
+    });
+    groups.set(harness, group);
+  }
+  return [...groups.values()];
+}
+
+/** Table rows for an interval chart: the exact n, value and bounds the marks draw. */
+const intervalColumns = (unit: (value: unknown) => string) => [
+  {
+    key: "harness",
+    label: "Harness",
+    render: (row: Row) => <HarnessName value={row.harness} />,
+  },
+  { key: "effort", label: "Effort" },
+  { key: "n", label: "n", numeric: true },
+  {
+    key: "value",
+    label: "Value",
+    numeric: true,
+    render: (row: Row) => unit(row.value),
+  },
+  {
+    key: "lo",
+    label: "Low",
+    numeric: true,
+    render: (row: Row) => unit(row.lo),
+  },
+  {
+    key: "hi",
+    label: "High",
+    numeric: true,
+    render: (row: Row) => unit(row.hi),
+  },
+];
+
+const cleanRead = (row: Row) => ({
+  n: num(row.clean_den),
+  value: row.clean_rate,
+  lo: row.clean_lo,
+  hi: row.clean_hi,
+});
+const durationRead = (row: Row) => ({
+  n: num(row.duration_n),
+  value: row.p50_duration,
+  lo: row.p25_duration,
+  hi: row.p75_duration,
+});
 
 export default function Effort({ data }: { data: Record<string, Row[]> }) {
   const usage = data.usage ?? [];
   const outcomes = data.outcomes ?? [];
   const spend: Row = data.spend?.[0] ?? {};
   const summary: Row = data.summary?.[0] ?? {};
-  const {
-    reasoningDaily,
-    mixDaily,
-    cleanDaily,
-    durationDaily,
-    taskSeries,
-    spendSeries,
-  } = dailyViews(data);
+  const { minRateN } = useView();
+  const { reasoningDaily, mixDaily, taskSeries, spendSeries } =
+    dailyViews(data);
+  const intervals = data.intervals ?? [];
+  const cleanGroups = intervalGroups(intervals, cleanRead);
+  const durationGroups = intervalGroups(intervals, durationRead);
+  const durationAxis = {
+    ...logExtent(
+      durationGroups
+        .flatMap((group) =>
+          group.rows.flatMap((row) => [row.lo, row.hi, row.value]),
+        )
+        .filter((value): value is number => value !== null),
+    ),
+    log: true,
+  };
+  const tableRows = (read: (row: Row) => Row) =>
+    intervals.map((row) => ({
+      harness: row.harness,
+      effort: row.effort,
+      ...read(row),
+    }));
   return (
     <>
       <Section title="At a glance">
@@ -167,49 +253,42 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
             rows={mixDaily}
           />
         </Panel>
+      </Section>
+      <Section title="Is heavier effort cleaner or slower?">
         <Panel
-          title="Daily clean completion by effort"
-          source="daily_tasks"
-          subtitle="Noisy on low-volume days; a friction proxy, not a quality score"
+          title="Clean completion by effort"
+          source="intervals"
+          subtitle="Whole window; compare efforts within one harness. Dot: clean rate, whisker: Wilson 95% interval, hollow dot: fewer tasks than the minimum sample"
           signals={["friction.clean_completion", "effort.level"]}
         >
-          <DailyChart
-            rows={cleanDaily}
-            series={taskSeries}
-            kind="line"
-            max={100}
-            fixed
+          <IntervalChart
+            label="Clean completion by effort"
+            groups={cleanGroups}
+            axis={{ min: 0, max: 100, fixed: true }}
             format={(value) => fmtPct(value, 0)}
+            minN={minRateN}
           />
           <TableView
-            columns={[
-              { key: "day", label: "Day" },
-              ...rateSeriesColumns(taskSeries),
-            ]}
-            rows={cleanDaily}
+            columns={intervalColumns((value) => fmtPct(maybe(value), 1))}
+            rows={tableRows(cleanRead)}
           />
         </Panel>
         <Panel
-          title="Daily median task duration by effort"
-          source="daily_tasks"
+          title="Task duration by effort"
+          source="intervals"
+          subtitle="Whole window; compare efforts within one harness. Dot: median, whisker: 25th to 75th percentile, log axis"
           signals={["task.duration", "effort.level"]}
         >
-          <DailyChart
-            rows={durationDaily}
-            series={taskSeries}
-            kind="line"
+          <IntervalChart
+            label="Task duration by effort"
+            groups={durationGroups}
+            axis={durationAxis}
             format={fmtSeconds}
+            minN={minRateN}
           />
           <TableView
-            columns={[
-              { key: "day", label: "Day" },
-              ...taskSeries.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} (s)`,
-                numeric: true,
-              })),
-            ]}
-            rows={durationDaily}
+            columns={intervalColumns((value) => fmtSeconds(maybe(value)))}
+            rows={tableRows(durationRead)}
           />
         </Panel>
       </Section>

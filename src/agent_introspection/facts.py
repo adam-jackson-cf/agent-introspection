@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any, cast
 
+from agent_introspection import command_shape
 from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig, is_local_host
 
 DATABASE = "introspection"
@@ -245,9 +246,19 @@ def _sql(name: str) -> str:
     return files("agent_introspection.facts_sql").joinpath(name).read_text()
 
 
+def _command_shape_fragment() -> str:
+    """Return the command-shape SQL fragment with its rules rendered from Python."""
+    return command_shape.fill(_sql("command_shape.sql"), command_shape.sql_parts())
+
+
 def render_select(select_file: str, window: str) -> str:
     """Return a curated projection restricted to one source-time predicate."""
-    return _sql(select_file).replace("{window}", window)
+    select = _sql(select_file)
+    if "{" + "command_shape}" in select:
+        select = command_shape.fill(
+            select, {"command_shape": _command_shape_fragment().rstrip("\n")}
+        )
+    return command_shape.fill(select, {"window": window})
 
 
 def loader_ddl(loader: Loader) -> str:

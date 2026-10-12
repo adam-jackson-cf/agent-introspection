@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import hooks, inbox
+from agent_introspection import command_shape, facts, hooks, inbox
 from tests.test_inbox import recorder
 
 SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
@@ -43,18 +43,21 @@ def tool_call(tool_name: str, tool_input: dict[str, Any], cwd: str = "/Users/me/
 # --- Parity with select_logs.sql --------------------------------------------------
 
 
-def test_subcommand_heads_match_the_log_projection() -> None:
-    sql = (Path(hooks.__file__).parent / "facts_sql" / "select_logs.sql").read_text()
-    listed = re.search(r"command_head IN \(([^)]*)\)", sql)
-    assert listed is not None
-    assert set(re.findall(r"'([^']+)'", listed[1])) == set(hooks.SUBCOMMAND_HEADS)
+def test_log_projection_renders_the_shared_command_shape_rules() -> None:
+    select = facts.render_select("select_logs.sql", "1")
+
+    assert not re.search(r"\{[a-z_]+\}", select)
+    for head in command_shape.SUBCOMMAND_HEADS:
+        assert f"'{head}'" in select
+    assert "AS verification_kinds" in select
 
 
 @pytest.mark.parametrize(
     ("command", "head", "sub"),
     [
         ("git commit -m wip", "git", "commit"),
-        ("FOO=1 BAR=x /usr/local/bin/uv run pytest", "uv", "run"),
+        ("FOO=1 BAR=x /usr/local/bin/uv run pytest", "pytest", ""),
+        ("cd app && npm run test:unit", "npm", "test:unit"),
         ("./scripts/run.sh --fast", "run.sh", ""),
         ("ls -la", "ls", ""),
         ("npm Install", "npm", ""),
@@ -426,6 +429,17 @@ def test_omp_events(tmp_path: Path) -> None:
     assert steer["attrs"] == {"prompt_length": len(PROMPT)}
     assert PROMPT not in json.dumps(steer)
     assert hooks.normalize("omp", "input", base | {"text": PROMPT, "idle": True}, ctx) == []
+    failure = base | {
+        "tool_use_id": "c1",
+        "tool_name": "bash",
+        "error": "ModuleNotFoundError: No module named 'x' at /Users/me/p/a.py",
+        "exit_code": 1,
+    }
+    (result,) = hooks.normalize("omp", "tool_result", failure, ctx)
+    assert result["event_type"] == "tool_failure"
+    assert result["attrs"]["failure_signature"].startswith("ModuleNotFoundError")
+    assert result["attrs"]["exit_code"] == 1
+    assert "/Users/me" not in json.dumps(result)
 
 
 def test_unknown_producer_event_and_missing_session_are_rejected(tmp_path: Path) -> None:
@@ -458,6 +472,12 @@ def test_no_raw_argument_or_output_text_in_records(tmp_path: Path) -> None:
     assert "Hunter2" not in serialized
     assert "hunter2" not in serialized
     assert secret not in serialized
+    attrs = records[0]["attrs"]
+    assert (attrs["command_head"], attrs["verification_kinds"], attrs["gate_run"]) == (
+        "printf",
+        [],
+        0,
+    )
 
 
 # --- Writing, CLI entry, and ingest -----------------------------------------------
@@ -608,6 +628,49 @@ handlers.before_agent_start(
 );
 console.log(sent);
 """
+
+
+OMP_RESULT_PROBE = """
+import register from "%s";
+const handlers: Record<string, any> = {};
+register({ on: (name: string, fn: any) => { handlers[name] = fn; } } as any);
+const context = { sessionManager: { getSessionId: () => "s1" }, cwd: "/Users/me/p" };
+handlers.tool_result({ toolCallId: "c0", toolName: "bash", isError: false, content: [] }, context);
+handlers.tool_result(
+  { toolCallId: "c1", toolName: "bash", isError: undefined, content: [] },
+  context,
+);
+handlers.tool_result(
+  {
+    toolCallId: "c2",
+    toolName: "bash",
+    isError: true,
+    content: [{ type: "text", text: "boom: ModuleNotFoundError" }, { type: "image" }],
+    details: { exitCode: 2 },
+  },
+  context,
+);
+await new Promise((resolve) => setTimeout(resolve, 1500));
+"""
+
+
+def test_omp_tool_result_spawns_the_shim_only_for_errors(tmp_path: Path) -> None:
+    shim = tmp_path / "shim.sh"
+    sink = tmp_path / "sink"
+    shim.write_text(f'echo "$2" >> {sink}\ncat >> {sink}\necho >> {sink}\n')
+    probe = tmp_path / "probe.ts"
+    probe.write_text(OMP_RESULT_PROBE % (SCRIPTS / "adapters/omp/activity.ts"))
+    env = {**os.environ, "AGENT_INTROSPECTION_SHIM": str(shim)}
+    subprocess.run(["bun", str(probe)], env=env, capture_output=True, timeout=60, check=True)
+
+    lines = sink.read_text().split()
+    assert lines.count("tool_result") == 1
+    (envelope,) = [
+        json.loads(line) for line in sink.read_text().splitlines() if line.startswith("{")
+    ]
+    assert envelope["tool_use_id"] == "c2"
+    assert envelope["error"] == "boom: ModuleNotFoundError\n"
+    assert envelope["exit_code"] == 2
 
 
 @pytest.mark.parametrize(("opt_in", "expected"), [(None, "0"), ("1", "1")])

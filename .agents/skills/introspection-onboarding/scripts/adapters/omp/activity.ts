@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Activity hooks for omp (see docs/hook-events.md). Each handler builds a small
 // JSON envelope and hands it to the detached activity shim, which runs
 // `agent-introspection hook omp <event>`. Handlers never block, throw, or change
-// the agent's behaviour; a failed spawn loses one record.
+// the agent's behaviour; a failed spawn loses one record and is logged by event and
+// error code only. The error text of a failed tool result is handed to the shim in
+// memory and reduced to a normalized signature there; it is never stored.
 //
 // omp exports no user-prompt event, so `before_agent_start` sends one: an
 // `omp.user_prompt` OTLP log (the same shape as Claude Code's `user_prompt` and
@@ -23,8 +25,14 @@ const shimPath =
     ".local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh",
   );
 
+const hooksLog = join(
+  homedir(),
+  ".local/share/agent-introspection/hooks.log",
+);
+
 type ActivityEvent =
   | "tool_call"
+  | "tool_result"
   | "tool_approval_resolved"
   | "auto_retry_start"
   | "auto_retry_end"
@@ -42,6 +50,14 @@ interface ToolCallEvent {
   toolCallId?: unknown;
   toolName?: unknown;
   input?: unknown;
+}
+
+interface ToolResultEvent {
+  toolCallId?: unknown;
+  toolName?: unknown;
+  isError?: unknown;
+  content?: unknown;
+  details?: { exitCode?: unknown };
 }
 
 interface BeforeAgentStartEvent {
@@ -67,6 +83,7 @@ type Handler<E> = (event: E, context: OmpContext) => void;
 
 interface OmpExtensionAPI {
   on(event: "tool_call", handler: Handler<ToolCallEvent>): void;
+  on(event: "tool_result", handler: Handler<ToolResultEvent>): void;
   on(
     event: "before_agent_start",
     handler: Handler<BeforeAgentStartEvent>,
@@ -87,6 +104,35 @@ function sessionId(context: OmpContext): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Join the text parts of a tool result's content; other parts carry no text. */
+function textOf(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) =>
+      typeof part?.text === "string" ? (part.text as string) : "",
+    )
+    .join("\n");
+}
+
+function exitCodeOf(event: ToolResultEvent): number | undefined {
+  const code = event.details?.exitCode;
+  return typeof code === "number" && Number.isFinite(code) ? code : undefined;
+}
+
+/** Append one line naming the event and error code; never any payload. */
+function logSpawnFailure(event: ActivityEvent, error: unknown): void {
+  try {
+    const code = (error as { code?: unknown })?.code;
+    mkdirSync(dirname(hooksLog), { recursive: true });
+    appendFileSync(
+      hooksLog,
+      `${new Date().toISOString()} omp ${event} spawn ${typeof code === "string" ? code : "error"}\n`,
+    );
+  } catch {
+    // Logging must never disturb the session.
+  }
+}
+
 function emit(
   event: ActivityEvent,
   context: OmpContext,
@@ -103,7 +149,7 @@ function emit(
       detached: true,
       stdio: ["pipe", "ignore", "ignore"],
     });
-    child.on("error", () => undefined);
+    child.on("error", (error) => logSpawnFailure(event, error));
     child.stdin?.on("error", () => undefined);
     child.stdin?.end(envelope);
     child.unref();
@@ -211,6 +257,15 @@ export default function registerOmpActivityHooks(api: OmpExtensionAPI): void {
       tool_use_id: event.toolCallId,
       tool_name: event.toolName,
       tool_input: event.input,
+    });
+  });
+  api.on("tool_result", (event, context) => {
+    if (event.isError !== true) return;
+    emit("tool_result", context, {
+      tool_use_id: event.toolCallId,
+      tool_name: event.toolName,
+      error: textOf(event.content),
+      exit_code: exitCodeOf(event),
     });
   });
   api.on("before_agent_start", (event, context) => {

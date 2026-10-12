@@ -44,6 +44,24 @@ export const effortRank = (effort: string) => {
   return index === -1 ? EFFORT_ORDER.length : index;
 };
 
+/** Verification kinds in display order, as stored in `tool_calls.verification_kinds`. */
+export const VERIFICATION_KINDS = [
+  "unit_test",
+  "integration_e2e",
+  "smoke",
+  "lint_format",
+  "typecheck",
+  "ci_remote",
+] as const;
+export const VERIFICATION_LABEL: Record<string, string> = {
+  unit_test: "Unit tests",
+  integration_e2e: "Integration and end-to-end",
+  smoke: "Smoke tests",
+  lint_format: "Lint and format",
+  typecheck: "Type check",
+  ci_remote: "Remote CI",
+};
+
 export const isHarness = (value: unknown): value is Harness =>
   typeof value === "string" && (HARNESSES as readonly string[]).includes(value);
 export const harnessLabel = (value: unknown) =>
@@ -77,6 +95,9 @@ export const fmtSeconds = (value: number | null) => {
   if (value >= 60) return `${(value / 60).toFixed(1)} min`;
   return `${value.toFixed(value >= 10 ? 0 : 1)} s`;
 };
+
+/** A text cell, "—" when the value is empty. */
+export const orDash = (value: unknown): string => String(value ?? "") || "—";
 
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";

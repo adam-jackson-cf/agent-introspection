@@ -5,13 +5,19 @@
 `~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh omp <event>` detached; override the path with
 `AGENT_INTROSPECTION_SHIM`. Handlers never block, throw, or return a result.
 
-| omp event                             | Record                                                | Envelope fields                      |
-| ------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
-| `tool_call`                           | `tool_call`                                           | `toolCallId`, `toolName`, `input`    |
-| `before_agent_start`                  | none; sends an `omp.user_prompt` OTLP log (see below) | `prompt`                             |
-| `tool_approval_resolved`              | `approval`                                            | `toolCallId`, `toolName`, `approved` |
-| `auto_retry_start` / `auto_retry_end` | `retry`                                               | `attempt`, `success`                 |
-| `input` while `ctx.isIdle()` is false | `steer`                                               | text length only is kept             |
+| omp event                             | Record                                                | Envelope fields                                 |
+| ------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
+| `tool_call`                           | `tool_call`                                           | `toolCallId`, `toolName`, `input`               |
+| `tool_result` with `isError`          | `tool_failure`                                        | `toolCallId`, `toolName`, error text, exit code |
+| `before_agent_start`                  | none; sends an `omp.user_prompt` OTLP log (see below) | `prompt`                                        |
+| `tool_approval_resolved`              | `approval`                                            | `toolCallId`, `toolName`, `approved`            |
+| `auto_retry_start` / `auto_retry_end` | `retry`                                               | `attempt`, `success`                            |
+| `input` while `ctx.isIdle()` is false | `steer`                                               | text length only is kept                        |
+
+A `tool_result` that is an error hands its text to the shim in memory; `hooks.py`
+keeps only the normalized failure signature, its hash, and the exit code. A failed
+spawn appends `<time> omp <event> spawn <code>` to
+`~/.local/share/agent-introspection/hooks.log`, with no payload.
 
 omp exports no prompt event, so on `before_agent_start` the extension posts one
 `omp.user_prompt` log (attributes `event.name`, `session.id`, `prompt`,

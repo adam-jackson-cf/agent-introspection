@@ -97,6 +97,14 @@ describe("refreshers feeding a view", () => {
       historyStale: false,
       failing: [],
     });
+    expect(scope("guardrails")).toContain("refresh_tool_calls_history");
+    expect(scope("guardrails")).toContain("refresh_tool_calls_recent");
+    expect(scope("friction")).toEqual(
+      expect.arrayContaining([
+        "refresh_task_labels_history",
+        "refresh_tool_calls_history",
+      ]),
+    );
     expect(scope("effort")).toContain("refresh_task_outcomes_history");
     expect(asOfFor(rows, scope("effort"))).toMatchObject({
       stale: false,

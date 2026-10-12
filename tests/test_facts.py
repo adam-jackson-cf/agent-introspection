@@ -707,6 +707,15 @@ def test_log_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
     assert "lower(substring(hex(SHA256(error_normalised)), 1, 16))" in digest
 
 
+def test_tool_calls_view_keeps_policy_blocked_calls_out_of_failures_and_signatures() -> None:
+    views = facts._sql("003_views.sql")
+    view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]
+
+    outcome = view.split("attrs_string['pi.gen_ai.tool.status'] = 'ok'")[1].split("'unknown'")[0]
+    assert outcome.index("= 'blocked', 'policy_blocked'") < outcome.index("has_error, 'failed'")
+    assert view.count("attrs_string['pi.gen_ai.tool.status'] != 'blocked'") == 2
+
+
 def test_tool_calls_view_unifies_old_and_new_signature_rows_for_every_source() -> None:
     views = facts._sql("003_views.sql")
     view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]

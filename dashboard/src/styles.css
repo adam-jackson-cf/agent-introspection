@@ -374,6 +374,9 @@ a {
 .contributor-rows i {
   border: 0;
 }
+.contributors-neutral .contributors-lead {
+  color: var(--color-muted);
+}
 .contributor small {
   color: var(--color-muted);
 }
@@ -1088,4 +1091,24 @@ select:focus-visible {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px 10px;
+}
+
+.interval-whisker {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.interval-dot {
+  stroke-width: 2;
+}
+.interval-chart .interval-group {
+  fill: var(--color-text);
+  font-weight: 600;
+}
+.interval-chart .interval-value {
+  fill: var(--color-text-2);
+}
+.interval-focus {
+  fill: var(--color-primary);
+  fill-opacity: 0.1;
+  pointer-events: none;
 }

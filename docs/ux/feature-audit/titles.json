@@ -231,13 +231,13 @@
     "page": "effort",
     "title": "Daily clean completion by effort",
     "feature": "EFF-F13",
-    "removed": null
+    "removed": "DC10"
   },
   {
     "page": "effort",
     "title": "Daily median task duration by effort",
     "feature": "EFF-F15",
-    "removed": null
+    "removed": "DC10"
   },
   {
     "page": "effort",
@@ -345,19 +345,19 @@
     "page": "tools",
     "title": "Repeats and loops",
     "feature": "TOOL-F11",
-    "removed": null
+    "removed": "DC9"
   },
   {
     "page": "tools",
     "title": "Repeated attempts",
     "feature": "TOOL-F11",
-    "removed": null
+    "removed": "DC9"
   },
   {
     "page": "tools",
     "title": "Tool loops",
     "feature": "TOOL-F12",
-    "removed": null
+    "removed": "DC9"
   },
   {
     "page": "friction",

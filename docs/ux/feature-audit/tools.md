@@ -122,3 +122,8 @@ No removed rows. New: TOOL-F14..F20, TOOL-S07..S14, TOOL-C10..C12.
 
 - Example session of a failure signature is now the most recent occurrence, `argMax(session_id, (ts, session_id))`, so refreshes no longer change it (`views.ts:192-194`). Rows TOOL-S05, TOOL-S14.
 - KPI details name their denominators: "Tasks affected by failures" reads "N of M tasks with an attributed tool call"; "Tasks with repeated attempts" reads "N of M tasks with comparable calls (not waiting or polling)" (`Tools.tsx:74,80`). Rows TOOL-S03, TOOL-S04, TOOL-C04, TOOL-C05. Registry formula of `tools.repeats` and `dashboard-measure-v3.md` state the repeat denominator.
+
+## Batch C changes (2026-10-12)
+
+- DC9: the Repeated attempts and Tool loops tables are one Repeated calls table (`tools.repeated_calls`, signals `tools.repeats` and `tools.loops`), one row per identical call in a task: Harness, Project, Session, Tool, Command, Attempts, Longest run (consecutive repeats), Failed, Started. Failed excludes omp `policy_blocked` calls. `repeat_summary` still feeds the KPI.
+- The Command column is the program after splitting on `&&`, `||`, `;`, `|` and unwrapping runners (`uv run`, `npx`, `python -m`), so `cd x && pytest` reads `pytest`.

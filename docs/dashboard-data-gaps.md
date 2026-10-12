@@ -25,68 +25,70 @@ harness does not emit it, so the signal is hidden wherever that harness is enabl
 
 ## Harness support matrix
 
-56 per-harness signals across 5 harnesses: 280 cells, 168 aligned (✓), 91 reached by a different route (≈), 7 not applicable by construction (—), 14 not emitted (✗).
+58 per-harness signals across 5 harnesses: 290 cells, 165 aligned (✓), 104 reached by a different route (≈), 7 not applicable by construction (—), 14 not emitted (✗).
 
 Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
-| View                     | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
-| ------------------------ | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
-| Pipeline                 | Fact freshness               | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Pipeline                 | Source parity                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Pipeline                 | Project attribution          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency         | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Cache efficiency         | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency         | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency         | Cache creation               | ✓   | ✗                | ✗         | ✗          | ✓           |
-| Cache efficiency         | Output tokens                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency         | Input cache utilization      | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency         | Completed operations         | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Cache efficiency         | Usage-active sessions        | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Reasoning effort         | Reasoning tokens             | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort         | Reasoning share of output    | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort         | Requested effort             | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort         | Tasks                        | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort         | Heavy-effort task share      | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort         | Task duration                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Reasoning effort         | Model steps per task         | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort         | Reasoning tokens per task    | ✓   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort         | Delegations per task         | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures            | Tool calls                   | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Tool failures            | Tool failure rate            | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures            | Failure signature            | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Tool failures            | Tasks affected by failures   | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures            | Repeated attempts            | ≈   | ✓                | ✓         | ✓          | ≈           |
-| Tool failures            | Tool loops                   | ≈   | ✓                | ✓         | ✓          | ≈           |
-| Friction                 | Interrupted tasks            | ≈   | ✓                | ✓         | —          | ≈           |
-| Friction                 | Steered tasks                | ≈   | ✓                | ✓         | —          | ≈           |
-| Friction                 | Errored tasks                | ✓   | ≈                | ≈         | ≈          | ≈           |
-| Friction                 | Quick follow-up              | ✓   | ✓                | ✓         | —          | ✓           |
-| Friction                 | Clean completion             | ✓   | ≈                | ≈         | —          | ≈           |
-| Friction                 | Recovery after failure       | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Guardrails               | Tool approval decisions      | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails               | Rejected tool calls          | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails               | Sandbox outcomes             | ✗   | ✓                | ✓         | ✓          | ✗           |
-| Guardrails               | Quality-gate bypass          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails               | Command churn                | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Provider                 | Model calls                  | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider                 | Call error rate              | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider                 | Stream disconnects           | ✗   | ✓                | ✓         | ✓          | ✗           |
-| Provider                 | Model call latency           | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider                 | Time to first token          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Provider                 | Output throughput            | ✓   | ✗                | ✗         | ✗          | ✓           |
-| Provider                 | Retries                      | ≈   | ≈                | ≈         | ≈          | ✓           |
-| Provider                 | Unknown outcomes             | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider                 | Model conformance            | ✓   | ✗                | ✗         | ✗          | ✗           |
-| Recurring failures       | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Recurring failures       | Recurring failure signatures | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Recurring failures       | Actionable repeats           | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Recurring failures       | Project concentration        | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Requests and corrections | Labelled tasks               | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Requests and corrections | Task type                    | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Requests and corrections | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
-| Requests and corrections | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
-| Requests and corrections | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
-| Requests and corrections | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
+| View                        | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
+| --------------------------- | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
+| Pipeline                    | Fact freshness               | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Pipeline                    | Source parity                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Pipeline                    | Project attribution          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency            | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Cache efficiency            | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency            | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency            | Cache creation               | ✓   | ✗                | ✗         | ✗          | ✓           |
+| Cache efficiency            | Output tokens                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency            | Input cache utilization      | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency            | Completed operations         | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Cache efficiency            | Usage-active sessions        | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Reasoning effort            | Reasoning tokens             | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort            | Reasoning share of output    | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort            | Requested effort             | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort            | Tasks                        | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort            | Heavy-effort task share      | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort            | Task duration                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Reasoning effort            | Model steps per task         | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort            | Reasoning tokens per task    | ✓   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort            | Delegations per task         | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures               | Tool calls                   | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Tool failures               | Tool failure rate            | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures               | Failure signature            | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Tool failures               | Tasks affected by failures   | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures               | Repeated attempts            | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Tool failures               | Tool loops                   | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Friction                    | Interrupted tasks            | ≈   | ✓                | ✓         | —          | ≈           |
+| Friction                    | Steered tasks                | ≈   | ✓                | ✓         | —          | ≈           |
+| Friction                    | Errored tasks                | ✓   | ≈                | ≈         | ≈          | ≈           |
+| Friction                    | Quick follow-up              | ✓   | ✓                | ✓         | —          | ✓           |
+| Friction                    | Clean completion             | ✓   | ≈                | ≈         | —          | ≈           |
+| Friction                    | Recovery after failure       | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Verification and guardrails | Tool approval decisions      | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Verification and guardrails | Rejected tool calls          | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Verification and guardrails | Sandbox outcomes             | ✗   | ✓                | ✓         | ✓          | ✗           |
+| Verification and guardrails | Quality-gate bypass          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Verification and guardrails | Command churn                | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Verification and guardrails | Verification runs            | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Verification and guardrails | Failures caught in the task  | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Provider                    | Model calls                  | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                    | Call error rate              | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                    | Stream disconnects           | ✗   | ✓                | ✓         | ✓          | ✗           |
+| Provider                    | Model call latency           | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                    | Time to first token          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Provider                    | Output throughput            | ✓   | ✗                | ✗         | ✗          | ✓           |
+| Provider                    | Retries                      | ≈   | ≈                | ≈         | ≈          | ✓           |
+| Provider                    | Unknown outcomes             | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                    | Model conformance            | ✓   | ✗                | ✗         | ✗          | ✗           |
+| Recurring failures          | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Recurring failures          | Recurring failure signatures | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Recurring failures          | Actionable repeats           | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Recurring failures          | Project concentration        | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections    | Labelled tasks               | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections    | Task type                    | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections    | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections    | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections    | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections    | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
 
 ## Signals a harness does not emit
 
@@ -157,6 +159,7 @@ These are emitted, but the route differs from the shared definition; the note sa
 | Tool failure rate            | Codex app-server | `success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins.                                                                                                              |
 | Tool failure rate            | Codex CLI        | `success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins.                                                                                                              |
 | Tool failure rate            | Codex exec       | `success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins.                                                                                                              |
+| Failure signature            | omp              | Most specific diagnostic line of the `tool_result` error text from the `tool_failure` hook; from the deploy date. The first error-like line of the span status message before.                                                  |
 | Failure signature            | Claude Code      | Most specific diagnostic line of the `PostToolUseFailure` error; before the hooks, and when the hook has no error text, the `error_type` class.                                                                                 |
 | Tasks affected by failures   | Codex app-server | Call → task by session and the turn span that contains the call time; calls outside a user turn are unattributed.                                                                                                               |
 | Tasks affected by failures   | Codex CLI        | Call → task by session and the turn span that contains the call time; calls outside a user turn are unattributed.                                                                                                               |
@@ -188,6 +191,16 @@ These are emitted, but the route differs from the shared definition; the note sa
 | Command churn                | Codex CLI        | Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension).                                                                               |
 | Command churn                | Codex exec       | Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension).                                                                               |
 | Command churn                | Claude Code      | Targets from the `PreToolUse` hook (`file_path`, edit paths, path-like command arguments). From the activity hooks' install date; earlier rows have no value.                                                                   |
+| Verification runs            | omp              | `verification_kinds` classified by the `tool_call` hook; the outcome is the `execute_tool` span status. From the deploy date; earlier rows have no value.                                                                       |
+| Verification runs            | Codex app-server | `x.verification_kinds` classified from the command in the projection. Outcome is the exit code when it parsed (about half of calls), else the success flag; recomputed for the rows SigNoz still retains.                       |
+| Verification runs            | Codex CLI        | `x.verification_kinds` classified from the command in the projection. Outcome is the exit code when it parsed (about half of calls), else the success flag; recomputed for the rows SigNoz still retains.                       |
+| Verification runs            | Codex exec       | `x.verification_kinds` classified from the command in the projection. Outcome is the exit code when it parsed (about half of calls), else the success flag; recomputed for the rows SigNoz still retains.                       |
+| Verification runs            | Claude Code      | `verification_kinds` classified by the `PreToolUse` hook; the outcome is the `tool_result` success flag. From the deploy date; earlier rows have no value.                                                                      |
+| Failures caught in the task  | omp              | Kinds from the `tool_call` hook, outcome from the `execute_tool` span; call → root run of the same trace. From the deploy date.                                                                                                 |
+| Failures caught in the task  | Codex app-server | Kinds and outcomes as for verification runs; calls outside a user turn are unattributed.                                                                                                                                        |
+| Failures caught in the task  | Codex CLI        | Kinds and outcomes as for verification runs; calls outside a user turn are unattributed.                                                                                                                                        |
+| Failures caught in the task  | Codex exec       | Kinds and outcomes as for verification runs; calls outside a user turn are unattributed.                                                                                                                                        |
+| Failures caught in the task  | Claude Code      | Kinds from the `PreToolUse` hook, outcome from `tool_result`; call → interaction of the same trace. From the deploy date.                                                                                                       |
 | Model calls                  | Codex app-server | One per response stream (`response.completed`), including failed streams; not a logical request.                                                                                                                                |
 | Model calls                  | Codex CLI        | One per response stream (`response.completed`), including failed streams; not a logical request.                                                                                                                                |
 | Model calls                  | Codex exec       | One per response stream (`response.completed`), including failed streams; not a logical request.                                                                                                                                |
@@ -209,7 +222,9 @@ These are emitted, but the route differs from the shared definition; the note sa
 | Recurring targets            | Codex CLI        | `x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~.                                                                                                                      |
 | Recurring targets            | Codex exec       | `x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~.                                                                                                                      |
 | Recurring targets            | Claude Code      | Targets from the `PreToolUse` hook, home as ~. From the activity hooks' install date; earlier rows have no value.                                                                                                               |
+| Recurring failure signatures | omp              | Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before.                                                                                        |
 | Recurring failure signatures | Claude Code      | Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks.                                                                                                                      |
+| Actionable repeats           | omp              | Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before.                                                                                        |
 | Actionable repeats           | Claude Code      | Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks.                                                                                                                      |
 | Labelled tasks               | omp              | omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start`. Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted.                              |
 | Task type                    | omp              | Prompt event sent by the omp activity extension.                                                                                                                                                                                |
@@ -244,12 +259,15 @@ These signals are emitted, but not for every row.
 
 ## Gaps from the activity hooks
 
-| Gap                                      | Harnesses        | Extent                                                                                                                                                                                                                               | Effect                                                                                                                                          |
-| ---------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hook history starts at install           | omp, Claude Code | Hook events exist from 2026-09-30 13:40 UTC                                                                                                                                                                                          | Hook-routed signals (argument identity, targets, gate bypass, Claude interrupts, steers, reasoning, delegations) are NULL before then, never 0. |
-| Prompt labels start at export            | All              | Producers exported prompt text from 2026-09-30 15:20 UTC (Claude Code and Codex sessions started after their setting changed; omp sessions started after the extension was registered); earlier prompts are a `REDACTED` placeholder | Intent signals are empty before then; a long-running session keeps exporting placeholders until it restarts.                                    |
-| Claude Code interrupts and steers        | Claude Code      | Inferred from hook timing: no `Stop` after the prompt (interrupt); a prompt submitted while the interaction runs (steer)                                                                                                             | Not live-tested yet; a queued prompt may start a new interaction instead of counting as a steer.                                                |
-| omp sessions started before registration | omp              | Long-running omp sessions load extensions at start                                                                                                                                                                                   | Their calls carry no hook fields until the session restarts.                                                                                    |
+| Gap                                                  | Harnesses               | Extent                                                                                                                                                                                                                               | Effect                                                                                                                                                  |
+| ---------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hook history starts at install                       | omp, Claude Code        | Hook events exist from 2026-09-30 13:40 UTC                                                                                                                                                                                          | Hook-routed signals (argument identity, targets, gate bypass, Claude interrupts, steers, reasoning, delegations) are NULL before then, never 0.         |
+| Prompt labels start at export                        | All                     | Producers exported prompt text from 2026-09-30 15:20 UTC (Claude Code and Codex sessions started after their setting changed; omp sessions started after the extension was registered); earlier prompts are a `REDACTED` placeholder | Intent signals are empty before then; a long-running session keeps exporting placeholders until it restarts.                                            |
+| Claude Code interrupts and steers                    | Claude Code             | Inferred from hook timing: no `Stop` after the prompt (interrupt); a prompt submitted while the interaction runs (steer)                                                                                                             | Not live-tested yet; a queued prompt may start a new interaction instead of counting as a steer.                                                        |
+| omp sessions started before registration             | omp                     | Long-running omp sessions load extensions at start                                                                                                                                                                                   | Their calls carry no hook fields until the session restarts.                                                                                            |
+| Command shape and verification kinds start at deploy | omp, Claude Code, Codex | Segment count, verification kinds, and gate-run flag are stored from the deploy date for hook rows; Codex rows are recomputed for the log rows SigNoz still retains                                                                  | Verification panels count only rows that carry the shape, so earlier hook rows are left out rather than read as "no verification".                      |
+| omp policy refusals                                  | omp                     | `pi.gen_ai.tool.status = 'blocked'` (jev-guard policy enforcement) is the outcome `policy_blocked` in `tool_calls`                                                                                                                   | Not a tool failure: outside the failure-rate denominator and repeated-call failures, and not counted as a guard rejection. Queryable for a policy page. |
+| omp plugin migration                                 | omp                     | omp sessions running during the 2026-10-12 10:14 plugin migration lost hook events until restart; headless omp runs without the plugin loaded have no hook rows                                                                      | Hook-routed signals (including tool failure signatures from `tool_result`) have no value for those sessions.                                            |
 
 ## Gaps in history
 

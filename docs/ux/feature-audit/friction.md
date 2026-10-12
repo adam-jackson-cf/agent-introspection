@@ -121,3 +121,8 @@ No removed rows. New: FRIC-F14..F20, FRIC-S08..S12, FRIC-C10..C12.
 
 - Recovery windows on the start of the task the calls belong to (`views.ts:240,255`), so all Friction measures cover the same tasks. Rows FRIC-S04, FRIC-F04, FRIC-F10, FRIC-F11. Registry formula and `dashboard-measure-v3.md` updated.
 - "Operations that fail most" shows "Showing N of M" when cut at 25 (FRIC-F11).
+
+## Batch C changes (2026-10-12)
+
+- The explicit-friction task table gains Project, Type (Jev task type), Effort, Failing tool and Failure class (the task's first failed call); blanks read "—".
+- New Where to look panel (`friction.where_to_look`): project by failure class over interrupted, steered or errored tasks, excluding generic error types and sessions without a Git project.

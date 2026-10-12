@@ -9,7 +9,7 @@ import Recurrence from "./views/Recurrence";
 export const OUTCOME_VIEWS: ViewSpec[] = [
   {
     id: "guardrails",
-    title: "Guardrails",
+    title: "Verification and guardrails",
     question:
       "How often do approvals block tool calls, and how often are quality gates bypassed?",
     component: Guardrails,

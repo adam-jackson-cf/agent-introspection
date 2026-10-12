@@ -767,8 +767,8 @@ describe("view queries", () => {
       expect(VIEW_QUERIES.recurrence[key]).toContain(
         `AND NOT match(failure_class, '${GENERIC_CLASS}')`,
       );
-    expect(VIEW_QUERIES.tools.repeats).toContain(
-      "GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2\nORDER BY failed DESC, attempts DESC",
+    expect(VIEW_QUERIES.tools.repeated_calls).toContain(
+      "GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2\n    ORDER BY failed DESC, longest_run DESC, attempts DESC LIMIT 25",
     );
     expect(VIEW_QUERIES.interventions.cluster_daily).toContain(
       "GROUP BY day, harness, tool_family, failure_class",

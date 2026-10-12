@@ -245,7 +245,9 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
             rows={data.targets ?? []}
             total={targetsTotal}
           />
-          <ViewLink view="guardrails">Open Guardrails</ViewLink>
+          <ViewLink view="guardrails">
+            Open Verification and guardrails
+          </ViewLink>
         </Panel>
         <Panel
           title="Project concentration"

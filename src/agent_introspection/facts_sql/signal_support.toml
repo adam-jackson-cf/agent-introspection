@@ -43,7 +43,7 @@ cache = "Cache efficiency"
 effort = "Reasoning effort"
 tools = "Tool failures"
 friction = "Friction"
-guardrails = "Guardrails"
+guardrails = "Verification and guardrails"
 provider = "Provider"
 recurrence = "Recurring failures"
 intent = "Requests and corrections"
@@ -239,15 +239,15 @@ id = "hook.tool_call"
 harnesses = ["oh-my-pi", "claude-code"]
 source = "hooks"
 match = "event_type = 'tool_call'"
-description = "Activity hook `tool_call` (Claude Code `PreToolUse`, omp `tool_call`): command head and subcommand, targets, gate-bypass flag, and argument hash derived from the arguments, which are not stored."
+description = "Activity hook `tool_call` (Claude Code `PreToolUse`, omp `tool_call`): command head and subcommand, segment count, verification kinds, gate-run and gate-bypass flags, targets, and argument hash derived from the arguments, which are not stored."
 
 [[route]]
 id = "hook.tool_failure"
 expect = "events"
-harnesses = ["claude-code"]
+harnesses = ["claude-code", "oh-my-pi"]
 source = "hooks"
 match = "event_type = 'tool_failure'"
-description = "Activity hook `tool_failure` (Claude Code `PostToolUseFailure`): the most specific diagnostic line of the error, normalized."
+description = "Activity hook `tool_failure` (Claude Code `PostToolUseFailure`, omp `tool_result` with `isError`): the most specific diagnostic line of the error, normalized, and the exit code when the harness reports one."
 
 [[route]]
 id = "hook.turn_stop"
@@ -640,7 +640,7 @@ unit = "%"
 formula = "100 × failed calls / calls with an explicit outcome (succeeded, failed, or aborted). Unknown outcomes stay out of the denominator."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins." }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "`pi.gen_ai.tool.status` error; aborted calls count in the denominator only." }
+oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "`pi.gen_ai.tool.status` error; aborted calls count in the denominator only. Status `blocked` (a jev-guard policy refusal) is the separate outcome `policy_blocked`: it is not a tool failure and stays out of the denominator." }
 claude-code = { route = "claude.tool_result", alignment = "aligned", note = "`success=false`." }
 
 [[signal]]
@@ -652,7 +652,7 @@ unit = "signature"
 formula = "Failed calls grouped by tool and the hash of the full normalized failure line (home → ~, digit and hex runs → N); the stored text is the first 80 characters, so failures sharing a prefix stay distinct."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: first error-like output line." }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "First error-like line of the span status message." }
+oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error text from the `tool_failure` hook; from the deploy date. The first error-like line of the span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `PostToolUseFailure` error; before the hooks, and when the hook has no error text, the `error_type` class." }
 
 [[signal]]
@@ -829,11 +829,35 @@ view = "guardrails"
 title = "Command churn"
 question = "Where do agents try ≥3 distinct commands against the same file in one task?"
 unit = "tasks"
-formula = "Task × target pairs with ≥3 distinct command head + subcommand values."
+formula = "Task × target pairs with ≥3 distinct command head + subcommand values. The head is taken after splitting the command on `&&`, `||`, `;`, `|`, and newlines and unwrapping runners such as `uv run`, `npx`, and `python -m`; hook rows stored before the command shape was added keep the first-token head."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension)." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Targets from the `tool_call` hook (edit paths, `path` arguments, path-like command arguments). From the activity hooks' install date; earlier rows have no value." }
 claude-code = { route = "hook.tool_call", alignment = "differs", note = "Targets from the `PreToolUse` hook (`file_path`, edit paths, path-like command arguments). From the activity hooks' install date; earlier rows have no value." }
+
+[[signal]]
+id = "guard.verification"
+view = "guardrails"
+title = "Verification runs"
+question = "Which verification commands run, and do they pass?"
+unit = "runs"
+formula = "Shell calls whose command contains a verification step, counted once per kind: unit test, integration or end-to-end test, smoke test, lint or format, type check, remote CI. A chained command counts toward every kind it contains and its one outcome applies to all of them; a failed chain fails every kind in it. Full local gate runs (CI or check-all scripts, `pre-commit`, `make check`) are a context flag, not a kind. Rows from before the command shape was stored are left out, not counted as no verification."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "`x.verification_kinds` classified from the command in the projection. Outcome is the exit code when it parsed (about half of calls), else the success flag; recomputed for the rows SigNoz still retains." }
+oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "`verification_kinds` classified by the `tool_call` hook; the outcome is the `execute_tool` span status. From the deploy date; earlier rows have no value." }
+claude-code = { route = "hook.tool_call", alignment = "differs", note = "`verification_kinds` classified by the `PreToolUse` hook; the outcome is the `tool_result` success flag. From the deploy date; earlier rows have no value." }
+
+[[signal]]
+id = "guard.verification_caught"
+view = "guardrails"
+title = "Failures caught in the task"
+question = "After a verification fails, does the same kind pass later in the task?"
+unit = "%"
+formula = "100 × (task, kind) pairs where a verification of that kind fails and a later run of the same kind succeeds in the same task / (task, kind) pairs with a failed run. Time to catch is from the first failure to the first later success."
+[signal.support]
+codex = { route = "codex.tool_result", alignment = "differs", note = "Kinds and outcomes as for verification runs; calls outside a user turn are unattributed." }
+oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Kinds from the `tool_call` hook, outcome from the `execute_tool` span; call → root run of the same trace. From the deploy date." }
+claude-code = { route = "hook.tool_call", alignment = "differs", note = "Kinds from the `PreToolUse` hook, outcome from `tool_result`; call → interaction of the same trace. From the deploy date." }
 
 # ---------------------------------------------------------------------------
 # V7 Provider
@@ -972,7 +996,7 @@ unit = "tasks"
 formula = "Failure clusters (tool family × failure class: the signature with quoted values and paths generalized) seen in ≥2 tasks, with occurrences, tasks, and days."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks." }
 
 [[signal]]
@@ -984,7 +1008,7 @@ unit = "signatures"
 formula = "Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a project or path under a temporary directory) are excluded."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
+oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks." }
 
 [[signal]]

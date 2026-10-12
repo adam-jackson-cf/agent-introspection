@@ -20,7 +20,7 @@ const manifest: Entry[] = await Bun.file(join(audit, "titles.json")).json();
 const decided = new Set(
   [
     ...(await Bun.file(join(audit, "README.md")).text()).matchAll(
-      /^\| (DC\d+) \|/gm,
+      /^\| (DC\d+)\s+\|/gm,
     ),
   ].map((match) => match[1]),
 );

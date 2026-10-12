@@ -1,5 +1,5 @@
 import { HARNESSES, type ViewId } from "../src/contracts";
-import { EFFORT_ORDER } from "../src/format";
+import { EFFORT_ORDER, VERIFICATION_KINDS } from "../src/format";
 
 /**
  * Aggregate queries per question-led view. Every query reads the snapshot
@@ -46,6 +46,9 @@ const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
 /** Waiting and status-polling tools repeat identical calls by design (registry: tools.repeats). */
 const NOT_POLLING =
   "tool NOT IN ('wait', 'write_stdin', 'wait_agent', 'wait_threads', 'collaborationwait_agent', 'sleep', 'get_goal', 'get_usage_limits')";
+/** Shell calls whose command shape was stored, so pre-change rows never read as "no verification". */
+const VERIFIABLE = "shape_v2 = 1 AND tool_family = 'shell'";
+const VERIFIED = `${VERIFIABLE} AND notEmpty(verification_kinds)`;
 const APPROVALS = "('approved', 'approved_with_amendment', 'accept')";
 /** Tool + command head + subcommand; omp and Claude Code take the command shape from the activity hooks. */
 const OPERATION = "trimBoth(concat(tool, ' ', command_head, ' ', command_sub))";
@@ -176,6 +179,26 @@ const sqlArray = (items: readonly string[]): string =>
 const orderRank = (order: readonly string[], column: string): string =>
   `if(indexOf(${sqlArray(order)}, ${column}) = 0, ${order.length + 1}, indexOf(${sqlArray(order)}, ${column}))`;
 
+/** Harness position in registry order, for stable (never value-ranked) row order. */
+const harnessRank = (column: string): string => orderRank(HARNESSES, column);
+
+/**
+ * Wilson 95% bounds (z = 1.96) in percent for `successes` of `n`; NULL when n is 0.
+ * Aliases `lo` / `hi` over the columns it is given.
+ */
+const wilson = (successes: string, n: string): string => {
+  const p = `(${successes} / ${n})`;
+  const centre = `(${p} + 1.96 * 1.96 / (2 * ${n})) / (1 + 1.96 * 1.96 / ${n})`;
+  const margin = `1.96 * sqrt(${p} * (1 - ${p}) / ${n} + 1.96 * 1.96 / (4 * ${n} * ${n})) / (1 + 1.96 * 1.96 / ${n})`;
+  return `if(${n} > 0, 100 * greatest(0, ${centre} - ${margin}), NULL) AS clean_lo,
+    if(${n} > 0, 100 * least(1, ${centre} + ${margin}), NULL) AS clean_hi`;
+};
+
+/** A verification kind failed in the task and a later run of the same kind succeeded. */
+const caught = (prefix = ""): string =>
+  `${prefix}failed > 0 AND arrayExists(t -> t > ${prefix}first_failure, ${prefix}successes)`;
+const KIND_RANK = orderRank(VERIFICATION_KINDS, "kind");
+
 /**
  * Project × correction kind pairs over the selected harnesses, one row each:
  * tasks and sessions are harness-scoped, so sessions count (harness, session).
@@ -247,6 +270,16 @@ FROM (
     if(reasoning_den > 0, reasoning / reasoning_den, NULL) AS reasoning_per_task,
     if(reasoning_den > 0 AND reasoning_output > 0, 100 * reasoning / reasoning_output, NULL) AS reasoning_share_rate
 FROM ${T} AS t WHERE ${inWindow("start_ts")} GROUP BY harness, effort ORDER BY harness, ${EFFORT_RANK}, effort`,
+    /** Whole-window clean rate (Wilson 95%) and duration quartiles per harness and effort. */
+    intervals: `SELECT harness, effort, count() AS tasks,
+    sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,
+    if(clean_den > 0, 100 * clean_n / clean_den, NULL) AS clean_rate,
+    ${wilson("clean_n", "clean_den")},
+    quantilesExact(0.25, 0.5, 0.75)(duration_seconds) AS duration_q,
+    count(duration_seconds) AS duration_n,
+    duration_q[1] AS p25_duration, duration_q[2] AS p50_duration, duration_q[3] AS p75_duration
+FROM ${T} WHERE ${inWindow("start_ts")}
+GROUP BY harness, effort ORDER BY ${harnessRank("harness")}, ${EFFORT_RANK}, effort`,
     summary: `SELECT count() AS tasks, countIf(effort IN ('high', 'xhigh')) AS heavy,
     sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,
     if(clean_den > 0, 100 * clean_n / clean_den, NULL) AS clean_rate,
@@ -308,15 +341,9 @@ FROM (
     GROUP BY harness, task_id, tool, arguments_hash
 ) GROUP BY ROLLUP(harness) ORDER BY harness`,
     /** Grouped as repeat_summary is, so the rows and the KPI count the same repeats. */
-    repeats: `SELECT harness, argMax(session_id, ts) AS example_session, task_id, tool,
-    any(command_head) AS command, count() AS attempts,
-    countIf(outcome = 'failed') AS failed, count() OVER () AS total_rows
-FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
-GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2
-ORDER BY failed DESC, attempts DESC LIMIT 25`,
-    loops: `WITH
+    repeated_calls: `WITH
     ordered AS (
-        SELECT harness, session_id, task_id, ts, tool, command_head, arguments_hash, outcome,
+        SELECT harness, session_id, task_id, ts, tool, command_head, command_sub, arguments_hash, outcome,
             concat(tool, char(0), arguments_hash) AS call_key,
             lagInFrame(call_key, 1, '') OVER (
                 PARTITION BY harness, task_id ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
@@ -328,11 +355,23 @@ ORDER BY failed DESC, attempts DESC LIMIT 25`,
             PARTITION BY harness, task_id ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS run
         FROM ordered
+    ),
+    sized AS (
+        SELECT *, count() OVER (PARTITION BY harness, task_id, run) AS run_length FROM runs
     )
-SELECT harness, session_id, task_id, any(tool) AS tool, any(command_head) AS command, count() AS length,
-    countIf(outcome = 'failed') AS failed, toString(min(ts)) AS started, count() OVER () AS total_rows
-FROM runs GROUP BY harness, session_id, task_id, run HAVING length >= 3
-ORDER BY length DESC LIMIT 25`,
+SELECT g.harness AS harness, p.project AS project, g.example_session AS example_session, g.tool AS tool,
+    g.command AS command, g.attempts AS attempts, g.longest_run AS longest_run, g.failed AS failed,
+    g.started AS started, g.total_rows AS total_rows
+FROM (
+    SELECT harness, tool, task_id, arguments_hash, count() AS attempts, max(run_length) AS longest_run,
+        countIf(outcome = 'failed') AS failed,
+        any(trimBoth(concat(command_head, ' ', command_sub))) AS command,
+        argMax(session_id, ts) AS example_session, toString(min(ts)) AS started,
+        count() OVER () AS total_rows
+    FROM sized GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2
+    ORDER BY failed DESC, longest_run DESC, attempts DESC LIMIT 25
+) AS g LEFT JOIN ${P} AS p ON p.session_id = g.example_session
+ORDER BY failed DESC, longest_run DESC, attempts DESC`,
   },
   friction: {
     kpi: `SELECT harness, ${TASK_OUTCOME_COLUMNS},
@@ -371,10 +410,36 @@ FROM ops GROUP BY ROLLUP(harness) ORDER BY harness`,
 SELECT harness, operation, count() AS failed_ops, count() OVER () AS total_rows,
     countIf(arrayExists(t -> t > first_failure, successes)) AS recovered
 FROM ops GROUP BY harness, operation ORDER BY failed_ops DESC LIMIT 25`,
-    tasks: `SELECT harness, session_id, task_id, model, toString(start_ts) AS started, duration_seconds,
-    interrupted, steered, errored, quick_follow_up
-FROM ${T} WHERE ${inWindow("start_ts")} AND (interrupted = 1 OR steered = 1 OR errored = 1)
-ORDER BY start_ts DESC LIMIT 25`,
+    tasks: `WITH failed_calls AS (
+    SELECT harness, task_id, argMin(tool, ts) AS failing_tool, argMin(failure_class, ts) AS failure_class,
+        count() AS failed_calls
+    FROM ${C} WHERE (harness, task_id) IN (SELECT harness, task_id FROM ${T} WHERE ${inWindow("start_ts")})
+        AND task_id != '' AND outcome = 'failed'
+    GROUP BY harness, task_id
+)
+SELECT t.harness AS harness, t.session_id AS session_id, t.task_id AS task_id, t.model AS model,
+    t.effort AS effort, toString(t.start_ts) AS started, t.duration_seconds AS duration_seconds,
+    t.interrupted AS interrupted, t.steered AS steered, t.errored AS errored, t.quick_follow_up AS quick_follow_up,
+    p.project AS project, l.task_type AS task_type,
+    f.failing_tool AS failing_tool, f.failure_class AS failure_class, f.failed_calls AS failed_calls
+FROM ${T} AS t
+LEFT JOIN ${P} AS p ON p.session_id = t.session_id
+LEFT JOIN ${L} AS l ON l.harness = t.harness AND l.task_id = t.task_id
+LEFT JOIN failed_calls AS f ON f.harness = t.harness AND f.task_id = t.task_id
+WHERE ${inWindowOf("t", "start_ts")} AND (t.interrupted = 1 OR t.steered = 1 OR t.errored = 1)
+ORDER BY t.start_ts DESC LIMIT 25`,
+    where_to_look: `SELECT p.project AS project, c.failure_class AS failure_class,
+    uniqExact(c.harness, c.task_id) AS tasks, count() AS failures,
+    arraySort(h -> (${harnessRank("h")}, h), groupUniqArray(c.harness)) AS harnesses,
+    toString(max(c.ts)) AS last_seen, count() OVER () AS total_rows
+FROM ${C} AS c INNER JOIN ${P} AS p ON p.session_id = c.session_id
+WHERE (c.harness, c.task_id) IN (
+        SELECT harness, task_id FROM ${T}
+        WHERE ${inWindow("start_ts")} AND (interrupted = 1 OR steered = 1 OR errored = 1)
+    )
+    AND c.task_id != '' AND c.outcome = 'failed' AND c.failure_class != ''
+    AND NOT match(c.failure_class, '${GENERIC_CLASS}') AND p.project != ''
+GROUP BY project, failure_class ORDER BY tasks DESC, failures DESC LIMIT 25`,
   },
   guardrails: {
     decisions: `SELECT harness, detail AS decision, source, count() AS n,
@@ -429,6 +494,51 @@ FROM ${C} ARRAY JOIN targets AS target
 WHERE ${inWindow("ts")} AND task_id != ''
 GROUP BY harness, session_id, task_id, target HAVING commands >= 3
 ORDER BY commands DESC, calls DESC LIMIT 25`,
+    verification_kpi: `SELECT harness, count() AS shell_calls, countIf(notEmpty(verification_kinds)) AS runs,
+    countIf(notEmpty(verification_kinds) AND outcome IN ('succeeded', 'failed')) AS explicit,
+    countIf(notEmpty(verification_kinds) AND outcome = 'failed') AS failed,
+    uniqExactIf(task_id, notEmpty(verification_kinds) AND task_id != '') AS tasks,
+    countIf(gate_run = 1) AS gate_runs
+FROM ${C} WHERE ${inWindow("ts")} AND ${VERIFIABLE} GROUP BY ROLLUP(harness) ORDER BY harness`,
+    verification_kinds: `SELECT harness, kind, count() AS runs,
+    countIf(outcome IN ('succeeded', 'failed')) AS explicit, countIf(outcome = 'failed') AS failed,
+    if(explicit > 0, 100 * failed / explicit, NULL) AS failed_rate,
+    uniqExactIf(task_id, task_id != '') AS tasks
+FROM ${C} ARRAY JOIN verification_kinds AS kind
+WHERE ${inWindow("ts")} AND ${VERIFIED}
+GROUP BY harness, kind ORDER BY ${KIND_RANK}, ${harnessRank("harness")}`,
+    verification_caught: `WITH ops AS (
+    SELECT harness, task_id, kind, countIf(outcome = 'failed') AS failed,
+        minIf(ts, outcome = 'failed') AS first_failure,
+        groupArrayIf(ts, outcome = 'succeeded') AS successes
+    FROM ${C} ARRAY JOIN verification_kinds AS kind
+    WHERE ${inWindow("ts")} AND ${VERIFIED} AND task_id != '' AND outcome IN ('failed', 'succeeded')
+    GROUP BY harness, task_id, kind HAVING failed > 0
+)
+SELECT harness, count() AS failed_kinds, countIf(${caught()}) AS caught,
+    if(failed_kinds > 0, 100 * caught / failed_kinds, NULL) AS caught_rate,
+    quantileExactIf(0.5)(
+        dateDiff('millisecond', first_failure, arrayMin(arrayFilter(t -> t > first_failure, successes))) / 1000,
+        arrayExists(t -> t > first_failure, successes)
+    ) AS p50_caught_seconds
+FROM ops GROUP BY ROLLUP(harness) ORDER BY harness`,
+    verification_projects: `WITH ops AS (
+    SELECT harness, session_id, task_id, kind, count() AS runs, countIf(outcome = 'failed') AS failed,
+        minIf(ts, outcome = 'failed') AS first_failure,
+        groupArrayIf(ts, outcome = 'succeeded') AS successes, max(ts) AS last_ts
+    FROM ${C} ARRAY JOIN verification_kinds AS kind
+    WHERE ${inWindow("ts")} AND ${VERIFIED}
+    GROUP BY harness, session_id, task_id, kind
+)
+SELECT p.project AS project, o.kind AS kind, o.harness AS harness, sum(o.runs) AS runs,
+    sum(o.failed) AS failed, countIf(${caught("o.")}) AS caught,
+    toString(max(o.last_ts)) AS last_seen, count() OVER () AS total_rows
+FROM ops AS o INNER JOIN ${P} AS p ON p.session_id = o.session_id
+WHERE p.project != ''
+GROUP BY project, kind, harness ORDER BY failed DESC, runs DESC LIMIT 50`,
+    gate_runs: `SELECT harness, count() AS runs, countIf(outcome = 'failed') AS failed
+FROM ${C} WHERE ${inWindow("ts")} AND ${VERIFIABLE} AND gate_run = 1
+GROUP BY harness ORDER BY ${harnessRank("harness")}`,
   },
   provider: {
     kpi: `SELECT harness, count() AS calls, countIf(outcome != 'cancelled') AS rated_calls, countIf(outcome = 'failed') AS failed,

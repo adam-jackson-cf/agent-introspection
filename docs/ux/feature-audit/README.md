@@ -88,16 +88,18 @@ shell, split into finer rows, or changed in presentation. The changes already ma
 
 Changes the user has agreed to (2026-09-30 brief and design approval). None of them removes a feature.
 
-| ID  | Decision                                                                                | Effect on features                   |
-| --- | --------------------------------------------------------------------------------------- | ------------------------------------ |
-| DC1 | Content left-aligned beside the sidebar, capped at 2560px                               | Layout only                          |
-| DC2 | Type scale: body 14px, nothing below 12px, sentence-case labels and headers             | Presentation only; wording unchanged |
-| DC3 | Daily charts 280–360px high                                                             | Presentation only                    |
-| DC4 | Non-harness series use `cat-6`…`cat-8`; unknown and unset groups use `other`            | Colour only                          |
-| DC5 | Panel info note as an anchored popover; native `title` tooltips become the same popover | Content must be kept in full         |
-| DC6 | Flat panels on `surface` with a `rule` border                                           | Presentation only                    |
-| DC7 | Labels, state words and terms stay as they are                                          | Constraint on every change           |
-| DC8 | No verdict line, change-against-baseline figures or action hub                          | No new features of these kinds       |
+| ID   | Decision                                                                                                                                         | Effect on features                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| DC1  | Content left-aligned beside the sidebar, capped at 2560px                                                                                        | Layout only                          |
+| DC2  | Type scale: body 14px, nothing below 12px, sentence-case labels and headers                                                                      | Presentation only; wording unchanged |
+| DC3  | Daily charts 280–360px high                                                                                                                      | Presentation only                    |
+| DC4  | Non-harness series use `cat-6`…`cat-8`; unknown and unset groups use `other`                                                                     | Colour only                          |
+| DC5  | Panel info note as an anchored popover; native `title` tooltips become the same popover                                                          | Content must be kept in full         |
+| DC6  | Flat panels on `surface` with a `rule` border                                                                                                    | Presentation only                    |
+| DC7  | Labels, state words and terms stay as they are                                                                                                   | Constraint on every change           |
+| DC8  | No verdict line, change-against-baseline figures or action hub                                                                                   | No new features of these kinds       |
+| DC9  | Tools: Repeated attempts and Tool loops become one Repeated calls table (grouped by identical call; attempts, longest consecutive run, failures) | Both tables' fields kept, merged     |
+| DC10 | Effort: the daily clean-completion and daily median-duration charts become whole-window interval charts by harness and effort                    | Same measures, over the whole window |
 
 **No removals are approved.** Moving long tables to their own detail pages (Pipeline coverage, Recurrence lists,
 Interventions findings, the Session tool-call log) is a proposed relocation that needs the user's approval

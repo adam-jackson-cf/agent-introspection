@@ -4,6 +4,7 @@ import {
   HarnessName,
   Kpi,
   Panel,
+  RateValue,
   rateSeriesColumns,
   Section,
   SessionLink,
@@ -15,12 +16,15 @@ import { OTHER_TOKEN } from "../tokens";
 import {
   fmtCount,
   fmtPct,
+  fmtSeconds,
   HARNESS_COLOR,
   HARNESS_LABEL,
   harnessLabel,
   isHarness,
   maybe,
   num,
+  orDash,
+  VERIFICATION_LABEL,
 } from "../format";
 
 /** The All row of a summary query (`harness === ''`); empty result reads as no data. */
@@ -79,6 +83,180 @@ const sandboxLayout = (shown: boolean) =>
   shown
     ? { span: 6 as const, approvals: "Who approves, and what is denied?" }
     : { span: 12 as const, approvals: "Who approves?" };
+
+const NO_SHAPE =
+  "No verification runs yet: the command shape is stored from the deploy date, and earlier rows are left out, not counted as no verification.";
+
+/** "All" for the rollup row, else the harness name. */
+const harnessOrAll = (row: Row) =>
+  row.harness === "" ? "All" : <HarnessName value={row.harness} />;
+
+/** Verification by kind: bars keyed kind · harness in the server's fixed order, then the exact figures. */
+function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
+  return (
+    <>
+      {kinds.length === 0 ? (
+        <p className="empty">{NO_SHAPE}</p>
+      ) : (
+        <BarList
+          items={kinds.map((entry) => ({
+            key: `${String(entry.kind)} · ${String(entry.harness)}`,
+            label: `${VERIFICATION_LABEL[String(entry.kind)] ?? String(entry.kind)} · ${harnessLabel(entry.harness)}`,
+            value: num(entry.runs),
+            color: isHarness(entry.harness)
+              ? HARNESS_COLOR[entry.harness]
+              : OTHER_TOKEN,
+          }))}
+          format={fmtCount}
+        />
+      )}
+      <DataTable
+        columns={[
+          {
+            key: "kind",
+            label: "Kind",
+            render: (row) =>
+              VERIFICATION_LABEL[String(row.kind)] ?? String(row.kind),
+          },
+          {
+            key: "harness",
+            label: "Harness",
+            render: (row) => <HarnessName value={row.harness} />,
+          },
+          { key: "runs", label: "Runs", numeric: true },
+          { key: "failed", label: "Failed", numeric: true },
+          {
+            key: "rate",
+            label: "Failed rate",
+            numeric: true,
+            render: (row) => (
+              <RateValue pct={maybe(row.failed_rate)} n={num(row.explicit)} />
+            ),
+          },
+          { key: "tasks", label: "Tasks", numeric: true },
+        ]}
+        rows={kinds}
+        empty={NO_SHAPE}
+      />
+      <details className="table-view">
+        <summary>Full gate runs by harness</summary>
+        <DataTable
+          columns={[
+            {
+              key: "harness",
+              label: "Harness",
+              render: (row) => <HarnessName value={row.harness} />,
+            },
+            { key: "runs", label: "Runs", numeric: true },
+            { key: "failed", label: "Failed", numeric: true },
+          ]}
+          rows={gates}
+          empty="No full gate run (CI or check-all script, pre-commit, make check) in the selected range."
+        />
+      </details>
+    </>
+  );
+}
+
+function VerificationSection({ data }: { data: Record<string, Row[]> }) {
+  const kpi = allRow(data.verification_kpi);
+  const observed = num(kpi.shell_calls) > 0;
+  return (
+    <Section title="Does the agent verify its work?">
+      <Kpi
+        title="Verification runs"
+        source="verification_kpi"
+        value={observed ? fmtCount(num(kpi.runs)) : "—"}
+        detail={
+          observed
+            ? `${fmtCount(num(kpi.failed))} failed · ${fmtCount(num(kpi.gate_runs))} full gate runs · in ${fmtCount(num(kpi.tasks))} tasks`
+            : "no shell call carries the command shape yet"
+        }
+        signals={["guard.verification"]}
+      />
+      <Panel
+        title="Verification runs by kind"
+        source={["verification_kinds", "gate_runs"]}
+        subtitle="A chained command counts toward each kind it contains, and its outcome applies to all of them"
+        signals={["guard.verification"]}
+        span={5}
+      >
+        <VerificationKinds
+          kinds={data.verification_kinds ?? []}
+          gates={data.gate_runs ?? []}
+        />
+      </Panel>
+      <Panel
+        title="Failures caught in the task"
+        source="verification_caught"
+        subtitle="A failed verification kind that later passes in the same task"
+        signals={["guard.verification_caught"]}
+        span={4}
+      >
+        <DataTable
+          columns={[
+            { key: "harness", label: "Harness", render: harnessOrAll },
+            { key: "failed_kinds", label: "Failed kinds", numeric: true },
+            { key: "caught", label: "Caught", numeric: true },
+            {
+              key: "rate",
+              label: "Rate",
+              numeric: true,
+              render: (row) => (
+                <RateValue
+                  pct={maybe(row.caught_rate)}
+                  n={num(row.failed_kinds)}
+                />
+              ),
+            },
+            {
+              key: "p50",
+              label: "P50 to catch",
+              numeric: true,
+              render: (row) => fmtSeconds(maybe(row.p50_caught_seconds)),
+            },
+          ]}
+          rows={data.verification_caught ?? []}
+          empty="No failed verification with a task in the selected range."
+        />
+      </Panel>
+      <Panel
+        title="Where to tune project rules"
+        source="verification_projects"
+        subtitle="Projects by failed verification runs; caught means the same kind later passed in that task"
+        signals={["guard.verification"]}
+        span={12}
+      >
+        <DataTable
+          columns={[
+            { key: "project", label: "Project" },
+            {
+              key: "kind",
+              label: "Kind",
+              render: (row) =>
+                VERIFICATION_LABEL[String(row.kind)] ?? orDash(row.kind),
+            },
+            {
+              key: "harness",
+              label: "Harness",
+              render: (row) => <HarnessName value={row.harness} />,
+            },
+            { key: "runs", label: "Runs", numeric: true },
+            { key: "failed", label: "Failed", numeric: true },
+            { key: "caught", label: "Caught", numeric: true },
+            {
+              key: "last_seen",
+              label: "Last seen (UTC)",
+              render: (row) => String(row.last_seen).slice(0, 16),
+            },
+          ]}
+          rows={data.verification_projects ?? []}
+          empty="No verification runs with a Git project in the selected range."
+        />
+      </Panel>
+    </Section>
+  );
+}
 
 function guardrailsModel(data: Record<string, Row[]>) {
   return {
@@ -197,6 +375,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
           />
         </Panel>
       </Section>
+      <VerificationSection data={data} />
       <Section title={layout.approvals}>
         <Panel
           title="Approval decisions by source"

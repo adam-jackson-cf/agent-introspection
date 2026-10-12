@@ -14,8 +14,10 @@ import {
   fmtSeconds,
   HARNESS_COLOR,
   HARNESS_LABEL,
+  harnessLabel,
   maybe,
   num,
+  orDash,
   SERIES,
 } from "../format";
 
@@ -236,9 +238,50 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       </Section>
       <Section title="Tasks with explicit friction">
         <Panel
+          title="Where to look"
+          source="where_to_look"
+          subtitle="Failure classes in tasks the user interrupted or steered, or that errored, by project; generic error types left out"
+          signals={[
+            "tools.failure_signature",
+            "friction.interrupt",
+            "friction.steer",
+            "friction.error",
+          ]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              { key: "project", label: "Project" },
+              { key: "failure_class", label: "Failure class" },
+              { key: "tasks", label: "Tasks", numeric: true },
+              { key: "failures", label: "Failures", numeric: true },
+              {
+                key: "harnesses",
+                label: "Harnesses",
+                render: (row) =>
+                  (Array.isArray(row.harnesses) ? row.harnesses : [])
+                    .map(harnessLabel)
+                    .join(", ") || "—",
+              },
+              {
+                key: "last_seen",
+                label: "Last seen (UTC)",
+                render: (row) => String(row.last_seen).slice(0, 16),
+              },
+            ]}
+            rows={data.where_to_look ?? []}
+            empty="No failure class with a Git project in friction tasks in the selected range."
+          />
+        </Panel>
+        <Panel
           title="Latest interrupted, steered, or errored tasks"
           source="tasks"
-          signals={["friction.interrupt", "friction.steer", "friction.error"]}
+          signals={[
+            "friction.interrupt",
+            "friction.steer",
+            "friction.error",
+            "tools.failure_signature",
+          ]}
           span={12}
         >
           <DataTable
@@ -249,6 +292,16 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => <HarnessName value={row.harness} />,
               },
               {
+                key: "project",
+                label: "Project",
+                render: (row) => orDash(row.project),
+              },
+              {
+                key: "task_type",
+                label: "Type",
+                render: (row) => orDash(row.task_type),
+              },
+              {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
@@ -256,6 +309,21 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 ),
               },
               { key: "model", label: "Model" },
+              {
+                key: "effort",
+                label: "Effort",
+                render: (row) => orDash(row.effort),
+              },
+              {
+                key: "failing_tool",
+                label: "Failing tool",
+                render: (row) => orDash(row.failing_tool),
+              },
+              {
+                key: "failure_class",
+                label: "Failure class",
+                render: (row) => orDash(row.failure_class),
+              },
               {
                 key: "started",
                 label: "Started (UTC)",

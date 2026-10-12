@@ -16,14 +16,17 @@ export type Series = { key: string; label: string; color: string };
 /** What the enclosing Panel tells its charts and tables. */
 export const PanelContext = createContext<{
   label: string;
+  /** The panel shows coloured harness chips, which then act as a harness legend. */
   harnessChips: boolean;
-}>({ label: "", harnessChips: false });
+  /** A chart tells its panel whether its series are not harnesses (chips then go neutral). */
+  reportSeries: (parts: boolean) => void;
+}>({ label: "", harnessChips: false, reportSeries: () => undefined });
 type Format = (value: number | null) => string;
 
 const HEIGHT = 280;
 const PAD = { top: 10, right: 8, bottom: 22, left: 64 };
 
-function useWidth(ref: RefObject<HTMLElement | null>): number {
+export function useWidth(ref: RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(0);
   useEffect(() => {
     const element = ref.current;
@@ -484,17 +487,31 @@ function useDayFocus(days: number, clearHover: () => void) {
 }
 
 /**
- * The chart's accessible name, and whether it needs its own legend: the
- * contributor chips already name the harnesses a legend would.
+ * The chart's accessible name, and whether it needs its own legend: coloured
+ * contributor chips already name the harnesses a legend would. Series that are not
+ * harnesses always get the legend, and the panel's chips then turn neutral so only
+ * one set of keys carries colour.
  */
+/** Whether every series is a harness, so coloured harness chips can name them. */
+export const seriesAreHarnesses = (series: Series[]): boolean =>
+  series.every((entry) => entry.key in HARNESS_LABEL);
+
+/** Tells the enclosing panel whether this chart's series are parts (not harnesses). */
+export function useReportSeries(series: Series[]): void {
+  const { reportSeries } = useContext(PanelContext);
+  const parts = !seriesAreHarnesses(series);
+  useEffect(() => {
+    reportSeries(parts);
+    return () => reportSeries(false);
+  }, [parts, reportSeries]);
+}
+
 const chartNaming = (
   panel: { label: string; harnessChips: boolean },
   series: Series[],
 ) => ({
   name: panel.label || series.map((entry) => entry.label).join(", "),
-  legend: !(
-    panel.harnessChips && series.every((entry) => entry.key in HARNESS_LABEL)
-  ),
+  legend: !(panel.harnessChips && seriesAreHarnesses(series)),
 });
 
 /**
@@ -537,6 +554,7 @@ export function DailyChart({
   const shownRow = rows[shown ?? -1];
   const activeRow = rows[active ?? -1];
   const { name, legend } = chartNaming(panel, series);
+  useReportSeries(series);
   if (rows.length === 0)
     return (
       <div className="chart">

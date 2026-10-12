@@ -3,7 +3,8 @@
 -- Raw prompt, tool argument, and tool output text is never stored. For Codex
 -- tool results, normalized `x.*` fields are derived from that text instead:
 -- command head/subcommand, gate-bypass flag, home-redacted targets, argument
--- hash, exit code, and a digit-normalized failure signature. The command comes
+-- hash, exit code, a digit-normalized failure signature, and the verification kinds
+-- (see command_shape.sql). The command comes
 -- from the `cmd` argument, or for the JavaScript `exec` tool from the first
 -- nested `cmd` it passes to `exec_command`. Targets are patch file headers,
 -- `path` arguments, and path-like command arguments.
@@ -17,16 +18,7 @@ WITH
         t -> t != '' AND NOT match(t, '^[A-Za-z_][A-Za-z0-9_]*='),
         splitByRegexp('\\s+', cmd)
     ) AS cmd_tokens,
-    if(empty(cmd_tokens), '', arrayElement(splitByChar('/', cmd_tokens[1]), -1)) AS command_head,
-    -- Only tools whose second token is a subcommand keep it, so a free-text argument
-    -- (`echo word`) never becomes a stored subcommand. Mirrors hooks.SUBCOMMAND_HEADS.
-    if(
-        length(cmd_tokens) > 1
-            AND command_head IN ('aws', 'brew', 'bun', 'bunx', 'cargo', 'claude', 'clawpatch', 'codegraph', 'codex', 'defaults', 'deno', 'docker', 'gcloud', 'gh', 'git', 'go', 'hdiutil', 'helm', 'infisical', 'just', 'kubectl', 'launchctl', 'make', 'npm', 'npx', 'omp', 'orca', 'pip', 'pipx', 'pnpm', 'poetry', 'security', 'systemctl', 'terraform', 'uv', 'volta', 'yarn')
-            AND match(cmd_tokens[2], '^[a-z][a-z0-9:_.-]*$'),
-        cmd_tokens[2],
-        ''
-    ) AS command_sub,
+{command_shape}
     arrayFilter(
         t -> NOT startsWith(t, '-')
             AND match(t, '^[~.]{0,2}/?[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*/?$')
@@ -123,6 +115,7 @@ SELECT
                 map(
                     'x.command_head', command_head,
                     'x.command_sub', command_sub,
+                    'x.verification_kinds', toJSONString(verification_kinds),
                     'x.gate_bypass', toString(match(args, '(--no-verify|(^|[\\s"\\x27])HUSKY=0|(^|[\\s"\\x27])SKIP=|--no-gpg-sign)')),
                     'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^/Users/[^/]+', '~'),
                     'x.targets', toJSONString(targets),
@@ -193,7 +186,7 @@ SELECT
             if(
                 is_codex_tool_result,
                 mapUpdate(
-                    map('x.arguments_length', toFloat64(length(args)), 'x.output_length', toFloat64(length(out))),
+                    map('x.arguments_length', toFloat64(length(args)), 'x.output_length', toFloat64(length(out)), 'x.gate_run', toFloat64(gate_run), 'x.segments', toFloat64(segments)),
                     if(exit_code IS NULL, CAST(map(), 'Map(String, Float64)'), map('x.exit_code', toFloat64(toInt64(assumeNotNull(exit_code)))))
                 ),
                 CAST(map(), 'Map(String, Float64)')

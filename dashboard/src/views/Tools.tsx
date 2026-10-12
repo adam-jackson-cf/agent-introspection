@@ -19,6 +19,7 @@ import {
   HARNESS_LABEL,
   maybe,
   num,
+  orDash,
 } from "../format";
 
 /** The server's All row: the rollup row, harness = ''. */
@@ -205,12 +206,13 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
           <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
       </Section>
-      <Section title="Repeats and loops">
+      <Section title="Repeated calls">
         <Panel
-          title="Repeated attempts"
-          source="repeats"
-          subtitle="Same tool and identical arguments ≥ 2 times in one task, most failed first; the session link is one of the task's sessions"
-          signals={["tools.repeats"]}
+          title="Repeated calls"
+          source="repeated_calls"
+          subtitle="Same tool and identical arguments ≥ 2 times in one task; longest run counts consecutive repeats. Failed calls first; the session link is one of the task's sessions"
+          signals={["tools.repeats", "tools.loops"]}
+          span={12}
         >
           <DataTable
             columns={[
@@ -218,6 +220,11 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 key: "harness",
                 label: "Harness",
                 render: (row) => <HarnessName value={row.harness} />,
+              },
+              {
+                key: "project",
+                label: "Project",
+                render: (row) => orDash(row.project),
               },
               {
                 key: "example_session",
@@ -233,41 +240,10 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "command",
                 label: "Command",
-                render: (row) => String(row.command) || "—",
+                render: (row) => orDash(row.command),
               },
               { key: "attempts", label: "Attempts", numeric: true },
-              { key: "failed", label: "Failed", numeric: true },
-            ]}
-            rows={data.repeats ?? []}
-          />
-        </Panel>
-        <Panel
-          title="Tool loops"
-          source="loops"
-          subtitle="≥ 3 consecutive identical calls in one task"
-          signals={["tools.loops"]}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              {
-                key: "session_id",
-                label: "Session",
-                render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
-                ),
-              },
-              { key: "tool", label: "Tool" },
-              {
-                key: "command",
-                label: "Command",
-                render: (row) => String(row.command) || "—",
-              },
-              { key: "length", label: "Run", numeric: true },
+              { key: "longest_run", label: "Longest run", numeric: true },
               { key: "failed", label: "Failed", numeric: true },
               {
                 key: "started",
@@ -275,8 +251,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => String(row.started).slice(0, 16),
               },
             ]}
-            rows={data.loops ?? []}
-            empty="No runs of three or more identical consecutive calls."
+            rows={data.repeated_calls ?? []}
           />
           <ViewLink view="friction">Open Friction</ViewLink>
           <ViewLink view="recurrence">Open Recurring failures</ViewLink>

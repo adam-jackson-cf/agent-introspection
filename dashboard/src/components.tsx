@@ -4,6 +4,7 @@ import {
   createContext,
   Fragment,
   isValidElement,
+  useCallback,
   useContext,
   useId,
   useState,
@@ -162,31 +163,54 @@ const sameChips = (a: Chips, b: Chips) =>
       b[index]![1].from === chip.from,
   );
 
-/** The chips of the enclosing Section band; null outside one. */
-const BandContext = createContext<Chips | null>(null);
+/**
+ * The enclosing Section band: its shared chips, whether they are neutral (some panel in
+ * the band draws non-harness series, so a coloured row would be a second legend), and how
+ * a panel reports that. Null outside a Section.
+ */
+type Band = {
+  chips: Chips;
+  neutral: boolean;
+  reportParts: (panel: string, parts: boolean) => void;
+};
+const BandContext = createContext<Band | null>(null);
 
 /**
  * Which harnesses contributed rows to the signals in the window. Row counts
- * and route start days sit in the panel's `i` popover.
+ * and route start days sit in the panel's `i` popover. Coloured chips name the
+ * harnesses of a harness chart; `neutral` chips are plain source status ("Data
+ * from ...") with no swatch, for panels whose chart colours something else.
  */
-export function Contributors({ signals }: { signals: string[] }) {
+export function Contributors({
+  signals,
+  neutral = false,
+}: {
+  signals: string[];
+  neutral?: boolean;
+}) {
   const context = useView();
   const chips = panelChips(context, signals);
   if (chips.length === 0) return null;
   return (
-    <ul className="contributors" aria-label="Harnesses contributing data">
+    <ul
+      className={`contributors${neutral ? " contributors-neutral" : ""}`}
+      aria-label="Harnesses contributing data"
+    >
+      {neutral && <li className="contributors-lead">Data from</li>}
       {chips.map(([harness, chip]) => (
         <li
           key={harness}
           className={`contributor contributor-${chip.state.replaceAll(" ", "-")}`}
         >
-          <i
-            style={{
-              background:
-                chip.state === "rows" ? HARNESS_COLOR[harness] : undefined,
-            }}
-            aria-hidden="true"
-          />
+          {!neutral && (
+            <i
+              style={{
+                background:
+                  chip.state === "rows" ? HARNESS_COLOR[harness] : undefined,
+              }}
+              aria-hidden="true"
+            />
+          )}
           {HARNESS_LABEL[harness]}
           {chip.state !== "rows" && <small>{chip.state}</small>}
           {chip.state === "rows" && chip.from && (
@@ -374,6 +398,35 @@ export function InfoPopover({
 }
 
 /**
+ * Whether this panel's chart draws parts rather than harnesses, and the callback a chart
+ * uses to say so (the band hears it too, so its shared row can go neutral).
+ */
+function usePartSeries(band: Band | null): [boolean, (parts: boolean) => void] {
+  const panelId = useId();
+  const [parts, setParts] = useState(false);
+  const reportBand = band?.reportParts;
+  const report = useCallback(
+    (hasParts: boolean) => {
+      setParts(hasParts);
+      reportBand?.(panelId, hasParts);
+    },
+    [reportBand, panelId],
+  );
+  return [parts, report];
+}
+
+/** The not-applicable reason, the query failure, or the panel's content, in that order. */
+function PanelBody(props: {
+  missing: SignalSupport[] | null;
+  failed: string[];
+  children: ReactNode;
+}) {
+  if (props.missing) return <NotApplicableNotice entries={props.missing} />;
+  if (props.failed.length > 0) return <PanelError messages={props.failed} />;
+  return props.children;
+}
+
+/**
  * Panel frame shared by every view: title, contributors, and an info note
  * rendered from the signal support registry. When the panel's signal is not
  * applicable to any selected harness, the body is replaced by the registry's
@@ -403,11 +456,17 @@ export function Panel({
 }) {
   const context = useView();
   const band = useContext(BandContext);
+  const [parts, reportSeries] = usePartSeries(band);
   const shown = signals.filter((signal) => !isHidden(context.registry, signal));
   const missing = notApplicable(context, shown);
   if (signals[0] !== undefined && shown[0] !== signals[0]) return null;
   const chips = panelChips(context, shown);
   const failed = failedSources(context.errors, source);
+  // The band's row serves a panel with the same chips when it is the right kind: a
+  // coloured row for a harness chart, a neutral one for a chart that colours parts.
+  const sharedRow =
+    band !== null && sameChips(chips, band.chips) && parts === band.neutral;
+  const ownRow = chips.length > 0 && !sharedRow;
   return (
     <article className="panel" data-span={span} id={id}>
       <header className="panel-head">
@@ -419,21 +478,19 @@ export function Panel({
           <InfoNote signals={shown} />
         </InfoPopover>
       </header>
-      {chips.length > 0 && (!band || !sameChips(chips, band)) && (
-        <Contributors signals={shown} />
-      )}
+      {ownRow && <Contributors signals={shown} neutral={parts} />}
       <div className="panel-body">
         <PanelContext.Provider
-          value={{ label: title, harnessChips: chips.length > 0 }}
+          value={{
+            label: title,
+            harnessChips: chips.length > 0 && !parts,
+            reportSeries,
+          }}
         >
           <Boundary label={title}>
-            {missing ? (
-              <NotApplicableNotice entries={missing} />
-            ) : failed.length > 0 ? (
-              <PanelError messages={failed} />
-            ) : (
-              children
-            )}
+            <PanelBody missing={missing} failed={failed}>
+              {children}
+            </PanelBody>
           </Boundary>
         </PanelContext.Provider>
       </div>
@@ -518,11 +575,24 @@ export function Section({
   const shared =
     chips.length > 0 &&
     panels.some((signals) => sameChips(panelChips(context, signals), chips));
+  const [partPanels, setPartPanels] = useState<ReadonlySet<string>>(new Set());
+  const reportParts = useCallback((panel: string, hasParts: boolean) => {
+    setPartPanels((current) => {
+      if (current.has(panel) === hasParts) return current;
+      const next = new Set(current);
+      if (hasParts) next.add(panel);
+      else next.delete(panel);
+      return next;
+    });
+  }, []);
+  const neutral = partPanels.size > 0;
   return (
     <section className="view-section">
       <h2>{title}</h2>
-      {shared && <Contributors signals={union} />}
-      <BandContext.Provider value={shared ? chips : null}>
+      {shared && <Contributors signals={union} neutral={neutral} />}
+      <BandContext.Provider
+        value={shared ? { chips, neutral, reportParts } : null}
+      >
         <div className="grid" data-columns={columns}>
           {children}
         </div>

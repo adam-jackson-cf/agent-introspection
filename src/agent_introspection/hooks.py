@@ -35,6 +35,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_introspection.command_shape import command_shape, command_tokens
+
 SCHEMA = "agent-introspection.hook-event/1"
 DATA_DIR = Path.home() / ".local/share/agent-introspection"
 INBOX = DATA_DIR / "hook-inbox"
@@ -52,8 +54,6 @@ type Envelope = dict[str, Any]
 
 # --- Derivations mirrored from facts_sql/select_logs.sql -------------------------
 
-_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_SUBCOMMAND = re.compile(r"^[a-z][a-z0-9:_.-]*$")
 _PATH_TOKEN = re.compile(r"^[~.]{0,2}/?[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*/?$")
 _FILE_EXTENSION = re.compile(
     r"\.(md|py|ts|tsx|js|mjs|json|jsonl|toml|ya?ml|sh|sql|txt|lock|css|html|rs|go|sqlite3?"
@@ -135,68 +135,6 @@ def command_text(arguments: object) -> str:
         if isinstance(value, list) and all(isinstance(part, str) for part in value):
             return " ".join(value)
     return ""
-
-
-def command_tokens(command: str) -> list[str]:
-    """Split on whitespace, dropping empty tokens and environment assignments."""
-    return [
-        token for token in re.split(r"\s+", command) if token and not _ENV_ASSIGNMENT.match(token)
-    ]
-
-
-def command_head(tokens: list[str]) -> str:
-    """Return the basename of the first command token."""
-    return tokens[0].split("/")[-1] if tokens else ""
-
-
-# Only tools whose second token is a subcommand keep it, so a free-text argument
-# (`echo word`) never becomes a stored subcommand. Mirrors select_logs.sql.
-SUBCOMMAND_HEADS = frozenset((
-    "aws",
-    "brew",
-    "bun",
-    "bunx",
-    "cargo",
-    "claude",
-    "clawpatch",
-    "codegraph",
-    "codex",
-    "defaults",
-    "deno",
-    "docker",
-    "gcloud",
-    "gh",
-    "git",
-    "go",
-    "hdiutil",
-    "helm",
-    "infisical",
-    "just",
-    "kubectl",
-    "launchctl",
-    "make",
-    "npm",
-    "npx",
-    "omp",
-    "orca",
-    "pip",
-    "pipx",
-    "pnpm",
-    "poetry",
-    "security",
-    "systemctl",
-    "terraform",
-    "uv",
-    "volta",
-    "yarn",
-))
-
-
-def command_sub(tokens: list[str]) -> str:
-    """Return the second token of a known subcommand-style tool when it looks like one."""
-    if len(tokens) < 2 or command_head(tokens) not in SUBCOMMAND_HEADS:
-        return ""
-    return tokens[1] if _SUBCOMMAND.match(tokens[1]) else ""
 
 
 def _strip_token(token: str) -> str:
@@ -326,7 +264,8 @@ def tool_call_attrs(envelope: Envelope) -> Attrs:
     """Derive ``tool_call`` attributes from a tool name, input, and working directory."""
     arguments = envelope.get("tool_input", {})
     canonical = canonical_arguments(arguments)
-    tokens = command_tokens(command_text(arguments))
+    command = command_text(arguments)
+    shape = command_shape(command)
     workdir = ""
     if isinstance(arguments, dict):
         workdir = next(
@@ -337,9 +276,12 @@ def tool_call_attrs(envelope: Envelope) -> Attrs:
         "tool_name": _text(envelope, "tool_name"),
         "arguments_hash": arguments_hash(canonical),
         "arguments_length": len(canonical.encode()),
-        "command_head": command_head(tokens),
-        "command_sub": command_sub(tokens),
-        "targets": targets(arguments, canonical, tokens),
+        "command_head": shape.head,
+        "command_sub": shape.sub,
+        "segments": shape.segments,
+        "verification_kinds": list(shape.verification_kinds),
+        "gate_run": shape.gate_run,
+        "targets": targets(arguments, canonical, command_tokens(command)),
         "gate_bypass": gate_bypass(canonical),
         "workdir": redact_home(workdir or _text(envelope, "cwd")),
     }
@@ -348,13 +290,17 @@ def tool_call_attrs(envelope: Envelope) -> Attrs:
 def tool_failure_attrs(envelope: Envelope) -> Attrs:
     """Derive ``tool_failure`` attributes; the error text becomes a signature only."""
     line = normalized_failure_line(_text(envelope, "error"))
-    return {
+    attrs: Attrs = {
         "tool_use_id": _text(envelope, "tool_use_id"),
         "tool_name": _text(envelope, "tool_name"),
         "failure_signature": line[:SIGNATURE_CHARS],
         "failure_signature_hash": signature_hash(line),
         "interrupted": int(envelope.get("is_interrupt") is True),
     }
+    exit_code = envelope.get("exit_code")
+    if isinstance(exit_code, int | float) and not isinstance(exit_code, bool):
+        attrs["exit_code"] = exit_code
+    return attrs
 
 
 # --- Turn state -------------------------------------------------------------------
@@ -544,6 +490,8 @@ def _claude(event: str, envelope: Envelope, context: Context, occurred_at: str) 
 def _omp_simple(event: str, envelope: Envelope) -> tuple[str, str, Attrs] | None:
     if event == "tool_call":
         return "tool_call", _text(envelope, "tool_use_id"), tool_call_attrs(envelope)
+    if event == "tool_result":
+        return "tool_failure", _text(envelope, "tool_use_id"), tool_failure_attrs(envelope)
     if event == "tool_approval_resolved":
         tool_use_id = _text(envelope, "tool_use_id")
         attrs: Attrs = {

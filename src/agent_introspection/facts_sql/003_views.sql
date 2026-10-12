@@ -466,7 +466,10 @@ SELECT
     toUInt8(max(attrs_number['gate_bypass'])) AS hc_gate_bypass,
     any(attrs_string['targets']) AS hc_targets,
     any(attrs_string['arguments_hash']) AS hc_arguments_hash,
-    any(attrs_string['workdir']) AS hc_workdir
+    any(attrs_string['workdir']) AS hc_workdir,
+    any(attrs_string['verification_kinds']) AS hc_verification_kinds,
+    toUInt8(max(attrs_number['gate_run'])) AS hc_gate_run,
+    toUInt8(max(mapContains(attrs_string, 'verification_kinds'))) AS hc_shape_v2
 FROM introspection.hook_events FINAL
 WHERE producer IN ('omp', 'claude-code') AND event_type = 'tool_call' AND attrs_string['tool_use_id'] != ''
 GROUP BY hc_tool_use_id;
@@ -479,7 +482,13 @@ GROUP BY hc_tool_use_id;
 -- omp and Claude Code tool spans carry no arguments, so their command shape, targets,
 -- gate-bypass flag, and argument hash come from the activity hooks' `tool_call`
 -- events (joined by tool call ID), and a Claude Code failure's signature from its
--- `tool_failure` event; calls from before hooks were installed keep the native fields.
+-- `tool_failure` event (omp: its `tool_result` error, which also gives the exit code; the
+-- span status message is the fallback before the hook); calls from before hooks were installed keep the native fields.
+-- `verification_kinds`, `gate_run` and `shape_v2` come from the command shape (Codex
+-- `x.*` fields, hook `tool_call` attributes); `shape_v2` is 1 only for rows that carry
+-- the shape, so a row from before it was stored never reads as "no verification".
+-- `policy_blocked` is an omp call the jev-guard policy refused: enforcement, not a
+-- tool failure, so it is neither succeeded nor failed.
 -- Stored signatures were capped at 160 bytes before 2026-10-01; since then at 80
 -- characters, taken from the diagnostic keyword when it lies past character 80, with
 -- a hash of the full line beside them. The view applies that same window and cap to
@@ -557,7 +566,10 @@ FROM (
         attrs_string['x.arguments_hash'] AS arguments_hash,
         attrs_string['mcp_server'] AS mcp_server,
         if(l.ts <= t.turn_end, t.turn_id, '') AS task_id,
-        attrs_string['x.workdir'] AS workdir
+        attrs_string['x.workdir'] AS workdir,
+        JSONExtract(if(attrs_string['x.verification_kinds'] = '', '[]', attrs_string['x.verification_kinds']), 'Array(String)') AS verification_kinds,
+        toUInt8(attrs_number['x.gate_run']) AS gate_run,
+        toUInt8(mapContains(attrs_string, 'x.verification_kinds')) AS shape_v2
     FROM introspection.logs AS l FINAL
     ASOF LEFT JOIN (
         SELECT
@@ -584,27 +596,49 @@ FROM (
             attrs_string['pi.gen_ai.tool.status'] = 'ok', 'succeeded',
             attrs_string['pi.gen_ai.tool.status'] = 'error', 'failed',
             attrs_string['pi.gen_ai.tool.status'] = 'aborted', 'aborted',
+            attrs_string['pi.gen_ai.tool.status'] = 'blocked', 'policy_blocked',
             has_error, 'failed',
             'unknown'
         ),
-        CAST(NULL, 'Nullable(Float64)'),
+        if(hf.hf_has_exit_code = 1, toNullable(hf.hf_exit_code), CAST(NULL, 'Nullable(Float64)')),
         toNullable(duration_ns / 1e6),
         hc.hc_command_head,
         hc.hc_command_sub,
         hc.hc_gate_bypass,
         JSONExtract(if(hc.hc_targets = '', '[]', hc.hc_targets), 'Array(String)'),
         if(
-            has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error',
-            replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'),
+            (has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error') AND attrs_string['pi.gen_ai.tool.status'] != 'blocked',
+            coalesce(
+                nullIf(hf.hf_signature, ''),
+                replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N')
+            ),
             ''
         ),
-        if(has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error', attrs_string['x.status_hash'], ''),
+        if(
+            (has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error') AND attrs_string['pi.gen_ai.tool.status'] != 'blocked',
+            if(hf.hf_signature != '', hf.hf_signature_hash, attrs_string['x.status_hash']),
+            ''
+        ),
         hc.hc_arguments_hash,
         '',
         r.root_span,
-        hc.hc_workdir
+        hc.hc_workdir,
+        JSONExtract(if(hc.hc_verification_kinds = '', '[]', hc.hc_verification_kinds), 'Array(String)'),
+        hc.hc_gate_run,
+        hc.hc_shape_v2
     FROM introspection.spans FINAL
     LEFT JOIN introspection.hook_tool_calls AS hc ON hc.hc_tool_use_id = attrs_string['gen_ai.tool.call.id']
+    LEFT JOIN (
+        SELECT
+            attrs_string['tool_use_id'] AS hf_tool_use_id,
+            any(attrs_string['failure_signature']) AS hf_signature,
+            any(attrs_string['failure_signature_hash']) AS hf_signature_hash,
+            toUInt8(max(mapContains(attrs_number, 'exit_code'))) AS hf_has_exit_code,
+            any(attrs_number['exit_code']) AS hf_exit_code
+        FROM introspection.hook_events FINAL
+        WHERE producer IN ('claude-code', 'omp') AND event_type = 'tool_failure'
+        GROUP BY hf_tool_use_id
+    ) AS hf ON hf.hf_tool_use_id = attrs_string['gen_ai.tool.call.id']
     LEFT JOIN (
         SELECT trace_id AS root_trace, any(span_id) AS root_span
         FROM introspection.spans FINAL
@@ -631,16 +665,21 @@ FROM (
         hc.hc_arguments_hash,
         '',
         i.interaction_span,
-        hc.hc_workdir
+        hc.hc_workdir,
+        JSONExtract(if(hc.hc_verification_kinds = '', '[]', hc.hc_verification_kinds), 'Array(String)'),
+        hc.hc_gate_run,
+        hc.hc_shape_v2
     FROM introspection.logs AS l FINAL
     LEFT JOIN introspection.hook_tool_calls AS hc ON hc.hc_tool_use_id = l.attrs_string['tool_use_id']
     LEFT JOIN (
         SELECT
             attrs_string['tool_use_id'] AS hf_tool_use_id,
             any(attrs_string['failure_signature']) AS hf_signature,
-            any(attrs_string['failure_signature_hash']) AS hf_signature_hash
+            any(attrs_string['failure_signature_hash']) AS hf_signature_hash,
+            toUInt8(max(mapContains(attrs_number, 'exit_code'))) AS hf_has_exit_code,
+            any(attrs_number['exit_code']) AS hf_exit_code
         FROM introspection.hook_events FINAL
-        WHERE producer = 'claude-code' AND event_type = 'tool_failure'
+        WHERE producer IN ('claude-code', 'omp') AND event_type = 'tool_failure'
         GROUP BY hf_tool_use_id
     ) AS hf ON hf.hf_tool_use_id = l.attrs_string['tool_use_id']
     LEFT JOIN (

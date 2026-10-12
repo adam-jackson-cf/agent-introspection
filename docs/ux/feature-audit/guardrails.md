@@ -126,3 +126,9 @@ Data source note: every query reads the `*_snapshot` tables (`views.ts:11-16`) u
 
 - Sandbox denials KPI and its outcome total come from the uncapped `sandbox_daily` aggregate, not the 30-row by-tool table (`Guardrails.tsx:39-40`). Rows GUARD-S05, GUARD-C10.
 - Churn (25), bypass (25) and sandbox-by-tool (30) tables pass `total` and show "Showing N of M" when cut (`Guardrails.tsx`; `views.ts:275`). Rows GUARD-S08, S09, S10.
+
+## Batch C changes (2026-10-12)
+
+- The page is renamed Verification and guardrails.
+- New section Does the agent verify its work? (registry signals `guard.verification` and `guard.verification_caught`): Verification runs KPI, runs by kind and harness (fixed kind order, harness registry order), failures caught in the task, and a Where to tune project rules table. Only shell calls that carry the command shape count; earlier hook rows are left out, not read as "no verification". Full gate runs (CI or check-all scripts, pre-commit, `make check`) are a count beside the KPI, not a kind.
+- omp `blocked` tool results (jev-guard policy) are the outcome `policy_blocked`: not a failure and not a guard rejection.
