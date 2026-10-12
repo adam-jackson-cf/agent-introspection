@@ -1,4 +1,5 @@
 import { DailyChart, DataTable, TableView } from "../charts";
+import type { ReactNode } from "react";
 import type { Row } from "../contracts";
 import { HarnessName, Kpi, Panel, Section, ViewLink } from "../components";
 import {
@@ -70,6 +71,28 @@ const BASELINE_SERIES = [
 export const appliedDetail = (kpi: Row): string =>
   `${fmtCount(num(kpi.applied_in_range))} in range · ${fmtCount(num(kpi.validated))} validated · ${fmtCount(num(kpi.regressed))} regressed · ${fmtCount(num(kpi.inconclusive))} inconclusive · ${fmtCount(num(kpi.not_evaluated))} not evaluated`;
 
+/** Where proposals come from: drafted by hand, never on a schedule. */
+function NoProposals() {
+  return (
+    <div className="not-applicable" role="status">
+      <b>No proposals yet</b>
+      <p>
+        Proposals are drafted manually; nothing schedules it. Run{" "}
+        <code>
+          agent-introspection proposal draft --reserved-model-budget N
+        </code>{" "}
+        (add <code>--dry-run</code> to preview), then apply one. The
+        before-and-after comparison starts once a proposal is applied.
+      </p>
+    </div>
+  );
+}
+
+/** The children once a proposal exists; before that, how proposals get drafted. */
+function WithProposals(props: { count: number; children: ReactNode }) {
+  return props.count === 0 ? <NoProposals /> : props.children;
+}
+
 export default function Interventions({
   data,
 }: {
@@ -100,6 +123,7 @@ export default function Interventions({
         />
         <Kpi
           title="Applied interventions"
+          source={["cluster_daily", "correction_daily", "task_daily"]}
           value={fmtCount(num(kpi.applied))}
           detail={appliedDetail(kpi)}
           signals={["intervene.post_recurrence"]}
@@ -114,74 +138,82 @@ export default function Interventions({
       <Section title="Did an intervention reduce what it targeted?">
         <Panel
           title="Post-intervention recurrence"
+          source={["cluster_daily", "correction_daily", "task_daily"]}
           subtitle="The finding's own cluster or correction per task, equal windows before and after application; the verdict is the one `facts sync` recorded"
           signals={["intervene.post_recurrence"]}
           span={12}
         >
-          <DataTable
-            columns={[
-              { key: "target", label: "Target" },
-              { key: "subject", label: "Finding" },
-              { key: "tier", label: "Tier" },
-              {
-                key: "applied_at",
-                label: "Applied (UTC)",
-                render: (row) => shortTime(row.applied_at),
-              },
-              { key: "days", label: "Window days", numeric: true },
-              { key: "pre_matched", label: "Before", numeric: true },
-              { key: "pre_tasks", label: "Tasks before", numeric: true },
-              { key: "post_matched", label: "After", numeric: true },
-              { key: "post_tasks", label: "Tasks after", numeric: true },
-              {
-                key: "change",
-                label: "Rate change",
-                numeric: true,
-                render: (row) =>
-                  row.change_pct === null || row.change_pct === undefined
-                    ? "—"
-                    : `${num(row.change_pct).toFixed(0)}%`,
-              },
-              {
-                key: "verdict",
-                label: "Verdict",
-                render: (row) =>
-                  row.verdict == null ? "not evaluated" : String(row.verdict),
-              },
-              {
-                key: "evaluated_ratio",
-                label: "Recorded ratio",
-                numeric: true,
-                render: (row) => fmtRatio(row.evaluated_ratio),
-              },
-            ]}
-            rows={comparisons}
-            empty="No intervention has been applied in the selected range; the comparison starts once a proposal reaches applied."
-          />
+          <WithProposals count={proposals.length}>
+            <DataTable
+              columns={[
+                { key: "target", label: "Target" },
+                { key: "subject", label: "Finding" },
+                { key: "tier", label: "Tier" },
+                {
+                  key: "applied_at",
+                  label: "Applied (UTC)",
+                  render: (row) => shortTime(row.applied_at),
+                },
+                { key: "days", label: "Window days", numeric: true },
+                { key: "pre_matched", label: "Before", numeric: true },
+                { key: "pre_tasks", label: "Tasks before", numeric: true },
+                { key: "post_matched", label: "After", numeric: true },
+                { key: "post_tasks", label: "Tasks after", numeric: true },
+                {
+                  key: "change",
+                  label: "Rate change",
+                  numeric: true,
+                  render: (row) =>
+                    row.change_pct === null || row.change_pct === undefined
+                      ? "—"
+                      : `${num(row.change_pct).toFixed(0)}%`,
+                },
+                {
+                  key: "verdict",
+                  label: "Verdict",
+                  render: (row) =>
+                    row.verdict == null ? "not evaluated" : String(row.verdict),
+                },
+                {
+                  key: "evaluated_ratio",
+                  label: "Recorded ratio",
+                  numeric: true,
+                  render: (row) => fmtRatio(row.evaluated_ratio),
+                },
+              ]}
+              rows={comparisons}
+              empty="No intervention has been applied in the selected range; the comparison starts once a proposal reaches applied."
+            />
+          </WithProposals>
         </Panel>
         <Panel
           title="Recurrence baseline"
+          source="baseline_daily"
           subtitle="Per Europe/London day: failure-cluster failures per 100 attributed tasks, and next-prompt corrections per 100 labelled tasks with a project"
           signals={["intervene.post_recurrence"]}
           span={12}
         >
-          <DailyChart
-            rows={baseline}
-            series={BASELINE_SERIES}
-            kind="line"
-            format={(value) => (value === null ? "—" : value.toFixed(0))}
-          />
-          <TableView
-            columns={[
-              { key: "day", label: "Day" },
-              ...BASELINE_SERIES.map((entry) => ({
-                key: entry.key,
-                label: entry.label,
-                numeric: true,
-              })),
-            ]}
-            rows={baseline}
-          />
+          <WithProposals count={proposals.length}>
+            <>
+              <DailyChart
+                rows={baseline}
+                series={BASELINE_SERIES}
+                kind="line"
+                format={(value) => (value === null ? "—" : value.toFixed(0))}
+              />
+              <TableView
+                columns={[
+                  { key: "day", label: "Day" },
+                  ...BASELINE_SERIES.map((entry) => ({
+                    key: entry.key,
+                    label: entry.label,
+                    numeric: true,
+                  })),
+                ]}
+                rows={baseline}
+              />
+            </>
+          </WithProposals>
         </Panel>
       </Section>
       <Section title="Findings and proposals">
@@ -230,7 +262,7 @@ export default function Interventions({
             rows={findings}
             empty="No findings recorded."
           />
-          <ViewLink view="recurrence">Open Recurrence</ViewLink>
+          <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
         <Panel
           title="Proposals"
@@ -281,7 +313,7 @@ export default function Interventions({
               },
             ]}
             rows={proposals}
-            empty="No proposals yet; `agent-introspection candidates export` drafts one for the next actionable finding."
+            empty="No proposals yet; they are drafted manually with `agent-introspection proposal draft`."
           />
         </Panel>
         <Panel

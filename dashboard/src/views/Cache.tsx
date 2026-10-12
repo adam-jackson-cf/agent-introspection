@@ -71,18 +71,21 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Input tokens"
+          source="kpi"
           value={fmtCount(num(all.input))}
           detail={`${fmtCount(num(all.operations))} completed operations`}
           signals={["usage.input_tokens", "usage.operations"]}
         />
         <Kpi
           title="Input cache utilization"
+          source="kpi"
           value={fmtPct(maybe(all.cache_rate))}
           detail={`${fmtCount(num(all.cached))} cached of ${fmtCount(num(all.input))}`}
           signals={["usage.cache_utilization", "usage.cached_input"]}
         />
         <Kpi
           title="Uncached input"
+          source="kpi"
           value={fmtCount(num(all.uncached))}
           detail={
             creationShown
@@ -93,6 +96,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Output tokens"
+          source="kpi"
           value={fmtCount(num(all.output))}
           detail={`${fmtCount(num(all.sessions))} usage-active sessions`}
           signals={["usage.output_tokens", "usage.active_sessions"]}
@@ -101,6 +105,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily token consumption"
+          source="daily"
           subtitle="Mutually exclusive parts; stack height is total processed tokens"
           signals={[
             "usage.uncached_input",
@@ -129,6 +134,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily input cache utilization"
+          source="daily"
           subtitle="Cached share of input per day, token-weighted within each harness"
           signals={["usage.cache_utilization"]}
           span={5}
@@ -138,6 +144,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
             series={harnessSeries}
             kind="line"
             max={100}
+            fixed
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -156,6 +163,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="Breakdowns">
         <Panel
           title="By harness"
+          source="kpi"
           subtitle="Each harness's own totals; All above is their sum"
           signals={[
             "usage.input_tokens",
@@ -226,6 +234,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="By model"
+          source="models"
           subtitle="Harness and model, largest input first"
           signals={["usage.input_tokens", "usage.cache_utilization"]}
           span={12}
@@ -272,6 +281,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="Where uncached input goes">
         <Panel
           title="Sessions with the most uncached input"
+          source="sessions"
           subtitle="Top 20 sessions; open one for its tasks and calls"
           signals={["usage.uncached_input", "usage.active_sessions"]}
           span={12}

@@ -6,11 +6,10 @@ import Pipeline from "./views/Pipeline";
 import PipelineCoverage from "./views/PipelineCoverage";
 import Tools from "./views/Tools";
 
-/** Pipeline freshness, cost and friction views (V1 to V5). */
+/** Pipeline freshness, cost and friction views. */
 export const HEALTH_VIEWS: ViewSpec[] = [
   {
     id: "pipeline",
-    number: "V1",
     title: "Pipeline",
     question:
       "Is the fact loader fresh, complete, and correct for every harness?",
@@ -26,7 +25,6 @@ export const HEALTH_VIEWS: ViewSpec[] = [
   },
   {
     id: "cache",
-    number: "V2",
     title: "Cache efficiency",
     question:
       "Where are tokens consumed, and how much input is served from cache?",
@@ -34,14 +32,12 @@ export const HEALTH_VIEWS: ViewSpec[] = [
   },
   {
     id: "effort",
-    number: "V3",
     title: "Reasoning effort",
     question: "Does heavier reasoning effort earn its cost?",
     component: Effort,
   },
   {
     id: "tools",
-    number: "V4",
     title: "Tool failures",
     question:
       "Which tools fail, how often, in which tasks, and do they repeat or loop?",
@@ -49,7 +45,6 @@ export const HEALTH_VIEWS: ViewSpec[] = [
   },
   {
     id: "friction",
-    number: "V5",
     title: "Friction",
     question:
       "How often do users interrupt, steer, or follow up quickly, and do tasks finish cleanly?",

@@ -125,7 +125,8 @@ def render() -> str:
         "| Stray | Harness | Source | Predicate | Explanation |",
         "| --- | --- | --- | --- | --- |",
         *(
-            f"| {_code(row['stray'])} | {labels[str(row['harness'])]} | {row['source']} | "
+            f"| {_code(row['stray'])} | {labels.get(str(row['harness']), row['harness'])} | "
+            f"{row['source']} | "
             f"{_code(row['match'])} | {_cell(row['reason'])} |"
             for row in registry.strays
         ),

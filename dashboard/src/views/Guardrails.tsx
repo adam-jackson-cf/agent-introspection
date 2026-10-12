@@ -57,6 +57,7 @@ function SandboxOrDecisionsKpi(props: {
     return (
       <Kpi
         title="Sandbox denials"
+        source="sandbox_kpi"
         value={fmtCount(num(sandbox.denied))}
         detail={`${fmtCount(num(sandbox.outcomes))} sandbox outcomes`}
         signals={["guard.sandbox"]}
@@ -65,6 +66,7 @@ function SandboxOrDecisionsKpi(props: {
   return (
     <Kpi
       title="Approval decisions"
+      source="decision_kpi"
       value={fmtCount(num(decisions.decided))}
       detail={`${fmtCount(num(decisions.by_user))} decided by the user`}
       signals={["guard.decisions"]}
@@ -121,6 +123,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Rejected tool calls"
+          source="decision_kpi"
           value={fmtPct(maybe(decisionKpi.rejection_rate), 2)}
           detail={`${fmtCount(num(decisionKpi.rejected))} of ${fmtCount(num(decisionKpi.decided))} approval decisions`}
           n={num(decisionKpi.decided)}
@@ -133,12 +136,14 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Quality-gate bypass"
+          source="bypass"
           value={fmtCount(num(bypass.bypass))}
           detail={`commands in ${fmtCount(num(bypass.tasks))} tasks, of ${fmtCount(num(bypass.commands))} shell commands`}
           signals={["guard.gate_bypass"]}
         />
         <Kpi
           title="Command churn"
+          source="churn_summary"
           value={fmtCount(num(churn.tasks))}
           detail={`tasks with ≥ 3 distinct commands on one file (${fmtCount(num(churn.pairs))} files)`}
           signals={["guard.command_churn"]}
@@ -147,6 +152,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily rejection rate"
+          source="decisions_daily"
           subtitle="Rejected / all approval decisions, per harness"
           signals={["guard.rejections"]}
           span={layout.span}
@@ -164,10 +170,11 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
             ]}
             rows={rejectionDaily}
           />
-          <ViewLink view="interventions">Open Interventions</ViewLink>
+          <ViewLink view="interventions">Open Findings and fixes</ViewLink>
         </Panel>
         <Panel
           title="Daily sandbox denials"
+          source="sandbox_daily"
           subtitle="Stacked by harness"
           signals={["guard.sandbox"]}
         >
@@ -193,6 +200,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
       <Section title={layout.approvals}>
         <Panel
           title="Approval decisions by source"
+          source={["decision_sources", "decisions"]}
           subtitle="Config policy, the user, or the automated approval reviewer"
           signals={["guard.decisions"]}
           span={layout.span}
@@ -222,7 +230,11 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
             rows={decisions}
           />
         </Panel>
-        <Panel title="Sandbox outcomes by tool" signals={["guard.sandbox"]}>
+        <Panel
+          title="Sandbox outcomes by tool"
+          signals={["guard.sandbox"]}
+          source="sandbox"
+        >
           <DataTable
             columns={[
               {
@@ -241,6 +253,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
       <Section title="Exemplars">
         <Panel
           title="Quality-gate bypass commands"
+          source={["bypass_calls", "bypass"]}
           subtitle="--no-verify, HUSKY=0, SKIP=, or --no-gpg-sign; the command text itself is not stored"
           signals={["guard.gate_bypass"]}
         >
@@ -277,6 +290,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Command churn"
+          source="churn"
           subtitle="Files hit by ≥ 3 distinct tool commands in one task"
           signals={["guard.command_churn"]}
         >

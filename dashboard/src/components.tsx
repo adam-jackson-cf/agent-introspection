@@ -19,7 +19,14 @@ import {
   type SignalSupport,
   type ViewPath,
 } from "./contracts";
-import { fmtCount, fmtPct, HARNESS_COLOR, HARNESS_LABEL, num } from "./format";
+import {
+  fmtCount,
+  fmtPct,
+  HARNESS_COLOR,
+  HARNESS_LABEL,
+  num,
+  plain,
+} from "./format";
 import { PanelContext, type Column, type Series } from "./charts";
 import { enabledHarnesses, isHidden } from "./harness-scope";
 
@@ -191,7 +198,7 @@ export function Contributors({ signals }: { signals: string[] }) {
   );
 }
 
-/** One harness's route and alignment for a signal; nothing when unsupported. */
+/** One harness's alignment and what it means for the signal; the route is one fold away. */
 function SupportRow(props: {
   context: ViewContextValue;
   signal: string;
@@ -213,17 +220,30 @@ function SupportRow(props: {
         </span>
       </td>
       <td>
-        {route?.description ?? ""}
-        {support.note && <em>{support.note}</em>}
+        {support.note && <p>{plain(support.note)}</p>}
         {support.alignment !== "not applicable" && (
-          <small>{fmtCount(rows ?? 0)} rows on this route in the window</small>
+          <details className="route-detail">
+            <summary>How it&apos;s captured</summary>
+            {route && <span>{plain(route.description)}</span>}
+            <small>
+              {fmtCount(rows ?? 0)} rows on this route in the window
+            </small>
+          </details>
         )}
       </td>
     </tr>
   );
 }
 
-/** Registry-driven note: definition, then each harness's route and alignment. */
+/** The glossary link names the panel's measured signal, so no two panels repeat one label. */
+const glossaryLabel = (registry: Registry, signals: string[]): string =>
+  registry.signals.find((entry) => entry.signal === signals[0])?.title ??
+  "all signals";
+
+/**
+ * Registry-driven note: each signal's question and formula first, then what each
+ * harness's alignment means; capture detail is folded and the Glossary has it all.
+ */
 export function InfoNote({ signals }: { signals: string[] }) {
   const context = useView();
   return (
@@ -244,7 +264,7 @@ export function InfoNote({ signals }: { signals: string[] }) {
           <section key={signal}>
             <b>{definition.title}</b>
             <p>{definition.question}</p>
-            <p className="formula">{definition.formula}</p>
+            <p className="formula">{plain(definition.formula)}</p>
             {definition.scope === "harness" && (
               <table>
                 <tbody>
@@ -262,6 +282,9 @@ export function InfoNote({ signals }: { signals: string[] }) {
           </section>
         );
       })}
+      <ViewLink view="glossary">
+        Glossary: {glossaryLabel(context.registry, signals)}
+      </ViewLink>
     </div>
   );
 }

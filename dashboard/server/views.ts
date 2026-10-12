@@ -14,6 +14,8 @@ const T = "introspection.task_outcomes_snapshot";
 const C = "introspection.tool_calls_snapshot";
 const S = "introspection.user_signals_snapshot";
 const M = "introspection.model_calls_snapshot";
+/** Codex sampling steps and attempts and Claude Code API errors, beside the terminal calls. */
+const A = "introspection.model_call_attempts_snapshot";
 const L = "introspection.task_labels_snapshot";
 /** Activity-hook events with the harness resolved (a view: never FINAL). */
 const H = "introspection.hook_rows";
@@ -47,8 +49,13 @@ const NOT_POLLING =
 const APPROVALS = "('approved', 'approved_with_amendment', 'accept')";
 /** Tool + command head + subcommand; omp and Claude Code take the command shape from the activity hooks. */
 const OPERATION = "trimBoth(concat(tool, ' ', command_head, ' ', command_sub))";
-const ACTIONABLE =
-  "(occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3)";
+/**
+ * A failure class naming only an error type or a header cannot be root-caused, so it is
+ * never actionable; mirrors findings.GENERIC_CLASS (a ClickHouse string literal).
+ */
+export const GENERIC_CLASS = String.raw`^(\\w+(Error|Exception)|Traceback \\(most recent call last\\):|Script (failed|error:?))$`;
+const ACTIONABLE = `((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3))
+    AND NOT match(failure_class, '${GENERIC_CLASS}')`;
 /** A signature is localized when at least this share of its attributed occurrences share one project. */
 export const LOCALIZED_SHARE = 0.8;
 /**
@@ -300,11 +307,13 @@ FROM (
     FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
     GROUP BY harness, task_id, tool, arguments_hash
 ) GROUP BY ROLLUP(harness) ORDER BY harness`,
-    repeats: `SELECT harness, session_id, task_id, tool, any(command_head) AS command, count() AS attempts,
+    /** Grouped as repeat_summary is, so the rows and the KPI count the same repeats. */
+    repeats: `SELECT harness, argMax(session_id, ts) AS example_session, task_id, tool,
+    any(command_head) AS command, count() AS attempts,
     countIf(outcome = 'failed') AS failed, count() OVER () AS total_rows
 FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
-GROUP BY harness, session_id, task_id, tool, arguments_hash HAVING attempts >= 2
-ORDER BY attempts DESC LIMIT 25`,
+GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2
+ORDER BY failed DESC, attempts DESC LIMIT 25`,
     loops: `WITH
     ordered AS (
         SELECT harness, session_id, task_id, ts, tool, command_head, arguments_hash, outcome,
@@ -444,11 +453,11 @@ FROM (
             output_tokens / (duration_seconds - ttft_seconds), NULL)) AS tps_p50
     FROM ${M} WHERE ${inWindow("ts")} GROUP BY harness, model ORDER BY calls DESC LIMIT 30
 ) AS l LEFT JOIN (
-    SELECT harness, attrs_string['model'] AS model, 1 AS matched,
-        quantileExactIf(0.5)(duration_ns / 1e9, name = 'run_sampling_request') AS p50,
-        quantileExactIf(0.95)(duration_ns / 1e9, name = 'run_sampling_request') AS p95
-    FROM introspection.spans FINAL
-    WHERE ${inWindow("ts")} AND harness LIKE 'codex%' AND name IN ('run_sampling_request', 'try_run_sampling_request')
+    SELECT harness, model, 1 AS matched,
+        quantileExactIf(0.5)(duration_seconds, kind = 'run_sampling_request') AS p50,
+        quantileExactIf(0.95)(duration_seconds, kind = 'run_sampling_request') AS p95
+    FROM ${A}
+    WHERE ${inWindow("ts")} AND harness LIKE 'codex%' AND kind IN ('run_sampling_request', 'try_run_sampling_request')
     GROUP BY harness, model
 ) AS s ON l.harness = s.harness AND l.model = s.model
 ORDER BY calls DESC`,
@@ -458,10 +467,10 @@ FROM (
     SELECT harness, toUInt64(if(attempts > steps, attempts - steps, 0)) AS extra, steps, attempts,
         0 AS failed_attempts, 0 AS exhausted
     FROM (
-        SELECT harness, countIf(name = 'run_sampling_request') AS steps,
-            countIf(name = 'try_run_sampling_request') AS attempts
-        FROM introspection.spans FINAL
-        WHERE ${inWindow("ts")} AND harness LIKE 'codex%' AND name IN ('run_sampling_request', 'try_run_sampling_request')
+        SELECT harness, countIf(kind = 'run_sampling_request') AS steps,
+            countIf(kind = 'try_run_sampling_request') AS attempts
+        FROM ${A}
+        WHERE ${inWindow("ts")} AND harness LIKE 'codex%' AND kind IN ('run_sampling_request', 'try_run_sampling_request')
         GROUP BY harness
     )
     UNION ALL
@@ -474,11 +483,9 @@ FROM (
     SELECT 'claude-code', (
         SELECT countIf(attempt > 1) FROM ${M} WHERE ${inWindow("ts")} AND harness = 'claude-code'
     ), 0, 0, (
-        SELECT countIf(event_name = 'api_error') FROM introspection.logs FINAL
-        WHERE ${inWindow("ts")} AND harness = 'claude-code' AND event_name IN ('api_error', 'api_retries_exhausted')
+        SELECT countIf(kind = 'api_error') FROM ${A} WHERE ${inWindow("ts")} AND harness = 'claude-code'
     ), (
-        SELECT countIf(event_name = 'api_retries_exhausted') FROM introspection.logs FINAL
-        WHERE ${inWindow("ts")} AND harness = 'claude-code' AND event_name IN ('api_error', 'api_retries_exhausted')
+        SELECT countIf(kind = 'api_retries_exhausted') FROM ${A} WHERE ${inWindow("ts")} AND harness = 'claude-code'
     )
     WHERE (SELECT count() FROM ${M} WHERE ${inWindow("ts")} AND harness = 'claude-code') > 0
 ) GROUP BY ROLLUP(harness)
@@ -554,20 +561,26 @@ FROM (${failures(inWindowOf("c", "ts"))})
 GROUP BY day, harness ORDER BY day`,
   },
   intent: {
-    kpi: `SELECT harness, tasks, labelled, corrected_n, corrected_den, frustrated_n, frustrated_den,
+    /**
+     * `tasks` counts the task_labels rows: tasks in sessions with at least one exported
+     * prompt, the only tasks a label can exist for. `all_tasks` is every task, so
+     * `before_export` is the tasks from sessions that never exported a prompt.
+     */
+    kpi: `SELECT harness, tasks, all_tasks, greatest(all_tasks, tasks) - tasks AS before_export,
+    labelled, corrected_n, corrected_den, frustrated_n, frustrated_den,
     ${rateOf("labelled", "tasks")} AS labelled_rate,
     ${rateOf("corrected_n", "corrected_den")} AS corrected_rate,
     ${rateOf("frustrated_n", "frustrated_den")} AS frustrated_rate
 FROM (
-    SELECT harness, sum(tasks) AS tasks, sum(labelled) AS labelled,
+    SELECT harness, sum(tasks) AS tasks, sum(all_tasks) AS all_tasks, sum(labelled) AS labelled,
         sum(corrected_n) AS corrected_n, sum(corrected_den) AS corrected_den,
         sum(frustrated_n) AS frustrated_n, sum(frustrated_den) AS frustrated_den
     FROM (
-        SELECT harness, count() AS tasks, 0 AS labelled, 0 AS corrected_n, 0 AS corrected_den,
+        SELECT harness, 0 AS tasks, count() AS all_tasks, 0 AS labelled, 0 AS corrected_n, 0 AS corrected_den,
             0 AS frustrated_n, 0 AS frustrated_den
         FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY harness
         UNION ALL
-        SELECT harness, 0, sum(labelled), ${CORRECTED_N}, ${CORRECTED_DEN},
+        SELECT harness, count(), 0, sum(labelled), ${CORRECTED_N}, ${CORRECTED_DEN},
             countIf(${NEXT_PROMPT} AND sentiment_next = 'frustrated'), countIf(${NEXT_PROMPT} AND sentiment_next != '')
         FROM ${L} WHERE ${inWindow("start_ts")} GROUP BY harness
     ) GROUP BY ROLLUP(harness)

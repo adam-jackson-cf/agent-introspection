@@ -84,11 +84,13 @@ a {
   color: var(--color-text);
   box-shadow: inset 2px 0 var(--color-primary);
 }
-.nav-num {
-  min-width: 20px;
-  color: var(--color-primary-soft);
+.nav-group-title {
+  margin: 14px 10px 4px;
+  color: var(--color-muted);
   font-size: var(--type-caption-size);
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .note {
   margin: 20px 8px;
@@ -420,6 +422,51 @@ small {
 .info-note small {
   color: var(--color-muted);
 }
+.info-note td p {
+  margin: 0;
+}
+.route-detail {
+  margin-top: 4px;
+  color: var(--color-muted);
+}
+.route-detail summary {
+  cursor: pointer;
+}
+.route-detail span {
+  display: block;
+}
+.glossary-entry {
+  margin: 0 0 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--color-rule);
+  max-width: 980px;
+}
+.glossary-entry h3 {
+  margin: 0 0 4px;
+}
+.glossary-entry p {
+  margin: 2px 0;
+}
+.glossary-entry .formula {
+  color: var(--color-muted);
+}
+.glossary-entry table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: var(--type-caption-size);
+}
+.glossary-entry th,
+.glossary-entry td {
+  padding: 5px 8px 5px 0;
+  border-top: 1px solid var(--color-rule);
+  text-align: left;
+  vertical-align: top;
+}
+.glossary-entry small {
+  display: block;
+  color: var(--color-muted);
+}
 .alignment {
   display: inline-block;
   padding: 1px 6px;
@@ -490,6 +537,12 @@ small {
 }
 .marker {
   stroke: var(--color-surface);
+  stroke-width: 2;
+}
+.point {
+  stroke-width: 2;
+}
+.marker-ring {
   stroke-width: 2;
 }
 .crosshair {

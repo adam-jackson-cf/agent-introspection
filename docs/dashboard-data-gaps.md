@@ -29,64 +29,64 @@ harness does not emit it, so the signal is hidden wherever that harness is enabl
 
 Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
-| View                   | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
-| ---------------------- | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
-| Pipeline               | Fact freshness               | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Pipeline               | Source parity                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Pipeline               | Project attribution          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency       | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Cache efficiency       | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency       | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency       | Cache creation               | ✓   | ✗                | ✗         | ✗          | ✓           |
-| Cache efficiency       | Output tokens                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency       | Input cache utilization      | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Cache efficiency       | Completed operations         | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Cache efficiency       | Usage-active sessions        | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Reasoning effort       | Reasoning tokens             | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort       | Reasoning share of output    | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort       | Requested effort             | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort       | Tasks                        | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort       | Heavy-effort task share      | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Reasoning effort       | Task duration                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Reasoning effort       | Model steps per task         | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort       | Reasoning tokens per task    | ✓   | ≈                | ≈         | ≈          | ≈           |
-| Reasoning effort       | Delegations per task         | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures          | Tool calls                   | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Tool failures          | Tool failure rate            | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures          | Failure signature            | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Tool failures          | Tasks affected by failures   | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Tool failures          | Repeated attempts            | ≈   | ✓                | ✓         | ✓          | ≈           |
-| Tool failures          | Tool loops                   | ≈   | ✓                | ✓         | ✓          | ≈           |
-| Friction               | Interrupted tasks            | ≈   | ✓                | ✓         | —          | ≈           |
-| Friction               | Steered tasks                | ≈   | ✓                | ✓         | —          | ≈           |
-| Friction               | Errored tasks                | ✓   | ≈                | ≈         | ≈          | ≈           |
-| Friction               | Quick follow-up              | ✓   | ✓                | ✓         | —          | ✓           |
-| Friction               | Clean completion             | ✓   | ≈                | ≈         | —          | ≈           |
-| Friction               | Recovery after failure       | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Guardrails             | Tool approval decisions      | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails             | Rejected tool calls          | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails             | Sandbox outcomes             | ✗   | ✓                | ✓         | ✓          | ✗           |
-| Guardrails             | Quality-gate bypass          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Guardrails             | Command churn                | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Provider               | Model calls                  | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider               | Call error rate              | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider               | Stream disconnects           | ✗   | ✓                | ✓         | ✓          | ✗           |
-| Provider               | Model call latency           | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider               | Time to first token          | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Provider               | Output throughput            | ✓   | ✗                | ✗         | ✗          | ✓           |
-| Provider               | Retries                      | ≈   | ≈                | ≈         | ≈          | ✓           |
-| Provider               | Unknown outcomes             | ✓   | ≈                | ≈         | ≈          | ✓           |
-| Provider               | Model conformance            | ✓   | ✗                | ✗         | ✗          | ✗           |
-| Recurrence             | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
-| Recurrence             | Recurring failure signatures | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Recurrence             | Actionable repeats           | ✓   | ✓                | ✓         | ✓          | ≈           |
-| Recurrence             | Project concentration        | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Intent and corrections | Labelled tasks               | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Intent and corrections | Task type                    | ≈   | ✓                | ✓         | ✓          | ✓           |
-| Intent and corrections | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
-| Intent and corrections | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
-| Intent and corrections | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
-| Intent and corrections | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
+| View                     | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
+| ------------------------ | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
+| Pipeline                 | Fact freshness               | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Pipeline                 | Source parity                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Pipeline                 | Project attribution          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency         | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Cache efficiency         | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency         | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency         | Cache creation               | ✓   | ✗                | ✗         | ✗          | ✓           |
+| Cache efficiency         | Output tokens                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency         | Input cache utilization      | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Cache efficiency         | Completed operations         | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Cache efficiency         | Usage-active sessions        | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Reasoning effort         | Reasoning tokens             | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort         | Reasoning share of output    | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort         | Requested effort             | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort         | Tasks                        | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort         | Heavy-effort task share      | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Reasoning effort         | Task duration                | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Reasoning effort         | Model steps per task         | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort         | Reasoning tokens per task    | ✓   | ≈                | ≈         | ≈          | ≈           |
+| Reasoning effort         | Delegations per task         | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures            | Tool calls                   | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Tool failures            | Tool failure rate            | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures            | Failure signature            | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Tool failures            | Tasks affected by failures   | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Tool failures            | Repeated attempts            | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Tool failures            | Tool loops                   | ≈   | ✓                | ✓         | ✓          | ≈           |
+| Friction                 | Interrupted tasks            | ≈   | ✓                | ✓         | —          | ≈           |
+| Friction                 | Steered tasks                | ≈   | ✓                | ✓         | —          | ≈           |
+| Friction                 | Errored tasks                | ✓   | ≈                | ≈         | ≈          | ≈           |
+| Friction                 | Quick follow-up              | ✓   | ✓                | ✓         | —          | ✓           |
+| Friction                 | Clean completion             | ✓   | ≈                | ≈         | —          | ≈           |
+| Friction                 | Recovery after failure       | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Guardrails               | Tool approval decisions      | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Guardrails               | Rejected tool calls          | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Guardrails               | Sandbox outcomes             | ✗   | ✓                | ✓         | ✓          | ✗           |
+| Guardrails               | Quality-gate bypass          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Guardrails               | Command churn                | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Provider                 | Model calls                  | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                 | Call error rate              | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                 | Stream disconnects           | ✗   | ✓                | ✓         | ✓          | ✗           |
+| Provider                 | Model call latency           | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                 | Time to first token          | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Provider                 | Output throughput            | ✓   | ✗                | ✗         | ✗          | ✓           |
+| Provider                 | Retries                      | ≈   | ≈                | ≈         | ≈          | ✓           |
+| Provider                 | Unknown outcomes             | ✓   | ≈                | ≈         | ≈          | ✓           |
+| Provider                 | Model conformance            | ✓   | ✗                | ✗         | ✗          | ✗           |
+| Recurring failures       | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
+| Recurring failures       | Recurring failure signatures | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Recurring failures       | Actionable repeats           | ✓   | ✓                | ✓         | ✓          | ≈           |
+| Recurring failures       | Project concentration        | ✓   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections | Labelled tasks               | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections | Task type                    | ≈   | ✓                | ✓         | ✓          | ✓           |
+| Requests and corrections | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
+| Requests and corrections | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
 
 ## Signals a harness does not emit
 
@@ -224,9 +224,9 @@ These are emitted, but the route differs from the shared definition; the note sa
 No harness can produce these, natively or through an activity hook, so they are
 never shown.
 
-| Signal                                      | View          | Missing for                                               | Reason                                                                                                                                                    |
-| ------------------------------------------- | ------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rule adherence (`intervene.rule_adherence`) | Interventions | omp, Codex app-server, Codex CLI, Codex exec, Claude Code | No producer emits rule triggers. Each applied intervention is instead evaluated against its own structured success metric (Post-intervention recurrence). |
+| Signal                                      | View               | Missing for                                               | Reason                                                                                                                                                    |
+| ------------------------------------------- | ------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rule adherence (`intervene.rule_adherence`) | Findings and fixes | omp, Codex app-server, Codex CLI, Codex exec, Claude Code | No producer emits rule triggers. Each applied intervention is instead evaluated against its own structured success metric (Post-intervention recurrence). |
 
 <!-- END GENERATED FROM signal_support.toml -->
 
@@ -257,6 +257,7 @@ These signals are emitted, but not for every row.
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Before SigNoz's retained data       | Raw traces and logs start on 2026-08-24                                                                                  | No.                                                                                                   |
 | 2026-09-06 to 2026-09-12            | Missing from SigNoz (expired under the earlier 15-day trace TTL and not in the recovery snapshot); 2026-09-10 is partial | No.                                                                                                   |
+| 2026-09-26 to 2026-09-27            | No raw telemetry reached SigNoz (a source gap: nothing was exported)                                                     | No.                                                                                                   |
 | Workflow findings before 2026-09-29 | The retired scan detectors produced 6 findings (2026-08-06); promotion from the facts began on 2026-09-29                | The retired ledger is archived at `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`. |
 
 ## Gaps in the source telemetry

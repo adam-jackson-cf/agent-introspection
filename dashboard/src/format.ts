@@ -80,3 +80,6 @@ export const fmtSeconds = (value: number | null) => {
 
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";
+
+/** Registry prose without its inline-code backticks, for reading rather than copying. */
+export const plain = (text: string): string => text.replaceAll("`", "");

@@ -32,6 +32,8 @@ export type RouteCounts = {
 
 const START = "{start:DateTime64(3, 'UTC')}";
 const WINDOW = `ts >= ${START} AND ts < {end:DateTime64(3, 'UTC')}`;
+/** How far before the window the route scan looks for an earlier row (the snapshot horizon). */
+const ROUTE_LOOKBACK_DAYS = 90;
 const SOURCES: Source[] = ["spans", "logs", "hooks"];
 /**
  * The relation each route source's predicates run against. Activity hooks are
@@ -81,9 +83,11 @@ const strayCondition = (registry: Registry, source: Source): string => {
  * Counts rows per harness for every route predicate over the window, and the
  * part of each count not explained by a registered stray. Predicates come from
  * the registry tables that `facts install` loaded from the repo-owned file. The
- * scan reaches back through all history before the window end, so each route also
- * reports the day of its first row when that row falls inside the window (a route
- * that started mid-window, such as an activity hook installed then).
+ * scan reaches back `ROUTE_LOOKBACK_DAYS` before the window start, so each route also
+ * reports the day of its first row when no row precedes it in that span (a route
+ * that started mid-window, such as an activity hook installed then). Route
+ * predicates read raw attributes no snapshot keeps, so this is the one raw scan; the
+ * lookback keeps it off all history.
  */
 export function routeCountQueries(registry: Registry): Record<string, string> {
   const queries: Record<string, string> = {};
@@ -97,7 +101,7 @@ export function routeCountQueries(registry: Registry): Record<string, string> {
       `if(countIf((${match}) AND ts < ${START}) = 0, toString(toDate(minIf(ts, ${match}))), '') AS f${index}`,
     ]);
     queries[source] =
-      `SELECT harness, ${columns.join(", ")} FROM ${SOURCE_RELATION[source]} WHERE ts < {end:DateTime64(3, 'UTC')} GROUP BY harness`;
+      `SELECT harness, ${columns.join(", ")} FROM ${SOURCE_RELATION[source]} WHERE ts >= ${START} - INTERVAL ${ROUTE_LOOKBACK_DAYS} DAY AND ts < {end:DateTime64(3, 'UTC')} GROUP BY harness`;
   }
   return queries;
 }

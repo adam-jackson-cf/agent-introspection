@@ -78,13 +78,19 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Labelled tasks"
+          source="kpi"
           value={fmtPct(maybe(all.labelled_rate))}
-          detail={`${fmtCount(num(all.labelled))} of ${fmtCount(num(all.tasks))} tasks have a labelled prompt`}
+          detail={`${fmtCount(num(all.labelled))} of ${fmtCount(num(all.tasks))} tasks in sessions with exported prompts${
+            num(all.before_export) > 0
+              ? `; ${fmtCount(num(all.before_export))} more come from sessions with none`
+              : ""
+          }`}
           n={num(all.tasks)}
           signals={["intent.labelled"]}
         />
         <Kpi
           title="Corrected by the next prompt"
+          source="kpi"
           value={fmtPct(maybe(all.corrected_rate))}
           detail={`${fmtCount(num(all.corrected_n))} of ${fmtCount(num(all.corrected_den))} tasks`}
           n={num(all.corrected_den)}
@@ -92,6 +98,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Frustrated follow-ups"
+          source="kpi"
           value={fmtPct(maybe(all.frustrated_rate))}
           detail={`${fmtCount(num(all.frustrated_n))} of ${fmtCount(num(all.frustrated_den))} labelled next prompts`}
           n={num(all.frustrated_den)}
@@ -99,6 +106,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Repeated corrections"
+          source="repeated_count"
           value={fmtCount(num(data.repeated_count?.[0]?.repeated))}
           detail="project × correction kind in ≥ 2 tasks and ≥ 2 sessions"
           signals={["intent.correction_kind"]}
@@ -107,6 +115,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily corrected-by-next-prompt rate"
+          source="daily"
           subtitle="Tasks whose next prompt within 10 minutes corrected the agent, per harness"
           signals={["intent.corrected"]}
           span={12}
@@ -116,6 +125,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
             series={series}
             kind="line"
             max={100}
+            fixed
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -130,6 +140,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       <Section title="What do users ask for, and what do they correct?">
         <Panel
           title="Task type mix"
+          source={["task_type_mix", "task_types"]}
           subtitle="Labelled tasks by Jev task type; each harness's count underneath"
           signals={["intent.task_type"]}
         >
@@ -162,6 +173,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Correction kinds"
+          source={["correction_kinds", "correction_kind_totals"]}
           subtitle="What the next prompt corrected"
           signals={["intent.correction_kind"]}
         >
@@ -193,6 +205,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="By harness"
+          source="kpi"
           subtitle="Each harness's own counts; All above is their sum"
           signals={[
             "intent.labelled",
@@ -241,6 +254,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       <Section title="Does heavier effort reduce corrections?">
         <Panel
           title="Effort payoff by task type"
+          source="effort_payoff"
           subtitle="Compare efforts within one task type, never harnesses. Correlational: harder tasks may attract higher effort."
           signals={["intent.effort_payoff", "effort.level"]}
           span={12}
@@ -270,6 +284,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       <Section title="Which corrections repeat?">
         <Panel
           title="Repeated corrections by project"
+          source="repeated"
           subtitle="Project × correction kind over the selected window; ≥ 2 tasks in ≥ 2 sessions is a repeat. Evaluation workspaces excluded."
           signals={["intent.correction_kind", "intent.corrected"]}
           span={12}
@@ -310,6 +325,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Recent corrected tasks"
+          source="recent"
           subtitle="The latest 25 tasks whose next prompt corrected the agent; open one for its session. Evaluation workspaces excluded."
           signals={["intent.corrected", "intent.task_type"]}
           span={12}

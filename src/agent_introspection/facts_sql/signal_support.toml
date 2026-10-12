@@ -45,9 +45,9 @@ tools = "Tool failures"
 friction = "Friction"
 guardrails = "Guardrails"
 provider = "Provider"
-recurrence = "Recurrence"
-intent = "Intent and corrections"
-interventions = "Interventions"
+recurrence = "Recurring failures"
+intent = "Requests and corrections"
+interventions = "Findings and fixes"
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -292,6 +292,19 @@ description = "Activity hook `steer` (omp `input` while the agent is running)."
 # Known stray rows: rows that match another producer's route or no route, and
 # are explained rather than a live route of the harness they are labelled with.
 # ---------------------------------------------------------------------------
+
+# Producers that export to the same SigNoz but are not harnesses: the loaders do not
+# read them, no signal is defined for them, and they are never ranked or compared.
+# A stray may name one in place of a harness.
+[producers]
+opencode = "opencode"
+
+[[stray]]
+id = "opencode.not_a_harness"
+harness = "opencode"
+source = "spans"
+match = "harness = 'opencode'"
+reason = "opencode exports spans to this SigNoz (service.name opencode, the largest span producer by volume). It is a known producer, not a harness: no loader reads it, so none of its rows reach the facts, and no signal is measured for it."
 
 [[stray]]
 id = "omp.claude_mislabel_logs"
@@ -996,7 +1009,7 @@ view = "intent"
 title = "Labelled tasks"
 question = "Which share of tasks has a Jev-labelled prompt?"
 unit = "%"
-formula = "100 × tasks whose starting prompt has a label in `prompt_labels` / tasks. `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times."
+formula = "100 × tasks whose starting prompt has a label in `prompt_labels` / tasks in sessions with at least one exported prompt (tasks from sessions before the prompt export began are counted apart). `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times."
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned", note = "`codex.user_prompt` text (`log_user_prompt = true`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted." }
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start`. Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted." }

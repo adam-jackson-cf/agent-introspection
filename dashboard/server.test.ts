@@ -13,7 +13,12 @@ import {
   SNAPSHOT_DAYS,
   type Query,
 } from "./server/clickhouse";
-import { HARNESS_FILTER, SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
+import {
+  GENERIC_CLASS,
+  HARNESS_FILTER,
+  SESSION_QUERIES,
+  VIEW_QUERIES,
+} from "./server/views";
 import { panelContribution } from "./src/components";
 
 import {
@@ -252,7 +257,7 @@ describe("snapshot horizon", () => {
     };
     const countQueries = () =>
       seen.filter((sql) =>
-        sql.includes("WHERE ts < {end:DateTime64(3, 'UTC')}"),
+        sql.includes("AND ts < {end:DateTime64(3, 'UTC')} GROUP BY harness"),
       ).length;
 
     await load(now);
@@ -686,6 +691,11 @@ describe("view queries", () => {
     );
   });
 
+  test("view queries read snapshots and lookup views, never the raw spans or logs", () => {
+    for (const sql of all)
+      expect(sql).not.toMatch(/introspection\.(spans|logs)\b/);
+  });
+
   test("All is the union of the enabled harnesses in every windowed view query", () => {
     expect(HARNESS_FILTER).toBe(
       "harness IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1) AND ({harness:String} = '' OR harness = {harness:String})",
@@ -751,7 +761,14 @@ describe("view queries", () => {
     );
     expect(VIEW_QUERIES.guardrails.bypass).not.toContain("codex%");
     expect(VIEW_QUERIES.recurrence.actionable).toContain(
-      "GROUP BY tool_family, failure_class HAVING (occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3)",
+      "GROUP BY tool_family, failure_class HAVING ((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3))",
+    );
+    for (const key of ["actionable", "actionable_summary"])
+      expect(VIEW_QUERIES.recurrence[key]).toContain(
+        `AND NOT match(failure_class, '${GENERIC_CLASS}')`,
+      );
+    expect(VIEW_QUERIES.tools.repeats).toContain(
+      "GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2\nORDER BY failed DESC, attempts DESC",
     );
     expect(VIEW_QUERIES.interventions.cluster_daily).toContain(
       "GROUP BY day, harness, tool_family, failure_class",

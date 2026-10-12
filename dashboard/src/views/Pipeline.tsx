@@ -467,7 +467,7 @@ function attributionPanels(data: Data) {
           label="Project attribution: sessions without a project"
           empty="Every session in the selected range has a project."
         />
-        <ViewLink view="recurrence">Open Recurrence</ViewLink>
+        <ViewLink view="recurrence">Open Recurring failures</ViewLink>
       </Panel>
     </>
   );

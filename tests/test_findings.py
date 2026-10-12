@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -223,6 +224,15 @@ def test_generic_failure_classes_never_become_actionable(open_workflow: OpenWork
         "Traceback (most recent call last):": "emerging",
         "ModuleNotFoundError: No module named '…'": "actionable",
     }
+
+
+def test_dashboard_generic_class_literal_mirrors_the_findings_pattern() -> None:
+    source = (Path(__file__).parents[1] / "dashboard/server/views.ts").read_text()
+    literal = re.search(r"GENERIC_CLASS = String\.raw`([^`]*)`", source)
+
+    assert literal is not None
+    # The dashboard embeds the pattern in a ClickHouse string literal, doubling backslashes.
+    assert literal.group(1).replace("\\\\", "\\") == findings.GENERIC_CLASS.pattern
 
 
 def test_refresh_reports_only_active_actionable_findings(open_workflow: OpenWorkflow) -> None:

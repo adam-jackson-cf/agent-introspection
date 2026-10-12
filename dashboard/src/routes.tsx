@@ -13,7 +13,6 @@ export type DetailSpec = {
 
 export type ViewSpec = {
   id: ViewId;
-  number: string;
   title: string;
   question: string;
   component: ComponentType<{ data: Record<string, Row[]> }>;
@@ -21,11 +20,33 @@ export type ViewSpec = {
   details?: DetailSpec[];
 };
 
+/** The sidebar groups and the order of their views: reading order. */
+export const NAV_GROUPS: { title: string; views: ViewId[] }[] = [
+  {
+    title: "Health",
+    views: ["pipeline", "provider", "cache", "effort"],
+  },
+  { title: "Behaviour", views: ["tools", "friction", "guardrails"] },
+  {
+    title: "Learning",
+    views: ["recurrence", "intent", "interventions"],
+  },
+];
+
+const BY_ID = new Map(
+  [...HEALTH_VIEWS, ...OUTCOME_VIEWS].map((view) => [view.id, view]),
+);
 /** Question-led views, in reading order. */
-export const VIEWS: ViewSpec[] = [...HEALTH_VIEWS, ...OUTCOME_VIEWS];
+export const VIEWS: ViewSpec[] = NAV_GROUPS.flatMap((group) =>
+  group.views.map((id) => BY_ID.get(id)!),
+);
+/** The sidebar group a view belongs to. */
+export const groupOf = (id: ViewId): string =>
+  NAV_GROUPS.find((group) => group.views.includes(id))!.title;
 
 export type Location =
   | { kind: "view"; view: ViewSpec; detail?: DetailSpec }
+  | { kind: "glossary" }
   | { kind: "session"; harness: string; session: string }
   | { kind: "unknown" };
 
@@ -39,6 +60,7 @@ export const readLocation = (): Location => {
       session: query.get("session") ?? "",
     };
   }
+  if (path === "glossary") return { kind: "glossary" };
   const [id, detailId] = path.split("/");
   const view = VIEWS.find((entry) => entry.id === id);
   if (!view) return { kind: "unknown" };

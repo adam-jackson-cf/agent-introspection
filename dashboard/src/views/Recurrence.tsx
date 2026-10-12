@@ -136,24 +136,28 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Actionable repeats"
+          source="actionable_summary"
           value={fmtCount(actionableTotal)}
           detail={`failure clusters over the 7 London days to ${weekEnd}`}
           signals={["recur.actionable"]}
         />
         <Kpi
           title="Recurring failure clusters"
+          source="cluster_summary"
           value={fmtCount(num(summary.recurring))}
           detail={`of ${fmtCount(num(summary.clusters))} clusters, seen in ≥ 2 tasks`}
           signals={["recur.signatures"]}
         />
         <Kpi
           title="Recurring targets"
+          source="target_summary"
           value={fmtCount(num(targets.recurring))}
           detail={`of ${fmtCount(num(targets.targets))} files touched in ≥ 2 tasks`}
           signals={["recur.targets"]}
         />
         <Kpi
           title="Localized signatures"
+          source="concentration"
           value={fmtPct(
             typeof localized.localized_rate === "number"
               ? localized.localized_rate
@@ -167,6 +171,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily tool failures with a failure class"
+          source="daily"
           subtitle="Europe/London days, stacked by harness; evaluation workspaces excluded"
           signals={["recur.signatures"]}
           span={12}
@@ -193,7 +198,8 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
       <Section title="What crosses the evidence threshold?">
         <Panel
           title="Actionable repeats"
-          subtitle="Failure clusters with ≥ 3 occurrences in ≥ 2 tasks on ≥ 2 days, or ≥ 5 occurrences in ≥ 3 tasks, over 7 Europe/London days"
+          source={["actionable", "actionable_summary"]}
+          subtitle="Failure clusters with ≥ 3 occurrences in ≥ 2 tasks on ≥ 2 days, or ≥ 5 occurrences in ≥ 3 tasks, over 7 Europe/London days; classes naming only an error type or header are never actionable"
           signals={["recur.actionable"]}
           span={12}
         >
@@ -208,6 +214,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
       <Section title="What recurs across tasks?">
         <Panel
           title="Recurring failure clusters"
+          source={["clusters", "cluster_summary"]}
           subtitle="Tool family × failure class seen in ≥ 2 tasks over the selected window, across harnesses"
           signals={["recur.signatures"]}
           span={12}
@@ -221,6 +228,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Recurring targets"
+          source={["targets", "target_summary"]}
           subtitle="Files touched in ≥ 2 tasks, with failures on them"
           signals={["recur.targets"]}
           span={12}
@@ -241,6 +249,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Project concentration"
+          source="concentration"
           subtitle="Where each repeated signature occurs (first 80 characters shown, grouped by a hash of the full line); project from the harness session stores"
           signals={["recur.project_concentration"]}
           span={12}

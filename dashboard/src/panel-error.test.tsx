@@ -7,7 +7,7 @@ const render = (errors: Record<string, string>, source: string | string[]) =>
   renderToStaticMarkup(
     <ViewContext.Provider
       value={{
-        registry: {} as Registry,
+        registry: { signals: [] } as unknown as Registry,
         contributions: {},
         filters: { start: "", end: "", harness: "" },
         minRateN: 0,

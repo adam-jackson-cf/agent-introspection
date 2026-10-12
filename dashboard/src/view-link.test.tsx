@@ -8,7 +8,7 @@ const link = (filters: Filters) =>
   renderToStaticMarkup(
     <ViewContext.Provider
       value={{
-        registry: {} as Registry,
+        registry: { signals: [] } as unknown as Registry,
         contributions: {},
         filters,
         minRateN: 0,

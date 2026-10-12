@@ -106,6 +106,12 @@ const cellValue = (row: Row, key: string) => {
     : Number(raw);
 };
 
+/** The y-axis ceiling: a cap on the fitted axis, or the whole axis when `fixed`. */
+type Axis = { max?: number; fixed?: boolean };
+
+/** Line markers: one on every point, hollow where a day's sample is under `minN`. */
+export type Markers = { minN: number };
+
 type Plot = {
   width: number;
   top: number;
@@ -117,11 +123,11 @@ type Plot = {
 };
 
 /** Scales and spacing shared by every layer of one daily chart. */
-function makePlot(
+export function makePlot(
   rows: Row[],
   series: Series[],
   kind: "stack" | "line",
-  max: number | undefined,
+  axis: Axis,
   width: number,
 ): Plot {
   const totals = rows.map((row) =>
@@ -130,7 +136,9 @@ function makePlot(
       : Math.max(0, ...series.map((entry) => cellValue(row, entry.key) ?? 0)),
   );
   const dataMax = niceMax(Math.max(0, ...totals));
-  const top = max === undefined ? dataMax : Math.min(max, dataMax);
+  const { max, fixed } = axis;
+  const top =
+    max === undefined ? dataMax : fixed ? max : Math.min(max, dataMax);
   const innerWidth = Math.max(0, width - PAD.left - PAD.right);
   const innerHeight = HEIGHT - PAD.top - PAD.bottom;
   const band = rows.length > 0 ? innerWidth / rows.length : 0;
@@ -144,6 +152,28 @@ function makePlot(
     y: (amount) =>
       PAD.top + innerHeight - (Math.min(amount, top) / top) * innerHeight,
   };
+}
+
+/** A day's sample size for a series, when its row carries `<key>_n`. */
+const sampleOf = (row: Row, key: string) => cellValue(row, `${key}_n`);
+
+/**
+ * A series' value on a day. With markers the sample size follows it, and an empty day
+ * says why: a row with no sample ("No outcomes") or no row at all ("No data").
+ */
+export function valueText(
+  row: Row,
+  entry: Series,
+  format: Format,
+  markers?: Markers,
+): string {
+  const value = cellValue(row, entry.key);
+  if (!markers) return format(value);
+  const n = sampleOf(row, entry.key);
+  if (value === null) return n === 0 ? "No outcomes (n 0)" : "No data";
+  return n === null
+    ? format(value)
+    : `${format(value)} (n ${n.toLocaleString("en")})`;
 }
 
 function Gridlines({ plot, format }: { plot: Plot; format: Format }) {
@@ -231,15 +261,16 @@ function LineSeries(props: {
   rows: Row[];
   plot: Plot;
   hover: number | null;
+  markers?: Markers;
 }) {
-  const { entry, rows, plot, hover } = props;
+  const { entry, rows, plot, hover, markers } = props;
   const points = rows.map(
     (row, index) => [index, cellValue(row, entry.key)] as const,
   );
   return (
     <g>
       {runs(points).map((run) =>
-        run.length === 1 ? (
+        run.length === 1 && !markers ? (
           <circle
             key={run[0]![0]}
             cx={plot.x(run[0]![0])}
@@ -258,13 +289,31 @@ function LineSeries(props: {
           />
         ),
       )}
+      {markers &&
+        points.map(([index, amount]) => {
+          if (amount === null) return null;
+          const n = sampleOf(rows[index]!, entry.key);
+          const thin = n !== null && n < markers.minN;
+          return (
+            <circle
+              key={`marker-${index}`}
+              className="point"
+              cx={plot.x(index)}
+              cy={plot.y(amount)}
+              r={4}
+              fill={thin ? "var(--color-surface)" : entry.color}
+              stroke={entry.color}
+            />
+          );
+        })}
       {hover !== null && points[hover]?.[1] != null && (
         <circle
-          className="marker"
+          className={markers ? "marker-ring" : "marker"}
           cx={plot.x(hover)}
           cy={plot.y(points[hover]![1]!)}
-          r={4}
-          fill={entry.color}
+          r={markers ? 7 : 4}
+          fill={markers ? "none" : entry.color}
+          stroke={markers ? entry.color : undefined}
         />
       )}
     </g>
@@ -298,9 +347,11 @@ function DailySvg(props: {
   plot: Plot;
   shown: number | null;
   active: number | null;
+  markers?: Markers;
   setHover: (index: number | null) => void;
 }) {
-  const { rows, series, kind, format, plot, shown, active, setHover } = props;
+  const { rows, series, kind, format, plot, shown, active, markers, setHover } =
+    props;
   return (
     <svg
       width={plot.width}
@@ -327,6 +378,7 @@ function DailySvg(props: {
               rows={rows}
               plot={plot}
               hover={shown}
+              markers={markers}
             />
           ))}
       {shown !== null && kind === "line" && (
@@ -352,9 +404,14 @@ function DailySvg(props: {
   );
 }
 
-const readout = (row: Row, series: Series[], format: Format) =>
+const readout = (
+  row: Row,
+  series: Series[],
+  format: Format,
+  markers?: Markers,
+) =>
   `${String(row.day)}: ${series
-    .map((entry) => `${entry.label} ${format(cellValue(row, entry.key))}`)
+    .map((entry) => `${entry.label} ${valueText(row, entry, format, markers)}`)
     .join(", ")}`;
 
 function DayTooltip(props: {
@@ -363,8 +420,9 @@ function DayTooltip(props: {
   series: Series[];
   format: Format;
   plot: Plot;
+  markers?: Markers;
 }) {
-  const { row, index, series, format, plot } = props;
+  const { row, index, series, format, plot, markers } = props;
   return (
     <div
       className="tooltip"
@@ -381,7 +439,7 @@ function DayTooltip(props: {
         <span key={entry.key}>
           <i style={{ background: entry.color }} aria-hidden="true" />
           {entry.label}
-          <em>{format(cellValue(row, entry.key))}</em>
+          <em>{valueText(row, entry, format, markers)}</em>
         </span>
       ))}
     </div>
@@ -451,6 +509,8 @@ export function DailyChart({
   kind,
   format,
   max,
+  fixed,
+  markers,
 }: {
   rows: Row[];
   series: Series[];
@@ -458,6 +518,13 @@ export function DailyChart({
   format: Format;
   /** Ceiling for the axis; the axis still fits the data when it stays lower. */
   max?: number;
+  /** Makes `max` the whole axis (0 to max), as for a percentage that always spans 0–100. */
+  fixed?: boolean;
+  /**
+   * Line charts: a marker on every point, hollow when a day's `<series key>_n` is under
+   * `minN`, with that n in the readout. A day without a row reads "No data".
+   */
+  markers?: Markers;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const width = useWidth(ref);
@@ -465,7 +532,7 @@ export function DailyChart({
   const [hover, setHover] = useState<number | null>(null);
   const rows = continuousDays(sparse);
   const { active, handlers } = useDayFocus(rows.length, () => setHover(null));
-  const plot = makePlot(rows, series, kind, max, width);
+  const plot = makePlot(rows, series, kind, { max, fixed }, width);
   const shown = hover ?? active;
   const shownRow = rows[shown ?? -1];
   const activeRow = rows[active ?? -1];
@@ -494,11 +561,12 @@ export function DailyChart({
           plot={plot}
           shown={shown}
           active={active}
+          markers={markers}
           setHover={setHover}
         />
       )}
       <p className="sr-only" aria-live="polite">
-        {activeRow ? readout(activeRow, series, format) : ""}
+        {activeRow ? readout(activeRow, series, format, markers) : ""}
       </p>
       {shownRow && (
         <DayTooltip
@@ -507,6 +575,7 @@ export function DailyChart({
           series={series}
           format={format}
           plot={plot}
+          markers={markers}
         />
       )}
     </div>

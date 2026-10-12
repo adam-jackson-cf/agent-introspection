@@ -196,6 +196,7 @@ SNAPSHOTS = (
     Snapshot("tool_calls", "(harness, ts)"),
     Snapshot("user_signals", "(harness, ts)"),
     Snapshot("model_calls", "(harness, ts)"),
+    Snapshot("model_call_attempts", "(harness, ts)"),
     Snapshot("task_labels", "(harness, start_ts)", "start_ts", "004_labels.sql", "task_outcomes"),
 )
 
@@ -363,12 +364,14 @@ def _parse_routes(
     return rows, covered_by
 
 
-def _parse_strays(entries: list[dict[str, Any]], harnesses: dict[str, str]) -> list[Row]:
+def _parse_strays(
+    entries: list[dict[str, Any]], harnesses: dict[str, str], producers: dict[str, str]
+) -> list[Row]:
     rows: list[Row] = []
     for entry in entries:
         stray = _text(entry, "id", "stray")
         harness = _text(entry, "harness", stray)
-        _require(harness in harnesses, f"{stray}: unknown harness")
+        _require(harness in harnesses or harness in producers, f"{stray}: unknown harness")
         source = _text(entry, "source", stray)
         _require(source in _SOURCES, f"{stray}: source must be one of {', '.join(_SOURCES)}")
         rows.append({
@@ -499,7 +502,7 @@ def parse_registry(document: dict[str, Any]) -> Registry:
         signals=signals,
         routes=routes,
         support=support,
-        strays=_parse_strays(document.get("stray", []), harnesses),
+        strays=_parse_strays(document.get("stray", []), harnesses, document.get("producers", {})),
         excluded=excluded,
         harnesses=dict(harnesses),
     )

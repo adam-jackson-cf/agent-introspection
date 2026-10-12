@@ -58,24 +58,28 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Clean completion"
+          source="kpi"
           value={fmtPct(rate("clean"))}
           detail={detail("clean")}
           signals={["friction.clean_completion"]}
         />
         <Kpi
           title="Interrupted tasks"
+          source="kpi"
           value={fmtPct(rate("interrupted"))}
           detail={detail("interrupted")}
           signals={["friction.interrupt"]}
         />
         <Kpi
           title="Quick follow-up"
+          source="kpi"
           value={fmtPct(rate("follow_up"))}
           detail={detail("follow_up")}
           signals={["friction.quick_follow_up"]}
         />
         <Kpi
           title="Recovery after failure"
+          source="recovery_summary"
           value={fmtPct(maybe(recovery.recovered_rate))}
           detail={`${fmtCount(num(recovery.recovered))} of ${fmtCount(num(recovery.failed_ops))} failed operations later succeeded (inferred)`}
           signals={["friction.recovery"]}
@@ -84,6 +88,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily clean completion"
+          source="daily"
           subtitle="Per harness; each counts only the friction components it observes"
           signals={["friction.clean_completion"]}
           span={7}
@@ -93,6 +98,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
             series={series}
             kind="line"
             max={100}
+            fixed
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -109,6 +115,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily interrupt and steer signals"
+          source="daily_signals"
           subtitle="Tasks started that day with an explicit user interrupt, and tasks with a steer; a task with both counts in each line"
           signals={["friction.interrupt", "friction.steer"]}
           span={5}
@@ -135,6 +142,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       <Section title="Which friction does each harness observe?">
         <Panel
           title="Friction components by harness"
+          source="kpi"
           subtitle="— means the harness does not emit that component; it is never counted as zero"
           signals={[
             "friction.clean_completion",
@@ -176,6 +184,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Recovery by harness"
+          source="recovery_summary"
           subtitle="A failed operation recovers when the same operation later succeeds in the task"
           signals={["friction.recovery"]}
         >
@@ -206,6 +215,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Operations that fail most"
+          source="recovery_ops"
           subtitle="Failed operation groups and how many recovered"
           signals={["friction.recovery"]}
         >
@@ -227,6 +237,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       <Section title="Tasks with explicit friction">
         <Panel
           title="Latest interrupted, steered, or errored tasks"
+          source="tasks"
           signals={["friction.interrupt", "friction.steer", "friction.error"]}
           span={12}
         >

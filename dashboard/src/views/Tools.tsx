@@ -10,6 +10,7 @@ import {
   SessionLink,
   ViewLink,
   useSelectedHarnesses,
+  useView,
 } from "../components";
 import {
   fmtCount,
@@ -42,6 +43,7 @@ function reshapeDaily(rows: Row[], valueKey: string, nKey?: string): Row[] {
 
 export default function Tools({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
+  const { minRateN } = useView();
   const kpi = allRow(data.kpi);
   const repeats = allRow(data.repeat_summary);
   const daily = data.daily ?? [];
@@ -57,12 +59,14 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Tool calls"
+          source="kpi"
           value={fmtCount(num(kpi.calls))}
           detail={`${fmtCount(num(kpi.unknown))} without an explicit outcome`}
           signals={["tools.calls"]}
         />
         <Kpi
           title="Tool failure rate"
+          source="kpi"
           value={fmtPct(maybe(kpi.failure_rate))}
           detail={`${fmtCount(num(kpi.failed))} failed of ${fmtCount(num(kpi.explicit))} with an outcome`}
           n={num(kpi.explicit)}
@@ -70,6 +74,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Tasks affected by failures"
+          source="kpi"
           value={fmtPct(maybe(kpi.tasks_affected_rate))}
           detail={`${fmtCount(num(kpi.failed_tasks))} of ${fmtCount(num(kpi.tasks))} tasks with an attributed tool call`}
           n={num(kpi.tasks)}
@@ -77,6 +82,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Tasks with repeated attempts"
+          source="repeat_summary"
           value={fmtPct(maybe(repeats.repeat_rate))}
           detail={`${fmtCount(num(repeats.repeat_tasks))} of ${fmtCount(num(repeats.tasks))} tasks with comparable calls (not waiting or polling) · ${fmtCount(num(repeats.repeated_attempts))} identical calls`}
           n={num(repeats.tasks)}
@@ -86,7 +92,8 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily tool failure rate"
-          subtitle="Failed / calls with an explicit outcome, per harness"
+          source="daily"
+          subtitle="Failed / calls with an explicit outcome, per harness; a hollow marker has fewer outcomes than the minimum sample, and its n is in the readout"
           signals={["tools.failure_rate"]}
           span={7}
         >
@@ -94,6 +101,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             rows={rateDaily}
             series={series}
             kind="line"
+            markers={{ minN: minRateN }}
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -106,6 +114,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily tool calls"
+          source="daily"
           subtitle="Stacked by harness"
           signals={["tools.calls"]}
           span={5}
@@ -132,6 +141,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
       <Section title="Which tools and failures repeat?">
         <Panel
           title="Failures by tool"
+          source="by_tool"
           subtitle="Most failures first; failed tasks count distinct tasks"
           signals={["tools.failure_rate", "tools.tasks_affected"]}
         >
@@ -163,6 +173,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Failure signatures"
+          source="signatures"
           subtitle="Normalized error line, first 80 characters shown (digits → N, home → ~); grouped by a hash of the full line"
           signals={["tools.failure_signature"]}
         >
@@ -191,13 +202,14 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             rows={data.signatures ?? []}
           />
           <ViewLink view="friction">Open Friction</ViewLink>
-          <ViewLink view="recurrence">Open Recurrence</ViewLink>
+          <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
       </Section>
       <Section title="Repeats and loops">
         <Panel
           title="Repeated attempts"
-          subtitle="Same tool and identical arguments ≥ 2 times in one task"
+          source="repeats"
+          subtitle="Same tool and identical arguments ≥ 2 times in one task, most failed first; the session link is one of the task's sessions"
           signals={["tools.repeats"]}
         >
           <DataTable
@@ -208,10 +220,13 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => <HarnessName value={row.harness} />,
               },
               {
-                key: "session_id",
+                key: "example_session",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row.harness}
+                    session={row.example_session}
+                  />
                 ),
               },
               { key: "tool", label: "Tool" },
@@ -228,6 +243,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Tool loops"
+          source="loops"
           subtitle="≥ 3 consecutive identical calls in one task"
           signals={["tools.loops"]}
         >
@@ -263,7 +279,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             empty="No runs of three or more identical consecutive calls."
           />
           <ViewLink view="friction">Open Friction</ViewLink>
-          <ViewLink view="recurrence">Open Recurrence</ViewLink>
+          <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
       </Section>
     </>

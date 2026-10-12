@@ -20,6 +20,7 @@ import { locationPath, type Location } from "./routes";
 const locationTitle = (location: Location) => {
   if (location.kind === "view")
     return location.detail?.title ?? location.view.title;
+  if (location.kind === "glossary") return "Glossary";
   return location.kind === "session" ? "Session" : "Unknown view";
 };
 

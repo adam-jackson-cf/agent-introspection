@@ -122,6 +122,9 @@ where_:
 - Definitions come from the signal registry, which the panel info note (`InfoNote` in
   `dashboard/src/components.tsx`) renders: definition, formula, and each harness's route and alignment. The
   note opens as an overlay anchored to the panel's `i` marker, so it never pushes the chart or table down.
+  The overlay leads with the question and formula, then each harness's alignment and note in plain text;
+  per-harness route detail may live one link away on the Glossary page, which is generated from the same
+  registry (`/glossary`, `dashboard/src/views/Glossary.tsx`).
 - A page never writes its own definition of a term.
 
 ### M2. Pages share one structure

@@ -13,10 +13,34 @@ import {
   isPlainClick,
 } from "./components";
 import { PRESETS, fromInput, presetFor, toInput } from "./app-state";
-import { VIEWS, type Location } from "./routes";
+import { groupOf, NAV_GROUPS, VIEWS, type Location } from "./routes";
+import Glossary from "./views/Glossary";
 import Session from "./views/Session";
 
 export type Navigate = (path: string, next: Filters) => void;
+
+function NavLink(props: {
+  title: string;
+  current: boolean;
+  href: string;
+  onOpen: () => void;
+}) {
+  const { title, current, href, onOpen } = props;
+  return (
+    <a
+      className={`nav${current ? " active" : ""}`}
+      href={href}
+      aria-current={current ? "page" : undefined}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        event.preventDefault();
+        onOpen();
+      }}
+    >
+      <span>{title}</span>
+    </a>
+  );
+}
 
 export function ViewNav(props: {
   location: Location;
@@ -26,22 +50,39 @@ export function ViewNav(props: {
 }) {
   const { location, filters, viewHref, navigate } = props;
   const current = location.kind === "view" ? location.view.id : null;
-  return VIEWS.map((view) => (
-    <a
-      key={view.id}
-      className={`nav${current === view.id ? " active" : ""}`}
-      href={viewHref(view.id)}
-      aria-current={current === view.id ? "page" : undefined}
-      onClick={(event) => {
-        if (!isPlainClick(event)) return;
-        event.preventDefault();
-        navigate(viewHref(view.id), filters);
-      }}
+  const groups = NAV_GROUPS.map((group) => (
+    <div
+      className="nav-group"
+      key={group.title}
+      role="group"
+      aria-label={group.title}
     >
-      <span className="nav-num">{view.number}</span>
-      <span>{view.title}</span>
-    </a>
+      <div className="nav-group-title">{group.title}</div>
+      {VIEWS.filter((view) => group.views.includes(view.id)).map((view) => (
+        <NavLink
+          key={view.id}
+          title={view.title}
+          current={current === view.id}
+          href={viewHref(view.id)}
+          onOpen={() => navigate(viewHref(view.id), filters)}
+        />
+      ))}
+    </div>
   ));
+  return (
+    <>
+      {groups}
+      <div className="nav-group" role="group" aria-label="Reference">
+        <div className="nav-group-title">Reference</div>
+        <NavLink
+          title="Glossary"
+          current={location.kind === "glossary"}
+          href={viewHref("glossary")}
+          onOpen={() => navigate(viewHref("glossary"), filters)}
+        />
+      </div>
+    </>
+  );
 }
 
 export function Sidebar({ nav }: { nav: React.ReactNode }) {
@@ -104,6 +145,8 @@ export function Topbar(props: {
 const headingQuestion = (location: Location) => {
   if (location.kind === "view")
     return location.detail?.question ?? location.view.question;
+  if (location.kind === "glossary")
+    return "What each signal asks, how it is computed, and how each harness produces it.";
   if (location.kind === "session")
     return "Tasks, usage, tool calls, and user signals for one session.";
   return `${window.location.pathname} is not a view.`;
@@ -161,8 +204,10 @@ export function PageHead(props: {
       <div>
         <div className="eyebrow">
           {location.kind === "view" && !location.detail
-            ? location.view.number
-            : "Drill-down"}
+            ? groupOf(location.view.id)
+            : location.kind === "glossary"
+              ? "Reference"
+              : "Drill-down"}
         </div>
         <h1 ref={heading} tabIndex={-1}>
           {title}
@@ -376,6 +421,7 @@ export function PageBody(props: {
         )}
       </ViewContext.Provider>
     );
+  if (location.kind === "glossary") return <Glossary registry={registry} />;
   if (location.kind === "session" && sessionResponse)
     return (
       <ViewContext.Provider

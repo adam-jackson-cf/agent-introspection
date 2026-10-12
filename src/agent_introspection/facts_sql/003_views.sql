@@ -430,6 +430,33 @@ SELECT
 FROM introspection.spans FINAL
 WHERE harness = 'claude-code' AND name = 'claude_code.llm_request';
 
+-- One row per retry-relevant event beside the terminal model calls: a Codex sampling
+-- step (`run_sampling_request` span), each request attempt inside a step
+-- (`try_run_sampling_request`), and a Claude Code `api_error` or
+-- `api_retries_exhausted` log. `kind` is the span or event name. The Provider view reads
+-- Codex latency and retry counts, and Claude Code API errors, from here rather than from
+-- the raw tables; a step's duration is the Codex call duration the response log lacks.
+CREATE OR REPLACE VIEW introspection.model_call_attempts AS
+SELECT
+    ts,
+    harness,
+    attrs_string['model'] AS model,
+    name AS kind,
+    toNullable(duration_ns / 1e9) AS duration_seconds,
+    span_id AS source_id
+FROM introspection.spans FINAL
+WHERE harness LIKE 'codex%' AND name IN ('run_sampling_request', 'try_run_sampling_request')
+UNION ALL
+SELECT
+    ts,
+    harness,
+    attrs_string['model'],
+    event_name,
+    CAST(NULL, 'Nullable(Float64)'),
+    log_id
+FROM introspection.logs FINAL
+WHERE harness = 'claude-code' AND event_name IN ('api_error', 'api_retries_exhausted');
+
 -- One row per activity-hook `tool_call` (omp and Claude Code), keyed by tool call ID.
 CREATE OR REPLACE VIEW introspection.hook_tool_calls AS
 SELECT
@@ -483,13 +510,17 @@ SELECT
         stored_signature != '' AND length(stored_signature) < 160, lower(substring(hex(SHA256(windowed_signature)), 1, 16)),
         ''
     ) AS failure_signature_hash,
+    -- zsh prefixes errors of `eval`ed commands with `(eval):N:`, which hides that two
+    -- failures are one; the prefix is dropped. A line that is only shell punctuation
+    -- before "not found" (`=== not found`, a markdown rule typed as a command) names
+    -- no failure and gets no class.
     if(
         windowed_signature = '',
         '',
-        trimBoth(replaceRegexpAll(
+        replaceRegexpOne(replaceRegexpOne(trimBoth(replaceRegexpAll(
             replaceRegexpAll(substringUTF8(windowed_signature, 1, 80), '\'[^\']*\'|"[^"]*"|`[^`]*`', '\'…\''),
             '[^\\s:\'"(),]*/[^\\s:\'"(),]+', '<path>'
-        ))
+        )), '^\\(eval\\):(\\w+:)?N: ', ''), '^=+\\w* not found$', '')
     ) AS failure_class
 FROM (
 SELECT

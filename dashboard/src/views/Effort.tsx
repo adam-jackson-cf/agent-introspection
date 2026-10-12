@@ -91,24 +91,28 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Reasoning tokens"
+          source="spend"
           value={fmtCount(num(spend.reasoning))}
           detail={`across ${fmtCount(num(spend.calls))} model calls (Claude Code: turns)`}
           signals={["effort.reasoning_tokens"]}
         />
         <Kpi
           title="Reasoning share of output"
+          source="spend"
           value={fmtPct(maybe(spend.reasoning_share_rate))}
           detail="token-weighted over producers that emit reasoning"
           signals={["effort.reasoning_share"]}
         />
         <Kpi
           title="Tasks"
+          source="summary"
           value={fmtCount(num(summary.tasks))}
           detail={`${fmtPct(maybe(summary.clean_rate))} clean completion · n=${fmtCount(num(summary.clean_den))}`}
           signals={["task.count", "friction.clean_completion"]}
         />
         <Kpi
           title="Heavy-effort task share"
+          source="summary"
           value={fmtPct(maybe(summary.heavy_rate))}
           detail="high or xhigh requested"
           signals={["effort.heavy_share", "effort.level"]}
@@ -117,6 +121,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
       <Section title="Daily trend">
         <Panel
           title="Daily reasoning tokens by effort"
+          source="daily_reasoning"
           subtitle="Model calls (Claude Code per turn); unset means the provider default, not no reasoning"
           signals={["effort.reasoning_tokens", "effort.level"]}
         >
@@ -140,6 +145,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily task mix by effort"
+          source="daily_tasks"
           subtitle="Tasks started per day"
           signals={["task.count", "effort.level"]}
         >
@@ -163,6 +169,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily clean completion by effort"
+          source="daily_tasks"
           subtitle="Noisy on low-volume days; a friction proxy, not a quality score"
           signals={["friction.clean_completion", "effort.level"]}
         >
@@ -171,6 +178,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
             series={taskSeries}
             kind="line"
             max={100}
+            fixed
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -183,6 +191,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily median task duration by effort"
+          source="daily_tasks"
           signals={["task.duration", "effort.level"]}
         >
           <DailyChart
@@ -207,6 +216,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
       <Section title="Does heavier effort earn its cost?">
         <Panel
           title="Task outcomes by reasoning effort"
+          source="outcomes"
           subtitle="Correlational: harder tasks may attract higher effort. Compare within one harness and model. Reasoning share here is over the output of tasks that report reasoning, so it can differ from the spend table."
           signals={[
             "task.count",
@@ -297,6 +307,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Reasoning spend by effort"
+          source="usage"
           subtitle="Model calls that report reasoning tokens; a Claude Code call is one turn, whose thinking tokens the Stop hook sums"
           signals={["effort.reasoning_tokens", "effort.reasoning_share"]}
           span={12}
@@ -345,6 +356,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Model × effort"
+          source="model_effort"
           subtitle="Holds the model fixed when comparing effort (≥ 3 tasks)"
           signals={[
             "task.count",
@@ -396,6 +408,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
       <Section title="Heaviest reasoning tasks">
         <Panel
           title="Top 25 tasks by reasoning tokens"
+          source="heaviest"
           signals={[
             "task.reasoning_tokens",
             "task.duration",

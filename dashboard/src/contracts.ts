@@ -16,7 +16,12 @@ export type ViewId = (typeof VIEW_IDS)[number];
 
 /** An L3 detail page lives at `/<view>/<detail>`, under its parent view. */
 export const DETAIL_PATHS = ["pipeline/coverage"] as const;
-export type ViewPath = ViewId | (typeof DETAIL_PATHS)[number];
+/** Pages that are not views: the generated glossary of signal definitions. */
+export const PAGE_PATHS = ["glossary"] as const;
+export type ViewPath =
+  | ViewId
+  | (typeof DETAIL_PATHS)[number]
+  | (typeof PAGE_PATHS)[number];
 
 /** Every known harness in registry order; the selector offers All plus each enabled one. */
 export const HARNESSES = [

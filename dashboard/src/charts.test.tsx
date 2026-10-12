@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DAY_KEYS, DailyChart, DataTable, sortRows } from "./charts";
+import {
+  DAY_KEYS,
+  DailyChart,
+  DataTable,
+  makePlot,
+  sortRows,
+  valueText,
+} from "./charts";
 
 const columns = [
   { key: "subject", label: "Subject" },
@@ -93,5 +100,32 @@ describe("DailyChart", () => {
     expect(DAY_KEYS.ArrowLeft!(3, 4)).toBe(2);
     expect(DAY_KEYS.Home!(3, 4)).toBe(0);
     expect(DAY_KEYS.End!(1, 4)).toBe(4);
+  });
+});
+
+describe("DailyChart axis", () => {
+  const series = [{ key: "a", label: "A", color: "var(--color-primary)" }];
+  const rows = [{ day: "2026-09-01", a: 12 }];
+  test("max caps the fitted axis; fixed makes it the whole axis", () => {
+    expect(makePlot(rows, series, "line", { max: 100 }, 400).top).toBe(20);
+    expect(
+      makePlot(rows, series, "line", { max: 100, fixed: true }, 400).top,
+    ).toBe(100);
+  });
+});
+
+describe("DailyChart markers", () => {
+  const entry = { key: "a", label: "A", color: "var(--color-primary)" };
+  const format = (value: number | null) => (value === null ? "—" : `${value}%`);
+  const markers = { minN: 20 };
+  test("the readout carries n, and says why a day is empty", () => {
+    expect(valueText({ day: "d", a: 5, a_n: 12 }, entry, format, markers)).toBe(
+      "5% (n 12)",
+    );
+    expect(
+      valueText({ day: "d", a: null, a_n: 0 }, entry, format, markers),
+    ).toBe("No outcomes (n 0)");
+    expect(valueText({ day: "d" }, entry, format, markers)).toBe("No data");
+    expect(valueText({ day: "d" }, entry, format)).toBe("—");
   });
 });

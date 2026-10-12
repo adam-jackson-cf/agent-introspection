@@ -197,9 +197,11 @@ describe("coverage grid", () => {
     ).toMatchObject({ "oh-my-pi": { state: "rows", rows: 10 } });
   });
 
-  test("route counts scan history before the window to date each route's first row", () => {
+  test("route counts scan the 90 days before the window to date each route's first row", () => {
     const { spans } = routeCountQueries(registry());
-    expect(spans).toContain("WHERE ts < {end:DateTime64(3, 'UTC')}");
+    expect(spans).toContain(
+      "WHERE ts >= {start:DateTime64(3, 'UTC')} - INTERVAL 90 DAY AND ts < {end:DateTime64(3, 'UTC')}",
+    );
     expect(spans).toContain(
       "countIf((name = 'chat') AND ts >= {start:DateTime64(3, 'UTC')}) AS t0",
     );

@@ -6,6 +6,7 @@ import { extname, join, relative } from "node:path";
 import {
   HARNESSES,
   DETAIL_PATHS,
+  PAGE_PATHS,
   VIEW_IDS,
   type Filters,
   type Harness,
@@ -548,7 +549,8 @@ export function createApp(
       route === "" ||
       route === "session" ||
       (VIEW_IDS as readonly string[]).includes(route) ||
-      (DETAIL_PATHS as readonly string[]).includes(route)
+      (DETAIL_PATHS as readonly string[]).includes(route) ||
+      (PAGE_PATHS as readonly string[]).includes(route)
         ? "/index.html"
         : url.pathname;
     const asset = dependencies.assets.get(assetPath);

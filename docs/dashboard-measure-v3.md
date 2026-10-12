@@ -108,6 +108,12 @@ spans, and Claude Code LLM request spans. `outcome` is `succeeded`, `failed`,
 `error_class`, `duration_seconds`, `ttft_seconds`, `output_tokens`, `attempt`, and
 `stream_disconnect`.
 
+`model_call_attempts` (a fact view with its own snapshot) holds the events beside the
+calls: Codex `run_sampling_request` steps (their duration is the Codex call latency)
+and `try_run_sampling_request` attempts, and Claude Code `api_error` and
+`api_retries_exhausted` logs. `kind` is the span or event name. The Provider view reads
+latency and retry counts from it instead of the raw tables.
+
 ### 2.6 `session_project`: one project per session
 
 The latest Git project the session-context hooks recorded for a session, from
@@ -160,11 +166,12 @@ while the harness is otherwise active is a valid observation.
 
 ### Registered strays
 
-| Stray                       | Harness | Source | Predicate                                                                                                                                                                                                              | Explanation                                                                                                                                                                                                                                                                         |
-| --------------------------- | ------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `omp.claude_mislabel_logs`  | omp     | logs   | `event_name IN ('api_request', 'tool_result', 'tool_decision', 'user_prompt', 'assistant_response', 'hook_registered', 'hook_execution_start', 'hook_execution_complete', 'mcp_server_connection', 'retention_sweep')` | Claude Code sessions exported with service.name oh-my-pi (seen 2026-08-24, 08-28, 09-01, 09-02, 09-13). Inferred: Claude Code launched from an omp shell inherits OTEL_SERVICE_NAME. The rows are Claude-style events, not an omp route, and are not counted as Claude Code either. |
-| `omp.claude_mislabel_spans` | omp     | spans  | `startsWith(name, 'claude_code.')`                                                                                                                                                                                     | Spans from the same mislabelled Claude Code sessions.                                                                                                                                                                                                                               |
-| `omp.docker_build`          | omp     | spans  | `name LIKE 'moby.%' OR name LIKE 'build%' OR name LIKE 'load %' OR name LIKE 'remotes.docker.%' OR name IN ('HEAD /_ping', 'GET /v1.54/version', 'HTTP POST')`                                                         | Inferred: Docker buildx spans inherit OTEL_SERVICE_NAME=oh-my-pi when omp runs docker builds. They are not agent telemetry.                                                                                                                                                         |
+| Stray                       | Harness  | Source | Predicate                                                                                                                                                                                                              | Explanation                                                                                                                                                                                                                                                                         |
+| --------------------------- | -------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode.not_a_harness`    | opencode | spans  | `harness = 'opencode'`                                                                                                                                                                                                 | opencode exports spans to this SigNoz (service.name opencode, the largest span producer by volume). It is a known producer, not a harness: no loader reads it, so none of its rows reach the facts, and no signal is measured for it.                                               |
+| `omp.claude_mislabel_logs`  | omp      | logs   | `event_name IN ('api_request', 'tool_result', 'tool_decision', 'user_prompt', 'assistant_response', 'hook_registered', 'hook_execution_start', 'hook_execution_complete', 'mcp_server_connection', 'retention_sweep')` | Claude Code sessions exported with service.name oh-my-pi (seen 2026-08-24, 08-28, 09-01, 09-02, 09-13). Inferred: Claude Code launched from an omp shell inherits OTEL_SERVICE_NAME. The rows are Claude-style events, not an omp route, and are not counted as Claude Code either. |
+| `omp.claude_mislabel_spans` | omp      | spans  | `startsWith(name, 'claude_code.')`                                                                                                                                                                                     | Spans from the same mislabelled Claude Code sessions.                                                                                                                                                                                                                               |
+| `omp.docker_build`          | omp      | spans  | `name LIKE 'moby.%' OR name LIKE 'build%' OR name LIKE 'load %' OR name LIKE 'remotes.docker.%' OR name IN ('HEAD /_ping', 'GET /v1.54/version', 'HTTP POST')`                                                         | Inferred: Docker buildx spans inherit OTEL_SERVICE_NAME=oh-my-pi when omp runs docker builds. They are not agent telemetry.                                                                                                                                                         |
 
 ## 4. Signal catalog
 
@@ -858,7 +865,7 @@ Scope: system (not per harness).
 | Codex exec       | not emitted | —          | Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model. |
 | Claude Code      | not emitted | —          | LLM request spans carry only the requested model.                                                                   |
 
-### Recurrence
+### Recurring failures
 
 #### Recurring targets (`recur.targets`)
 
@@ -916,13 +923,13 @@ Scope: system (not per harness).
 | Codex exec       | aligned   | `codex.tool_result`  | —    |
 | Claude Code      | aligned   | `claude.tool_result` | —    |
 
-### Intent and corrections
+### Requests and corrections
 
 #### Labelled tasks (`intent.labelled`)
 
 - **Question:** Which share of tasks has a Jev-labelled prompt?
 - **Unit:** %
-- **Formula:** 100 × tasks whose starting prompt has a label in `prompt_labels` / tasks. `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times.
+- **Formula:** 100 × tasks whose starting prompt has a label in `prompt_labels` / tasks in sessions with at least one exported prompt (tasks from sessions before the prompt export began are counted apart). `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times.
 
 | Harness          | Alignment | Route                | Note                                                                                                                                                                                               |
 | ---------------- | --------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1002,7 +1009,7 @@ Scope: system (not per harness).
 | Codex exec       | differs   | `codex.user_prompt`  | Task type only; corrections and clean completion are not applicable to headless runs. |
 | Claude Code      | aligned   | `claude.user_prompt` | —                                                                                     |
 
-### Interventions
+### Findings and fixes
 
 #### Findings and proposals (`intervene.findings`)
 

@@ -842,3 +842,17 @@ def test_projection_redacts_credentials_before_normalizing_diagnostics(template:
         position = found
     # Redaction wraps the window before home and digit normalization.
     assert select.index("[REDACTED]") < select.index("'/Users/[^/ ]+',\n")
+
+
+def test_opencode_is_a_registered_producer_stray_and_not_a_harness() -> None:
+    registry = facts.load_registry()
+
+    assert "opencode" not in registry.harnesses
+    assert any(row["harness"] == "opencode" for row in registry.strays)
+    assert all(row["harness"] != "opencode" for row in registry.routes)
+    with pytest.raises(facts.RegistryError, match="unknown harness"):
+        facts._parse_strays(
+            [{"id": "x", "harness": "gemini", "source": "spans", "match": "1", "reason": "r"}],
+            {},
+            {},
+        )
