@@ -27,7 +27,7 @@ def test_spool_sync_attributes_and_sends_without_touching_clickhouse(
 
     result = json.loads(capsys.readouterr().out)
     assert result["drain"]["sent"] == 3
-    assert result["status"]["pending"] == 2
+    assert result["status"]["pending"] == 0
     assert names(inbox) == set()
     assert len(collector.records) == 3
 

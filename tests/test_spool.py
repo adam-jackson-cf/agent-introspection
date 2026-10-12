@@ -7,6 +7,7 @@ import urllib.request
 from datetime import UTC, datetime
 from email.message import Message
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -331,6 +332,29 @@ def test_sync_attributes_then_reports_status_then_drains(
         spool.STATUS_SCHEMA,
     }
     assert names(inbox) == set()
+
+
+def test_sync_ships_records_before_a_heartbeat_that_counts_them(
+    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [one_session_store(tmp_path)])
+
+    result = spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+
+    per_request = [
+        [json.loads(e["body"]["stringValue"])["schema"] for e in body_logs(body)]
+        for body in collector.bodies
+    ]
+    assert per_request == [[spool.SESSION_PROJECT_SCHEMA], [spool.STATUS_SCHEMA]]
+    (heartbeat,) = [r for r in collector.records if r["schema"] == spool.STATUS_SCHEMA]
+    assert heartbeat["sent_total"] == {"hook-event": 0, "session-project": 1}
+    assert result["drain"]["sent"] == 2
+    assert result["drain"]["batches"] == 2
+
+
+def body_logs(body: dict[str, Any]) -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = body["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    return logs
 
 
 def test_sync_without_an_endpoint_only_spools_the_attribution(

@@ -34,7 +34,11 @@ session loader keeps the newest `resolved_at` per session. Consequences:
   loaders). Over the last 24 hours, sent is the counter's growth between the first and
   last heartbeat (a counter that went down was reset, so its latest value is used);
   heartbeats from the last 5 minutes are ignored so in-flight batches do not read as
-  lost. The Pipeline "Hook spool by host" panel shows received / sent per family and
+  lost. `spool sync` drains its records first, then takes the heartbeat snapshot, then
+  ships the heartbeat as its own request, so every record a heartbeat counts was observed
+  at or before it and falls in the window the check counts. Heartbeats emitted before
+  this ordering shipped can still show a first-window gap (received short of sent) for up
+  to 24 hours. The Pipeline "Hook spool by host" panel shows received / sent per family and
   flags a host when received falls short of sent by more than 2 records or 2%.
 - Readers select these families by `service.name`, `event.name`, and the body's
   `schema`. Older rows under the same service name come from a retired pipeline and are

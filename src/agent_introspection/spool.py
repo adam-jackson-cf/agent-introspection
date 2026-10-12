@@ -463,6 +463,14 @@ def sync(
 
     Without an endpoint nothing is sent (and no heartbeat is written, which would only
     pile up), so records wait in the spool until one is configured.
+
+    Ordering invariant: records are drained first, the status snapshot is taken after,
+    and the heartbeat is then written and drained as its own request. So heartbeat k's
+    ``sent_total`` counts every record shipped before it, each of which the collector
+    observed at or before heartbeat k, and the records in the increment k-1 -> k are
+    observed in (heartbeat k-1, heartbeat k]: the window the Pipeline delivery check
+    counts. (If the first drain stops early on a backlog or a failure, the heartbeat can
+    share a later batch with leftover records, which the next heartbeat then counts.)
     """
     from agent_introspection import sessions
 
@@ -476,9 +484,15 @@ def sync(
     endpoint = resolve_otlp_logs_endpoint(config.hooks_otlp_logs_endpoint, environ)
     if endpoint is None:
         return {"sessions": attributed, "drain": {"skipped": "no_endpoint"}}
+    sent = drain(endpoint, inbox=directory)
     status = status_record(directory)
     hooks.write(status, directory)
-    sent = drain(endpoint, inbox=directory)
+    beat = drain(endpoint, inbox=directory)
+    sent.batches += beat.batches
+    sent.sent += beat.sent
+    sent.rejected += beat.rejected
+    sent.busy = sent.busy or beat.busy
+    sent.error_class = sent.error_class or beat.error_class
     return {
         "sessions": attributed,
         "status": {key: status[key] for key in ("pending", "rejected")},

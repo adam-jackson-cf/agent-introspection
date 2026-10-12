@@ -523,6 +523,41 @@ describe("spool delivery: sent counters against records received", () => {
     120000,
   );
 
+  // Mirrors SPOOL_DELIVERY's window over inline values(): heartbeats h1..h3 carry
+  // sent_total; records are observed before the heartbeat that counts them.
+  test.skipIf(!live)(
+    "records shipped just before a heartbeat are received inside its window (sync order)",
+    async () => {
+      // h1 at 1000 (total 0), sync ships 20 records at 1001..1020, h2 at 1021 counts 20.
+      const heartbeats = [
+        [1000, 0],
+        [1021, 20],
+      ];
+      const records = Array.from({ length: 20 }, (_, i) => 1001 + i);
+      const hb = heartbeats
+        .map(([ns, total]) => `(${ns}, ${total})`)
+        .join(", ");
+      const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent, (SELECT count() FROM values('ns UInt64', ${records.map((n) => `(${n})`).join(", ")}) WHERE ns > 1000 AND ns <= 1021) AS received FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('observed_ns UInt64, sent_total Int64', ${hb})) FORMAT TSV`;
+      const proc = Bun.spawn(
+        ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
+        {
+          stdin: new TextEncoder().encode(sql),
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [out, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        proc.exited,
+      ]);
+      if (code !== 0) throw new Error(await new Response(proc.stderr).text());
+      const [sent, received] = out.trim().split("\t").map(Number);
+      expect(sent).toBe(20);
+      expect(received).toBe(sent);
+    },
+    120000,
+  );
+
   test("the pipeline response carries the delivery columns", async () => {
     const query: Query = async (sql) =>
       sql.includes("AS last_error_class")
