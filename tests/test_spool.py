@@ -1,7 +1,11 @@
 import fcntl
+import io
 import json
 import os
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -96,6 +100,19 @@ def test_responses_are_classified_by_what_they_say_about_the_batch(
 ) -> None:
     outcome = spool.classify_response(status, body.encode())
     assert (outcome.action, outcome.error_class) == (action, error_class)
+
+
+def test_an_http_error_response_is_read_then_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = io.BytesIO(b"unavailable")
+    error = urllib.error.HTTPError("http://collector/v1/logs", 503, "Busy", Message(), body)
+
+    def failing(request: object, timeout: float) -> None:
+        raise error
+
+    monkeypatch.setattr(urllib.request, "urlopen", failing)
+
+    assert spool.send("http://collector/v1/logs", b"{}") == spool.Outcome("keep", "http_503")
+    assert body.closed
 
 
 def test_a_dead_endpoint_and_a_timeout_keep_the_files_with_their_class(

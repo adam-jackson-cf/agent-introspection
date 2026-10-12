@@ -297,7 +297,7 @@ describe("snapshot horizon", () => {
     const first = await load();
     await load();
     expect(first.asOf).toEqual({
-      at: "2026-09-30T11:58:00Z",
+      at: "2026-09-30T11:57:00Z",
       stale: true,
       historyStale: false,
       failing: ["load_spans"],

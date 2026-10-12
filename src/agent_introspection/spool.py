@@ -249,10 +249,11 @@ def send(endpoint: str, body: bytes, timeout: float = CONNECT_TIMEOUT_SECONDS) -
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return classify_response(response.status, response.read(_MAX_RESPONSE_BYTES))
     except urllib.error.HTTPError as exc:
-        try:
-            answer = exc.read(_MAX_RESPONSE_BYTES)
-        except (OSError, http.client.HTTPException):
-            answer = b""
+        with exc:
+            try:
+                answer = exc.read(_MAX_RESPONSE_BYTES)
+            except (OSError, http.client.HTTPException):
+                answer = b""
         return classify_response(exc.code, answer)
     except urllib.error.URLError as exc:
         reason = exc.reason if isinstance(exc.reason, BaseException) else exc
