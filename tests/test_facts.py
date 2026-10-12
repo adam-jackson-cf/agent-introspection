@@ -969,8 +969,9 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
 
     from agent_introspection.config import ConfigurationError
 
+    body = io.BytesIO(b"Code: 497. DB::Exception: facts: Not enough privileges\ntrace")
+
     def failing(request: Any, timeout: float) -> _Response:
-        body = io.BytesIO(b"Code: 497. DB::Exception: facts: Not enough privileges\ntrace")
         raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), body)
 
     monkeypatch.setattr(urllib.request, "urlopen", failing)
@@ -979,6 +980,7 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
     with pytest.raises(FactsError, match="Code: 497") as raised:
         facts.http_runner(_http_config())("SELECT 1")
     assert "s3cret" not in str(raised.value)
+    assert body.closed
 
     monkeypatch.delenv("CH_PASSWORD")
     with pytest.raises(ConfigurationError, match="CH_PASSWORD") as missing:

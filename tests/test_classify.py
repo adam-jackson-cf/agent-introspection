@@ -1,4 +1,8 @@
+import io
 import json
+import urllib.error
+import urllib.request
+from email.message import Message
 from typing import Any
 
 import pytest
@@ -120,3 +124,22 @@ def test_unexpected_model_stops_the_run() -> None:
             key="k",
             post=lambda _b, _k: jev_response(model="other/model"),
         )
+
+
+@pytest.mark.parametrize(
+    ("status", "error"), [(403, classify.JevUnavailableError), (500, RuntimeError)]
+)
+def test_http_poster_closes_the_error_response_and_withholds_its_body(
+    monkeypatch: pytest.MonkeyPatch, status: int, error: type[Exception]
+) -> None:
+    body = io.BytesIO(b"echoed prompt text")
+
+    def failing(request: object, timeout: float) -> None:
+        raise urllib.error.HTTPError("http://jev", status, "err", Message(), body)
+
+    monkeypatch.setattr(urllib.request, "urlopen", failing)
+
+    with pytest.raises(error, match=str(status)) as raised:
+        classify.http_poster(b"{}", "key")
+    assert "echoed" not in str(raised.value)
+    assert body.closed

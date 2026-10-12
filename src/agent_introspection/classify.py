@@ -181,11 +181,13 @@ def http_poster(body: bytes, key: str) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return dict(json.load(response))
     except urllib.error.HTTPError as exc:
-        if exc.code in (401, 402, 403):
+        with exc:
+            code = exc.code
+        if code in (401, 402, 403):
             raise JevUnavailableError(
-                f"OpenRouter refused the key or credit (HTTP {exc.code})"
+                f"OpenRouter refused the key or credit (HTTP {code})"
             ) from None
-        raise RuntimeError(f"Jev returned HTTP {exc.code}") from None
+        raise RuntimeError(f"Jev returned HTTP {code}") from None
 
 
 def label(answers: dict[str, Any], cost: float) -> dict[str, Any]:

@@ -945,7 +945,9 @@ def http_runner(config: AppConfig) -> SqlRunner:
             with urllib.request.urlopen(request, timeout=_QUERY_TIMEOUT_SECONDS) as response:
                 return cast(bytes, response.read()).decode()
         except urllib.error.HTTPError as exc:
-            raise FactsError(_exception_line(exc.read().decode(errors="replace"))) from None
+            with exc:
+                detail = exc.read().decode(errors="replace")
+            raise FactsError(_exception_line(detail)) from None
         except TimeoutError as exc:
             raise FactsError("ClickHouse statement timed out") from exc
         except urllib.error.URLError as exc:

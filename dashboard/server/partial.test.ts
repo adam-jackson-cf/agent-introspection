@@ -120,7 +120,9 @@ describe("refreshers feeding a view", () => {
   test("windows past the snapshot horizon depend on the minute loaders only", () => {
     expect(refreshersFor(VIEW_QUERIES.effort!, false)).toEqual([
       "load_spans",
+      "sweep_spans",
       "load_logs",
+      "sweep_logs",
     ]);
   });
 
@@ -129,17 +131,25 @@ describe("refreshers feeding a view", () => {
     const projects = { a: "SELECT 1 FROM introspection.session_project" };
     expect(refreshersFor(hooks, false)).toEqual([
       "load_spans",
+      "sweep_spans",
       "load_logs",
+      "sweep_logs",
       "load_hook_events",
+      "sweep_hook_events",
     ]);
     expect(refreshersFor(projects, false)).toEqual([
       "load_spans",
+      "sweep_spans",
       "load_logs",
+      "sweep_logs",
       "load_session_projects",
+      "sweep_session_projects",
     ]);
     expect(refreshersFor({ a: "SELECT 1" }, true)).toEqual([
       "load_spans",
+      "sweep_spans",
       "load_logs",
+      "sweep_logs",
     ]);
   });
 
@@ -162,6 +172,22 @@ describe("refreshers feeding a view", () => {
     expect(
       asOfFor(rows, ["load_spans", "refresh_usage_events_history"])?.at,
     ).toBe("2026-09-30T11:59:00Z");
+  });
+
+  test("a failing sweep is stale and named, but never lowers the as-of time", () => {
+    const sweeps = [
+      { view: "sweep_spans", as_of: "2026-09-30 11:00:00", stale: 0 },
+      { view: "sweep_logs", as_of: "2026-09-30 11:00:00", stale: 1 },
+    ];
+    const withSweeps = [...rows, ...sweeps];
+    const scope = ["load_spans", "sweep_spans", "load_logs", "sweep_logs"];
+    expect(asOfFor(withSweeps, scope)).toEqual({
+      at: "2026-09-30T11:59:00Z",
+      stale: true,
+      historyStale: false,
+      failing: ["sweep_logs"],
+    });
+    expect(asOfFor(withSweeps, ["sweep_spans"])).toBeNull();
   });
 });
 
