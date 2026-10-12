@@ -293,7 +293,8 @@ for (const page of pages) {
   const path = session ? await sessionTarget() : `${page}?range=7`;
   const name = page.replaceAll("/", "-");
   await tab.goto(`${BASE}/${path}`, { waitUntil: "networkidle0", timeout: 180_000 });
-  await tab.waitForFunction(() => document.body.innerText.includes("Queried") && !document.querySelector(".skeleton"), { timeout: 180_000 });
+  // "Query failed" ends the wait too, so the dom.failed check below reports it instead of a 180 s timeout.
+  await tab.waitForFunction(() => /Queried|Query failed/.test(document.body.innerText) && !document.querySelector(".skeleton"), { timeout: 180_000 });
   await Bun.sleep(500);
   await tab.screenshot({ path: `${outDir}/${name}-first.png` });
   await tab.screenshot({ path: `${outDir}/${name}-full.png`, fullPage: true });
