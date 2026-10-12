@@ -140,6 +140,11 @@ REFRESH_SETTINGS = (
     f"max_bytes_before_external_sort = {REFRESH_SPILL_BYTES}, "
     "join_algorithm = 'grace_hash,hash'"
 )
+# Backfill INSERT ... SELECT runs the heavy projections over raw source rows, so it uses
+# the refresh ceiling plus small blocks and one insert thread, over short windows. Rows
+# are identical to a whole-day run, and ReplacingMergeTree makes a rerun idempotent.
+BACKFILL_WINDOW = timedelta(hours=6)
+BACKFILL_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_threads = 1"
 # Each snapshot is two tables behind one view. Recent holds the days whose facts can
 # still change and is rebuilt every 10 minutes: the minute log loader accepts a log up
 # to 7 days after its event (it selects by arrival time), so recent covers 8 days and
@@ -653,20 +658,33 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     ]
 
 
+def backfill_windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Split ``[start, end)`` into consecutive ``BACKFILL_WINDOW`` pieces, the last clipped."""
+    windows = []
+    lower = start
+    while lower < end:
+        upper = min(lower + BACKFILL_WINDOW, end)
+        windows.append((lower, upper))
+        lower = upper
+    return windows
+
+
+def backfill_statement(target: str, lower: datetime, upper: datetime) -> str:
+    """Return one memory-bounded INSERT of the source rows in ``[lower, upper)``."""
+    window = _BACKFILL_WINDOWS[target].format(
+        start=lower.strftime("%Y-%m-%d %H:%M:%S"), end=upper.strftime("%Y-%m-%d %H:%M:%S")
+    )
+    return (
+        f"INSERT INTO {DATABASE}.{target}\n{render_select(_SELECT_FILES[target], window)}\n"
+        f"SETTINGS {BACKFILL_SETTINGS}"
+    )
+
+
 def backfill_statements(target: str, start: datetime, end: datetime) -> list[str]:
-    """Return one INSERT per UTC day covering ``[start, end)`` for ``target``."""
-    statements = []
-    day = start
-    while day < end:
-        upper = min(day + timedelta(days=1), end)
-        window = _BACKFILL_WINDOWS[target].format(
-            start=day.strftime("%Y-%m-%d %H:%M:%S"), end=upper.strftime("%Y-%m-%d %H:%M:%S")
-        )
-        statements.append(
-            f"INSERT INTO {DATABASE}.{target}\n{render_select(_SELECT_FILES[target], window)}"
-        )
-        day = upper
-    return statements
+    """Return one INSERT per backfill window covering ``[start, end)`` for ``target``."""
+    return [
+        backfill_statement(target, lower, upper) for lower, upper in backfill_windows(start, end)
+    ]
 
 
 def _require_local_docker_context(context: str | None) -> None:
@@ -994,8 +1012,14 @@ def backfill(run: SqlRunner, *, days: int, now: datetime | None = None) -> dict[
     start = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     counts = {}
     for target in ("spans", "logs"):
-        for statement in backfill_statements(target, start, end):
-            run(statement)
+        for lower, upper in backfill_windows(start, end):
+            try:
+                run(backfill_statement(target, lower, upper))
+            except FactsError as exc:
+                raise FactsError(
+                    f"backfill of {target} failed for window {lower:%Y-%m-%d %H:%M:%S}"
+                    f" to {upper:%Y-%m-%d %H:%M:%S} UTC (rerun is idempotent): {exc}"
+                ) from exc
         counts[target] = int(run(f"SELECT count() FROM {DATABASE}.{target} FINAL").strip())
     return {"start": start.isoformat(), "end": end.isoformat(), "rows": counts}
 

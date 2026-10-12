@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import subprocess
@@ -434,16 +435,44 @@ def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
     assert "\\'a" in statement
 
 
-def test_backfill_splits_the_range_into_utc_days_ending_at_now() -> None:
+def test_backfill_windows_cover_the_range_exactly() -> None:
     start = datetime(2026, 9, 1, tzinfo=UTC)
     end = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
+
+    windows = facts.backfill_windows(start, end)
+
+    assert windows[0][0] == start
+    assert windows[-1][1] == end
+    assert all(a[1] == b[0] for a, b in itertools.pairwise(windows))
+    assert all(lo < hi and hi - lo <= facts.BACKFILL_WINDOW for lo, hi in windows)
+    assert len(windows) == 11  # 60h30m: ten full windows and one clipped
+
+
+def test_backfill_statements_are_memory_bounded_inserts() -> None:
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 1, 13, tzinfo=UTC)
 
     statements = facts.backfill_statements("logs", start, end)
 
     assert len(statements) == 3
-    assert all(s.startswith("INSERT INTO introspection.logs") for s in statements)
     assert "'2026-09-01 00:00:00'" in statements[0]
-    assert "'2026-09-03 12:30:00'" in statements[-1]
+    assert "'2026-09-01 13:00:00'" in statements[-1]
+    for statement in statements:
+        assert statement.startswith("INSERT INTO introspection.logs")
+        assert statement.count("SETTINGS") == 1
+        assert statement.rstrip().endswith(f"SETTINGS {facts.BACKFILL_SETTINGS}")
+        assert "max_memory_usage = 1610612736" in statement
+        assert "max_threads = 2" in statement
+
+
+def test_backfill_failure_names_the_target_and_window() -> None:
+    def run(sql: str) -> str:
+        if "INSERT INTO introspection.logs" in sql:
+            raise facts.FactsError("Code: 241")
+        return "0\n" if sql.startswith("SELECT count()") else ""
+
+    with pytest.raises(facts.FactsError, match=r"backfill of logs failed for window 2026-09-27"):
+        facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
 
 
 _ATTRIBUTE_FILTER = re.compile(
@@ -606,7 +635,7 @@ def test_backfill_reports_final_row_counts() -> None:
 
     assert result["rows"] == {"spans": 7, "logs": 7}
     assert result["start"] == "2026-09-27T00:00:00+00:00"
-    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4
+    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 2 * 5
 
 
 def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_arguments() -> None:
