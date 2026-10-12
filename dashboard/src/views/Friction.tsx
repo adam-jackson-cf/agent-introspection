@@ -12,57 +12,47 @@ import {
   fmtCount,
   fmtPct,
   fmtSeconds,
-  groupSum,
   HARNESS_COLOR,
   HARNESS_LABEL,
   maybe,
   num,
-  pivotDaily,
-  ratio,
   SERIES,
-  sumRows,
 } from "../format";
 
 const COMPONENTS = ["clean", "interrupted", "steered", "errored", "follow_up"];
-const FIELDS = [
-  "tasks",
-  ...COMPONENTS.flatMap((key) => [`${key}_n`, `${key}_den`]),
-];
 
 const flag = (value: unknown) =>
   value === null || value === undefined ? "—" : num(value) === 1 ? "yes" : "no";
 
+function pivotCleanDaily(daily: Row[]): Row[] {
+  const out: Row[] = [];
+  for (const row of daily) {
+    const day = String(row.day);
+    let entry = out.find((candidate) => candidate.day === day);
+    if (!entry) out.push((entry = { day }));
+    entry[String(row.harness)] = maybe(row.clean_rate);
+  }
+  return out;
+}
+
 export default function Friction({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const kpi = data.kpi ?? [];
-  const all = sumRows(kpi, FIELDS);
-  const rate = (key: string, sums: Record<string, number> = all) =>
-    ratio(sums[`${key}_n`]!, sums[`${key}_den`]!);
+  // The server returns one All row (harness '') beside the per-harness rows.
+  const all = kpi.find((row) => row.harness === "") ?? {};
+  const harnessRows = kpi.filter((row) => row.harness !== "");
+  const rate = (key: string) => maybe(all[`${key}_rate`]);
   const detail = (key: string) =>
-    `${fmtCount(all[`${key}_n`]!)} of ${fmtCount(all[`${key}_den`]!)} tasks that observe it`;
+    `${fmtCount(num(all[`${key}_n`]))} of ${fmtCount(num(all[`${key}_den`]))} tasks that observe it`;
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const daily = data.daily ?? [];
-  const cleanDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["clean_n", "clean_den"],
-    (sums) => ratio(sums.clean_n!, sums.clean_den!),
-  );
-  const signals = [...groupSum(daily, "day", ["interrupted_n", "steered_n"])]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, sums]) => ({
-      day,
-      interrupt: sums.interrupted_n!,
-      steer: sums.steered_n!,
-    }));
-  const recovery = sumRows(data.recovery_summary ?? [], [
-    "failed_ops",
-    "recovered",
-  ]);
+  const cleanDaily = pivotCleanDaily(data.daily ?? []);
+  const signals = data.daily_signals ?? [];
+  const recoveryRows = data.recovery_summary ?? [];
+  const recovery = recoveryRows.find((row) => row.harness === "") ?? {};
   return (
     <>
       <Section title="At a glance">
@@ -86,8 +76,8 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Recovery after failure"
-          value={fmtPct(ratio(recovery.recovered!, recovery.failed_ops!))}
-          detail={`${fmtCount(recovery.recovered!)} of ${fmtCount(recovery.failed_ops!)} failed operations later succeeded (inferred)`}
+          value={fmtPct(maybe(recovery.recovered_rate))}
+          detail={`${fmtCount(num(recovery.recovered))} of ${fmtCount(num(recovery.failed_ops))} failed operations later succeeded (inferred)`}
           signals={["friction.recovery"]}
         />
       </Section>
@@ -178,15 +168,10 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                   follow_up: "Follow-up",
                 }[key]!,
                 numeric: true,
-                render: (row: Row) =>
-                  num(row[`${key}_den`]) > 0
-                    ? fmtPct(
-                        ratio(num(row[`${key}_n`]), num(row[`${key}_den`])),
-                      )
-                    : "—",
+                render: (row: Row) => fmtPct(maybe(row[`${key}_rate`])),
               })),
             ]}
-            rows={kpi}
+            rows={harnessRows}
           />
         </Panel>
         <Panel
@@ -207,8 +192,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 key: "rate",
                 label: "Rate",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.recovered), num(row.failed_ops))),
+                render: (row) => fmtPct(maybe(row.recovered_rate)),
               },
               {
                 key: "p50",
@@ -217,7 +201,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => fmtSeconds(maybe(row.p50_recovery_seconds)),
               },
             ]}
-            rows={data.recovery_summary ?? []}
+            rows={recoveryRows.filter((row) => row.harness !== "")}
           />
         </Panel>
         <Panel

@@ -41,6 +41,9 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
     run = facts.runner(config)
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
         "preflight": lambda: preflight.preflight(run, config),
+        "verify": lambda: (
+            facts.compare(run) if args.compare else facts.verify(run, config.harnesses_enabled)
+        ),
         "install": lambda: _install(args, config, run),
         "backfill": lambda: facts.backfill(run, days=args.days),
         "sessions": lambda: _sessions(config, run, rescan=args.rescan),
@@ -105,6 +108,14 @@ def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 def add_facts_parser(commands: Any) -> None:
     facts_parser = commands.add_parser("facts").add_subparsers(dest="facts_command", required=True)
     facts_parser.add_parser("preflight", help="read-only checks before facts install")
+    verify = facts_parser.add_parser(
+        "verify", help="build the store in a scratch database to check every statement"
+    )
+    verify.add_argument(
+        "--compare",
+        action="store_true",
+        help="rebuild the live snapshots and check each matches a full read of its view",
+    )
     facts_parser.add_parser("install")
     backfill = facts_parser.add_parser("backfill")
     backfill.add_argument("--days", type=int, default=90)

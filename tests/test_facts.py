@@ -4,7 +4,7 @@ import json
 import re
 import subprocess
 import tomllib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -55,18 +55,59 @@ def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> N
     assert first("DROP VIEW IF EXISTS introspection.refresh_") < first(
         "DROP VIEW IF EXISTS introspection.load_spans"
     )
+    # task_labels reads task_outcomes_snapshot, which a fresh database has only once created.
+    assert first("CREATE VIEW introspection.task_outcomes_snapshot") < first(
+        "CREATE OR REPLACE VIEW introspection.task_labels"
+    )
     assert statements[-1].startswith("INSERT INTO introspection.signal_exclusions")
 
 
-def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() -> None:
-    for snapshot in facts.SNAPSHOTS:
-        create_table, refresher = facts.snapshot_statements(snapshot)[2:]
+def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
+    statements = facts.verify_statements()
+    refreshers = [s for s in statements if "REFRESH EVERY" in s]
 
-        assert f"introspection.{snapshot.view}_snapshot" in create_table
-        assert "EMPTY AS SELECT" in create_table
-        assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
-        assert "APPEND" not in refresher
-    views = facts._sql("003_views.sql")
+    assert statements[0] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    assert not [s for s in statements if re.search(r"\bintrospection[.;]", s)]
+    assert len(refreshers) == len(facts.LOADERS) + 2 * len(facts.SNAPSHOTS)
+    for refresher in refreshers:
+        assert "REFRESH EVERY 1 YEAR" in refresher
+        assert " EMPTY\nAS" in refresher
+
+
+def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if "VIEW introspection_verify.task_labels" in sql:
+            raise facts.FactsError("Unknown table expression identifier")
+        return ""
+
+    with pytest.raises(facts.FactsError):
+        facts.install(run)
+
+    assert not [s for s in ran if re.search(r"\bintrospection[.;]", s)]
+    assert ran[-1] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+
+
+def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_parts() -> None:
+    for snapshot in facts.SNAPSHOTS:
+        statements = facts.snapshot_statements(snapshot)
+        refreshers = [s for s in statements if s.startswith("CREATE MATERIALIZED VIEW")]
+
+        assert any(
+            s.startswith(f"CREATE VIEW introspection.{snapshot.view}_snapshot") for s in statements
+        )
+        assert len(refreshers) == 2
+        for refresher in refreshers:
+            # Each part replaces its table whole, so it never holds duplicates.
+            assert "APPEND" not in refresher
+            assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
+    labels = next(s for s in facts.SNAPSHOTS if s.view == "task_labels")
+    waits = [s for s in facts.snapshot_statements(labels) if "DEPENDS ON" in s]
+    assert "introspection.refresh_task_outcomes_history" in waits[0]
+    assert "introspection.refresh_task_outcomes_recent" in waits[1]
+    views = "".join(facts._sql(name) for name in facts.VIEW_FILES)
     fact_views = {
         name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
     }
@@ -74,6 +115,52 @@ def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() ->
     # Lookup views (latest project, hook tool details, hook harness) are not snapshotted.
     helpers = {"session_project", "hook_rows", "hook_tool_calls"}
     assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
+
+
+@pytest.mark.parametrize("hour", [0, 0.4, 0.6, 12, 23.9])
+def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float) -> None:
+    """History rebuilds daily at 00:30 UTC and recent every 10 minutes; whenever the
+    dashboard reads, the boundary must lie inside both parts or rows go missing."""
+    day = timedelta(days=1)
+    now = datetime(2026, 10, 2, tzinfo=UTC) + timedelta(hours=hour)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Before today's 00:30 build, history is yesterday's; recent may be 10 minutes old.
+    history_built = today + timedelta(minutes=30)
+    if history_built > now:
+        history_built -= day
+    recent_built = now - timedelta(minutes=10)
+
+    def start_of(moment: datetime) -> datetime:
+        return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    boundary = today - facts.BOUNDARY_DAYS * day
+    history_end = start_of(history_built) - facts.HISTORY_END_DAYS * day
+    recent_start = start_of(recent_built) - facts.RECENT_START_DAYS * day
+
+    assert recent_start <= boundary <= history_end
+
+
+def test_compare_rebuilds_sources_first_and_fails_on_any_mismatch() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if "FORMAT JSONEachRow" not in sql:
+            return ""
+        held = "2" if "introspection.tool_calls_snapshot" in sql else "1"
+        return (
+            f'{{"side":"snapshot","rows":"5","hash":"{held}"}}\n'
+            '{"side":"view","rows":"5","hash":"1"}\n'
+        )
+
+    result = facts.compare(run)
+
+    assert result["passed"] is False
+    assert [v for v, r in result["snapshots"].items() if not r["match"]] == ["tool_calls"]
+    refreshed = [s for s in ran if s.startswith("SYSTEM REFRESH VIEW")]
+    assert refreshed.index("SYSTEM REFRESH VIEW introspection.refresh_task_outcomes_recent") < (
+        refreshed.index("SYSTEM REFRESH VIEW introspection.refresh_task_labels_recent")
+    )
 
 
 def _document(**support: dict[str, str]) -> dict[str, Any]:
@@ -430,7 +517,6 @@ def test_span_projection_normalizes_status() -> None:
     normalising = select.split("AS status_normalised")[0]
     assert "'~'" in normalising
     assert "'N'" in normalising
-    assert "substringUTF8(status_normalised, 1, 80) AS status_message" in select
 
 
 def test_span_projection_keeps_only_the_codex_spans_the_facts_use() -> None:
@@ -523,15 +609,6 @@ def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_a
     assert "'~'" in targets
 
 
-def test_snapshots_bound_span_and_log_reads_to_the_horizon() -> None:
-    for snapshot in facts.SNAPSHOTS:
-        refresher = facts.snapshot_statements(snapshot)[-1]
-
-        assert "additional_table_filters = {'introspection.spans': " in refresher
-        assert f"INTERVAL {facts.SNAPSHOT_DAYS + 1} DAY" in refresher
-        assert "'introspection.logs': " in refresher
-
-
 @pytest.mark.parametrize(
     ("args", "bypass"),
     [
@@ -602,7 +679,6 @@ def test_capped_text_starts_at_the_keyword_when_it_lies_past_the_cap(
 def test_span_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
     select = facts.render_select("select_spans.sql", "1")
 
-    assert "substringUTF8(status_normalised, 1, 80) AS status_message" in select
     assert "'x.status_hash', lower(substring(hex(SHA256(status_normalised)), 1, 16))" in select
     assert "status_normalised = ''" in select
 
@@ -618,15 +694,22 @@ def test_log_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
     assert "lower(substring(hex(SHA256(error_normalised)), 1, 16))" in digest
 
 
-def test_tool_calls_view_exposes_the_failure_signature_hash_for_every_source() -> None:
+def test_tool_calls_view_unifies_old_and_new_signature_rows_for_every_source() -> None:
     views = facts._sql("003_views.sql")
     view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]
 
-    assert "attrs_string['x.failure_signature_hash'] AS failure_signature_hash" in view
-    assert "attrs_string['x.status_hash']" in view
-    assert "hf.hf_signature_hash" in view
-    assert "1, 80)" in view
-    assert "1, 160" not in view
+    # Every source passes its stored text and hash through one shared derivation.
+    assert view.count("AS stored_signature") == 1
+    assert view.count("AS stored_hash") == 1
+    for stored in (
+        "attrs_string['x.failure_signature_hash']",
+        "attrs_string['x.status_hash']",
+        "hf.hf_signature_hash",
+    ):
+        assert stored in view
+    assert "substringUTF8(windowed_signature, 1, 80) AS failure_signature" in view
+    assert "length(stored_signature) < 160" in view
+    assert "* EXCEPT (stored_signature, stored_hash, windowed_signature)" in view
 
 
 def test_split_statements_ignores_semicolons_in_literals_identifiers_and_comments() -> None:
@@ -644,7 +727,7 @@ def test_split_statements_ignores_semicolons_in_literals_identifiers_and_comment
 
 
 def test_split_statements_matches_the_statement_count_of_every_install_file() -> None:
-    for name in ("001_tables.sql", "002_registry.sql", "003_views.sql"):
+    for name in ("001_tables.sql", "002_registry.sql", *facts.VIEW_FILES):
         text = facts._sql(name)
         heads = re.findall(r"^(?:CREATE|DROP|INSERT|ALTER)\b", text, flags=re.MULTILINE)
 

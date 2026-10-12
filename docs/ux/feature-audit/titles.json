@@ -1,0 +1,848 @@
+[
+  {
+    "page": "pipeline",
+    "title": "At a glance",
+    "feature": "PIPE-F04",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Loaders and snapshots",
+    "feature": "PIPE-F04",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Max fact lag",
+    "feature": "PIPE-F05",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Coverage",
+    "feature": "PIPE-F06",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Sanitization",
+    "feature": "PIPE-F07",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Is the loader fresh?",
+    "feature": "PIPE-F09",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Loader and snapshot refresh",
+    "feature": "PIPE-F09",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Freshness by harness",
+    "feature": "PIPE-F10",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Fact rows per day",
+    "feature": "PIPE-F11",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Is it complete and correct?",
+    "feature": "PIPE-F13",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Coverage grid",
+    "feature": "PIPE-F13",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Source parity",
+    "feature": "PIPE-F17",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "All = Σ harnesses",
+    "feature": "PIPE-F18",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Project attribution",
+    "feature": "PIPE-F20",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Stray and unrouted rows",
+    "feature": "PIPE-F23",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Excluded signals",
+    "feature": "PIPE-F25",
+    "removed": null
+  },
+  {
+    "page": "pipeline",
+    "title": "Signals hidden on this machine",
+    "feature": "PIPE-F26",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "At a glance",
+    "feature": "CACHE-F04",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Input tokens",
+    "feature": "CACHE-F05",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Input cache utilization",
+    "feature": "CACHE-F06",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Uncached input",
+    "feature": "CACHE-F07",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Output tokens",
+    "feature": "CACHE-F08",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Daily trend",
+    "feature": "CACHE-F04",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Daily token consumption",
+    "feature": "CACHE-F09",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Daily input cache utilization",
+    "feature": "CACHE-F11",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Breakdowns",
+    "feature": "CACHE-F04",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "By harness",
+    "feature": "CACHE-F13",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "By model",
+    "feature": "CACHE-F15",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Where uncached input goes",
+    "feature": "CACHE-F04",
+    "removed": null
+  },
+  {
+    "page": "cache",
+    "title": "Sessions with the most uncached input",
+    "feature": "CACHE-F16",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "At a glance",
+    "feature": "EFF-F04",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Reasoning tokens",
+    "feature": "EFF-F05",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Reasoning share of output",
+    "feature": "EFF-F06",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Tasks",
+    "feature": "EFF-F07",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Heavy-effort task share",
+    "feature": "EFF-F08",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Daily trend",
+    "feature": "EFF-F04",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Daily reasoning tokens by effort",
+    "feature": "EFF-F09",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Daily task mix by effort",
+    "feature": "EFF-F11",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Daily clean completion by effort",
+    "feature": "EFF-F13",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Daily median task duration by effort",
+    "feature": "EFF-F15",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Does heavier effort earn its cost?",
+    "feature": "EFF-F04",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Task outcomes by reasoning effort",
+    "feature": "EFF-F17",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Reasoning spend by effort",
+    "feature": "EFF-F18",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Model × effort",
+    "feature": "EFF-F19",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Heaviest reasoning tasks",
+    "feature": "EFF-F04",
+    "removed": null
+  },
+  {
+    "page": "effort",
+    "title": "Top 25 tasks by reasoning tokens",
+    "feature": "EFF-F20",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "At a glance",
+    "feature": "TOOL-F01",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Tool calls",
+    "feature": "TOOL-F01",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Tool failure rate",
+    "feature": "TOOL-F02",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Tasks affected by failures",
+    "feature": "TOOL-F03",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Tasks with repeated attempts",
+    "feature": "TOOL-F04",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Daily trend",
+    "feature": "TOOL-F05",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Daily tool failure rate",
+    "feature": "TOOL-F05",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Daily tool calls",
+    "feature": "TOOL-F07",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Which tools and failures repeat?",
+    "feature": "TOOL-F09",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Failures by tool",
+    "feature": "TOOL-F09",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Failure signatures",
+    "feature": "TOOL-F10",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Repeats and loops",
+    "feature": "TOOL-F11",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Repeated attempts",
+    "feature": "TOOL-F11",
+    "removed": null
+  },
+  {
+    "page": "tools",
+    "title": "Tool loops",
+    "feature": "TOOL-F12",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "At a glance",
+    "feature": "FRIC-F01",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Clean completion",
+    "feature": "FRIC-F01",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Interrupted tasks",
+    "feature": "FRIC-F02",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Quick follow-up",
+    "feature": "FRIC-F03",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Recovery after failure",
+    "feature": "FRIC-F04",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Daily trend",
+    "feature": "FRIC-F05",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Daily clean completion",
+    "feature": "FRIC-F05",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Daily interrupt and steer signals",
+    "feature": "FRIC-F07",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Which friction does each harness observe?",
+    "feature": "FRIC-F09",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Friction components by harness",
+    "feature": "FRIC-F09",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Recovery by harness",
+    "feature": "FRIC-F10",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Operations that fail most",
+    "feature": "FRIC-F11",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Tasks with explicit friction",
+    "feature": "FRIC-F12",
+    "removed": null
+  },
+  {
+    "page": "friction",
+    "title": "Latest interrupted, steered, or errored tasks",
+    "feature": "FRIC-F12",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Sandbox denials",
+    "feature": "GUARD-F12",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Approval decisions",
+    "feature": "GUARD-F02",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "At a glance",
+    "feature": "GUARD-F01",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Rejected tool calls",
+    "feature": "GUARD-F01",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Quality-gate bypass",
+    "feature": "GUARD-F03",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Command churn",
+    "feature": "GUARD-F04",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Daily trend",
+    "feature": "GUARD-F05",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Daily rejection rate",
+    "feature": "GUARD-F05",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Daily sandbox denials",
+    "feature": "GUARD-F13",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Approval decisions by source",
+    "feature": "GUARD-F07",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Sandbox outcomes by tool",
+    "feature": "GUARD-F15",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Exemplars",
+    "feature": "GUARD-F09",
+    "removed": null
+  },
+  {
+    "page": "guardrails",
+    "title": "Quality-gate bypass commands",
+    "feature": "GUARD-F09",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "At a glance",
+    "feature": "PROV-F03",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Model calls",
+    "feature": "PROV-F03",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Call error rate",
+    "feature": "PROV-F04",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Stream disconnects",
+    "feature": "PROV-F16",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Retries",
+    "feature": "PROV-F05",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Unknown outcomes",
+    "feature": "PROV-F06",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Daily trend",
+    "feature": "PROV-F07",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Daily call error rate",
+    "feature": "PROV-F07",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Daily median time to first token",
+    "feature": "PROV-F09",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Where does provider time go?",
+    "feature": "PROV-F11",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Call errors by class",
+    "feature": "PROV-F12",
+    "removed": null
+  },
+  {
+    "page": "provider",
+    "title": "Model conformance",
+    "feature": "PROV-F18",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "At a glance",
+    "feature": "RECUR-F03",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Actionable repeats",
+    "feature": "RECUR-F03",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Recurring failure clusters",
+    "feature": "RECUR-F04",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Recurring targets",
+    "feature": "RECUR-F05",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Localized signatures",
+    "feature": "RECUR-F06",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Daily trend",
+    "feature": "RECUR-F07",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Daily tool failures with a failure class",
+    "feature": "RECUR-F07",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "What crosses the evidence threshold?",
+    "feature": "RECUR-F09",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "What recurs across tasks?",
+    "feature": "RECUR-F10",
+    "removed": null
+  },
+  {
+    "page": "recurrence",
+    "title": "Project concentration",
+    "feature": "RECUR-F12",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "At a glance",
+    "feature": "INTENT-F03",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Labelled tasks",
+    "feature": "INTENT-F03",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Corrected by the next prompt",
+    "feature": "INTENT-F04",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Frustrated follow-ups",
+    "feature": "INTENT-F05",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Repeated corrections",
+    "feature": "INTENT-F06",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Daily trend",
+    "feature": "INTENT-F07",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Daily corrected-by-next-prompt rate",
+    "feature": "INTENT-F07",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "What do users ask for, and what do they correct?",
+    "feature": "INTENT-F09",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Task type mix",
+    "feature": "INTENT-F09",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Correction kinds",
+    "feature": "INTENT-F11",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "By harness",
+    "feature": "INTENT-F13",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Does heavier effort reduce corrections?",
+    "feature": "INTENT-F14",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Effort payoff by task type",
+    "feature": "INTENT-F14",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Which corrections repeat?",
+    "feature": "INTENT-F15",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Repeated corrections by project",
+    "feature": "INTENT-F15",
+    "removed": null
+  },
+  {
+    "page": "intent",
+    "title": "Recent corrected tasks",
+    "feature": "INTENT-F16",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "At a glance",
+    "feature": "INTV-F02",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Active findings",
+    "feature": "INTV-F02",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Proposals",
+    "feature": "INTV-F03",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Applied interventions",
+    "feature": "INTV-F04",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Repeated corrections",
+    "feature": "INTV-F05",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Did an intervention reduce what it targeted?",
+    "feature": "INTV-F06",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Post-intervention recurrence",
+    "feature": "INTV-F06",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Recurrence baseline",
+    "feature": "INTV-F07",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Findings and proposals",
+    "feature": "INTV-F09",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Approval history",
+    "feature": "INTV-F15",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Enforcement-tier audit",
+    "feature": "INTV-F11",
+    "removed": null
+  },
+  {
+    "page": "interventions",
+    "title": "Uncodified practice recurrence",
+    "feature": "INTV-F12",
+    "removed": null
+  },
+  {
+    "page": "session",
+    "title": "Tasks",
+    "feature": "SESS-F01",
+    "removed": null
+  },
+  {
+    "page": "session",
+    "title": "Model usage and calls",
+    "feature": "SESS-F04",
+    "removed": null
+  },
+  {
+    "page": "session",
+    "title": "Tool calls",
+    "feature": "SESS-F06",
+    "removed": null
+  },
+  {
+    "page": "session",
+    "title": "User and policy signals",
+    "feature": "SESS-F07",
+    "removed": null
+  }
+]

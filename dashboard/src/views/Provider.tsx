@@ -4,86 +4,70 @@ import {
   HarnessName,
   Kpi,
   Panel,
+  RateValue,
+  rateSeriesColumns,
   Section,
   useSelectedHarnesses,
   useVisible,
+  ViewLink,
 } from "../components";
 import {
   fmtCount,
   fmtPct,
   fmtSeconds,
-  groupSum,
   HARNESS_COLOR,
   HARNESS_LABEL,
   maybe,
   num,
-  pivotDaily,
-  ratio,
-  sumRows,
 } from "../format";
 
-/** One row per harness with its own retry route; zero is a valid observation
- * for a harness with model calls, and a harness without calls has no row. */
-function retryRows(data: Record<string, Row[]>): Row[] {
-  const kpi = data.kpi ?? [];
-  const codexRetries = [
-    ...groupSum(data.codex_sampling ?? [], "harness", ["steps", "attempts"]),
-  ].map(([harness, sums]) => ({
-    harness,
-    steps: sums.steps!,
-    attempts: sums.attempts!,
-    extra: Math.max(0, sums.attempts! - sums.steps!),
-  }));
-  const claudeRetries = data.claude_retries ?? [];
-  const claudeKpi = kpi.find((row) => row.harness === "claude-code");
-  const ompKpi = kpi.find((row) => row.harness === "oh-my-pi");
-  const ompRetries = num(data.omp_retries?.[0]?.retries);
-  return [
-    ...codexRetries.map((row) => ({
-      harness: row.harness,
-      extra: row.extra,
-      route: `${fmtCount(row.attempts)} sampling attempts over ${fmtCount(row.steps)} steps`,
-    })),
-    ...(ompKpi
-      ? [
-          {
-            harness: "oh-my-pi",
-            extra: ompRetries,
-            route: "auto-retry starts (activity hook)",
-          },
-        ]
-      : []),
-    ...(claudeKpi
-      ? [
-          {
-            harness: "claude-code",
-            extra: num(claudeKpi.retried),
-            route: `requests with attempt > 1 · ${fmtCount(num(claudeRetries[0]?.failed_attempts))} failed attempts · ${fmtCount(num(claudeRetries[0]?.exhausted))} exhausted`,
-          },
-        ]
-      : []),
-  ];
+/** The server's All row (ROLLUP over harness) carries harness ''. */
+const isAll = (row: Row) => row.harness === "";
+
+/** "Measured as" text from the server's counts for each harness's retry route. */
+function retryRoute(row: Row): string {
+  const harness = String(row.harness);
+  if (harness.startsWith("codex"))
+    return `${fmtCount(num(row.attempts))} sampling attempts over ${fmtCount(num(row.steps))} steps`;
+  if (harness === "oh-my-pi") return "auto-retry starts (activity hook)";
+  return `requests with attempt > 1 · ${fmtCount(num(row.failed_attempts))} failed attempts · ${fmtCount(num(row.exhausted))} exhausted`;
 }
 
-/** Codex latency is the sampling step; other harnesses keep their own rows. */
-function latencyRows(data: Record<string, Row[]>): Row[] {
-  const sampling = data.codex_sampling ?? [];
-  const latency = data.latency ?? [];
-  return [
-    ...latency.filter((row) => !String(row.harness).startsWith("codex")),
-    ...latency
-      .filter((row) => String(row.harness).startsWith("codex"))
-      .map((row) => {
-        const step = sampling.find(
-          (entry) => entry.harness === row.harness && entry.model === row.model,
-        );
-        return {
-          ...row,
-          p50: step?.p50 ?? null,
-          p95: step?.p95 ?? null,
-        } as Row;
-      }),
-  ].sort((a, b) => num(b.calls) - num(a.calls));
+/** Long daily rows to one row per day: error rate (and its n) and TTFT per harness. */
+function dailyByDay(daily: Row[]): { errors: Row[]; ttft: Row[] } {
+  const errors: Record<string, Row> = {};
+  const ttft: Record<string, Row> = {};
+  for (const row of daily) {
+    const day = String(row.day);
+    const harness = String(row.harness);
+    errors[day] = {
+      ...(errors[day] ?? { day }),
+      [harness]: maybe(row.error_rate),
+      [`${harness}_n`]: num(row.rated_calls),
+    };
+    ttft[day] = { ...(ttft[day] ?? { day }), [harness]: maybe(row.ttft_p50) };
+  }
+  return { errors: Object.values(errors), ttft: Object.values(ttft) };
+}
+
+function providerModel(data: Record<string, Row[]>) {
+  const kpi = data.kpi ?? [];
+  const retryAll = data.retries ?? [];
+  const daily = dailyByDay(data.daily ?? []);
+  return {
+    all: kpi.find(isAll) ?? {},
+    retries: retryAll
+      .filter((row) => !isAll(row))
+      .map((row) => ({
+        harness: row.harness,
+        extra: row.extra,
+        route: retryRoute(row),
+      })),
+    extraAttempts: num(retryAll.find(isAll)?.extra),
+    errorDaily: daily.errors,
+    ttftDaily: daily.ttft,
+    latency: data.latency ?? [],
+  };
 }
 
 export default function Provider({ data }: { data: Record<string, Row[]> }) {
@@ -91,63 +75,34 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
   const disconnectsShown = useVisible("provider.stream_disconnects");
   const throughputShown = useVisible("provider.throughput");
   const conformanceShown = useVisible("provider.model_conformance");
-  const kpi = data.kpi ?? [];
-  const all = sumRows(kpi, [
-    "calls",
-    "failed",
-    "cancelled",
-    "unknown",
-    "disconnects",
-    "disconnect_den",
-    "retried",
-    "attempt_den",
-  ]);
-  const daily = data.daily ?? [];
-  const retries = retryRows(data);
-  const extraAttempts = retries.reduce(
-    (total, row) => total + num(row.extra),
-    0,
-  );
+  const { all, retries, extraAttempts, errorDaily, ttftDaily, latency } =
+    providerModel(data);
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const errorDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["failed", "calls"],
-    (sums) => ratio(sums.failed!, sums.calls!),
-  );
-  const ttftDaily = daily.reduce<Record<string, Row>>((days, row) => {
-    const day = String(row.day);
-    days[day] = {
-      ...(days[day] ?? { day }),
-      [String(row.harness)]: maybe(row.ttft_p50),
-    };
-    return days;
-  }, {});
-  const latency = latencyRows(data);
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Model calls"
-          value={fmtCount(all.calls!)}
-          detail={`${fmtCount(all.failed!)} failed · ${fmtCount(all.cancelled!)} cancelled by the user`}
+          value={fmtCount(num(all.calls))}
+          detail={`${fmtCount(num(all.failed))} failed · ${fmtCount(num(all.cancelled))} cancelled by the user`}
           signals={["provider.calls"]}
         />
         <Kpi
           title="Call error rate"
-          value={fmtPct(ratio(all.failed!, all.calls! - all.cancelled!), 2)}
-          detail="failed / model calls not cancelled by the user"
+          value={fmtPct(maybe(all.error_rate), 2)}
+          detail={`failed / model calls not cancelled by the user · n=${fmtCount(num(all.rated_calls))}`}
+          n={num(all.rated_calls)}
           signals={["provider.error_rate"]}
         />
         {disconnectsShown ? (
           <Kpi
             title="Stream disconnects"
-            value={fmtCount(all.disconnects!)}
-            detail={`of ${fmtCount(all.disconnect_den!)} response streams`}
+            value={fmtCount(num(all.disconnects))}
+            detail={`of ${fmtCount(num(all.disconnect_den))} response streams`}
             signals={["provider.stream_disconnects"]}
           />
         ) : (
@@ -160,7 +115,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
         )}
         <Kpi
           title="Unknown outcomes"
-          value={fmtCount(all.unknown!)}
+          value={fmtCount(num(all.unknown))}
           detail="calls with no success flag, error, or finish reason"
           signals={["provider.unknown_outcomes"]}
         />
@@ -180,11 +135,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...series.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} %`,
-                numeric: true,
-              })),
+              ...rateSeriesColumns(series),
             ]}
             rows={errorDaily}
           />
@@ -195,9 +146,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           signals={["provider.ttft"]}
         >
           <DailyChart
-            rows={Object.values(ttftDaily).sort((a, b) =>
-              String(a.day).localeCompare(String(b.day)),
-            )}
+            rows={ttftDaily}
             series={series}
             kind="line"
             format={fmtSeconds}
@@ -211,7 +160,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
               })),
             ]}
-            rows={Object.values(ttftDaily)}
+            rows={ttftDaily}
           />
         </Panel>
       </Section>
@@ -312,6 +261,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
             rows={data.errors ?? []}
             empty="No failed model calls in the selected range."
           />
+          <ViewLink view="friction">Open Friction</ViewLink>
         </Panel>
         <Panel
           title="Retries"
@@ -360,14 +310,16 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 key: "rate",
                 label: "Mismatch rate",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(
-                    ratio(num(row.mismatched), num(row.with_response_model)),
-                    2,
-                  ),
+                render: (row) => (
+                  <RateValue
+                    pct={maybe(row.mismatch_rate)}
+                    n={num(row.with_response_model)}
+                    digits={2}
+                  />
+                ),
               },
             ]}
-            rows={kpi.filter((row) => num(row.with_response_model) > 0)}
+            rows={data.conformance ?? []}
             empty="No calls report a served model in the selected range."
           />
         </Panel>

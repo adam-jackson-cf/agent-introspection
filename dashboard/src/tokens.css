@@ -29,12 +29,13 @@
   --color-cat-6: #9ce9f0;
   --color-cat-7: #e8d7a5;
   --color-cat-8: #dbade0;
-  --color-seq-effort-1: #184f95;
-  --color-seq-effort-2: #2a78d6;
-  --color-seq-effort-3: #6da7ec;
-  --color-seq-effort-4: #b7d3f6;
-  --color-effort-mixed: #9085e9;
+  --color-seq-effort-1: #9065d0;
+  --color-seq-effort-2: #45a9f5;
+  --color-seq-effort-3: #3fded6;
+  --color-seq-effort-4: #c8f9ad;
+  --color-effort-mixed: #fd8c7b;
   --color-other: #6b7280;
+  --color-shadow: #00000073;
   --rounded-sm: 4px;
   --rounded-md: 8px;
   --rounded-lg: 10px;

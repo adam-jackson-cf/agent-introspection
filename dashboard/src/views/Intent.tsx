@@ -4,183 +4,102 @@ import {
   HarnessName,
   Kpi,
   Panel,
+  RateValue,
+  rateSeriesColumns,
   Section,
   SessionLink,
   useSelectedHarnesses,
 } from "../components";
 import {
-  effortRank,
   fmtCount,
   fmtPct,
-  groupSum,
   HARNESS_COLOR,
   HARNESS_LABEL,
   harnessLabel,
+  maybe,
   num,
-  pivotDaily,
-  ratio,
   SERIES,
   shortTime,
-  sumRows,
 } from "../format";
 
-const KPI_FIELDS = [
-  "tasks",
-  "labelled",
-  "corrected_n",
-  "corrected_den",
-  "frustrated_n",
-  "frustrated_den",
-];
-/** Jev's task types in classifier order; unknown types follow. */
-const TASK_TYPES = [
-  "bugfix",
-  "feature",
-  "refactor",
-  "investigate",
-  "review",
-  "ops",
-  "docs",
-  "continue",
-];
-const typeRank = (type: string) => {
-  const index = TASK_TYPES.indexOf(type);
-  return index === -1 ? TASK_TYPES.length : index;
-};
 const words = (value: unknown) => String(value ?? "").replaceAll("_", " ");
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
+/** Labelled tasks whose type is empty get their own row, so shares sum to 100%. */
+export const typeLabel = (type: string) => (type === "" ? "untyped" : type);
 
-const stringList = (value: unknown) =>
-  Array.isArray(value) ? value.map(String) : [];
+/** Server rate and sample size of a `<key>_rate` / `<key>_den` column pair. */
+const pct = (row: Row, key: string) => (
+  <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
+);
 
-/**
- * Recombines per-harness rows of one (project, correction kind) into a single
- * row: tasks and sessions are harness-scoped, so they sum.
- */
-export function recombineCorrections(rows: Row[]): Row[] {
-  const groups = new Map<string, Row[]>();
+/** Long daily rows to one row per day: each harness's server rate and its n. */
+function pivotCorrectedRate(rows: Row[]): Row[] {
+  const days = new Map<string, Row>();
   for (const row of rows) {
-    const key = `${String(row.project)}\u0000${String(row.correction_kind)}`;
-    groups.set(key, [...(groups.get(key) ?? []), row]);
+    const day = String(row.day);
+    const out = days.get(day) ?? { day };
+    const harness = String(row.harness);
+    out[harness] = maybe(row.corrected_rate);
+    out[`${harness}_n`] = num(row.corrected_den);
+    days.set(day, out);
   }
-  return [...groups.values()]
-    .map((members) => {
-      const sums = sumRows(members, ["tasks", "sessions"]);
-      return {
-        project: members[0]!.project ?? "",
-        correction_kind: members[0]!.correction_kind ?? "",
-        harnesses: [...members]
-          .sort((a, b) => harnessOrder(a.harness) - harnessOrder(b.harness))
-          .map((row) => String(row.harness)),
-        tasks: sums.tasks!,
-        sessions: sums.sessions!,
-        task_types: [
-          ...new Set(members.flatMap((row) => stringList(row.task_types))),
-        ].sort((a, b) => typeRank(a) - typeRank(b)),
-        last_seen: members
-          .map((row) => String(row.last_seen ?? ""))
-          .sort()
-          .at(-1)!,
-      } as Row;
-    })
-    .sort(
-      (a, b) =>
-        num(b.tasks) - num(a.tasks) ||
-        String(a.project).localeCompare(String(b.project)),
-    );
+  return [...days.values()];
 }
 
-/** Task type × effort over every selected harness: counts sum, ratios divide after. */
-export function effortPayoff(rows: Row[]): Row[] {
-  const groups = new Map<string, Row[]>();
-  for (const row of rows) {
-    const key = `${String(row.task_type)}\u0000${String(row.effort)}`;
-    groups.set(key, [...(groups.get(key) ?? []), row]);
-  }
-  return [...groups.values()]
-    .map((members) => ({
-      task_type: members[0]!.task_type ?? "",
-      effort: members[0]!.effort ?? "",
-      ...sumRows(members, [
-        "tasks",
-        "corrected_n",
-        "corrected_den",
-        "clean_n",
-        "clean_den",
-      ]),
-    }))
-    .sort(
-      (a, b) =>
-        typeRank(String(a.task_type)) - typeRank(String(b.task_type)) ||
-        effortRank(String(a.effort)) - effortRank(String(b.effort)),
-    );
-}
-
-const pct = (row: Row, key: string) =>
-  fmtPct(ratio(num(row[`${key}_n`]), num(row[`${key}_den`])));
+/** Rows of a view dataset, empty while the server omits it. */
+const rowsOf = (data: Record<string, Row[]>, key: string) => data[key] ?? [];
 
 export default function Intent({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
-  const kpi = data.kpi ?? [];
-  const all = sumRows(kpi, KPI_FIELDS);
+  const kpi = rowsOf(data, "kpi");
+  // The rollup row (harness '') is All, computed by the server.
+  const all = kpi.find((row) => row.harness === "") ?? {};
+  const byHarness = kpi.filter((row) => row.harness !== "");
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const correctedDaily = pivotDaily(
-    data.daily ?? [],
-    (row) => String(row.harness),
-    ["corrected_n", "corrected_den"],
-    (sums) => ratio(sums.corrected_n!, sums.corrected_den!),
-  );
-  const types = data.task_types ?? [];
-  const typeTotals = [...groupSum(types, "task_type", ["tasks"])].sort(
-    ([a], [b]) => typeRank(a) - typeRank(b),
-  );
-  const labelledTypes = typeTotals.reduce(
-    (total, [, sums]) => total + sums.tasks!,
-    0,
-  );
+  const correctedDaily = pivotCorrectedRate(rowsOf(data, "daily"));
+  const types = rowsOf(data, "task_types");
+  const typeMix = rowsOf(data, "task_type_mix");
   const typeDetail = (type: string) =>
     types
       .filter((row) => row.task_type === type)
       .sort((a, b) => harnessOrder(a.harness) - harnessOrder(b.harness))
       .map((row) => `${harnessLabel(row.harness)} ${fmtCount(num(row.tasks))}`)
       .join(" · ");
-  const kinds = [
-    ...groupSum(data.correction_kinds ?? [], "correction_kind", ["tasks"]),
-  ].sort(([a], [b]) => a.localeCompare(b));
-  const payoff = effortPayoff(data.effort_payoff ?? []);
-  const repeated = recombineCorrections(data.repeated ?? []);
-  const recurring = repeated.filter(
-    (row) => num(row.tasks) >= 2 && num(row.sessions) >= 2,
-  );
+  const kindTotals = rowsOf(data, "correction_kind_totals");
+  const payoff = rowsOf(data, "effort_payoff");
+  const repeated = rowsOf(data, "repeated");
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Labelled tasks"
-          value={fmtPct(ratio(all.labelled!, all.tasks!))}
-          detail={`${fmtCount(all.labelled!)} of ${fmtCount(all.tasks!)} tasks have a labelled prompt`}
+          value={fmtPct(maybe(all.labelled_rate))}
+          detail={`${fmtCount(num(all.labelled))} of ${fmtCount(num(all.tasks))} tasks have a labelled prompt`}
+          n={num(all.tasks)}
           signals={["intent.labelled"]}
         />
         <Kpi
           title="Corrected by the next prompt"
-          value={fmtPct(ratio(all.corrected_n!, all.corrected_den!))}
-          detail={`${fmtCount(all.corrected_n!)} of ${fmtCount(all.corrected_den!)} tasks`}
+          value={fmtPct(maybe(all.corrected_rate))}
+          detail={`${fmtCount(num(all.corrected_n))} of ${fmtCount(num(all.corrected_den))} tasks`}
+          n={num(all.corrected_den)}
           signals={["intent.corrected"]}
         />
         <Kpi
           title="Frustrated follow-ups"
-          value={fmtPct(ratio(all.frustrated_n!, all.frustrated_den!))}
-          detail={`${fmtCount(all.frustrated_n!)} of ${fmtCount(all.frustrated_den!)} labelled next prompts`}
+          value={fmtPct(maybe(all.frustrated_rate))}
+          detail={`${fmtCount(num(all.frustrated_n))} of ${fmtCount(num(all.frustrated_den))} labelled next prompts`}
+          n={num(all.frustrated_den)}
           signals={["intent.frustration"]}
         />
         <Kpi
           title="Repeated corrections"
-          value={fmtCount(recurring.length)}
+          value={fmtCount(num(data.repeated_count?.[0]?.repeated))}
           detail="project × correction kind in ≥ 2 tasks and ≥ 2 sessions"
           signals={["intent.correction_kind"]}
         />
@@ -202,11 +121,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...series.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} %`,
-                numeric: true,
-              })),
+              ...rateSeriesColumns(series),
             ]}
             rows={correctedDaily}
           />
@@ -219,12 +134,12 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
           signals={["intent.task_type"]}
         >
           <BarList
-            items={typeTotals.map(([type, sums]) => ({
-              key: type,
-              label: type,
-              value: sums.tasks!,
+            items={typeMix.map((row) => ({
+              key: String(row.task_type),
+              label: typeLabel(String(row.task_type)),
+              value: num(row.tasks),
               color: SERIES[0]!,
-              detail: `${fmtPct(ratio(sums.tasks!, labelledTypes), 0)} · ${typeDetail(type)}`,
+              detail: `${fmtPct(maybe(row.share_rate), 0)} · ${typeDetail(String(row.task_type))}`,
             }))}
             format={fmtCount}
           />
@@ -235,7 +150,11 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 label: "Harness",
                 render: (row) => <HarnessName value={row.harness} />,
               },
-              { key: "task_type", label: "Task type" },
+              {
+                key: "task_type",
+                label: "Task type",
+                render: (row) => typeLabel(String(row.task_type)),
+              },
               { key: "tasks", label: "Tasks", numeric: true },
             ]}
             rows={types}
@@ -247,10 +166,10 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
           signals={["intent.correction_kind"]}
         >
           <BarList
-            items={kinds.map(([kind, sums]) => ({
-              key: kind,
-              label: words(kind),
-              value: sums.tasks!,
+            items={kindTotals.map((row) => ({
+              key: String(row.correction_kind),
+              label: words(row.correction_kind),
+              value: num(row.tasks),
               color: SERIES[1]!,
             }))}
             format={fmtCount}
@@ -269,7 +188,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
               },
               { key: "tasks", label: "Tasks", numeric: true },
             ]}
-            rows={data.correction_kinds ?? []}
+            rows={rowsOf(data, "correction_kinds")}
           />
         </Panel>
         <Panel
@@ -295,8 +214,12 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 key: "labelled_share",
                 label: "Labelled share",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.labelled), num(row.tasks))),
+                render: (row) => (
+                  <RateValue
+                    pct={maybe(row.labelled_rate)}
+                    n={num(row.tasks)}
+                  />
+                ),
               },
               {
                 key: "corrected",
@@ -311,7 +234,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => pct(row, "frustrated"),
               },
             ]}
-            rows={kpi}
+            rows={byHarness}
           />
         </Panel>
       </Section>
@@ -387,7 +310,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Recent corrected tasks"
-          subtitle="The latest 25 tasks whose next prompt corrected the agent; open one for its session"
+          subtitle="The latest 25 tasks whose next prompt corrected the agent; open one for its session. Evaluation workspaces excluded."
           signals={["intent.corrected", "intent.task_type"]}
           span={12}
         >
@@ -432,7 +355,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => String(row.project ?? "") || "—",
               },
             ]}
-            rows={data.recent ?? []}
+            rows={rowsOf(data, "recent")}
             empty="No task was corrected by its next prompt in the selected range."
           />
         </Panel>

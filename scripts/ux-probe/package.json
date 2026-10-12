@@ -1,0 +1,10 @@
+{
+  "name": "ux-probe",
+  "private": true,
+  "type": "module",
+  "description": "Answers the auto checks of docs/ux/rubrics/ux-page.yaml from the running dashboard",
+  "dependencies": {
+    "axe-core": "4.13.0",
+    "puppeteer-core": "25.12.0"
+  }
+}

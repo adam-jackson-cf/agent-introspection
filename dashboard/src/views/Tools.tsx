@@ -4,8 +4,11 @@ import {
   HarnessName,
   Kpi,
   Panel,
+  RateValue,
+  rateSeriesColumns,
   Section,
   SessionLink,
+  ViewLink,
   useSelectedHarnesses,
 } from "../components";
 import {
@@ -13,71 +16,70 @@ import {
   fmtPct,
   HARNESS_COLOR,
   HARNESS_LABEL,
+  maybe,
   num,
-  pivotDaily,
-  ratio,
-  sumRows,
 } from "../format";
+
+/** The server's All row: the rollup row, harness = ''. */
+const allRow = (rows: Row[] | undefined): Row =>
+  (rows ?? []).find((row) => row.harness === "") ?? {};
+
+/** Long daily rows to one row per day, a column per harness; values are copied. */
+function reshapeDaily(rows: Row[], valueKey: string, nKey?: string): Row[] {
+  const days = new Map<string, Row>();
+  for (const row of rows) {
+    const day = String(row.day);
+    const out = days.get(day) ?? { day };
+    const harness = String(row.harness);
+    out[harness] = maybe(row[valueKey]);
+    if (nKey) out[`${harness}_n`] = num(row[nKey]);
+    days.set(day, out);
+  }
+  return [...days.values()].sort((a, b) =>
+    String(a.day).localeCompare(String(b.day)),
+  );
+}
 
 export default function Tools({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
-  const kpi = sumRows(data.kpi ?? [], [
-    "calls",
-    "explicit",
-    "failed",
-    "unknown",
-    "tasks",
-    "failed_tasks",
-    "unattributed",
-  ]);
-  const repeats = sumRows(data.repeat_summary ?? [], [
-    "repeat_tasks",
-    "tasks",
-    "repeated_attempts",
-  ]);
+  const kpi = allRow(data.kpi);
+  const repeats = allRow(data.repeat_summary);
   const daily = data.daily ?? [];
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const rateDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["failed", "explicit"],
-    (sums) => ratio(sums.failed!, sums.explicit!),
-  );
-  const callsDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["calls"],
-    (sums) => sums.calls!,
-  );
+  const rateDaily = reshapeDaily(daily, "failure_rate", "explicit");
+  const callsDaily = reshapeDaily(daily, "calls");
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Tool calls"
-          value={fmtCount(kpi.calls!)}
-          detail={`${fmtCount(kpi.unknown!)} without an explicit outcome`}
+          value={fmtCount(num(kpi.calls))}
+          detail={`${fmtCount(num(kpi.unknown))} without an explicit outcome`}
           signals={["tools.calls"]}
         />
         <Kpi
           title="Tool failure rate"
-          value={fmtPct(ratio(kpi.failed!, kpi.explicit!))}
-          detail={`${fmtCount(kpi.failed!)} failed of ${fmtCount(kpi.explicit!)} with an outcome`}
+          value={fmtPct(maybe(kpi.failure_rate))}
+          detail={`${fmtCount(num(kpi.failed))} failed of ${fmtCount(num(kpi.explicit))} with an outcome`}
+          n={num(kpi.explicit)}
           signals={["tools.failure_rate"]}
         />
         <Kpi
           title="Tasks affected by failures"
-          value={fmtPct(ratio(kpi.failed_tasks!, kpi.tasks!))}
-          detail={`${fmtCount(kpi.failed_tasks!)} of ${fmtCount(kpi.tasks!)} tool-using tasks`}
+          value={fmtPct(maybe(kpi.tasks_affected_rate))}
+          detail={`${fmtCount(num(kpi.failed_tasks))} of ${fmtCount(num(kpi.tasks))} tasks with an attributed tool call`}
+          n={num(kpi.tasks)}
           signals={["tools.tasks_affected"]}
         />
         <Kpi
           title="Tasks with repeated attempts"
-          value={fmtPct(ratio(repeats.repeat_tasks!, repeats.tasks!))}
-          detail={`${fmtCount(repeats.repeat_tasks!)} tasks · ${fmtCount(repeats.repeated_attempts!)} identical calls`}
+          value={fmtPct(maybe(repeats.repeat_rate))}
+          detail={`${fmtCount(num(repeats.repeat_tasks))} of ${fmtCount(num(repeats.tasks))} tasks with comparable calls (not waiting or polling) · ${fmtCount(num(repeats.repeated_attempts))} identical calls`}
+          n={num(repeats.tasks)}
           signals={["tools.repeats"]}
         />
       </Section>
@@ -97,11 +99,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...series.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} %`,
-                numeric: true,
-              })),
+              ...rateSeriesColumns(series),
             ]}
             rows={rateDaily}
           />
@@ -151,8 +149,12 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 key: "rate",
                 label: "Rate",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.failed), num(row.explicit))),
+                render: (row) => (
+                  <RateValue
+                    pct={maybe(row.failure_rate)}
+                    n={num(row.explicit)}
+                  />
+                ),
               },
               { key: "failed_tasks", label: "Failed tasks", numeric: true },
             ]}
@@ -188,6 +190,8 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             ]}
             rows={data.signatures ?? []}
           />
+          <ViewLink view="friction">Open Friction</ViewLink>
+          <ViewLink view="recurrence">Open Recurrence</ViewLink>
         </Panel>
       </Section>
       <Section title="Repeats and loops">
@@ -258,6 +262,8 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             rows={data.loops ?? []}
             empty="No runs of three or more identical consecutive calls."
           />
+          <ViewLink view="friction">Open Friction</ViewLink>
+          <ViewLink view="recurrence">Open Recurrence</ViewLink>
         </Panel>
       </Section>
     </>

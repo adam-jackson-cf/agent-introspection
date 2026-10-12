@@ -79,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         _fail(EXIT_INTERNAL, exc)
     _emit(result)
-    # A failed preflight still prints every check, then exits non-zero.
-    failed = getattr(args, "facts_command", None) == "preflight" and not result["passed"]
+    # A failed preflight or snapshot comparison still prints every result, then exits
+    # non-zero.
+    checked = getattr(args, "facts_command", None) in ("preflight", "verify")
+    failed = checked and not result["passed"]
     return EXIT_FACTS if failed else 0

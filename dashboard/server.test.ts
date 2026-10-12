@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Registry, Row } from "./src/contracts";
+import type { Registry, Row, ViewResponse } from "./src/contracts";
 import { createApp, parseFilters, sqliteWorkflow } from "./server";
 import {
   batch,
@@ -260,6 +260,117 @@ describe("snapshot horizon", () => {
     expect(view.every((sql) => sql.includes("usage_events_snapshot"))).toBe(
       true,
     );
+  });
+
+  test("live-preset loads in one 10-minute slot share a route count query; the next slot counts again", async () => {
+    let now = new Date("2026-09-30T12:00:10.000Z");
+    const seen: string[] = [];
+    const query: Query = async (sql) => {
+      seen.push(sql);
+      return sql.includes("FROM introspection.signals")
+        ? registryRows(registry())
+        : [];
+    };
+    const app = createApp({ query, workflow: () => ({}), now: () => now });
+    const load = async (end: Date) => {
+      const start = new Date(end.getTime() - 7 * 86_400_000);
+      const response = await app(
+        new Request(
+          `http://127.0.0.1:4173/api/view?view=cache&start=${start.toISOString()}&end=${end.toISOString()}&harness=`,
+          { headers: HOST },
+        ),
+      );
+      expect(response.status).toBe(200);
+    };
+    const countQueries = () =>
+      seen.filter((sql) =>
+        sql.includes("WHERE ts < {end:DateTime64(3, 'UTC')}"),
+      ).length;
+
+    await load(now);
+    now = new Date("2026-09-30T12:09:50.000Z");
+    await load(now);
+    expect(countQueries()).toBe(1);
+    now = new Date("2026-09-30T12:10:05.000Z");
+    await load(now);
+    expect(countQueries()).toBe(2);
+  });
+
+  test("a view reports its timings and the facts' freshness, loaded once per 10 minutes", async () => {
+    const now = new Date("2026-09-30T12:00:10.000Z");
+    let refreshes = 0;
+    const query: Query = async (sql) => {
+      if (sql.includes("system.view_refreshes")) {
+        refreshes += 1;
+        return [{ as_of: "2026-09-30 11:58:00", stale: 1 }];
+      }
+      return sql.includes("FROM introspection.signals")
+        ? registryRows(registry())
+        : [];
+    };
+    const app = createApp({ query, workflow: () => ({}), now: () => now });
+    const load = async () =>
+      (await (
+        await app(
+          new Request(
+            `http://127.0.0.1:4173/api/view?view=cache&start=${START}&end=${END}&harness=`,
+            { headers: HOST },
+          ),
+        )
+      ).json()) as ViewResponse;
+    const first = await load();
+    await load();
+    expect(first.asOf).toEqual({ at: "2026-09-30T11:58:00Z", stale: true });
+    expect(Object.keys(first.timings)).toEqual([
+      "registryMs",
+      "routeCountsMs",
+      "sqlMs",
+    ]);
+    expect(refreshes).toBe(1);
+  });
+
+  test("pipeline's whole-history checks are shared for 10 minutes and a failed check is retried", async () => {
+    let now = new Date("2026-09-30T12:00:10.000Z");
+    let failSanitization = true;
+    const seen: string[] = [];
+    const query: Query = async (sql) => {
+      seen.push(sql);
+      if (sql.includes("AS long_status") && failSanitization) {
+        failSanitization = false;
+        throw new Error("Timeout exceeded");
+      }
+      return sql.includes("FROM introspection.signals")
+        ? registryRows(registry())
+        : [];
+    };
+    const app = createApp({ query, workflow: () => ({}), now: () => now });
+    const load = async () => {
+      const start = new Date(now.getTime() - 7 * 86_400_000);
+      return (
+        await app(
+          new Request(
+            `http://127.0.0.1:4173/api/view?view=pipeline&start=${start.toISOString()}&end=${now.toISOString()}&harness=`,
+            { headers: HOST },
+          ),
+        )
+      ).status;
+    };
+    const runs = (marker: string) =>
+      seen.filter((sql) => sql.includes(marker)).length;
+    const SANITIZATION = "AS long_status";
+    const UNROUTED = "ORDER BY n DESC LIMIT 40";
+
+    expect(await load()).toBe(503);
+    now = new Date("2026-09-30T12:03:00.000Z");
+    expect(await load()).toBe(200);
+    now = new Date("2026-09-30T12:09:50.000Z");
+    expect(await load()).toBe(200);
+    expect(runs(SANITIZATION)).toBe(2);
+    expect(runs(UNROUTED)).toBe(1);
+    now = new Date("2026-09-30T12:13:30.000Z");
+    expect(await load()).toBe(200);
+    expect(runs(SANITIZATION)).toBe(3);
+    expect(runs(UNROUTED)).toBe(2);
   });
 });
 
@@ -593,7 +704,7 @@ describe("view queries", () => {
 
   test("hook_rows is a view and is never read with FINAL", () => {
     for (const sql of all) expect(sql).not.toMatch(/hook_rows\s+FINAL/);
-    expect(VIEW_QUERIES.provider.omp_retries).toContain(
+    expect(VIEW_QUERIES.provider.retries).toContain(
       "event_type = 'retry' AND attrs_string['phase'] = 'start'",
     );
   });
@@ -628,12 +739,15 @@ describe("view queries", () => {
   test("intent queries read task_labels snapshots with bound parameters", () => {
     const intent = VIEW_QUERIES.intent;
     expect(Object.keys(intent).sort()).toEqual([
+      "correction_kind_totals",
       "correction_kinds",
       "daily",
       "effort_payoff",
       "kpi",
       "recent",
       "repeated",
+      "repeated_count",
+      "task_type_mix",
       "task_types",
     ]);
     for (const sql of Object.values(intent)) {
@@ -660,7 +774,7 @@ describe("view queries", () => {
     );
     expect(VIEW_QUERIES.guardrails.bypass).not.toContain("codex%");
     expect(VIEW_QUERIES.recurrence.actionable).toContain(
-      "FROM f GROUP BY tool_family, failure_class HAVING (cluster_occurrences >= 3",
+      "GROUP BY tool_family, failure_class HAVING (occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3)",
     );
     expect(VIEW_QUERIES.interventions.cluster_daily).toContain(
       "GROUP BY day, harness, tool_family, failure_class",
@@ -672,7 +786,9 @@ describe("view queries", () => {
 
   test("failure signatures group by the full-line hash so a shared prefix does not merge", () => {
     const tools = VIEW_QUERIES.tools.signatures;
-    expect(tools).toContain("any(failure_signature) AS signature");
+    expect(tools).toContain(
+      "argMax(failure_signature, (ts, session_id)) AS signature",
+    );
     expect(tools).toContain(
       "if(failure_signature_hash != '', failure_signature_hash, failure_signature) AS signature_key",
     );

@@ -21,31 +21,39 @@ export const lastDays = (days: number): Pick<Filters, "start" | "end"> => {
     end: iso(end),
   };
 };
-/** A preset is live only when the window ends at (about) the current time. */
-const LIVE_END_TOLERANCE_MS = 5 * 60_000;
-export const presetFor = (filters: Filters, now = Date.now()) => {
-  const end = Date.parse(filters.end);
-  const days = (end - Date.parse(filters.start)) / 86_400_000;
-  if (Math.abs(now - end) > LIVE_END_TOLERANCE_MS) return "Custom range";
-  return (
-    Object.entries(PRESETS).find(
-      ([, value]) => Math.abs(value - days) < 0.001,
-    )?.[0] ?? "Custom range"
-  );
-};
+/** The selector label for the filters: a live preset, or a fixed custom range. */
+export const presetFor = (filters: Filters) =>
+  Object.entries(PRESETS).find(([, days]) => days === filters.range)?.[0] ??
+  "Custom range";
+/** Reads the URL: `range` is a live preset; `start`/`end` a fixed range; neither the default preset. */
 export const readFilters = (): Filters => {
   const query = new URLSearchParams(window.location.search);
-  const fallback = lastDays(DEFAULT_DAYS);
   const harness = query.get("harness") ?? "";
-  return {
-    start: query.get("start") ?? fallback.start,
-    end: query.get("end") ?? fallback.end,
+  const scope = {
     harness: (HARNESSES as readonly string[]).includes(harness)
       ? (harness as Filters["harness"])
-      : "",
+      : ("" as const),
   };
+  const range = Number(query.get("range"));
+  const start = query.get("start");
+  const end = query.get("end");
+  if (Object.values(PRESETS).includes(range))
+    return { ...lastDays(range), ...scope, range };
+  if (start && end) return { start, end, ...scope };
+  return { ...lastDays(DEFAULT_DAYS), ...scope, range: DEFAULT_DAYS };
 };
-export const filterQuery = (filters: Filters) =>
+/** Filters as URL parameters: a live preset keeps only its length; All has no `harness`. */
+export const filterQuery = (filters: Filters) => {
+  const query = new URLSearchParams(
+    filters.range === undefined
+      ? { start: filters.start, end: filters.end }
+      : { range: String(filters.range) },
+  );
+  if (filters.harness !== "") query.set("harness", filters.harness);
+  return query;
+};
+/** Filters as API parameters: always the resolved window. */
+export const apiQuery = (filters: Filters) =>
   new URLSearchParams({
     start: filters.start,
     end: filters.end,

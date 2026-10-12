@@ -10,7 +10,8 @@ then, only when the user wants a live check, run one short session.
   `~/.local/lib/agent-introspection/activity-hooks-v1/`, and the managed copies
   match the repo's `scripts/`.
 - The settings in the harness configuration workflow's table are present for each
-  harness in use, in every Codex root, and omp's `config.yml` lists `activity.ts`.
+  harness in use, in every Codex root, and `omp plugin list` shows
+  `agent-introspection-activity` while `~/.omp/agent/config.yml` does not list it.
 - `agent-introspection` resolves for the shim, and an OpenRouter key is present for
   `facts sync` (presence only).
 

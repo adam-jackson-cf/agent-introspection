@@ -151,9 +151,10 @@ WITH
             if(mapContains(t.attrs_number, 'codex.turn.token_usage.reasoning_output_tokens'), toNullable(t.attrs_number['codex.turn.token_usage.reasoning_output_tokens']), NULL) AS reasoning_tokens,
             toUInt64(s.model_steps) AS model_steps,
             toUInt64(sp.delegations) AS delegations,
-            toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_interrupts))) AS interrupted,
+            -- Headless Codex exec has no user to interrupt or steer: not applicable, so NULL.
+            if(t.harness = 'codex_exec', NULL, toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_interrupts)))) AS interrupted,
             toNullable(toUInt8(lr.errored)) AS errored,
-            toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_steers))) AS steered
+            if(t.harness = 'codex_exec', NULL, toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_steers)))) AS steered
         FROM introspection.spans AS t FINAL
         LEFT JOIN codex_steps AS s ON s.task_id = t.attrs_string['turn.id']
         LEFT JOIN codex_spawns AS sp ON sp.task_id = t.attrs_string['turn.id']
@@ -452,13 +453,19 @@ GROUP BY hc_tool_use_id;
 -- gate-bypass flag, and argument hash come from the activity hooks' `tool_call`
 -- events (joined by tool call ID), and a Claude Code failure's signature from its
 -- `tool_failure` event; calls from before hooks were installed keep the native fields.
+-- Stored signatures were capped at 160 bytes before 2026-10-01; since then at 80
+-- characters, taken from the diagnostic keyword when it lies past character 80, with
+-- a hash of the full line beside them. The view applies that same window and cap to
+-- every row, so old and new rows of one failure share text and `failure_class`. A row
+-- without a stored hash whose text is under 160 bytes held the whole line, so hashing
+-- its windowed text gives the `failure_signature_hash` a new row of that failure has.
 CREATE OR REPLACE VIEW introspection.tool_calls AS
 -- `tool_family` groups each harness's tool names by what the tool does, so one
 -- behaviour is one finding whatever harness produced it. `failure_class` is the
 -- failure signature with quoted values and paths generalized, so the same failure on
 -- different files is one class.
 SELECT
-    *,
+    * EXCEPT (stored_signature, stored_hash, windowed_signature),
     multiIf(
         lower(tool) IN ('bash', 'exec_command', 'exec', 'shell', 'local_shell', 'write_stdin', 'run', 'js'), 'shell',
         lower(tool) IN ('read', 'view_image', 'lsp', 'lsp_evidence_bind'), 'read',
@@ -470,14 +477,31 @@ SELECT
         startsWith(tool, 'mcp__') OR mcp_server != '', 'mcp',
         lower(tool)
     ) AS tool_family,
+    substringUTF8(windowed_signature, 1, 80) AS failure_signature,
+    multiIf(
+        stored_hash != '', stored_hash,
+        stored_signature != '' AND length(stored_signature) < 160, lower(substring(hex(SHA256(windowed_signature)), 1, 16)),
+        ''
+    ) AS failure_signature_hash,
     if(
-        failure_signature = '',
+        windowed_signature = '',
         '',
         trimBoth(replaceRegexpAll(
-            replaceRegexpAll(failure_signature, '\'[^\']*\'|"[^"]*"|`[^`]*`', '\'…\''),
+            replaceRegexpAll(substringUTF8(windowed_signature, 1, 80), '\'[^\']*\'|"[^"]*"|`[^`]*`', '\'…\''),
             '[^\\s:\'"(),]*/[^\\s:\'"(),]+', '<path>'
         ))
     ) AS failure_class
+FROM (
+SELECT
+    *,
+    -- The projections' keyword window: when the first 80 characters hold no
+    -- diagnostic keyword but the line does, keep the line from the keyword on.
+    if(
+        match(substringUTF8(stored_signature, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)')
+            OR NOT match(stored_signature, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        stored_signature,
+        extract(stored_signature, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
+    ) AS windowed_signature
 FROM (
     SELECT
         ts,
@@ -497,8 +521,8 @@ FROM (
         attrs_string['x.command_sub'] AS command_sub,
         toUInt8(attrs_string['x.gate_bypass'] = '1') AS gate_bypass,
         JSONExtract(if(attrs_string['x.targets'] = '', '[]', attrs_string['x.targets']), 'Array(String)') AS targets,
-        attrs_string['x.failure_signature'] AS failure_signature,
-        attrs_string['x.failure_signature_hash'] AS failure_signature_hash,
+        attrs_string['x.failure_signature'] AS stored_signature,
+        attrs_string['x.failure_signature_hash'] AS stored_hash,
         attrs_string['x.arguments_hash'] AS arguments_hash,
         attrs_string['mcp_server'] AS mcp_server,
         if(l.ts <= t.turn_end, t.turn_id, '') AS task_id,
@@ -540,14 +564,10 @@ FROM (
         JSONExtract(if(hc.hc_targets = '', '[]', hc.hc_targets), 'Array(String)'),
         if(
             has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error',
-            substringUTF8(replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'), 1, 80),
+            replaceRegexpAll(replaceRegexpAll(status_message, '/Users/[^/ ]+', '~'), '[0-9a-f]{8,}|\\d+', 'N'),
             ''
         ),
-        if(
-            has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error',
-            attrs_string['x.status_hash'],
-            ''
-        ),
+        if(has_error OR attrs_string['pi.gen_ai.tool.status'] = 'error', attrs_string['x.status_hash'], ''),
         hc.hc_arguments_hash,
         '',
         r.root_span,
@@ -608,6 +628,7 @@ FROM (
         GROUP BY trace_id
     ) AS i ON i.interaction_trace = l.trace_id
     WHERE l.harness = 'claude-code' AND l.event_name = 'tool_result'
+)
 );
 
 -- Explicit user and policy friction signals. Codex interrupt/steer RPC spans
@@ -691,65 +712,6 @@ SELECT
     project_root
 FROM introspection.session_projects FINAL
 WHERE status = 'attributed';
-
--- One row per task with the Jev labels of the prompt that started it and of the
--- next prompt in the session (`introspection.prompt_labels`, labelled by `facts sync`
--- from the producers' prompt events). The task's own
--- label is the latest one submitted up to five seconds after the task started. A
--- next prompt within 10 minutes of the task's end that Jev reads as a correction
--- (probability ≥ 0.5) marks the task `corrected_next`. Tasks whose session had no
--- labelled prompts keep empty labels and NULL flags. It reads the task_outcomes
--- snapshot rather than recomputing the view: labels exist only from the hooks'
--- install date (2026-09-30), well inside the snapshot's 91 days.
-CREATE OR REPLACE VIEW introspection.task_labels AS
-WITH labels AS (
-    SELECT
-        session_id,
-        ts AS label_ts,
-        task_type,
-        task_type_confidence,
-        correction,
-        correction_kind,
-        sentiment
-    FROM introspection.prompt_labels FINAL
-    WHERE status = 'labelled' AND session_id != ''
-),
-labelled_sessions AS (SELECT DISTINCT session_id FROM labels),
-tasks AS (
-    SELECT harness, session_id, task_id, start_ts, end_ts, effort, clean_completion,
-        start_ts + INTERVAL 5 SECOND AS label_before
-    FROM introspection.task_outcomes_snapshot
-    WHERE session_id IN (SELECT session_id FROM labelled_sessions)
-),
-own AS (
-    SELECT t.harness AS harness, t.task_id AS task_id, o.task_type AS task_type,
-        o.task_type_confidence AS task_type_confidence, o.sentiment AS sentiment
-    FROM tasks AS t
-    ASOF INNER JOIN labels AS o ON o.session_id = t.session_id AND t.label_before >= o.label_ts
-),
-next AS (
-    SELECT t.harness AS harness, t.task_id AS task_id, n.label_ts AS next_ts, n.correction AS correction,
-        n.correction_kind AS correction_kind, n.sentiment AS sentiment, t.end_ts AS end_ts
-    FROM tasks AS t
-    ASOF INNER JOIN labels AS n ON n.session_id = t.session_id AND n.label_ts > t.end_ts
-)
-SELECT
-    t.harness AS harness,
-    t.session_id AS session_id,
-    t.task_id AS task_id,
-    t.start_ts AS start_ts,
-    t.effort AS effort,
-    t.clean_completion AS clean_completion,
-    coalesce(o.task_type, '') AS task_type,
-    o.task_type_confidence AS task_type_confidence,
-    coalesce(o.sentiment, '') AS sentiment,
-    toUInt8(o.task_id != '') AS labelled,
-    toNullable(toUInt8(n.task_id != '' AND n.next_ts <= t.end_ts + INTERVAL 10 MINUTE AND n.correction >= 0.5)) AS corrected_next,
-    if(n.task_id != '' AND n.next_ts <= t.end_ts + INTERVAL 10 MINUTE AND n.correction >= 0.5, n.correction_kind, '') AS correction_kind_next,
-    if(n.task_id != '' AND n.next_ts <= t.end_ts + INTERVAL 10 MINUTE, n.sentiment, '') AS sentiment_next
-FROM tasks AS t
-LEFT JOIN own AS o ON o.harness = t.harness AND o.task_id = t.task_id
-LEFT JOIN next AS n ON n.harness = t.harness AND n.task_id = t.task_id;
 
 -- Activity-hook events with the harness resolved, for registry route predicates and
 -- the Pipeline coverage grid. Codex hooks are shared by app-server, CLI, and exec, so

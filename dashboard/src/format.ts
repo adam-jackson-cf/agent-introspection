@@ -1,4 +1,4 @@
-import { HARNESSES, type Harness, type Row } from "./contracts";
+import { HARNESSES, type Harness } from "./contracts";
 import { EFFORT_TOKENS, HARNESS_TOKENS, PART_TOKENS } from "./tokens";
 
 /**
@@ -78,63 +78,5 @@ export const fmtSeconds = (value: number | null) => {
   return `${value.toFixed(value >= 10 ? 0 : 1)} s`;
 };
 
-/** Token-weighted ratio: aggregate before division; no denominator gives null. */
-export const ratio = (numerator: number, denominator: number) =>
-  denominator > 0 ? (100 * numerator) / denominator : null;
-
-/** Sums numeric fields across per-harness rows: All is the union of each. */
-export function sumRows(rows: Row[], keys: string[]): Record<string, number> {
-  const totals: Record<string, number> = Object.fromEntries(
-    keys.map((key) => [key, 0]),
-  );
-  for (const row of rows)
-    for (const key of keys) totals[key] = totals[key]! + num(row[key]);
-  return totals;
-}
-
-/** Groups rows by a key and sums numeric fields within each group. */
-export function groupSum(
-  rows: Row[],
-  by: string,
-  keys: string[],
-): Map<string, Record<string, number>> {
-  const groups = new Map<string, Row[]>();
-  for (const row of rows) {
-    const key = String(row[by]);
-    groups.set(key, [...(groups.get(key) ?? []), row]);
-  }
-  return new Map(
-    [...groups].map(([key, members]) => [key, sumRows(members, keys)]),
-  );
-}
-
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";
-
-/**
- * Pivots long daily rows into one row per day with a column per series. The
- * value function receives the summed numeric fields of that day and series.
- */
-export function pivotDaily(
-  rows: Row[],
-  seriesOf: (row: Row) => string,
-  fields: string[],
-  value: (sums: Record<string, number>) => number | null,
-): Row[] {
-  const days = new Map<string, Map<string, Row[]>>();
-  for (const row of rows) {
-    const day = String(row.day);
-    const bySeries = days.get(day) ?? new Map<string, Row[]>();
-    const series = seriesOf(row);
-    bySeries.set(series, [...(bySeries.get(series) ?? []), row]);
-    days.set(day, bySeries);
-  }
-  return [...days.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, bySeries]) => {
-      const out: Row = { day };
-      for (const [series, members] of bySeries)
-        out[series] = value(sumRows(members, fields));
-      return out;
-    });
-}

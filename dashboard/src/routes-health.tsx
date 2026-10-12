@@ -3,6 +3,7 @@ import Cache from "./views/Cache";
 import Effort from "./views/Effort";
 import Friction from "./views/Friction";
 import Pipeline from "./views/Pipeline";
+import PipelineCoverage from "./views/PipelineCoverage";
 import Tools from "./views/Tools";
 
 /** Pipeline freshness, cost and friction views (V1 to V5). */
@@ -14,6 +15,14 @@ export const HEALTH_VIEWS: ViewSpec[] = [
     question:
       "Is the fact loader fresh, complete, and correct for every harness?",
     component: Pipeline,
+    details: [
+      {
+        id: "coverage",
+        title: "Coverage grid",
+        question: "Which signal × harness cells are not healthy, and why?",
+        component: PipelineCoverage,
+      },
+    ],
   },
   {
     id: "cache",

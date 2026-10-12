@@ -378,7 +378,7 @@ Scope: system (not per harness).
 
 - **Question:** What share of output tokens was reasoning?
 - **Unit:** %
-- **Formula:** 100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division.
+- **Formula:** 100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division. The KPI and the spend table use the same usage rows (Claude Code: tasks); the outcomes table divides by the output of task-attributed rows that report reasoning, so it can differ.
 
 | Harness          | Alignment | Route            | Note                                                                                                                                             |
 | ---------------- | --------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -476,7 +476,7 @@ Scope: system (not per harness).
 
 - **Question:** How many subagent runs does a task start?
 - **Unit:** runs
-- **Formula:** Average delegations per task.
+- **Formula:** Σ delegations / tasks, per harness and effort (Effort page outcomes table).
 
 | Harness          | Alignment | Route                 | Note                                                                                                                                                 |
 | ---------------- | --------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -548,7 +548,7 @@ Scope: system (not per harness).
 
 - **Question:** Which operations run with identical arguments more than once in a task?
 - **Unit:** tasks
-- **Formula:** Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected.
+- **Formula:** Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected. Rate denominator: tasks with ≥1 such comparable call (hashed arguments, not waiting or polling).
 
 | Harness          | Alignment | Route               | Note                                                                                                                                                       |
 | ---------------- | --------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -648,7 +648,7 @@ Scope: system (not per harness).
 
 - **Question:** After a failed tool call, does the same operation later succeed in the task?
 - **Unit:** %
-- **Formula:** Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks.
+- **Formula:** Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks. Tasks are those that started in the window, as in the other Friction measures.
 
 | Harness          | Alignment | Route                | Note                                                                                                         |
 | ---------------- | --------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -864,7 +864,7 @@ Scope: system (not per harness).
 
 - **Question:** Which files recur across tasks?
 - **Unit:** tasks
-- **Formula:** Targets touched in ≥2 tasks, with task, day, and failure counts.
+- **Formula:** Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a project or path under a temporary directory) are excluded.
 
 | Harness          | Alignment | Route               | Note                                                                                                              |
 | ---------------- | --------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -906,7 +906,7 @@ Scope: system (not per harness).
 
 - **Question:** Is a repeated failure localized to one project?
 - **Unit:** %
-- **Formula:** Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store.
+- **Formula:** Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store. Evaluation workspaces (a project or path under a temporary directory) are excluded.
 
 | Harness          | Alignment | Route                | Note |
 | ---------------- | --------- | -------------------- | ---- |
@@ -936,7 +936,7 @@ Scope: system (not per harness).
 
 - **Question:** What kind of work do users ask for?
 - **Unit:** tasks
-- **Formula:** Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue.
+- **Formula:** Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue. Labelled tasks with no type show as untyped, so shares of labelled tasks sum to 100%.
 
 | Harness          | Alignment | Route                | Note                                             |
 | ---------------- | --------- | -------------------- | ------------------------------------------------ |
@@ -950,7 +950,7 @@ Scope: system (not per harness).
 
 - **Question:** How often does the user's next prompt correct the task's work?
 - **Unit:** %
-- **Formula:** 100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy.
+- **Formula:** 100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) with a named correction kind (not none) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy.
 
 | Harness          | Alignment      | Route                | Note                                             |
 | ---------------- | -------------- | -------------------- | ------------------------------------------------ |
@@ -992,7 +992,7 @@ Scope: system (not per harness).
 
 - **Question:** For which kinds of work does heavier reasoning effort reduce corrections?
 - **Unit:** %
-- **Formula:** Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks; compare efforts within one task type, never across harnesses.
+- **Formula:** Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks, headless Codex exec runs excluded from both; compare efforts within one task type, never across harnesses.
 
 | Harness          | Alignment | Route                | Note                                                                                  |
 | ---------------- | --------- | -------------------- | ------------------------------------------------------------------------------------- |

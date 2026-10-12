@@ -1,0 +1,11 @@
+{
+  "name": "agent-introspection-activity",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "omp": {
+    "extensions": [
+      "./activity.ts"
+    ]
+  }
+}

@@ -3,8 +3,9 @@
 Refreshable materialized views copy curated producer spans and logs from the
 SigNoz tables into the durable ``introspection`` database every minute. Fact
 views normalize them, snapshot tables hold the last 90 days of each view's result
-refreshed after every load, and the signal support registry records how each producer reaches
-each dashboard signal. The dashboard reads small aggregates from the snapshots.
+rebuilt every 10 minutes after a load, and the signal support registry records how
+each producer reaches each dashboard signal. The dashboard reads small aggregates
+from the snapshots.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import tomllib
 import urllib.error
@@ -26,6 +28,13 @@ from typing import Any, cast
 from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig, is_local_host
 
 DATABASE = "introspection"
+# `facts verify` builds a disposable copy of the store here before any install.
+VERIFY_DATABASE = f"{DATABASE}_verify"
+_DATABASE_REFERENCE = re.compile(rf"\b{DATABASE}(?=[.;])")
+_REFRESH_SCHEDULE = re.compile(
+    r"REFRESH EVERY \d+ (?:MINUTE|HOUR|DAY)(?: OFFSET \d+ (?:MINUTE|HOUR))?"
+)
+_REFRESH_TARGET = re.compile(r"(\bTO [\w.]+)\nAS\b")
 _QUERY_TIMEOUT_SECONDS = 600.0
 
 type SqlRunner = Callable[[str], str]
@@ -117,23 +126,64 @@ SNAPSHOT_FILTERS = (
     f"additional_table_filters = {{'{DATABASE}.spans': '{_SNAPSHOT_BOUND}', "
     f"'{DATABASE}.logs': '{_SNAPSHOT_BOUND}'}}"
 )
+# Each snapshot is two tables behind one view. Recent holds the days whose facts can
+# still change and is rebuilt every 10 minutes: the minute log loader accepts a log up
+# to 7 days after its event (it selects by arrival time), so recent covers 8 days and
+# reads one more day of spans and logs as context for rows near its start (a task's
+# next task, a call's turn). History holds the rest and is rebuilt once a day. The
+# view takes rows before the boundary from history and the rest from recent; both
+# tables overlap the boundary, so between rebuilds no row is missed or repeated:
+# history built yesterday still reaches the boundary, recent always starts before it.
+SNAPSHOT_SCHEDULE = "EVERY 10 MINUTE"
+HISTORY_SCHEDULE = "EVERY 1 DAY OFFSET 30 MINUTE"
+HISTORY_END_DAYS = 6
+BOUNDARY_DAYS = 7
+RECENT_START_DAYS = 8
+RECENT_CONTEXT_DAYS = 1
+
+
+def _days_before_today(days: int) -> str:
+    return f"toStartOfDay(now64(9), 'UTC') - INTERVAL {days} DAY"
+
+
+# Quoted inside the settings map, so its own quotes are escaped.
+_RECENT_BOUND = f"ts >= {_days_before_today(RECENT_START_DAYS + RECENT_CONTEXT_DAYS)}".replace(
+    "'", "\\'"
+)
+RECENT_FILTERS = (
+    f"additional_table_filters = {{'{DATABASE}.spans': '{_RECENT_BOUND}', "
+    f"'{DATABASE}.logs': '{_RECENT_BOUND}'}}"
+)
 
 
 @dataclass(frozen=True)
 class Snapshot:
-    """A table holding one fact view's result, replaced after each minute load."""
+    """One fact view's result, split into history and recent tables behind one view.
+
+    The tables are ``<view>_history`` and ``<view>_recent``; readers use ``<view>_snapshot``.
+
+    ``time_column`` is the row time the boundary splits on. ``views_file`` is the SQL
+    file defining the view; install creates each file's snapshots right after it,
+    because later views read earlier snapshots. ``reads`` names the snapshot this
+    view reads, whose refreshes each part waits for.
+    """
 
     view: str
     order_by: str
+    time_column: str = "ts"
+    views_file: str = "003_views.sql"
+    reads: str = ""
 
 
+# task_labels reads task_outcomes_snapshot, so its view lives in a later file.
+VIEW_FILES = ("003_views.sql", "004_labels.sql")
 SNAPSHOTS = (
     Snapshot("usage_events", "(harness, ts)"),
-    Snapshot("task_outcomes", "(harness, start_ts)"),
+    Snapshot("task_outcomes", "(harness, start_ts)", "start_ts"),
     Snapshot("tool_calls", "(harness, ts)"),
     Snapshot("user_signals", "(harness, ts)"),
     Snapshot("model_calls", "(harness, ts)"),
-    Snapshot("task_labels", "(harness, start_ts)"),
+    Snapshot("task_labels", "(harness, start_ts)", "start_ts", "004_labels.sql", "task_outcomes"),
 )
 
 REGISTRY_FILE = "signal_support.toml"
@@ -195,25 +245,66 @@ def loader_ddl(loader: Loader) -> str:
     )
 
 
-def snapshot_statements(snapshot: Snapshot) -> list[str]:
-    """Return statements that recreate one snapshot table and its refresher.
+def snapshot_refreshers(snapshot: Snapshot) -> tuple[str, str]:
+    """Return the names of the history and recent refreshers of one snapshot."""
+    return (f"refresh_{snapshot.view}_history", f"refresh_{snapshot.view}_recent")
 
-    The refresher depends on both minute loaders, so each snapshot replaces its
-    content right after new rows land. ``additional_table_filters`` bounds every
-    span and log read inside the view to the snapshot horizon, leaving the view
-    SQL unchanged. Non-append refreshes swap atomically. Refreshers run with two
-    threads so dashboard queries keep the CPU.
+
+def snapshot_statements(snapshot: Snapshot) -> list[str]:
+    """Return statements that recreate one snapshot's two tables, refreshers and view.
+
+    Each refresher replaces its whole table (non-append refreshes swap atomically),
+    so neither table ever holds duplicates or rows the facts no longer produce. Both
+    wait for the minute loaders, and for the refreshes of a snapshot the view reads.
+    ``additional_table_filters`` bounds the spans and logs each part reads, leaving
+    the view SQL unchanged. Refreshers run with two threads so dashboard queries keep
+    the CPU. The pre-split single-table refresher and table are dropped too.
     """
-    table = f"{DATABASE}.{snapshot.view}_snapshot"
+    base = f"{DATABASE}.{snapshot.view}"
+    column = snapshot.time_column
+    boundary = _days_before_today(BOUNDARY_DAYS)
+    history, recent = (f"{base}_history", f"{base}_recent")
+
+    def refresher(part: int, schedule: str, table: str, keep: str, filters: str) -> str:
+        waits = [f"{DATABASE}.load_spans", f"{DATABASE}.load_logs"]
+        if snapshot.reads:
+            upstream = next(s for s in SNAPSHOTS if s.view == snapshot.reads)
+            waits.append(f"{DATABASE}.{snapshot_refreshers(upstream)[part]}")
+        return (
+            f"CREATE MATERIALIZED VIEW {DATABASE}.{snapshot_refreshers(snapshot)[part]}\n"
+            f"REFRESH {schedule} DEPENDS ON {', '.join(waits)}\n"
+            f"TO {table}\nAS SELECT * FROM {base} WHERE {keep}\n"
+            f"SETTINGS max_threads = 2, {filters}"
+        )
+
     return [
         f"DROP VIEW IF EXISTS {DATABASE}.refresh_{snapshot.view}",
-        f"DROP TABLE IF EXISTS {table}",
-        f"CREATE TABLE {table} ENGINE = MergeTree ORDER BY {snapshot.order_by}"
-        f" EMPTY AS SELECT * FROM {DATABASE}.{snapshot.view}",
-        f"CREATE MATERIALIZED VIEW {DATABASE}.refresh_{snapshot.view}\n"
-        f"REFRESH EVERY 1 MINUTE DEPENDS ON {DATABASE}.load_spans, {DATABASE}.load_logs\n"
-        f"TO {table}\nAS SELECT * FROM {DATABASE}.{snapshot.view}\n"
-        f"SETTINGS max_threads = 2, {SNAPSHOT_FILTERS}",
+        *(f"DROP VIEW IF EXISTS {DATABASE}.{name}" for name in snapshot_refreshers(snapshot)),
+        f"DROP TABLE IF EXISTS {base}_snapshot",
+        *(f"DROP TABLE IF EXISTS {table}" for table in (history, recent)),
+        *(
+            f"CREATE TABLE {table} ENGINE = MergeTree ORDER BY {snapshot.order_by}"
+            f" EMPTY AS SELECT * FROM {base}"
+            for table in (history, recent)
+        ),
+        f"CREATE VIEW {base}_snapshot AS\n"
+        f"SELECT * FROM {history} WHERE {column} < {boundary}\n"
+        f"UNION ALL\n"
+        f"SELECT * FROM {recent} WHERE {column} >= {boundary}",
+        refresher(
+            0,
+            HISTORY_SCHEDULE,
+            history,
+            f"{column} < {_days_before_today(HISTORY_END_DAYS)}",
+            SNAPSHOT_FILTERS,
+        ),
+        refresher(
+            1,
+            SNAPSHOT_SCHEDULE,
+            recent,
+            f"{column} >= {_days_before_today(RECENT_START_DAYS)}",
+            RECENT_FILTERS,
+        ),
     ]
 
 
@@ -495,6 +586,17 @@ def route_check_statements(registry: Registry) -> list[str]:
     ]
 
 
+def view_file_statements(views_file: str) -> list[str]:
+    """Return a view file's DDL followed by the statements of the snapshots it defines."""
+    steps = [
+        step
+        for snapshot in SNAPSHOTS
+        if snapshot.views_file == views_file
+        for step in snapshot_statements(snapshot)
+    ]
+    return [_sql(views_file), *steps]
+
+
 def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     """Return the ordered idempotent statements that create the whole facts store.
 
@@ -508,11 +610,15 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     harnesses = enabled_harnesses(registry, enabled)
     return [
         _sql("001_tables.sql"),
-        *(f"DROP VIEW IF EXISTS {DATABASE}.refresh_{snapshot.view}" for snapshot in SNAPSHOTS),
+        # Refreshers go before the loaders they wait on, a reader's before its source's.
+        *(
+            f"DROP VIEW IF EXISTS {DATABASE}.{name}"
+            for snapshot in reversed(SNAPSHOTS)
+            for name in (*snapshot_refreshers(snapshot), f"refresh_{snapshot.view}")
+        ),
         *(f"DROP VIEW IF EXISTS {DATABASE}.{loader.name}" for loader in LOADERS),
         *(loader_ddl(loader) for loader in LOADERS),
-        _sql("003_views.sql"),
-        *(statement for snapshot in SNAPSHOTS for statement in snapshot_statements(snapshot)),
+        *(statement for views_file in VIEW_FILES for statement in view_file_statements(views_file)),
         *route_check_statements(registry),
         _sql("002_registry.sql"),
         *registry_statements(registry, harnesses),
@@ -738,12 +844,103 @@ def runner(config: AppConfig) -> SqlRunner:
     return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
 
 
+def verify_statements(enabled: Sequence[str] | None = None) -> list[str]:
+    """Return the install statements rewritten to build a scratch copy of the store.
+
+    Every reference to the facts database points at ``VERIFY_DATABASE`` instead, and
+    each refreshable view is created ``EMPTY`` on a yearly schedule, so ClickHouse
+    checks every statement (including each view's columns against its target table)
+    without loading a row or touching the live store.
+    """
+
+    def scratch(statement: str) -> str:
+        statement = _DATABASE_REFERENCE.sub(VERIFY_DATABASE, statement)
+        if not _REFRESH_SCHEDULE.search(statement):
+            return statement
+        yearly = _REFRESH_SCHEDULE.sub("REFRESH EVERY 1 YEAR", statement)
+        return _REFRESH_TARGET.sub(r"\1 EMPTY\nAS", yearly, count=1)
+
+    return [
+        f"DROP DATABASE IF EXISTS {VERIFY_DATABASE} SYNC",
+        *(scratch(statement) for statement in install_statements(enabled)),
+    ]
+
+
+def verify(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, Any]:
+    """Build the whole store in a scratch database, then drop it.
+
+    Raises on the first statement ClickHouse rejects, so a broken projection, view,
+    snapshot, or registry entry is caught before ``install`` drops the live loaders.
+    """
+    statements = verify_statements(enabled)
+    try:
+        for statement in statements:
+            run(statement)
+    finally:
+        run(f"DROP DATABASE IF EXISTS {VERIFY_DATABASE} SYNC")
+    return {"database": VERIFY_DATABASE, "statements": len(statements), "passed": True}
+
+
+def compare_statement(snapshot: Snapshot) -> str:
+    """Return a query counting and hashing the rows of a snapshot and of its view.
+
+    The hash is order-independent and covers every column.
+
+    The newest 15 minutes are left out (the loaders keep adding rows there) and so is
+    the oldest day of the 91-day horizon (rows at the edge lack their neighbours).
+    """
+    base = f"{DATABASE}.{snapshot.view}"
+    column = snapshot.time_column
+    window = (
+        f"{column} >= now64(9) - INTERVAL {SNAPSHOT_DAYS} DAY"
+        f" AND {column} < now64(9) - INTERVAL 15 MINUTE"
+    )
+    side = "count() AS rows, toString(sum(cityHash64(*))) AS hash"
+    return (
+        f"SELECT 'snapshot' AS side, {side} FROM {base}_snapshot WHERE {window}\n"
+        f"UNION ALL\n"
+        f"SELECT 'view' AS side, {side} FROM {base} WHERE {window}\n"
+        f"SETTINGS max_threads = 2, {SNAPSHOT_FILTERS}\n"
+        "FORMAT JSONEachRow"
+    )
+
+
+def compare(run: SqlRunner) -> dict[str, Any]:
+    """Rebuild every snapshot now, then check each matches a full read of its view.
+
+    Proves the history/recent split loses and repeats nothing. It rereads every view
+    in full, so it runs on demand (``facts verify --compare``), not on a schedule.
+    """
+    for snapshot in SNAPSHOTS:
+        for name in snapshot_refreshers(snapshot):
+            run(f"SYSTEM REFRESH VIEW {DATABASE}.{name}")
+            run(f"SYSTEM WAIT VIEW {DATABASE}.{name}")
+    snapshots: dict[str, dict[str, Any]] = {}
+    for snapshot in SNAPSHOTS:
+        output = run(compare_statement(snapshot))
+        rows = [json.loads(line) for line in output.splitlines() if line]
+        sides = {row["side"]: row for row in rows}
+        held, full = sides["snapshot"], sides["view"]
+        snapshots[snapshot.view] = {
+            "snapshot_rows": int(held["rows"]),
+            "view_rows": int(full["rows"]),
+            "match": held["rows"] == full["rows"] and held["hash"] == full["hash"],
+        }
+    return {
+        "snapshots": snapshots,
+        "passed": all(result["match"] for result in snapshots.values()),
+    }
+
+
 def install(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, Any]:
     """Create the facts database, loaders, views, snapshots, and registry tables.
 
     ``enabled`` holds the configured harness keys (None: every registry harness);
-    unknown keys are rejected before any statement runs.
+    unknown keys are rejected before any statement runs. The whole store is first
+    built in a scratch database (``verify``), so SQL ClickHouse rejects never leaves
+    the live store half installed.
     """
+    verify(run, enabled)
     statements = install_statements(enabled)
     for statement in statements:
         run(statement)

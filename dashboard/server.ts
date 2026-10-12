@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { extname, join, relative } from "node:path";
 import {
   HARNESSES,
+  DETAIL_PATHS,
   VIEW_IDS,
   type Filters,
   type Harness,
@@ -24,8 +25,17 @@ import {
   type Query,
 } from "./server/clickhouse";
 import { enabledHarnesses, hiddenSignals } from "./src/harness-scope";
-import { contributions, pipelineData, routeCounts } from "./server/pipeline";
-import { SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
+import {
+  contributions,
+  pipelineData,
+  routeCounts,
+  sanitizationRows,
+  unroutedRows,
+  type RouteCounts,
+  type Unrouted,
+} from "./server/pipeline";
+import { interventionsData } from "./server/interventions";
+import { MIN_RATE_N, SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 
 const ADDRESS = "127.0.0.1";
 const PORT = 4173;
@@ -38,9 +48,16 @@ const HOOK_INBOX =
   join(homedir(), ".local/share/agent-introspection/hook-inbox");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
-/** Route counts feed coverage and contributor chips; loaders add rows once a minute. */
-const ROUTE_COUNT_TTL_MS = 60_000;
-const ROUTE_COUNT_ENTRIES = 32;
+/**
+ * Route counts (coverage, contributor chips) and Pipeline's whole-history checks
+ * are shared for 10 minutes, the cadence the fact snapshots rebuild on.
+ */
+const SHARED_TTL_MS = 600_000;
+type FactsAsOf = ViewResponse["asOf"];
+const FACTS_AS_OF = `SELECT toString(max(last_success_time)) AS as_of,
+    toUInt8(max(exception != '' OR now() > next_refresh_time + INTERVAL 2 MINUTE)) AS stale
+FROM system.view_refreshes WHERE database = 'introspection'`;
+const CACHE_ENTRIES = 32;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CSP =
   "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self'; img-src 'self'; script-src 'self'; style-src 'self';";
@@ -125,6 +142,32 @@ const params = (filters: Filters): Record<string, string> => ({
   end: filters.end.replace("T", " ").replace("Z", ""),
   harness: filters.harness,
 });
+
+/**
+ * Shares one pending result per key for `ttlMs`, so concurrent and repeated loads
+ * run a query once. A failed result is dropped at once, so the next load retries.
+ */
+function ttlCache<T>(
+  ttlMs: number,
+  maxEntries: number,
+  now: () => number,
+): (key: string, load: () => Promise<T>) => Promise<T> {
+  const entries = new Map<string, { at: number; value: Promise<T> }>();
+  return (key, load) => {
+    const at = now();
+    for (const [entry, { at: stored }] of entries)
+      if (at - stored > ttlMs) entries.delete(entry);
+    const hit = entries.get(key);
+    if (hit) return hit.value;
+    const value = load();
+    entries.set(key, { at, value });
+    value.catch(() => {
+      if (entries.get(key)?.value === value) entries.delete(key);
+    });
+    if (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
+    return value;
+  };
+}
 
 async function loadRegistry(query: Query): Promise<Registry> {
   const { signals, support, routes, strays, exclusions, harnesses } =
@@ -346,35 +389,48 @@ export function createApp(
     return cached.registry;
   };
 
-  const countCache = new Map<
-    string,
-    { at: number; counts: ReturnType<typeof routeCounts> }
-  >();
-  const cachedRouteCounts = (
-    reg: Registry,
-    bound: Record<string, string>,
-  ): ReturnType<typeof routeCounts> => {
-    const now = dependencies.now().getTime();
-    const key = `${bound.start}|${bound.end}`;
-    const hit = countCache.get(key);
-    if (hit && now - hit.at <= ROUTE_COUNT_TTL_MS) return hit.counts;
-    const counts = routeCounts(query, reg, bound);
-    countCache.set(key, { at: now, counts });
-    counts.catch(() => countCache.delete(key));
-    for (const [entry, value] of countCache)
-      if (
-        countCache.size > ROUTE_COUNT_ENTRIES ||
-        now - value.at > ROUTE_COUNT_TTL_MS
-      )
-        countCache.delete(entry);
-    return counts;
-  };
+  const clock = () => dependencies.now().getTime();
+  const routeCountCache = ttlCache<RouteCounts>(
+    SHARED_TTL_MS,
+    CACHE_ENTRIES,
+    clock,
+  );
+  const checkCache = ttlCache<Row[]>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
+  const unroutedCache = ttlCache<Unrouted>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
+  // Live presets move `end` on every load; keys keep only the 10-minute slot of each
+  // bound, so every load in one slot shares one count and one set of checks.
+  const tenMinutes = (bound: Record<string, string>) =>
+    `${bound.start!.slice(0, 15)}|${bound.end!.slice(0, 15)}`;
+
+  // "Data as of": the newest successful fact refresh. `stale` is the loader's own test
+  // (a refresh failed, or the next one is more than 2 minutes late), as on Pipeline.
+  const asOfCache = ttlCache<FactsAsOf>(SHARED_TTL_MS, 1, clock);
+  const factsAsOf = (): Promise<FactsAsOf> =>
+    asOfCache("facts", async () => {
+      const [row] = await query(FACTS_AS_OF);
+      const at = typeof row?.as_of === "string" ? row.as_of : "";
+      return at && !at.startsWith("1970")
+        ? { at: at.replace(" ", "T") + "Z", stale: Number(row?.stale) === 1 }
+        : null;
+    }).catch(() => null);
 
   async function view(id: ViewId, filters: Filters): Promise<ViewResponse> {
     const started = performance.now();
     const bound = params(filters);
     const reg = await registry();
-    const counts = await cachedRouteCounts(reg, bound);
+    const registryDone = performance.now();
+    // Started now, awaited after the view's own batch, so the two run together.
+    const countsMs = { value: 0 };
+    const counts = routeCountCache(tenMinutes(bound), () =>
+      routeCounts(query, reg, bound),
+    );
+    counts.then(
+      () => {
+        countsMs.value = performance.now() - registryDone;
+      },
+      () => undefined,
+    );
+    const asOf = factsAsOf();
     // Snapshots keep one extra day (facts.SNAPSHOT_DAYS + 1), so a "Last 90 days"
     // window whose start was computed a moment before this request still reads them.
     const withinSnapshots =
@@ -382,7 +438,13 @@ export function createApp(
       dependencies.now().getTime() - (SNAPSHOT_DAYS + 1) * 86_400_000;
     let data: Record<string, Row[]>;
     if (id === "pipeline") {
-      data = await pipelineData(query, reg, bound, counts, withinSnapshots);
+      data = await pipelineData(query, reg, bound, withinSnapshots, {
+        counts,
+        sanitization: checkCache("sanitization", () => sanitizationRows(query)),
+        unrouted: unroutedCache(`unrouted|${tenMinutes(bound)}`, () =>
+          unroutedRows(query, reg, bound),
+        ),
+      });
       data.project_sync = (data.project_sync ?? []).map((row) => ({
         ...row,
         inbox_backlog: dependencies.inbox(),
@@ -394,15 +456,25 @@ export function createApp(
         withinSnapshots ? queries : live(queries),
         bound,
       );
-      if (id === "interventions") Object.assign(data, dependencies.workflow());
+      if (id === "interventions")
+        data = interventionsData(data, dependencies.workflow(), filters);
     }
+    const sqlDone = performance.now();
+    const contributed = contributions(reg, await counts, id);
     return {
       view: id,
       filters,
       queriedAt: dependencies.now().toISOString(),
       elapsedMs: Math.round(performance.now() - started),
+      timings: {
+        registryMs: Math.round(registryDone - started),
+        routeCountsMs: Math.round(countsMs.value),
+        sqlMs: Math.round(sqlDone - registryDone),
+      },
+      asOf: await asOf,
       data,
-      contributions: contributions(reg, counts, id),
+      thresholds: { minRateN: MIN_RATE_N },
+      contributions: contributed,
     };
   }
 
@@ -458,7 +530,8 @@ export function createApp(
     const assetPath =
       route === "" ||
       route === "session" ||
-      (VIEW_IDS as readonly string[]).includes(route)
+      (VIEW_IDS as readonly string[]).includes(route) ||
+      (DETAIL_PATHS as readonly string[]).includes(route)
         ? "/index.html"
         : url.pathname;
     const asset = dependencies.assets.get(assetPath);

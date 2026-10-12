@@ -47,6 +47,7 @@ SELECT
     duration_nano AS duration_ns,
     has_error,
     status_code_string AS status_code,
+    substringUTF8(
         replaceRegexpAll(
             replaceRegexpAll(
                 replaceRegexpAll(
@@ -88,7 +89,9 @@ SELECT
             '[0-9a-f]{8,}|\\d+',
             'N'
         ) AS status_normalised,
-    substringUTF8(status_normalised, 1, 80) AS status_message,
+        1,
+        80
+    ) AS status_message,
     -- omp renamed its `pi.gen_ai.*` attributes to `omp.gen_ai.*` on 2026-09-29; both
     -- are stored under the original `pi.gen_ai.*` names so every view reads one key.
     -- Tool intent text is dropped under any prefix.

@@ -24,28 +24,32 @@ nothing until the user opts in to prompt export by setting
 does this only in its user-confirmed prompt-export step). `facts sync`
 labels the prompt with Jev; the facts store never keeps its text.
 
-omp does not load this extension from ambient discovery: list it under `extensions:`
-in `~/.omp/agent/config.yml`, then restart omp sessions.
+omp loads it as a linked plugin: `package.json` declares `activity.ts` under
+`omp.extensions`, and `omp plugin link` records it in omp's plugin directory
+(`~/.omp/plugins`). Nothing goes in `~/.omp/agent/extensions/` or `config.yml`, so a
+`~/.omp` shared across machines never names an extension that a machine lacks.
 
-Install the shim and the extension, link it, and register it. Diff and back up any
-existing destination (including the link) before replacing it. The subshell stops at
-the first failed backup or install without closing your shell:
+Install the shim and the plugin package, then link it. Diff and back up any existing
+destination before replacing it. The subshell stops at the first failed backup or
+install without closing your shell:
 
 ```sh
 R=~/.local/lib/agent-introspection/activity-hooks-v1
-L=~/.omp/agent/extensions/agent-introspection-activity.ts
 T=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$R/omp"
 (
-  if [ -e "$R/activity-shim.sh" ]; then diff -u "$R/activity-shim.sh" ../../activity-shim.sh; cp -p "$R/activity-shim.sh" "$R/activity-shim.sh.bak-$T" || exit 1; fi
-  if [ -e "$R/omp/activity.ts" ]; then diff -u "$R/omp/activity.ts" activity.ts; cp -p "$R/omp/activity.ts" "$R/omp/activity.ts.bak-$T" || exit 1; fi
-  if [ -e "$L" ] || [ -L "$L" ]; then ls -l "$L"; mv "$L" "$L.bak-$T" || exit 1; fi
-  install -m 0755 ../../activity-shim.sh "$R/activity-shim.sh" || exit 1
-  install -m 0644 activity.ts "$R/omp/activity.ts" || exit 1
-  ln -sfn "$R/omp/activity.ts" "$L"
+  for pair in "../../activity-shim.sh:$R/activity-shim.sh:0755" "activity.ts:$R/omp/activity.ts:0644" "package.json:$R/omp/package.json:0644"; do
+    src=${pair%%:*}; rest=${pair#*:}; dst=${rest%%:*}; mode=${rest##*:}
+    if [ -e "$dst" ]; then diff -u "$dst" "$src"; cp -p "$dst" "$dst.bak-$T" || exit 1; fi
+    install -m "$mode" "$src" "$dst" || exit 1
+  done
+  omp plugin link "$R/omp"
 )
-# then add ~/.omp/agent/extensions/agent-introspection-activity.ts under `extensions:`
-# in ~/.omp/agent/config.yml and restart omp sessions
+omp plugin list   # shows agent-introspection-activity
 ```
 
-Remove the link and the `config.yml` entry to uninstall.
+Restart omp sessions. Updating the installed files needs no relink. Earlier installs
+linked `~/.omp/agent/extensions/agent-introspection-activity.ts` and listed it under
+`extensions:` in `~/.omp/agent/config.yml`; remove both, since a synced `config.yml`
+entry makes omp report a load failure on every machine without the link. Uninstall
+with `omp plugin uninstall agent-introspection-activity`.

@@ -37,6 +37,11 @@ Rules:
 2. Each L2 block sits next to the L1 element it explains, not in a long scroll away from it.
 3. An L3 page opens on its own answer too. Zooming in resets to zoomed out.
 4. Nothing that isn't L1 content is open by default.
+5. **Exceptions first.** A table whose rows are mostly fine shows a server-computed summary and only the
+   exceptions at L1; the full table is a disclosure in place (L2).
+6. **An L3 page keeps its parent's context.** It lives at `/<view>/<detail>`, keeps the parent's navigation
+   item, filters and data, and the zoomed-out numbers it deepens stay on the parent, so nothing exists only
+   one level down except the full table.
 
 ### P1. Every number explains itself
 
@@ -47,6 +52,7 @@ where_:
 2. **Basis:** state any adjustment (per item or total, gross or net, sampled or complete) once per page, and
    label any exception.
 3. **Period:** "last 30 days", "this run", "since the first trace".
+   Every KPI's detail line states it in a few words ("last day", "all time", "current").
 4. **Freshness:** an as-of time for synced or external data. Stale or missing inputs are flagged next to the
    number they affect.
 5. **Source:** the dataset, query or function behind it, at L2.

@@ -1,30 +1,27 @@
-import type { MouseEvent } from "react";
 import type {
   Filters,
   Harness,
   Registry,
   SessionResponse,
-  ViewId,
+  ViewPath,
   ViewResponse,
 } from "./contracts";
-import { HarnessSelector, ViewContext } from "./components";
+import {
+  HarnessSelector,
+  InfoPopover,
+  ViewContext,
+  isPlainClick,
+} from "./components";
 import { PRESETS, fromInput, presetFor, toInput } from "./app-state";
 import { VIEWS, type Location } from "./routes";
 import Session from "./views/Session";
 
 export type Navigate = (path: string, next: Filters) => void;
 
-const isPlainClick = (event: MouseEvent) =>
-  event.button === 0 &&
-  !event.metaKey &&
-  !event.ctrlKey &&
-  !event.shiftKey &&
-  !event.altKey;
-
 export function ViewNav(props: {
   location: Location;
   filters: Filters;
-  viewHref: (id: ViewId) => string;
+  viewHref: (id: ViewPath) => string;
   navigate: Navigate;
 }) {
   const { location, filters, viewHref, navigate } = props;
@@ -65,14 +62,33 @@ export function Sidebar({ nav }: { nav: React.ReactNode }) {
 
 export function Topbar(props: {
   title: string;
+  /** The parent view of a detail page, shown as a link in the breadcrumb. */
+  parent?: { title: string; href: string; onOpen: () => void };
   nav: React.ReactNode;
   onRefresh: () => void;
 }) {
+  const { parent } = props;
   return (
     <>
       <header className="topbar">
         <div className="crumb">
-          Views / <b>{props.title}</b>
+          Views /{" "}
+          {parent && (
+            <>
+              <a
+                href={parent.href}
+                onClick={(event) => {
+                  if (!isPlainClick(event)) return;
+                  event.preventDefault();
+                  parent.onOpen();
+                }}
+              >
+                {parent.title}
+              </a>{" "}
+              /{" "}
+            </>
+          )}
+          <b>{props.title}</b>
         </div>
         <button className="refresh" onClick={props.onRefresh}>
           ↻ Refresh
@@ -86,7 +102,8 @@ export function Topbar(props: {
 }
 
 const headingQuestion = (location: Location) => {
-  if (location.kind === "view") return location.view.question;
+  if (location.kind === "view")
+    return location.detail?.question ?? location.view.question;
   if (location.kind === "session")
     return "Tasks, usage, tool calls, and user signals for one session.";
   return `${window.location.pathname} is not a view.`;
@@ -107,29 +124,60 @@ const liveText = (
   return "";
 };
 
+/** Where the query time went, and how fresh the facts are; both come from the server. */
+function ViewDetail({ response }: { response: ViewResponse }) {
+  const { timings, asOf } = response;
+  return (
+    <>
+      <span className="timings">
+        {" "}
+        (registry {timings.registryMs} · route counts {timings.routeCountsMs} ·
+        SQL {timings.sqlMs} ms)
+      </span>
+      {asOf && (
+        <div className={asOf.stale ? "as-of-stale" : undefined}>
+          Data as of {asOf.at.slice(11, 16)} UTC
+          {asOf.stale ? " · older than the refresh schedule" : ""}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function PageHead(props: {
   location: Location;
   title: string;
   heading: React.RefObject<HTMLHeadingElement | null>;
   loading: boolean;
+  elapsedSeconds: number;
   failure: string;
   viewResponse: ViewResponse | null;
   sessionResponse: SessionResponse | null;
 }) {
-  const { location, title, heading, loading, failure } = props;
+  const { location, title, heading, loading, failure, viewResponse } = props;
   return (
     <div className="head">
       <div>
         <div className="eyebrow">
-          {location.kind === "view" ? location.view.number : "Drill-down"}
+          {location.kind === "view" && !location.detail
+            ? location.view.number
+            : "Drill-down"}
         </div>
         <h1 ref={heading} tabIndex={-1}>
           {title}
         </h1>
         <p>{headingQuestion(location)}</p>
       </div>
-      <div className="live" aria-live="polite">
-        {liveText(loading, failure, props.viewResponse, props.sessionResponse)}
+      <div className="live">
+        <span aria-live="polite">
+          {liveText(loading, failure, viewResponse, props.sessionResponse)}
+        </span>
+        {loading && props.elapsedSeconds > 0 && (
+          <span aria-hidden="true"> {props.elapsedSeconds} s</span>
+        )}
+        {!loading && !failure && viewResponse && (
+          <ViewDetail response={viewResponse} />
+        )}
       </div>
     </div>
   );
@@ -150,6 +198,7 @@ function CustomRange(props: {
           change({
             ...filters,
             start: fromInput(event.target.value, filters.start),
+            range: undefined,
           })
         }
       />
@@ -161,6 +210,7 @@ function CustomRange(props: {
           change({
             ...filters,
             end: fromInput(event.target.value, filters.end),
+            range: undefined,
           })
         }
       />
@@ -198,27 +248,42 @@ export function FilterBar(props: {
           <CustomRange filters={filters} change={change} />
         )}
       </div>
-      <HarnessSelector
-        value={filters.harness}
-        harnesses={harnesses}
-        onChange={(harness) => change({ ...filters, harness })}
-      />
-      <p className="scope">
-        {filters.harness === ""
-          ? "All = the union of each enabled harness's rows for the same signal"
-          : "One harness: signals not applicable to it say so, never zero"}
-      </p>
+      <div className="filter-group">
+        <HarnessSelector
+          value={filters.harness}
+          harnesses={harnesses}
+          onChange={(harness) => change({ ...filters, harness })}
+        />
+        <InfoPopover label="What the harness choice covers">
+          <p className="scope">
+            {filters.harness === ""
+              ? "All = the union of each enabled harness's rows for the same signal"
+              : "One harness: signals not applicable to it say so, never zero"}
+          </p>
+        </InfoPopover>
+      </div>
     </div>
   );
 }
 
-export function Notices(props: { location: Location; failure: string }) {
+export function Notices(props: {
+  location: Location;
+  failure: string;
+  onRetry: () => void;
+}) {
   return (
     <>
       {props.failure && (
         <div className="state-notice" role="alert">
-          <b>Query failed — outcome unknown</b>
-          <span>{props.failure}</span>
+          <div className="state-notice-row">
+            <div>
+              <b>Query failed — outcome unknown</b>
+              <span>{props.failure}</span>
+            </div>
+            <button className="refresh" onClick={props.onRetry}>
+              Retry
+            </button>
+          </div>
         </div>
       )}
       {props.location.kind === "unknown" && (
@@ -231,15 +296,49 @@ export function Notices(props: { location: Location; failure: string }) {
   );
 }
 
+/** Said once above the bands when every dataset of the view is empty for the range. */
+export function RangeNotice({ response }: { response: ViewResponse | null }) {
+  if (
+    !response ||
+    !Object.values(response.data).every((rows) => rows.length === 0)
+  )
+    return null;
+  return (
+    <p className="range-notice">
+      No data for this view in the selected range or harness.
+    </p>
+  );
+}
+
+/** Page-shaped placeholder: the header stays, then a KPI strip, a chart band and a table band. */
+export function LoadingSkeleton() {
+  return (
+    <div className="skeleton" role="status">
+      <p className="skeleton-label">Loading the view…</p>
+      <div className="skeleton-kpis">
+        <i />
+        <i />
+        <i />
+        <i />
+      </div>
+      <i className="skeleton-chart" />
+      <i className="skeleton-table" />
+    </div>
+  );
+}
+
 export function PageBody(props: {
   location: Location;
   registry: Registry | null;
   filters: Filters;
   sessionHref: (harness: string, session: string) => string;
+  viewHref: (id: ViewPath) => string;
+  navigate: Navigate;
   viewResponse: ViewResponse | null;
   sessionResponse: SessionResponse | null;
 }) {
   const { location, registry, filters, sessionHref } = props;
+  const { viewHref, navigate } = props;
   const { viewResponse, sessionResponse } = props;
   if (!registry) return null;
   if (location.kind === "view" && viewResponse)
@@ -250,15 +349,30 @@ export function PageBody(props: {
           contributions: viewResponse.contributions,
           filters,
           sessionHref,
+          minRateN: viewResponse.thresholds.minRateN,
+          viewHref,
+          navigate,
         }}
       >
-        <location.view.component data={viewResponse.data} />
+        {location.detail ? (
+          <location.detail.component data={viewResponse.data} />
+        ) : (
+          <location.view.component data={viewResponse.data} />
+        )}
       </ViewContext.Provider>
     );
   if (location.kind === "session" && sessionResponse)
     return (
       <ViewContext.Provider
-        value={{ registry, contributions: {}, filters, sessionHref }}
+        value={{
+          registry,
+          contributions: {},
+          filters,
+          sessionHref,
+          minRateN: 0,
+          viewHref,
+          navigate,
+        }}
       >
         <Session response={sessionResponse} />
       </ViewContext.Provider>

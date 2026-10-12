@@ -1,6 +1,15 @@
 import { DailyChart, DataTable, TableView, type Series } from "../charts";
 import type { Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, SessionLink } from "../components";
+import {
+  HarnessName,
+  Kpi,
+  Panel,
+  RateValue,
+  rateSeriesColumns,
+  Section,
+  SessionLink,
+} from "../components";
+import { OTHER_TOKEN } from "../tokens";
 import {
   EFFORT_COLOR,
   effortRank,
@@ -9,14 +18,7 @@ import {
   fmtSeconds,
   maybe,
   num,
-  pivotDaily,
-  ratio,
-  sumRows,
 } from "../format";
-
-const byEffort = (a: Row, b: Row) =>
-  String(a.harness).localeCompare(String(b.harness)) ||
-  effortRank(String(a.effort)) - effortRank(String(b.effort));
 
 const effortSeries = (rows: Row[]): Series[] =>
   [...new Set(rows.map((row) => String(row.effort)))]
@@ -24,71 +26,90 @@ const effortSeries = (rows: Row[]): Series[] =>
     .map((effort) => ({
       key: effort,
       label: effort,
-      color: EFFORT_COLOR[effort] ?? "#6b7280",
+      color: EFFORT_COLOR[effort] ?? OTHER_TOKEN,
     }));
 
-const pct = (row: Row, key: string) =>
-  fmtPct(ratio(num(row[`${key}_n`]), num(row[`${key}_den`])));
+/** Server rate beside its sample size; the rate is a column (`<key>_rate`, n = `<key>_den`). */
+const pct = (row: Row, key: string) => (
+  <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
+);
+
+const fixed1 = (value: unknown) => {
+  const figure = maybe(value);
+  return figure === null ? "—" : figure.toFixed(1);
+};
+
+/** Long daily rows → one row per day, one column per series (reshape only: values are the server's). */
+const byDay = (rows: Row[], cells: (row: Row) => Row): Row[] => {
+  const days = new Map<string, Row>();
+  for (const row of rows) {
+    const day = String(row.day);
+    days.set(day, { ...(days.get(day) ?? { day }), ...cells(row) });
+  }
+  return [...days.values()].sort((a, b) =>
+    String(a.day).localeCompare(String(b.day)),
+  );
+};
+
+function dailyViews(data: Record<string, Row[]>) {
+  const reasoning = data.daily_reasoning ?? [];
+  const dailyTasks = data.daily_tasks ?? [];
+  return {
+    reasoningDaily: byDay(reasoning, (row) => ({
+      [String(row.effort)]: row.reasoning,
+    })),
+    mixDaily: byDay(dailyTasks, (row) => ({
+      [String(row.effort)]: row.tasks,
+    })),
+    cleanDaily: byDay(dailyTasks, (row) => ({
+      [String(row.effort)]: maybe(row.clean_rate),
+      [`${String(row.effort)}_n`]: row.clean_den,
+    })),
+    durationDaily: byDay(dailyTasks, (row) => ({
+      [String(row.effort)]: maybe(row.p50_duration),
+    })),
+    taskSeries: effortSeries(dailyTasks),
+    spendSeries: effortSeries(reasoning),
+  };
+}
 
 export default function Effort({ data }: { data: Record<string, Row[]> }) {
   const usage = data.usage ?? [];
   const outcomes = data.outcomes ?? [];
-  const spend = sumRows(usage, ["reasoning", "output", "calls"]);
-  const tasks = sumRows(outcomes, ["tasks", "heavy", "clean_n", "clean_den"]);
-  const reasoningDaily = pivotDaily(
-    data.daily_reasoning ?? [],
-    (row) => String(row.effort),
-    ["reasoning"],
-    (sums) => sums.reasoning!,
-  );
-  const dailyTasks = data.daily_tasks ?? [];
-  const mixDaily = pivotDaily(
-    dailyTasks,
-    (row) => String(row.effort),
-    ["tasks"],
-    (sums) => sums.tasks!,
-  );
-  const cleanDaily = pivotDaily(
-    dailyTasks,
-    (row) => String(row.effort),
-    ["clean_n", "clean_den"],
-    (sums) => ratio(sums.clean_n!, sums.clean_den!),
-  );
-  const durationDaily = dailyTasks.reduce<Record<string, Row>>((days, row) => {
-    const day = String(row.day);
-    days[day] = {
-      ...(days[day] ?? { day }),
-      [String(row.effort)]: maybe(row.p50_duration),
-    };
-    return days;
-  }, {});
-  const taskSeries = effortSeries(dailyTasks);
-  const spendSeries = effortSeries(data.daily_reasoning ?? []);
-  const totalReasoning = spend.reasoning!;
+  const spend: Row = data.spend?.[0] ?? {};
+  const summary: Row = data.summary?.[0] ?? {};
+  const {
+    reasoningDaily,
+    mixDaily,
+    cleanDaily,
+    durationDaily,
+    taskSeries,
+    spendSeries,
+  } = dailyViews(data);
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Reasoning tokens"
-          value={fmtCount(totalReasoning)}
-          detail={`across ${fmtCount(spend.calls!)} model calls (Claude Code: turns)`}
+          value={fmtCount(num(spend.reasoning))}
+          detail={`across ${fmtCount(num(spend.calls))} model calls (Claude Code: turns)`}
           signals={["effort.reasoning_tokens"]}
         />
         <Kpi
           title="Reasoning share of output"
-          value={fmtPct(ratio(totalReasoning, spend.output!))}
+          value={fmtPct(maybe(spend.reasoning_share_rate))}
           detail="token-weighted over producers that emit reasoning"
           signals={["effort.reasoning_share"]}
         />
         <Kpi
           title="Tasks"
-          value={fmtCount(tasks.tasks!)}
-          detail={`${fmtPct(ratio(tasks.clean_n!, tasks.clean_den!))} clean completion`}
+          value={fmtCount(num(summary.tasks))}
+          detail={`${fmtPct(maybe(summary.clean_rate))} clean completion · n=${fmtCount(num(summary.clean_den))}`}
           signals={["task.count", "friction.clean_completion"]}
         />
         <Kpi
           title="Heavy-effort task share"
-          value={fmtPct(ratio(tasks.heavy!, tasks.tasks!))}
+          value={fmtPct(maybe(summary.heavy_rate))}
           detail="high or xhigh requested"
           signals={["effort.heavy_share", "effort.level"]}
         />
@@ -155,11 +176,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...taskSeries.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} %`,
-                numeric: true,
-              })),
+              ...rateSeriesColumns(taskSeries),
             ]}
             rows={cleanDaily}
           />
@@ -169,9 +186,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
           signals={["task.duration", "effort.level"]}
         >
           <DailyChart
-            rows={Object.values(durationDaily).sort((a, b) =>
-              String(a.day).localeCompare(String(b.day)),
-            )}
+            rows={durationDaily}
             series={taskSeries}
             kind="line"
             format={fmtSeconds}
@@ -185,14 +200,14 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
               })),
             ]}
-            rows={Object.values(durationDaily)}
+            rows={durationDaily}
           />
         </Panel>
       </Section>
       <Section title="Does heavier effort earn its cost?">
         <Panel
           title="Task outcomes by reasoning effort"
-          subtitle="Correlational: harder tasks may attract higher effort. Compare within one harness and model."
+          subtitle="Correlational: harder tasks may attract higher effort. Compare within one harness and model. Reasoning share here is over the output of tasks that report reasoning, so it can differ from the spend table."
           signals={[
             "task.count",
             "friction.clean_completion",
@@ -202,6 +217,8 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
             "task.duration",
             "task.model_steps",
             "task.reasoning_tokens",
+            "task.delegations",
+            "effort.reasoning_share",
           ]}
           span={12}
         >
@@ -254,31 +271,28 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 key: "steps",
                 label: "Steps / task",
                 numeric: true,
-                render: (row) =>
-                  (num(row.steps) / Math.max(1, num(row.tasks))).toFixed(1),
+                render: (row) => fixed1(row.steps_per_task),
+              },
+              {
+                key: "delegations",
+                label: "Delegations / task",
+                numeric: true,
+                render: (row) => fixed1(row.delegations_per_task),
               },
               {
                 key: "reasoning",
                 label: "Reasoning / task",
                 numeric: true,
-                render: (row) =>
-                  num(row.reasoning_den) > 0
-                    ? fmtCount(num(row.reasoning) / num(row.reasoning_den))
-                    : "—",
+                render: (row) => fmtCount(maybe(row.reasoning_per_task)),
               },
               {
                 key: "share",
                 label: "Reasoning share",
                 numeric: true,
-                render: (row) =>
-                  num(row.reasoning_den) > 0
-                    ? fmtPct(
-                        ratio(num(row.reasoning), num(row.reasoning_output)),
-                      )
-                    : "—",
+                render: (row) => fmtPct(maybe(row.reasoning_share_rate)),
               },
             ]}
-            rows={[...outcomes].sort(byEffort)}
+            rows={outcomes}
           />
         </Panel>
         <Panel
@@ -311,25 +325,22 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 key: "of_all",
                 label: "Of all reasoning",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.reasoning), totalReasoning)),
+                render: (row) => fmtPct(maybe(row.of_all_rate)),
               },
               {
                 key: "per_call",
                 label: "Per call",
                 numeric: true,
-                render: (row) =>
-                  fmtCount(num(row.reasoning) / Math.max(1, num(row.calls))),
+                render: (row) => fmtCount(num(row.per_call)),
               },
               {
                 key: "share",
                 label: "Share of output",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.reasoning), num(row.output))),
+                render: (row) => fmtPct(maybe(row.reasoning_share_rate)),
               },
             ]}
-            rows={[...usage].sort(byEffort)}
+            rows={usage}
           />
         </Panel>
         <Panel
@@ -375,13 +386,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 key: "reasoning",
                 label: "Reasoning / step",
                 numeric: true,
-                render: (row) =>
-                  num(row.reasoning_den) > 0
-                    ? fmtCount(
-                        num(row.reasoning) /
-                          Math.max(1, num(row.avg_steps) * num(row.tasks)),
-                      )
-                    : "—",
+                render: (row) => fmtCount(maybe(row.reasoning_per_step)),
               },
             ]}
             rows={data.model_effort ?? []}

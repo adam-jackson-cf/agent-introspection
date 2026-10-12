@@ -7,7 +7,9 @@ import {
   pipelineData,
   recombine,
   routeCountQueries,
+  sanitizationRows,
   unroutedQuery,
+  unroutedTotalsQuery,
 } from "./pipeline";
 import {
   counting,
@@ -286,7 +288,11 @@ describe("pipeline checks", () => {
       return [];
     };
     const counts = counting([], []);
-    await pipelineData(query, registry(), {}, counts);
+    await pipelineData(query, registry(), {}, true, {
+      counts: Promise.resolve(counts),
+      sanitization: sanitizationRows(query),
+      unrouted: Promise.resolve({ list: [], totals: [] }),
+    });
     const sql = sent.join("\n");
     expect(sql).toContain("FROM introspection.hook_events");
     for (const key of [
@@ -301,7 +307,134 @@ describe("pipeline checks", () => {
     ])
       expect(sql).toContain(`'${key}'`);
     expect(sql).toContain(
-      "SELECT ts, harness, 'hooks' FROM introspection.hook_rows WHERE",
+      "SELECT ts, harness, 'hooks' FROM introspection.hook_rows",
     );
+  });
+});
+
+describe("pipeline calculations come from the server (Phase 2)", () => {
+  const run = async (
+    params: Record<string, string>,
+    list: Row[] = [],
+    totals: Row[] = [],
+  ) => {
+    const sent: string[] = [];
+    const query: Query = async (sql) => {
+      sent.push(sql);
+      return [];
+    };
+    const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
+    const data = await pipelineData(query, registry(), params, true, {
+      counts: Promise.resolve(counts),
+      sanitization: Promise.resolve([]),
+      unrouted: Promise.resolve({ list, totals }),
+    });
+    return { data, sql: sent.join("\n;\n") };
+  };
+
+  test("coverage summary counts cells and unexplained cells after the harness filter", async () => {
+    const all = await run({});
+    const grid = all.data.coverage!;
+    const unexplained = grid.filter((row) =>
+      [
+        "possible break",
+        "stray (unexplained)",
+        "not in use, rows present",
+      ].includes(String(row.state)),
+    ).length;
+    expect(all.data.coverage_summary).toEqual([
+      { cells: grid.length, unexplained },
+    ]);
+    expect(unexplained).toBeGreaterThan(0);
+    const one = await run({ harness: "claude-code" });
+    expect(
+      one.data.coverage!.every((row) => row.harness === "claude-code"),
+    ).toBe(true);
+    expect(one.data.coverage_summary).toEqual([
+      {
+        cells: one.data.coverage!.length,
+        unexplained: one.data.coverage!.filter(
+          (row) => row.state === "stray (unexplained)",
+        ).length,
+      },
+    ]);
+  });
+
+  test("the selected harness filters coverage, strays and unrouted on the server", async () => {
+    const unrouted: Row[] = [
+      { harness: "claude-code", source: "logs", name: "a", n: 2 },
+      { harness: "oh-my-pi", source: "spans", name: "b", n: 1 },
+      { harness: "", source: "hooks", name: "c", n: 4 },
+    ];
+    expect((await run({}, unrouted)).data.unrouted).toHaveLength(3);
+    expect(
+      (await run({ harness: "oh-my-pi" }, unrouted)).data.unrouted,
+    ).toEqual([unrouted[1]!]);
+    const strays = (await run({ harness: "oh-my-pi" })).data.strays!;
+    expect(strays.every((row) => row.harness === "oh-my-pi")).toBe(true);
+  });
+
+  test("coverage states and per-view rows partition the filtered grid, and the unrouted totals are exact and filtered", async () => {
+    const totals: Row[] = [
+      { harness: "claude-code", names: 3, rows: 240_000 },
+      { harness: "oh-my-pi", names: 1, rows: 7 },
+    ];
+    const { data } = await run({ harness: "claude-code" }, [], totals);
+    const grid = data.coverage!;
+    const states = data.coverage_states!;
+    expect(states.map((row) => row.state)[0]).toBe("healthy");
+    expect(states).toHaveLength(9);
+    expect(states.reduce((sum, row) => sum + Number(row.cells), 0)).toBe(
+      grid.length,
+    );
+    const byView = data.coverage_by_view!;
+    expect(byView.reduce((sum, row) => sum + Number(row.cells), 0)).toBe(
+      grid.length,
+    );
+    expect(data.unrouted_summary).toEqual([{ names: 3, rows: 240_000 }]);
+    expect((await run({}, [], totals)).data.unrouted_summary).toEqual([
+      { names: 4, rows: 240_007 },
+    ]);
+  });
+
+  test("the unrouted totals query has no limit and the list stays capped", () => {
+    expect(unroutedTotalsQuery(registry())).not.toContain("LIMIT");
+    expect(unroutedQuery(registry())).toContain("LIMIT 40");
+  });
+
+  test("SQL carries the KPI totals, rates, daily sums and harness filter", async () => {
+    const { sql } = await run({ harness: "oh-my-pi" });
+    // Loaders KPI: total, failing, ok = total - failing.
+    expect(sql).toContain("total - failing AS ok");
+    // Freshness KPI: missing sources and largest lag, a NULL lag counting as 0.
+    expect(sql).toContain("countIf(facts_missing = 1) AS missing_facts");
+    expect(sql).toContain("if(count() > 0, max(ifNull(lag_seconds, 0)), NULL)");
+    // Parity KPI and subtitle window label.
+    expect(sql).toContain("countIf(ok = 1) AS matching");
+    expect(sql).toContain("AS window_label");
+    // Project share is an SQL rate over the attributed and tasks columns.
+    expect(sql).toContain(
+      "if(tasks > 0, 100 * attributed / tasks, NULL) AS share_rate",
+    );
+    // Daily rows are summed over sources in SQL.
+    expect(sql).toContain("count() AS n FROM (");
+    expect(sql).toContain("GROUP BY day, harness ORDER BY day, harness");
+    // The harness filter is in the freshness, parity and project queries.
+    expect(
+      sql.split("{harness:String} = '' OR harness = {harness:String}").length,
+    ).toBeGreaterThan(4);
+    expect(sql).toContain("OR t.harness = {harness:String}");
+  });
+
+  test("sanitization totals violations per table with an All row", async () => {
+    const sent: string[] = [];
+    await sanitizationRows(async (sql) => {
+      sent.push(sql);
+      return [];
+    });
+    expect(sent[0]).toContain(
+      "forbidden_keys + long_status + home_paths AS violations",
+    );
+    expect(sent[0]).toContain("GROUP BY ROLLUP(source)");
   });
 });

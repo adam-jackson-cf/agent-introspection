@@ -512,7 +512,7 @@ view = "effort"
 title = "Reasoning share of output"
 question = "What share of output tokens was reasoning?"
 unit = "%"
-formula = "100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division."
+formula = "100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division. The KPI and the spend table use the same usage rows (Claude Code: tasks); the outcomes table divides by the output of task-attributed rows that report reasoning, so it can differ."
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -596,7 +596,7 @@ view = "effort"
 title = "Delegations per task"
 question = "How many subagent runs does a task start?"
 unit = "runs"
-formula = "Average delegations per task."
+formula = "Σ delegations / tasks, per harness and effort (Effort page outcomes table)."
 [signal.support]
 codex = { route = "codex.agent_spawn", alignment = "differs", note = "Subagent spawns (`codex.agent_communication`) sent from the turn's thread during the turn; the subagent threads still also appear as separate tasks." }
 oh-my-pi = { route = "omp.subagent", alignment = "aligned", note = "`invoke_agent <agent>` spans in the trace, advisors excluded." }
@@ -660,7 +660,7 @@ view = "tools"
 title = "Repeated attempts"
 question = "Which operations run with identical arguments more than once in a task?"
 unit = "tasks"
-formula = "Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected."
+formula = "Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected. Rate denominator: tasks with ≥1 such comparable call (hashed arguments, not waiting or polling)."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.arguments_hash` over the raw arguments." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Hash of the canonical tool arguments from the `tool_call` hook, joined by tool call ID. From the activity hooks' install date; earlier rows have no value." }
@@ -752,7 +752,7 @@ view = "friction"
 title = "Recovery after failure"
 question = "After a failed tool call, does the same operation later succeed in the task?"
 unit = "%"
-formula = "Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks."
+formula = "Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks. Tasks are those that started in the window, as in the other Friction measures."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Operation = tool + command head + subcommand." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "differs", note = "Operation = tool + command head + subcommand from the `tool_call` hook; tool name only before the hooks." }
@@ -944,7 +944,7 @@ view = "recurrence"
 title = "Recurring targets"
 question = "Which files recur across tasks?"
 unit = "tasks"
-formula = "Targets touched in ≥2 tasks, with task, day, and failure counts."
+formula = "Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a project or path under a temporary directory) are excluded."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Targets from the `tool_call` hook, home as ~. From the activity hooks' install date; earlier rows have no value." }
@@ -980,7 +980,7 @@ view = "recurrence"
 title = "Project concentration"
 question = "Is a repeated failure localized to one project?"
 unit = "%"
-formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store."
+formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store. Evaluation workspaces (a project or path under a temporary directory) are excluded."
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
@@ -1008,7 +1008,7 @@ view = "intent"
 title = "Task type"
 question = "What kind of work do users ask for?"
 unit = "tasks"
-formula = "Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue."
+formula = "Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue. Labelled tasks with no type show as untyped, so shares of labelled tasks sum to 100%."
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "Prompt event sent by the omp activity extension." }
@@ -1020,7 +1020,7 @@ view = "intent"
 title = "Corrected by the next prompt"
 question = "How often does the user's next prompt correct the task's work?"
 unit = "%"
-formula = "100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy."
+formula = "100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) with a named correction kind (not none) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy."
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have no next prompt." }
@@ -1059,7 +1059,7 @@ view = "intent"
 title = "Effort payoff by task type"
 question = "For which kinds of work does heavier reasoning effort reduce corrections?"
 unit = "%"
-formula = "Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks; compare efforts within one task type, never across harnesses."
+formula = "Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks, headless Codex exec runs excluded from both; compare efforts within one task type, never across harnesses."
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 codex_exec = { route = "codex.user_prompt", alignment = "differs", note = "Task type only; corrections and clean completion are not applicable to headless runs." }

@@ -1,9 +1,13 @@
 import {
+  Children,
   Component,
   createContext,
+  Fragment,
+  isValidElement,
   useContext,
   useId,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -13,15 +17,21 @@ import {
   type Harness,
   type Registry,
   type SignalSupport,
+  type ViewPath,
 } from "./contracts";
-import { fmtCount, HARNESS_COLOR, HARNESS_LABEL } from "./format";
+import { fmtCount, fmtPct, HARNESS_COLOR, HARNESS_LABEL, num } from "./format";
+import { PanelContext, type Column, type Series } from "./charts";
 import { enabledHarnesses, isHidden } from "./harness-scope";
 
 export type ViewContextValue = {
   registry: Registry;
+  /** Server-owned threshold: rates over fewer samples are muted. */
+  minRateN: number;
   contributions: Contributions;
   filters: Filters;
   sessionHref: (harness: string, session: string) => string;
+  viewHref: (id: ViewPath) => string;
+  navigate: (path: string, next: Filters) => void;
 };
 export const ViewContext = createContext<ViewContextValue | null>(null);
 export const useView = (): ViewContextValue => {
@@ -113,44 +123,68 @@ const chipTitle = (harness: Harness, chip: Contribution) => {
   return `${label}: ${fmtCount(chip.rows)} rows on its route${since}`;
 };
 
-/** Which harnesses contributed rows to the panel's signals in the window. */
-export function Contributors({ signals }: { signals: string[] }) {
-  const context = useView();
-  const harnessSignals = signals.filter((signal) =>
+type Chips = (readonly [Harness, Contribution])[];
+
+/** One chip per selected harness; none when no signal is harness-scoped. */
+const panelChips = (context: ViewContextValue, signals: string[]): Chips => {
+  const scoped = signals.filter((signal) =>
     context.registry.signals.some(
       (entry) => entry.signal === signal && entry.scope === "harness",
     ),
   );
-  if (harnessSignals.length === 0) return null;
+  return scoped.length === 0
+    ? []
+    : selectedHarnesses(context).map(
+        (harness) =>
+          [
+            harness,
+            panelContribution(context.contributions, scoped, harness),
+          ] as const,
+      );
+};
+
+/** Chips agree when every harness has the same state and route start day. */
+const sameChips = (a: Chips, b: Chips) =>
+  a.length === b.length &&
+  a.every(
+    ([harness, chip], index) =>
+      b[index]![0] === harness &&
+      b[index]![1].state === chip.state &&
+      b[index]![1].from === chip.from,
+  );
+
+/** The chips of the enclosing Section band; null outside one. */
+const BandContext = createContext<Chips | null>(null);
+
+/**
+ * Which harnesses contributed rows to the signals in the window. Row counts
+ * and route start days sit in the panel's `i` popover.
+ */
+export function Contributors({ signals }: { signals: string[] }) {
+  const context = useView();
+  const chips = panelChips(context, signals);
+  if (chips.length === 0) return null;
   return (
     <ul className="contributors" aria-label="Harnesses contributing data">
-      {selectedHarnesses(context).map((harness) => {
-        const chip = panelContribution(
-          context.contributions,
-          harnessSignals,
-          harness,
-        );
-        return (
-          <li
-            key={harness}
-            className={`contributor contributor-${chip.state.replaceAll(" ", "-")}`}
-            title={chipTitle(harness, chip)}
-          >
-            <i
-              style={{
-                background:
-                  chip.state === "rows" ? HARNESS_COLOR[harness] : undefined,
-              }}
-              aria-hidden="true"
-            />
-            {HARNESS_LABEL[harness]}
-            {chip.state !== "rows" && <small>{chip.state}</small>}
-            {chip.state === "rows" && chip.from && (
-              <small>from {chip.from}</small>
-            )}
-          </li>
-        );
-      })}
+      {chips.map(([harness, chip]) => (
+        <li
+          key={harness}
+          className={`contributor contributor-${chip.state.replaceAll(" ", "-")}`}
+        >
+          <i
+            style={{
+              background:
+                chip.state === "rows" ? HARNESS_COLOR[harness] : undefined,
+            }}
+            aria-hidden="true"
+          />
+          {HARNESS_LABEL[harness]}
+          {chip.state !== "rows" && <small>{chip.state}</small>}
+          {chip.state === "rows" && chip.from && (
+            <small>from {chip.from}</small>
+          )}
+        </li>
+      ))}
     </ul>
   );
 }
@@ -192,6 +226,13 @@ export function InfoNote({ signals }: { signals: string[] }) {
   const context = useView();
   return (
     <div className="info-note">
+      {panelChips(context, signals).length > 0 && (
+        <ul className="chip-details" aria-label="Harnesses contributing data">
+          {panelChips(context, signals).map(([harness, chip]) => (
+            <li key={harness}>{chipTitle(harness, chip)}</li>
+          ))}
+        </ul>
+      )}
       {signals.map((signal) => {
         const definition = context.registry.signals.find(
           (entry) => entry.signal === signal,
@@ -254,6 +295,42 @@ export function NotApplicableNotice({ entries }: { entries: SignalSupport[] }) {
   );
 }
 
+/** The "i" button: hover, focus or click opens its note; Escape closes it. */
+export function InfoPopover({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const noteId = useId();
+  return (
+    <span
+      className="panel-info"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpen(false);
+      }}
+    >
+      <button
+        className="details"
+        aria-describedby={noteId}
+        aria-label={label}
+        onClick={() => setOpen(true)}
+      >
+        <span aria-hidden="true">i</span>
+      </button>
+      <div id={noteId} role="tooltip" className="panel-popover" hidden={!open}>
+        {children}
+      </div>
+    </span>
+  );
+}
+
 /**
  * Panel frame shared by every view: title, contributors, and an info note
  * rendered from the signal support registry. When the panel's signal is not
@@ -266,60 +343,45 @@ export function Panel({
   subtitle,
   signals,
   span = 6,
+  id,
   children,
 }: {
   title: string;
   subtitle?: string;
   signals: string[];
-  span?: 3 | 4 | 5 | 6 | 7 | 8 | 12;
+  span?: 1 | 3 | 4 | 5 | 6 | 7 | 8 | 12;
+  /** Anchor for in-page links such as a KPI's "Show …" link. */
+  id?: string;
   children: ReactNode;
 }) {
   const context = useView();
-  const [open, setOpen] = useState(false);
-  const noteId = useId();
+  const band = useContext(BandContext);
   const shown = signals.filter((signal) => !isHidden(context.registry, signal));
   const missing = notApplicable(context, shown);
   if (signals[0] !== undefined && shown[0] !== signals[0]) return null;
+  const chips = panelChips(context, shown);
   return (
-    <article className="panel" data-span={span}>
+    <article className="panel" data-span={span} id={id}>
       <header className="panel-head">
         <div>
           <h3>{title}</h3>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        <span
-          className="panel-info"
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setOpen(false);
-          }}
-        >
-          <button
-            className="details"
-            aria-describedby={noteId}
-            aria-label={`Definition of ${title}`}
-            onClick={() => setOpen(true)}
-          >
-            <span aria-hidden="true">i</span>
-          </button>
-          <div
-            id={noteId}
-            role="tooltip"
-            className="panel-popover"
-            hidden={!open}
-          >
-            <InfoNote signals={shown} />
-          </div>
-        </span>
+        <InfoPopover label={`Definition of ${title}`}>
+          <InfoNote signals={shown} />
+        </InfoPopover>
       </header>
-      <Contributors signals={shown} />
+      {chips.length > 0 && (!band || !sameChips(chips, band)) && (
+        <Contributors signals={shown} />
+      )}
       <div className="panel-body">
-        <Boundary label={title}>
-          {missing ? <NotApplicableNotice entries={missing} /> : children}
-        </Boundary>
+        <PanelContext.Provider
+          value={{ label: title, harnessChips: chips.length > 0 }}
+        >
+          <Boundary label={title}>
+            {missing ? <NotApplicableNotice entries={missing} /> : children}
+          </Boundary>
+        </PanelContext.Provider>
       </div>
     </article>
   );
@@ -331,33 +393,83 @@ export function Kpi({
   value,
   detail,
   signals,
+  n,
+  span = 3,
+  children,
 }: {
   title: string;
   value: string;
   detail?: string;
   signals: string[];
+  /** Sample size of a rate value: muted when below the server's threshold. */
+  n?: number;
+  /** 1 is one column of a five-column band (`Section columns={5}`). */
+  span?: 1 | 3;
+  /** A link to the detail behind the figure. */
+  children?: ReactNode;
 }) {
+  const { minRateN } = useView();
+  const muted = n !== undefined && isMutedRate(n, minRateN);
   return (
-    <Panel title={title} signals={signals} span={3}>
+    <Panel title={title} signals={signals} span={span}>
       <div className="kpi">
-        <strong>{value}</strong>
+        <strong className={muted ? "muted-rate" : undefined}>{value}</strong>
         {detail && <span>{detail}</span>}
+        {children}
       </div>
     </Panel>
   );
 }
 
+/** Each panel's signal list directly inside a band, skipping hidden ones. */
+const bandSignals = (
+  children: ReactNode,
+  hidden: (s: string) => boolean,
+): string[][] =>
+  Children.toArray(children).flatMap((child): string[][] => {
+    if (!isValidElement<{ signals?: string[]; children?: ReactNode }>(child))
+      return [];
+    if (child.type === Fragment)
+      return bandSignals(child.props.children, hidden);
+    const signals = child.props.signals;
+    return Array.isArray(signals) && !(signals[0] && hidden(signals[0]))
+      ? [signals.filter((signal) => !hidden(signal))]
+      : [];
+  });
+
+/**
+ * A band of panels. Its heading is followed by one contributor row for the
+ * union of its panels' signals when at least one panel shares that row; a
+ * panel repeats a row only when its own chips differ from the band's.
+ */
 export function Section({
   title,
+  columns,
   children,
 }: {
   title: string;
+  /** Five lets a band of five KPIs share one row; the default is twelve. */
+  columns?: 5;
   children: ReactNode;
 }) {
+  const context = useView();
+  const panels = bandSignals(children, (signal) =>
+    isHidden(context.registry, signal),
+  );
+  const union = [...new Set(panels.flat())];
+  const chips = panelChips(context, union);
+  const shared =
+    chips.length > 0 &&
+    panels.some((signals) => sameChips(panelChips(context, signals), chips));
   return (
     <section className="view-section">
       <h2>{title}</h2>
-      <div className="grid">{children}</div>
+      {shared && <Contributors signals={union} />}
+      <BandContext.Provider value={shared ? chips : null}>
+        <div className="grid" data-columns={columns}>
+          {children}
+        </div>
+      </BandContext.Provider>
     </section>
   );
 }
@@ -419,3 +531,88 @@ export function SessionLink({
     </a>
   );
 }
+
+export const isPlainClick = (event: MouseEvent) =>
+  event.button === 0 &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey;
+
+/** A link to another view that keeps the current range and harness, like the nav. */
+export function ViewLink({
+  view,
+  children,
+}: {
+  view: ViewPath;
+  children: ReactNode;
+}) {
+  const { viewHref, navigate, filters } = useView();
+  const href = viewHref(view);
+  return (
+    <a
+      className="view-link"
+      href={href}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        event.preventDefault();
+        navigate(href, filters);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/** An in-page link to a panel on this page; it scrolls without touching the URL or the data. */
+export function ShowLink(props: { target: string; children: string }) {
+  return (
+    <a
+      className="view-link"
+      href={`#${props.target}`}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        event.preventDefault();
+        document.getElementById(props.target)?.scrollIntoView();
+      }}
+    >
+      {props.children}
+    </a>
+  );
+}
+
+/** A rate over fewer samples than the server's threshold is muted, not hidden. */
+export const isMutedRate = (n: number, minRateN: number) => n < minRateN;
+
+/** A formatted rate with its sample size; dimmed when n is below the server's threshold. */
+export function RateValue(props: {
+  pct: number | null;
+  n: number;
+  digits?: number;
+}) {
+  const { minRateN } = useView();
+  return (
+    <span className={isMutedRate(props.n, minRateN) ? "muted-rate" : undefined}>
+      {fmtPct(props.pct, props.digits)}
+      <span className="rate-n"> · n={fmtCount(props.n)}</span>
+    </span>
+  );
+}
+
+/**
+ * Table columns for a pivoted daily rate: each series' cell is the rate and
+ * reads its sample size from the row's `<series>_n` (the daily query's denominator).
+ */
+export const rateSeriesColumns = (series: Series[]): Column[] =>
+  series.map((entry) => ({
+    key: entry.key,
+    label: `${entry.label} %`,
+    numeric: true,
+    render: (row) => (
+      <RateValue
+        pct={typeof row[entry.key] === "number" ? Number(row[entry.key]) : null}
+        n={num(row[`${entry.key}_n`])}
+        digits={1}
+      />
+    ),
+  }));

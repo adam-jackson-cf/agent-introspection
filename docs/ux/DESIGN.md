@@ -33,12 +33,13 @@ colors:
   cat-6: "#9ce9f0"
   cat-7: "#e8d7a5"
   cat-8: "#dbade0"
-  seq-effort-1: "#184f95"
-  seq-effort-2: "#2a78d6"
-  seq-effort-3: "#6da7ec"
-  seq-effort-4: "#b7d3f6"
-  effort-mixed: "#9085e9"
+  seq-effort-1: "#9065d0"
+  seq-effort-2: "#45a9f5"
+  seq-effort-3: "#3fded6"
+  seq-effort-4: "#c8f9ad"
+  effort-mixed: "#fd8c7b"
   other: "#6b7280"
+  shadow: "#00000073"
 typography:
   page-title:
     fontFamily: Inter
@@ -322,7 +323,9 @@ thing the eye finds.
   Muted is the lowest allowed for any text; it passes 4.5:1 on every background.
 - **primary `#8b5cf6`** is the identity colour, for marks only: focus rings, the selected state and
   highlights. It's never used for body text. **selection `#211a33`** marks the active navigation item.
-- **primary-soft `#a78bfa`** is for links, session IDs and the info `i` marker.
+- **primary-soft `#a78bfa`** is for links, session IDs, the info `i` marker and the nav numbers.
+- **shadow `#00000073`** is the black at 45% opacity under popovers and chart readouts. It's the only
+  translucent colour.
 
 ### Status
 
@@ -347,12 +350,16 @@ Status colours always appear with their word and are never decorative. Each pass
   (`dashboard/src/views/Friction.tsx:129-132`), and single-line trends (`dashboard/src/views/Interventions.tsx:219-223`).
   They are pale so they never read as a harness. Today these series reuse the harness colours through `SERIES`
   (`dashboard/src/format.ts:23`) and literals.
-- **Reasoning effort, ordinal `seq-effort-1`…`seq-effort-4`**: low, medium, high, xhigh, dark to light blue
-  (`EFFORT_COLOR`, `dashboard/src/format.ts:38-45`). **effort-mixed** marks tasks with more than one effort
-  level and sits off the ramp. `seq-effort-1` (low) is below 3:1 on every background, so effort series always
-  carry a direct label or legend entry, and bars are ordered low → xhigh.
-- **Neutral `other`**: unset effort (provider default) and any unknown harness, instead of the `#6b7280`
-  literals in `Effort.tsx:27` and `Guardrails.tsx:160`.
+- **Reasoning effort, ordinal `seq-effort-1`…`seq-effort-4`**: low, medium, high, xhigh, a multi-hue ramp from
+  violet through sky blue and aqua to pale lime, rising in lightness (`EFFORT_COLOR`, `dashboard/src/format.ts`).
+  Neighbouring steps differ in hue as well as lightness so they read apart in a stack (minimum OKLab ΔE 0.157,
+  up from 0.095 for the all-blue ramp), and every step passes 4:1 on `surface` and `raised`. **effort-mixed**
+  (salmon, a warm hue off the cool ramp) marks tasks with more than one effort level. Effort series still carry a legend
+  entry, and bars are ordered low → xhigh.
+- **Legends and chip rows** keep `md` space below a chart legend and `sm` below a contributor chip row, so a
+  key never touches the plot or table it labels.
+- **Neutral `other`**: unset effort (provider default) and any unknown harness, read from `OTHER_TOKEN` in
+  `dashboard/src/tokens.ts`.
 
 A chart colour means the same thing on every page. Categorical colours pass 3:1 on the chart background and
 stay distinct from each other. Ordinal ramps keep their lightness order, and a step below 3:1 carries a
@@ -368,9 +375,9 @@ One family: **Inter**, kept from the existing app. It has true tabular lining fi
 holds at the dense sizes an expert dashboard needs, and needs no second face. Session IDs use the system
 monospace, because they are identifiers a reader compares character by character.
 
-The scale is one step larger than today: body text moves from 13px to 14px, and no text is smaller than 12px
-(today table headers are 9px and chart ticks, contributors and captions 10–11px). Labels and table headers
-use sentence case, not tracked capitals.
+The scale is one step larger than the old app: body text is 14px (`body-md`) at the root, and nothing is smaller
+than 12px (the old table headers were 9px and chart ticks, contributors and captions 10–11px). Labels and
+table headers use sentence case, not tracked capitals.
 
 | Token         | Use                                                                      |
 | ------------- | ------------------------------------------------------------------------ |
@@ -398,7 +405,8 @@ layout must also work on smaller monitors, down to 1024px wide, and on wider win
 - **Width cap `content-max` (2560px).** Below the cap, content fills the space beside the sidebar. Content
   runs in **bands** separated by `band-gap` and a hairline `rule`.
 - **A 12-column grid** with a `gutter`. Typical spans: primary 8 + drivers 4, two comparisons at 6 each, or
-  three at 4 each.
+  three at 4 each. Panels in one row always stretch to the row's height, so a row reads as one block; pair
+  panels of similar length rather than shrinking the shorter one.
 - **Prose is capped at `measure` (80ch)** inside whatever column it sits in, including the page question.
 - **Fold budget at 1330 px** (1440 minus menu bar and browser chrome): the header and L1 take ≤ 30% of it.
   Charts are 280–360px high and as wide as their span.
@@ -423,11 +431,22 @@ The radius follows the hierarchy: `sm` for inputs and bars, `md` for callouts, p
 
 - **Page.** `ink` background, `text` colour, `body-md` type and `page-x` side padding. The header holds the
   view title in `page-title` and its question in `body-md` `text-2`.
-- **Bands.** Each band opens with its sub-question in `band-title`, over a 1px `rule`.
+- **Bands.** Each band opens with its sub-question in `band-title`, over a 1px `rule`. When at least one panel
+  in the band has the same contributing-harness chips as the band as a whole, the chip row sits once under the
+  band heading and only panels that differ repeat their own row; otherwise every panel shows its own row.
 - **Panel.** A `surface` container with a `rule` border and `lg` radius: title in `panel-title`, a subtitle in
-  `caption` `muted` that says how to read it, the contributing harnesses, then the chart or table.
+  `caption` `muted` that says how to read it, the contributing harnesses, then the chart or table. Chip
+  details (row counts, route start day) live in the panel's info popover, never in a native `title`.
 - **Figures.** A `figure-label`, then the value in `figure-lg` with tabular figures, then one caption line of
-  detail.
+  detail. The detail states the figure's period or scope in a few words ("last day", "7 days", "all time",
+  "current"), taken from what its query covers. A band of five figures sits in five equal columns.
+- **Exceptions first.** A table whose rows are mostly fine shows a one-line summary computed by the server
+  ("16 on schedule") and only its exception rows at L1, with the full table behind a "Show all N"
+  disclosure in place. The server decides what an exception is; a table with no server rule shows no
+  exception rows, only its summary.
+- **Detail pages.** An L3 page lives at `/<view>/<detail>` and keeps its parent's navigation item, filters and
+  data. Its breadcrumb is Views / parent / title, with the parent as a link. It opens on its own answer
+  (the numbers, then the legend, then the full table) and links back to its parent.
 - **Info marker and popover.** An `i` in `primary-soft` in the panel header opens the registry note as a
   `popover` anchored to it, over the content rather than pushing it down. Contributor details and coverage-cell
   details use the same popover, never a native `title` attribute. Opens on hover, focus and tap; closes on
@@ -436,14 +455,23 @@ The radius follows the hierarchy: `sm` for inputs and bars, `md` for callouts, p
 - **Navigation.** The active item uses `selection` with a 2px `primary` accent. Icons are monochrome glyphs,
   not emoji.
 - **Focus.** A 2px `primary` ring on every focusable element.
-- **Filters.** Controls on `raised`, `label` type, sentence-case labels above them.
+- **Filters.** Controls on `raised`, `label` type, sentence-case labels above them, all on one line. Custom
+  range inputs open beside the range select. Explanations of a filter sit in an `i` popover right after its
+  control, never as text under it.
 - **Tables.** Headers in `caption` `muted`, sentence case; cells in `label` `text-2`; numbers right-aligned;
-  `rule` row dividers; sticky header.
+  `rule` row dividers; sticky header. A capped table says "Showing N of M" above it, and its scroll region is
+  focusable and named after its panel. Every column with values sorts from its header (`aria-sort`, a ↕ / ▲ /
+  ▼ mark): numbers start largest first, text A to Z, a third click restores the server's order, empty cells
+  sort last, and the All row keeps its place.
+- **Rates.** Every rate shows its sample size as " · n=…" in `muted`. Below the server's minimum sample
+  (`minRateN`, 20) the rate itself is `muted` too; it is never hidden.
 - **Status chip.** Pill, caption size, status-coloured mark and word. Alignment pills sit on `raised`.
 - **Callout.** Query errors only, on `raised` with a 3px `status-stray-unexplained` left edge.
 - **Not-emitted notice.** A dashed `axis` outline on `surface`, `muted` text.
 - **Charts.** Transparent background, `rule` gridlines, `muted` ticks, `axis` reference lines, and hover on
-  every mark.
+  every mark. Daily charts are 280px high, fit the axis to the data, and are one tab stop: arrow keys move the
+  day, Escape clears, and a live region reads the day aloud. A chart drops its own legend when the panel's
+  harness chips already name the same series.
 
 ## Do's and Don'ts
 

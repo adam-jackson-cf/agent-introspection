@@ -5,22 +5,11 @@ import {
   Kpi,
   Panel,
   Section,
+  ViewLink,
   useView,
   useSelectedHarnesses,
 } from "../components";
-import {
-  fmtCount,
-  fmtPct,
-  HARNESS_COLOR,
-  HARNESS_LABEL,
-  num,
-  pivotDaily,
-  ratio,
-  sumRows,
-} from "../format";
-
-/** A signature is localized when at least 80% of its attributed occurrences share one working directory. */
-const LOCALIZED = 0.8;
+import { fmtCount, fmtPct, HARNESS_COLOR, HARNESS_LABEL, num } from "../format";
 
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
@@ -28,43 +17,43 @@ const harnessOrder = (harness: unknown) =>
 const stringList = (value: unknown) =>
   Array.isArray(value) ? value.map(String) : [];
 
+/** The Europe/London calendar date of an ISO instant, which the SQL week cuts at. */
+export function londonDate(instant: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(instant));
+}
+
 /**
- * Recombines per-harness failure-cluster rows into one row per cluster (tool
- * family × failure class): occurrences and tasks are the sums of the harness
- * rows (tasks are harness-scoped), days are the cluster's own distinct days, and
- * `breakdown` keeps each harness's rows in registry order, never ranked.
+ * Failure-cluster rows arrive finished (one per tool family × failure class);
+ * only the per-harness breakdown is put in registry order, never ranked.
  */
-export function recombineClusters(rows: Row[]): Row[] {
-  const clusters = new Map<string, Row[]>();
+export function clusterRows(rows: Row[]): Row[] {
+  return rows.map((row) => ({
+    ...row,
+    breakdown: stringList(row.breakdown).sort(
+      (a, b) => harnessOrder(a.split(":")[0]) - harnessOrder(b.split(":")[0]),
+    ),
+  }));
+}
+
+/** Long daily rows (one per day and harness, finished) as one row per day for the chart. */
+function dailyWide(rows: Row[]): Row[] {
+  const days = new Map<string, Row>();
   for (const row of rows) {
-    const key = `${String(row.tool_family)}\u0000${String(row.failure_class)}`;
-    clusters.set(key, [...(clusters.get(key) ?? []), row]);
+    const day = String(row.day);
+    days.set(day, {
+      ...days.get(day),
+      day,
+      [String(row.harness)]: row.failures,
+    });
   }
-  return [...clusters.entries()].map(([key, members]) => {
-    const sums = sumRows(members, ["occurrences", "tasks"]);
-    const breakdown = [...members].sort(
-      (a, b) => harnessOrder(a.harness) - harnessOrder(b.harness),
-    );
-    return {
-      key,
-      tool_family: members[0]!.tool_family ?? "",
-      failure_class: members[0]!.failure_class ?? "",
-      occurrences: sums.occurrences!,
-      tasks: sums.tasks!,
-      days: num(members[0]!.cluster_days),
-      harnesses: breakdown.map((row) => String(row.harness)),
-      breakdown: breakdown.map(
-        (row) => `${String(row.harness)}:${num(row.occurrences)}`,
-      ),
-      tools: [
-        ...new Set(members.flatMap((row) => stringList(row.tools))),
-      ].sort(),
-      last_seen: members
-        .map((row) => String(row.last_seen ?? ""))
-        .sort()
-        .at(-1)!,
-    };
-  });
+  return [...days.values()].sort((a, b) =>
+    String(a.day).localeCompare(String(b.day)),
+  );
 }
 
 /** Each harness's occurrences of one cluster, in registry order. */
@@ -103,35 +92,51 @@ const CLUSTER_COLUMNS: Column[] = [
   },
 ];
 
+const firstRow = (rows: Row[] | undefined): Row => rows?.[0] ?? {};
+
+function deriveRecurrence(data: Record<string, Row[]>) {
+  const concentration = data.concentration ?? [];
+  return {
+    targets: firstRow(data.target_summary),
+    summary: firstRow(data.cluster_summary),
+    actionable: clusterRows(data.actionable ?? []),
+    recurring: clusterRows(data.clusters ?? []),
+    concentration,
+    localized: firstRow(concentration),
+    daily: dailyWide(data.daily ?? []),
+    actionableTotal: num(firstRow(data.actionable_summary).actionable),
+    targetsTotal: num(firstRow(data.targets).total_files),
+    concentrationTotal: num(firstRow(concentration).total_signatures),
+  };
+}
+
 export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
   const { filters } = useView();
   const selected = useSelectedHarnesses();
-  const targets = sumRows(data.target_summary ?? [], ["targets", "recurring"]);
-  const summary = data.cluster_summary?.[0] ?? {};
-  const actionable = recombineClusters(data.actionable ?? []);
-  const recurring = recombineClusters(data.clusters ?? []);
-  const concentration = data.concentration ?? [];
-  const localized = concentration.filter(
-    (row) => num(row.top_count) >= LOCALIZED * num(row.attributed),
-  );
+  const {
+    targets,
+    summary,
+    actionable,
+    recurring,
+    concentration,
+    localized,
+    daily,
+    actionableTotal,
+    targetsTotal,
+    concentrationTotal,
+  } = deriveRecurrence(data);
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const daily = pivotDaily(
-    data.daily ?? [],
-    (row) => String(row.harness),
-    ["failures"],
-    (sums) => sums.failures!,
-  );
-  const weekEnd = filters.end.slice(0, 10);
+  const weekEnd = londonDate(filters.end);
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Actionable repeats"
-          value={fmtCount(actionable.length)}
+          value={fmtCount(actionableTotal)}
           detail={`failure clusters over the 7 London days to ${weekEnd}`}
           signals={["recur.actionable"]}
         />
@@ -143,14 +148,19 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         />
         <Kpi
           title="Recurring targets"
-          value={fmtCount(targets.recurring!)}
-          detail={`of ${fmtCount(targets.targets!)} files touched in ≥ 2 tasks`}
+          value={fmtCount(num(targets.recurring))}
+          detail={`of ${fmtCount(num(targets.targets))} files touched in ≥ 2 tasks`}
           signals={["recur.targets"]}
         />
         <Kpi
           title="Localized signatures"
-          value={fmtPct(ratio(localized.length, concentration.length), 0)}
-          detail={`${localized.length} of ${concentration.length} signatures with ≥ 80% in one project`}
+          value={fmtPct(
+            typeof localized.localized_rate === "number"
+              ? localized.localized_rate
+              : null,
+            0,
+          )}
+          detail={`${num(localized.localized_signatures)} of ${num(localized.shown)} signatures with ≥ 80% in one project`}
           signals={["recur.project_concentration"]}
         />
       </Section>
@@ -191,6 +201,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
             columns={CLUSTER_COLUMNS}
             rows={actionable}
             empty="No failure cluster crosses the threshold in the 7 days ending on the window end."
+            total={actionableTotal}
           />
         </Panel>
       </Section>
@@ -201,7 +212,12 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
           signals={["recur.signatures"]}
           span={12}
         >
-          <DataTable columns={CLUSTER_COLUMNS} rows={recurring} />
+          <DataTable
+            columns={CLUSTER_COLUMNS}
+            rows={recurring}
+            total={num(summary.recurring)}
+          />
+          <ViewLink view="tools">Open Tool failures</ViewLink>
         </Panel>
         <Panel
           title="Recurring targets"
@@ -219,7 +235,9 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
               { key: "failed", label: "Failed", numeric: true },
             ]}
             rows={data.targets ?? []}
+            total={targetsTotal}
           />
+          <ViewLink view="guardrails">Open Guardrails</ViewLink>
         </Panel>
         <Panel
           title="Project concentration"
@@ -243,10 +261,14 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
                 label: "Top share",
                 numeric: true,
                 render: (row) =>
-                  fmtPct(ratio(num(row.top_count), num(row.attributed)), 0),
+                  fmtPct(
+                    typeof row.top_share === "number" ? row.top_share : null,
+                    0,
+                  ),
               },
             ]}
             rows={concentration}
+            total={concentrationTotal}
           />
         </Panel>
       </Section>

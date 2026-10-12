@@ -15,4 +15,5 @@ __pycache__/
 build/
 dist/
 dashboard/node_modules/
+scripts/ux-probe/node_modules/
 .clawpatch/

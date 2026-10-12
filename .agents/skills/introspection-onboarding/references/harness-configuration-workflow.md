@@ -46,7 +46,7 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
    T=$(date -u +%Y%m%dT%H%M%SZ)
    mkdir -p "$R/omp"
    (
-     for pair in "$S/activity-shim.sh:$R/activity-shim.sh:0755" "$S/adapters/omp/activity.ts:$R/omp/activity.ts:0644"; do
+     for pair in "$S/activity-shim.sh:$R/activity-shim.sh:0755" "$S/adapters/omp/activity.ts:$R/omp/activity.ts:0644" "$S/adapters/omp/package.json:$R/omp/package.json:0644"; do
        src=${pair%%:*}; rest=${pair#*:}; dst=${rest%%:*}; mode=${rest##*:}
        if [ -e "$dst" ]; then diff -u "$dst" "$src"; cp -p "$dst" "$dst.bak-$T" || exit 1; fi
        install -m "$mode" "$src" "$dst" || exit 1
@@ -70,13 +70,13 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
 5. **Activity hooks.**
    - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
      then without `--dry-run` (backs up, idempotent, `--remove` undoes).
-   - omp: link the extension, preserving whatever is already there:
-     `L=~/.omp/agent/extensions/agent-introspection-activity.ts`; if `[ -e "$L" ] || [ -L "$L" ]`,
-     show it (`ls -l "$L"`; `diff -u "$L" "$R/omp/activity.ts"` when it is a different file)
-     and move it aside with `mv "$L" "$L.bak-$T"`; then
-     `ln -sfn "$R/omp/activity.ts" "$L"`. List `$L` under
-     `extensions:` in `~/.omp/agent/config.yml` (omp's ambient discovery does not load
-     it; back that file up and show its diff too). Restart omp sessions.
+   - omp: link the managed package as a plugin with `omp plugin link "$R/omp"` and
+     confirm `omp plugin list` shows `agent-introspection-activity`. The link lives in
+     omp's plugin directory, so nothing is added to `~/.omp/agent/extensions/` or
+     `~/.omp/agent/config.yml`. If an earlier install left
+     `~/.omp/agent/extensions/agent-introspection-activity.ts` or its `extensions:`
+     entry in `config.yml`, back up `config.yml`, show the diff, and remove both.
+     Restart omp sessions.
 6. **Prompt export** (after the user's confirmation): Claude Code
    `OTEL_LOG_USER_PROMPTS=1`; Codex `log_user_prompt = true` in every root; omp
    `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (`activity.ts` sends no

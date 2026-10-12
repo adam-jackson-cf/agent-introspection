@@ -14,6 +14,10 @@ export const VIEW_IDS = [
 ] as const;
 export type ViewId = (typeof VIEW_IDS)[number];
 
+/** An L3 detail page lives at `/<view>/<detail>`, under its parent view. */
+export const DETAIL_PATHS = ["pipeline/coverage"] as const;
+export type ViewPath = ViewId | (typeof DETAIL_PATHS)[number];
+
 /** Every known harness in registry order; the selector offers All plus each enabled one. */
 export const HARNESSES = [
   "oh-my-pi",
@@ -29,6 +33,11 @@ export type Filters = {
   end: string;
   /** Empty string means All harnesses: the union of the enabled harnesses. */
   harness: Harness | "";
+  /**
+   * Browser only: a live preset in days. The window always ends now, so Refresh
+   * and a reopened link move it forward. Absent for a custom range.
+   */
+  range?: number;
 };
 
 export type Scalar = string | number | boolean | null;
@@ -144,7 +153,12 @@ export type ViewResponse = {
   filters: Filters;
   queriedAt: string;
   elapsedMs: number;
+  /** Where `elapsedMs` went: the registry, the shared route counts, the view's own SQL. */
+  timings: { registryMs: number; routeCountsMs: number; sqlMs: number };
+  /** Latest successful fact refresh; `stale` is the loader's own staleness test. Null when unknown. */
+  asOf: { at: string; stale: boolean } | null;
   data: Record<string, Row[]>;
+  thresholds: { minRateN: number };
   contributions: Contributions;
 };
 

@@ -1,18 +1,15 @@
 import { DailyChart, DataTable, TableView } from "../charts";
 import type { Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, useView } from "../components";
+import { HarnessName, Kpi, Panel, Section, ViewLink } from "../components";
 import {
   fmtCount,
   fmtPct,
-  groupSum,
   harnessLabel,
   num,
-  ratio,
   SERIES,
   shortTime,
 } from "../format";
 
-const DAY = 86_400_000;
 const CLUSTER_DETECTOR = "facts.failure_cluster";
 const CORRECTION_DETECTOR = "facts.repeated_correction";
 const DETECTOR_LABEL: Record<string, string> = {
@@ -20,29 +17,12 @@ const DETECTOR_LABEL: Record<string, string> = {
   [CORRECTION_DETECTOR]: "Repeated correction",
 };
 
-/** The Europe/London calendar day of an instant, matching the daily facts buckets. */
-const londonDay = (instant: number) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(
-    instant,
-  );
-
-/** The calendar day `offset` days from `day`, both as YYYY-MM-DD. */
-const addDays = (day: string, offset: number) =>
-  new Date(Date.parse(`${day}T00:00:00Z`) + offset * DAY)
-    .toISOString()
-    .slice(0, 10);
-
 const strings = (value: unknown): string[] | null =>
   Array.isArray(value) ? value.map(String) : null;
 
-/** Whether a finding or proposal subject is a repeated correction (else a failure cluster). */
-const isCorrection = (row: Row) =>
-  row.detector === CORRECTION_DETECTOR ||
-  (row.project != null && row.correction_kind != null);
-
 /** A finding's subject as one readable line. */
 export const subjectLabel = (row: Row): string =>
-  isCorrection(row)
+  row.kind === "correction"
     ? `${String(row.project ?? "—")} · ${String(row.correction_kind ?? "—").replaceAll("_", " ")}`
     : row.tool_family != null
       ? `${String(row.tool_family)} · ${String(row.failure_class ?? "—")}`
@@ -57,112 +37,6 @@ export const metricLabel = (row: Row): string | null =>
           ? ` · ${strings(row.metric_harnesses)!.map(harnessLabel).join(", ")}`
           : ""
       }`;
-
-export type DailyFacts = {
-  /** Failure-cluster tasks per London day, harness, tool family, and failure class. */
-  clusters: Row[];
-  /** Labelled tasks and corrected tasks per London day, harness, project, and correction kind. */
-  corrections: Row[];
-  /** Tasks per London day and harness. */
-  tasks: Row[];
-};
-
-/**
- * The finding's own task rate in equal runs of whole London days before and after
- * the application day, clipped to the selected range, over the metric's
- * harnesses (the finding's when the metric has none): tasks that hit its failure
- * cluster per task, or labelled tasks in its project whose next prompt corrected
- * the agent the same way per labelled task there. The application day itself
- * mixes pre and post events, so neither window counts it.
- */
-export function prePost(
-  proposal: Row,
-  daily: DailyFacts,
-  start: string,
-  end: string,
-): Row {
-  const applied = Date.parse(String(proposal.applied_at));
-  const appliedDay = londonDay(applied);
-  const harnesses =
-    strings(proposal.metric_harnesses) ?? strings(proposal.harnesses);
-  const inHarnesses = (row: Row) =>
-    harnesses === null || harnesses.includes(String(row.harness));
-  const correction = isCorrection(proposal);
-  const window = (first: string, last: string) => {
-    const inRange = (row: Row) => {
-      const day = String(row.day);
-      return day >= first && day <= last && inHarnesses(row);
-    };
-    const sum = (rows: Row[], key: string) =>
-      rows.filter(inRange).reduce((total, row) => total + num(row[key]), 0);
-    const matched = correction
-      ? sum(
-          daily.corrections.filter(
-            (row) =>
-              row.project === proposal.project &&
-              row.correction_kind === proposal.correction_kind,
-          ),
-          "corrected",
-        )
-      : sum(
-          daily.clusters.filter(
-            (row) =>
-              row.tool_family === proposal.tool_family &&
-              row.failure_class === proposal.failure_class,
-          ),
-          "tasks",
-        );
-    const taskCount = correction
-      ? sum(
-          daily.corrections.filter((row) => row.project === proposal.project),
-          "tasks",
-        )
-      : sum(daily.tasks, "tasks");
-    return {
-      matched,
-      tasks: taskCount,
-      rate: taskCount > 0 ? matched / taskCount : null,
-    };
-  };
-  // Whole London days on each side: the range's first and last complete days,
-  // exclusive of the application day, and the shorter side sets both windows.
-  const firstFull = (instant: number) =>
-    londonDay(instant - 1) === londonDay(instant)
-      ? addDays(londonDay(instant), 1)
-      : londonDay(instant);
-  const lastFull = (instant: number) =>
-    londonDay(instant - 1) === londonDay(instant)
-      ? addDays(londonDay(instant), -1)
-      : londonDay(instant - 1);
-  const between = (from: string, to: string) =>
-    Math.round(
-      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY,
-    );
-  const days = Math.max(
-    Math.min(
-      between(firstFull(Date.parse(start)), appliedDay),
-      between(appliedDay, lastFull(Date.parse(end))),
-    ),
-    0,
-  );
-  const pre = window(addDays(appliedDay, -days), addDays(appliedDay, -1));
-  const post = window(addDays(appliedDay, 1), addDays(appliedDay, days));
-  return {
-    target: proposal.target,
-    subject: subjectLabel(proposal),
-    tier: proposal.tier,
-    applied_at: proposal.applied_at,
-    days,
-    pre_matched: pre.matched,
-    pre_tasks: pre.tasks,
-    pre_rate: pre.rate,
-    post_matched: post.matched,
-    post_tasks: post.tasks,
-    post_rate: post.rate,
-    verdict: proposal.verdict ?? null,
-    evaluated_ratio: proposal.evaluated_ratio ?? null,
-  };
-}
 
 const HarnessList = ({ value }: { value: unknown }) => {
   const list = strings(value);
@@ -179,126 +53,60 @@ const HarnessList = ({ value }: { value: unknown }) => {
 const fmtRatio = (value: unknown) =>
   value === null || value === undefined ? "—" : `${num(value).toFixed(2)}×`;
 
-const dailyFacts = (data: Record<string, Row[]>): DailyFacts => ({
-  clusters: data.cluster_daily ?? [],
-  corrections: data.correction_daily ?? [],
-  tasks: data.task_daily ?? [],
-});
-
 const BASELINE_SERIES = [
   {
-    key: "failures",
+    key: "failures_rate",
     label: "Cluster failures per 100 tasks",
     color: SERIES[0]!,
   },
   {
-    key: "corrected",
+    key: "corrected_rate",
     label: "Corrections per 100 labelled tasks",
     color: SERIES[1]!,
   },
 ];
 
-/** Cluster failures and corrections per day, as rates over that day's tasks. */
-function baselineByDay(daily: DailyFacts) {
-  const failuresByDay = groupSum(daily.clusters, "day", ["occurrences"]);
-  const correctedByDay = groupSum(daily.corrections, "day", [
-    "corrected",
-    "tasks",
-  ]);
-  const tasksByDay = groupSum(daily.tasks, "day", ["tasks"]);
-  return [...new Set([...tasksByDay.keys(), ...correctedByDay.keys()])]
-    .sort()
-    .map((day) => ({
-      day,
-      failures: ratio(
-        failuresByDay.get(day)?.occurrences ?? 0,
-        tasksByDay.get(day)?.tasks ?? 0,
-      ),
-      corrected: ratio(
-        correctedByDay.get(day)?.corrected ?? 0,
-        correctedByDay.get(day)?.tasks ?? 0,
-      ),
-    }));
-}
-
-const tierCounts = (proposals: Row[]) =>
-  [
-    ...groupSum(
-      proposals.map((row) => ({ ...row, n: 1 })),
-      "tier",
-      ["n"],
-    ),
-  ].map(([tier, sums]) => ({
-    tier: tier === "null" ? "not recorded" : tier,
-    proposals: sums.n,
-  }));
-/** Decision events belonging to the given (in-scope) proposals. */
-export const historyFor = (proposals: Row[], events: Row[]): Row[] => {
-  const ids = new Set(proposals.map((row) => row.id));
-  return events.filter((event) => ids.has(event.proposal_id));
-};
+/** Applied-KPI detail: in-range count plus verdict parts that sum to the headline. */
+export const appliedDetail = (kpi: Row): string =>
+  `${fmtCount(num(kpi.applied_in_range))} in range · ${fmtCount(num(kpi.validated))} validated · ${fmtCount(num(kpi.regressed))} regressed · ${fmtCount(num(kpi.inconclusive))} inconclusive · ${fmtCount(num(kpi.not_evaluated))} not evaluated`;
 
 export default function Interventions({
   data,
 }: {
   data: Record<string, Row[]>;
 }) {
-  const { filters } = useView();
-  // Findings span harnesses; a harness filter keeps those seen in it. Findings
-  // without a harness list (older stores) are shown under All only.
-  const inScope = (row: Row) =>
-    filters.harness === "" ||
-    (strings(row.metric_harnesses) ?? strings(row.harnesses) ?? []).includes(
-      filters.harness,
-    );
-  const findings = (data.findings ?? []).filter(inScope);
-  const proposals = (data.proposals ?? []).filter(inScope);
-  const history = historyFor(proposals, data.proposal_events ?? []);
-  const applied = proposals.filter((row) => row.applied_at);
-  const corrections = findings.filter(
-    (row) => row.detector === CORRECTION_DETECTOR,
-  );
-  const daily = dailyFacts(data);
-  const comparisons = applied
-    .filter((row) => {
-      const at = Date.parse(String(row.applied_at));
-      return at > Date.parse(filters.start) && at < Date.parse(filters.end);
-    })
-    .map((row) => prePost(row, daily, filters.start, filters.end));
-  const verdicts = groupSum(
-    applied
-      .filter((row) => row.verdict != null)
-      .map((row) => ({ verdict: row.verdict, n: 1 })),
-    "verdict",
-    ["n"],
-  );
-  const verdictCount = (verdict: string) => verdicts.get(verdict)?.n ?? 0;
-  const baseline = baselineByDay(daily);
-  const tiers = tierCounts(proposals);
+  const kpi = data.kpis?.[0] ?? {};
+  const findings = data.findings ?? [];
+  const proposals = data.proposals ?? [];
+  const history = data.proposal_events ?? [];
+  const comparisons = data.comparisons ?? [];
+  const corrections = data.corrections ?? [];
+  const baseline = data.baseline_daily ?? [];
+  const tiers = data.tiers ?? [];
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Active findings"
-          value={fmtCount(findings.length)}
-          detail={`${findings.filter((row) => row.state === "actionable").length} actionable`}
+          value={fmtCount(num(kpi.findings))}
+          detail={`${num(kpi.actionable)} actionable · current state, not the selected range`}
           signals={["intervene.findings"]}
         />
         <Kpi
           title="Proposals"
-          value={fmtCount(proposals.length)}
-          detail={`${proposals.filter((row) => row.state === "pending").length} pending`}
+          value={fmtCount(num(kpi.proposals))}
+          detail={`${num(kpi.pending)} pending · current state, not the selected range`}
           signals={["intervene.tier_audit"]}
         />
         <Kpi
           title="Applied interventions"
-          value={fmtCount(applied.length)}
-          detail={`${fmtCount(verdictCount("validated"))} validated · ${fmtCount(verdictCount("regressed"))} regressed · ${fmtCount(verdictCount("inconclusive"))} inconclusive`}
+          value={fmtCount(num(kpi.applied))}
+          detail={appliedDetail(kpi)}
           signals={["intervene.post_recurrence"]}
         />
         <Kpi
           title="Repeated corrections"
-          value={fmtCount(corrections.length)}
+          value={fmtCount(num(kpi.corrections))}
           detail="practices users keep correcting, not yet codified"
           signals={["intervene.practice_recurrence"]}
         />
@@ -330,11 +138,9 @@ export default function Interventions({
                 label: "Rate change",
                 numeric: true,
                 render: (row) =>
-                  row.pre_rate === null ||
-                  row.post_rate === null ||
-                  num(row.pre_rate) === 0
+                  row.change_pct === null || row.change_pct === undefined
                     ? "—"
-                    : `${((100 * (num(row.post_rate) - num(row.pre_rate))) / num(row.pre_rate)).toFixed(0)}%`,
+                    : `${num(row.change_pct).toFixed(0)}%`,
               },
               {
                 key: "verdict",
@@ -381,7 +187,7 @@ export default function Interventions({
       <Section title="Findings and proposals">
         <Panel
           title="Active findings"
-          subtitle="Failure clusters and repeated corrections promoted by `facts sync` (7 Europe/London days)"
+          subtitle="Failure clusters and repeated corrections promoted by `facts sync` (7 Europe/London days). Current workflow state, not the selected range"
           signals={["intervene.findings"]}
           span={12}
         >
@@ -424,10 +230,11 @@ export default function Interventions({
             rows={findings}
             empty="No findings recorded."
           />
+          <ViewLink view="recurrence">Open Recurrence</ViewLink>
         </Panel>
         <Panel
           title="Proposals"
-          subtitle="Each proposal's structured success metric and its latest recorded evaluation"
+          subtitle="Each proposal's structured success metric and its latest recorded evaluation. Current workflow state, not the selected range"
           signals={["intervene.post_recurrence", "intervene.tier_audit"]}
           span={12}
         >
@@ -479,7 +286,7 @@ export default function Interventions({
         </Panel>
         <Panel
           title="Approval history"
-          subtitle="Each decision event on the proposals above: who, when, and the recorded reason"
+          subtitle="Each decision event on the proposals above: who, when, and the recorded reason. Current workflow state, not the selected range"
           signals={["intervene.tier_audit"]}
           span={12}
         >

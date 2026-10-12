@@ -1,17 +1,27 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
 import type { Row, Scalar } from "./contracts";
+import { HARNESS_LABEL, num } from "./format";
 
 export type Series = { key: string; label: string; color: string };
+
+/** What the enclosing Panel tells its charts and tables. */
+export const PanelContext = createContext<{
+  label: string;
+  harnessChips: boolean;
+}>({ label: "", harnessChips: false });
 type Format = (value: number | null) => string;
 
-const HEIGHT = 170;
-const PAD = { top: 10, right: 8, bottom: 22, left: 48 };
+const HEIGHT = 280;
+const PAD = { top: 10, right: 8, bottom: 22, left: 64 };
 
 function useWidth(ref: RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(0);
@@ -119,7 +129,8 @@ function makePlot(
       ? series.reduce((sum, entry) => sum + (cellValue(row, entry.key) ?? 0), 0)
       : Math.max(0, ...series.map((entry) => cellValue(row, entry.key) ?? 0)),
   );
-  const top = max ?? niceMax(Math.max(0, ...totals));
+  const dataMax = niceMax(Math.max(0, ...totals));
+  const top = max === undefined ? dataMax : Math.min(max, dataMax);
   const innerWidth = Math.max(0, width - PAD.left - PAD.right);
   const innerHeight = HEIGHT - PAD.top - PAD.bottom;
   const band = rows.length > 0 ? innerWidth / rows.length : 0;
@@ -262,12 +273,10 @@ function LineSeries(props: {
 
 function HitTargets(props: {
   rows: Row[];
-  series: Series[];
-  format: Format;
   plot: Plot;
   setHover: (index: number | null) => void;
 }) {
-  const { rows, series, format, plot, setHover } = props;
+  const { rows, plot, setHover } = props;
   return rows.map((row, index) => (
     <rect
       key={`hit-${String(row.day)}`}
@@ -276,13 +285,7 @@ function HitTargets(props: {
       y={PAD.top}
       width={plot.band}
       height={plot.innerHeight}
-      tabIndex={0}
-      aria-label={`${String(row.day)}: ${series
-        .map((entry) => `${entry.label} ${format(cellValue(row, entry.key))}`)
-        .join(", ")}`}
       onMouseEnter={() => setHover(index)}
-      onFocus={() => setHover(index)}
-      onBlur={() => setHover(null)}
     />
   ));
 }
@@ -293,16 +296,16 @@ function DailySvg(props: {
   kind: "stack" | "line";
   format: Format;
   plot: Plot;
-  hover: number | null;
+  shown: number | null;
+  active: number | null;
   setHover: (index: number | null) => void;
 }) {
-  const { rows, series, kind, format, plot, hover, setHover } = props;
+  const { rows, series, kind, format, plot, shown, active, setHover } = props;
   return (
     <svg
       width={plot.width}
       height={HEIGHT}
-      role="img"
-      aria-label={`Daily ${series.map((entry) => entry.label).join(", ")}`}
+      aria-hidden="true"
       onMouseLeave={() => setHover(null)}
     >
       <Gridlines plot={plot} format={format} />
@@ -323,28 +326,36 @@ function DailySvg(props: {
               entry={entry}
               rows={rows}
               plot={plot}
-              hover={hover}
+              hover={shown}
             />
           ))}
-      {hover !== null && kind === "line" && (
+      {shown !== null && kind === "line" && (
         <line
           className="crosshair"
-          x1={plot.x(hover)}
-          x2={plot.x(hover)}
+          x1={plot.x(shown)}
+          x2={plot.x(shown)}
           y1={PAD.top}
           y2={PAD.top + plot.innerHeight}
         />
       )}
-      <HitTargets
-        rows={rows}
-        series={series}
-        format={format}
-        plot={plot}
-        setHover={setHover}
-      />
+      {active !== null && (
+        <rect
+          className="day-focus"
+          x={PAD.left + plot.band * active}
+          y={PAD.top}
+          width={plot.band}
+          height={plot.innerHeight}
+        />
+      )}
+      <HitTargets rows={rows} plot={plot} setHover={setHover} />
     </svg>
   );
 }
+
+const readout = (row: Row, series: Series[], format: Format) =>
+  `${String(row.day)}: ${series
+    .map((entry) => `${entry.label} ${format(cellValue(row, entry.key))}`)
+    .join(", ")}`;
 
 function DayTooltip(props: {
   row: Row;
@@ -363,7 +374,7 @@ function DayTooltip(props: {
           Math.max(0, plot.width - 170),
         ),
       }}
-      role="status"
+      aria-hidden="true"
     >
       <b>{String(row.day)}</b>
       {series.map((entry) => (
@@ -377,10 +388,62 @@ function DayTooltip(props: {
   );
 }
 
+/** Where each navigation key moves the focused day; null means none yet. */
+export const DAY_KEYS: Record<
+  string,
+  (current: number | null, last: number) => number
+> = {
+  ArrowLeft: (current) => (current === null ? 0 : Math.max(0, current - 1)),
+  ArrowRight: (current, last) =>
+    current === null ? 0 : Math.min(last, current + 1),
+  Home: () => 0,
+  End: (_current, last) => last,
+};
+
+/** The keyboard-selected day of a chart: one tab stop, arrows move, Escape clears. */
+function useDayFocus(days: number, clearHover: () => void) {
+  const [active, setActive] = useState<number | null>(null);
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      setActive(null);
+      clearHover();
+      return;
+    }
+    const move = DAY_KEYS[event.key];
+    if (!move || days === 0) return;
+    event.preventDefault();
+    setActive(move(active, days - 1));
+  };
+  return {
+    active,
+    handlers: {
+      tabIndex: days > 0 ? 0 : undefined,
+      onKeyDown,
+      onFocus: () => setActive((current) => current ?? 0),
+      onBlur: () => setActive(null),
+    },
+  };
+}
+
+/**
+ * The chart's accessible name, and whether it needs its own legend: the
+ * contributor chips already name the harnesses a legend would.
+ */
+const chartNaming = (
+  panel: { label: string; harnessChips: boolean },
+  series: Series[],
+) => ({
+  name: panel.label || series.map((entry) => entry.label).join(", "),
+  legend: !(
+    panel.harnessChips && series.every((entry) => entry.key in HARNESS_LABEL)
+  ),
+});
+
 /**
  * Daily trend as stacked columns (mutually exclusive parts of one total) or
- * lines (a rate per series). One y-axis. Hovering or focusing a day shows every
- * series value for that day.
+ * lines (a rate per series). One y-axis. The chart is one tab stop: Left/Right,
+ * Home and End move between days, Escape clears; hovering or focusing a day
+ * shows every series value for that day.
  */
 export function DailyChart({
   rows: sparse,
@@ -393,35 +456,54 @@ export function DailyChart({
   series: Series[];
   kind: "stack" | "line";
   format: Format;
+  /** Ceiling for the axis; the axis still fits the data when it stays lower. */
   max?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const width = useWidth(ref);
+  const panel = useContext(PanelContext);
   const [hover, setHover] = useState<number | null>(null);
   const rows = continuousDays(sparse);
+  const { active, handlers } = useDayFocus(rows.length, () => setHover(null));
   const plot = makePlot(rows, series, kind, max, width);
-  const hovered = hover === null ? undefined : rows[hover];
-  return (
-    <div className="chart" ref={ref}>
-      {rows.length === 0 && (
+  const shown = hover ?? active;
+  const shownRow = rows[shown ?? -1];
+  const activeRow = rows[active ?? -1];
+  const { name, legend } = chartNaming(panel, series);
+  if (rows.length === 0)
+    return (
+      <div className="chart">
         <p className="empty">No rows for the selected range.</p>
-      )}
-      {rows.length > 0 && <Legend series={series} />}
-      {width > 0 && rows.length > 0 && (
+      </div>
+    );
+  return (
+    <div
+      className="chart"
+      ref={ref}
+      role="group"
+      aria-label={`${name} daily chart`}
+      {...handlers}
+    >
+      {legend && <Legend series={series} />}
+      {width > 0 && (
         <DailySvg
           rows={rows}
           series={series}
           kind={kind}
           format={format}
           plot={plot}
-          hover={hover}
+          shown={shown}
+          active={active}
           setHover={setHover}
         />
       )}
-      {hover !== null && hovered && (
+      <p className="sr-only" aria-live="polite">
+        {activeRow ? readout(activeRow, series, format) : ""}
+      </p>
+      {shownRow && (
         <DayTooltip
-          row={hovered}
-          index={hover}
+          row={shownRow}
+          index={shown!}
           series={series}
           format={format}
           plot={plot}
@@ -453,10 +535,7 @@ export function BarList({
   return (
     <ul className="bar-list">
       {items.map((item) => (
-        <li
-          key={item.key}
-          title={item.value === null ? "No value" : format(item.value)}
-        >
+        <li key={item.key}>
           <span className="bar-label">{item.label}</span>
           <span className="bar-track">
             {item.value !== null && top > 0 && (
@@ -468,7 +547,9 @@ export function BarList({
                 }}
               />
             )}
-            <span className="bar-value">{format(item.value)}</span>
+            <span className="bar-value">
+              {item.value === null ? "No value" : format(item.value)}
+            </span>
           </span>
           {item.detail && <span className="bar-detail">{item.detail}</span>}
         </li>
@@ -495,47 +576,169 @@ const cell = (value: Scalar | Scalar[] | undefined): ReactNode =>
           )
         : String(value);
 
+export type Sort = { key: string; descending: boolean };
+
+/** A cell's value as a number when it is one (ClickHouse sends 64-bit integers as strings). */
+const numeric = (value: Scalar | Scalar[] | undefined): number | null => {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** Ascending order; null and missing values sort after every value in both directions. */
+function compareCells(
+  a: Scalar | Scalar[] | undefined,
+  b: Scalar | Scalar[] | undefined,
+): number {
+  const left = numeric(a);
+  const right = numeric(b);
+  if (left !== null && right !== null) return left - right;
+  return String(cell(a)).localeCompare(String(cell(b)), "en", {
+    numeric: true,
+  });
+}
+
+const isBlank = (value: Scalar | Scalar[] | undefined) =>
+  value === null || value === undefined;
+
+/**
+ * Rows ordered by one column. The server's All row (harness '') keeps its
+ * position; every other row is reordered around it.
+ */
+export function sortRows(rows: Row[], sort: Sort | null): Row[] {
+  if (!sort) return rows;
+  const pinned = (row: Row) => row.harness === "";
+  const sign = sort.descending ? -1 : 1;
+  const sorted = rows
+    .filter((row) => !pinned(row))
+    .sort((a, b) => {
+      const x = a[sort.key];
+      const y = b[sort.key];
+      if (isBlank(x) || isBlank(y))
+        return Number(isBlank(x)) - Number(isBlank(y));
+      return sign * compareCells(x, y);
+    });
+  let next = 0;
+  return rows.map((row) => (pinned(row) ? row : sorted[next++]));
+}
+
+/** A column header that sorts its table: numbers start largest first, text A to Z. */
+function SortHeader({
+  column,
+  sort,
+  onSort,
+}: {
+  column: Column;
+  sort: Sort | null;
+  onSort: (sort: Sort | null) => void;
+}) {
+  const active = sort?.key === column.key;
+  const firstDescending = Boolean(column.numeric);
+  const toggle = () =>
+    onSort(
+      !active
+        ? { key: column.key, descending: firstDescending }
+        : sort.descending === firstDescending
+          ? { key: column.key, descending: !firstDescending }
+          : null,
+    );
+  return (
+    <th
+      scope="col"
+      className={column.numeric ? "num" : undefined}
+      aria-sort={
+        active ? (sort.descending ? "descending" : "ascending") : undefined
+      }
+    >
+      <button type="button" className="sort" onClick={toggle}>
+        {column.label}
+        <span className="sort-mark" aria-hidden="true">
+          {active ? (sort.descending ? "▼" : "▲") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export function DataTable({
   columns,
   rows,
   empty = "No rows for the selected range.",
+  total = num(rows[0]?.total_rows),
+  label,
 }: {
   columns: Column[];
   rows: Row[];
   empty?: string;
+  /**
+   * Rows the source holds before a display limit; shows "Showing N of M" when larger.
+   * Defaults to the `total_rows` column a limited query returns (`count() OVER ()`).
+   */
+  total?: number;
+  /** Accessible name of the scrollable table region; defaults to the panel title. */
+  label?: string;
 }) {
+  const panel = useContext(PanelContext);
+  const [sort, setSort] = useState<Sort | null>(null);
+  const name = label ?? panel.label;
   if (rows.length === 0) return <p className="empty">{empty}</p>;
+  const sortable = (column: Column) =>
+    rows.length > 1 && rows.some((row) => !isBlank(row[column.key]));
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                className={column.numeric ? "num" : undefined}
-              >
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {columns.map((column) => (
-                <td
-                  key={column.key}
-                  className={column.numeric ? "num" : undefined}
-                >
-                  {column.render ? column.render(row) : cell(row[column.key])}
-                </td>
-              ))}
+    <>
+      {total > rows.length && (
+        <p className="table-count">
+          Showing {rows.length.toLocaleString("en")} of{" "}
+          {total.toLocaleString("en")}
+        </p>
+      )}
+      <div
+        className="table-wrap"
+        tabIndex={0}
+        role={name ? "region" : undefined}
+        aria-label={name || undefined}
+      >
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) =>
+                sortable(column) ? (
+                  <SortHeader
+                    key={column.key}
+                    column={column}
+                    sort={sort}
+                    onSort={setSort}
+                  />
+                ) : (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    className={column.numeric ? "num" : undefined}
+                  >
+                    {column.label}
+                  </th>
+                ),
+              )}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {sortRows(rows, sort).map((row, index) => (
+              <tr key={index}>
+                {columns.map((column) => (
+                  <td
+                    key={column.key}
+                    className={column.numeric ? "num" : undefined}
+                  >
+                    {column.render ? column.render(row) : cell(row[column.key])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

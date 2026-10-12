@@ -11,11 +11,11 @@ import type {
 import { HARNESSES } from "../src/contracts";
 import { enabledHarnesses, isHidden } from "../src/harness-scope";
 import { batch, live, type Query } from "./clickhouse";
-import { inWindow } from "./views";
+import { HARNESS_FILTER, inWindow } from "./views";
 
 type Params = Record<string, string>;
 type Source = RouteSource;
-type RouteCounts = {
+export type RouteCounts = {
   /** route → harness → rows matching the route predicate. */
   total: Map<string, Map<string, number>>;
   /** route → harness → matching rows not explained by a registered stray. */
@@ -352,9 +352,8 @@ export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
   return rows;
 }
 
-/** Rows no route or registered stray claims, by harness and name. */
-export function unroutedQuery(registry: Registry): string {
-  const parts = SOURCES.map((source) => {
+const unroutedParts = (registry: Registry) =>
+  SOURCES.map((source) => {
     const claimed = registry.routes
       .filter((route) => route.source === source)
       .map((route) => `(harness = '${route.harness}' AND (${route.match}))`);
@@ -362,17 +361,34 @@ export function unroutedQuery(registry: Registry): string {
 FROM ${SOURCE_RELATION[source]}
 WHERE ${WINDOW} AND NOT (${claimed.join(" OR ") || "0"}) AND NOT (${strayCondition(registry, source)})
 GROUP BY harness, name`;
-  });
-  return `SELECT * FROM (${parts.join(" UNION ALL ")}) ORDER BY n DESC LIMIT 40`;
-}
+  }).join(" UNION ALL ");
+
+const UNROUTED_LIMIT = 40;
+
+/** Rows no route or registered stray claims, by harness and name: the top names. */
+export const unroutedQuery = (registry: Registry): string =>
+  `SELECT * FROM (${unroutedParts(registry)}) ORDER BY n DESC LIMIT ${UNROUTED_LIMIT}`;
+
+/** The same rows with no limit, counted per harness: names and rows. */
+export const unroutedTotalsQuery = (registry: Registry): string =>
+  `SELECT harness, count() AS names, sum(n) AS rows FROM (${unroutedParts(registry)}) GROUP BY harness`;
+
+const LOADER_STALE =
+  "exception != '' OR now() > next_refresh_time + INTERVAL 2 MINUTE";
+/** The harness the page selected; All (empty) keeps every row. */
+const SELECTED = "({harness:String} = '' OR harness = {harness:String})";
 
 const LOADERS = `SELECT view, toString(status) AS status, toString(last_success_time) AS last_success,
     dateDiff('second', last_success_time, now()) AS age_seconds,
-    toUInt8(exception != '' OR now() > next_refresh_time + INTERVAL 2 MINUTE) AS stale,
+    toUInt8(${LOADER_STALE}) AS stale,
     exception, written_rows
 FROM system.view_refreshes WHERE database = 'introspection' ORDER BY view`;
 
-const FRESHNESS = `WITH
+/** Loaders in total, failing (stale) and healthy: the Loaders KPI. */
+const LOADER_SUMMARY = `SELECT count() AS total, countIf(stale = 1) AS failing, total - failing AS ok
+FROM (SELECT toUInt8(${LOADER_STALE}) AS stale FROM system.view_refreshes WHERE database = 'introspection')`;
+
+const FRESHNESS_CTES = `WITH
     facts AS (
         SELECT 'spans' AS source, harness, max(ts) AS latest, toUInt8(1) AS present FROM introspection.spans
         WHERE ts > now() - INTERVAL 1 DAY GROUP BY harness
@@ -394,7 +410,8 @@ const FRESHNESS = `WITH
             AND observed_timestamp < toUInt64(toUnixTimestamp(now() - INTERVAL 1 MINUTE)) * 1000000000
             AND resource.\`service.name\`::String IN (${SERVICES})
         GROUP BY 2
-    )
+    ),
+    fresh AS (
 SELECT r.source AS source, r.harness AS harness, toString(r.latest) AS source_latest,
     -- An unmatched join yields a default, not a timestamp: report no facts, never a lag.
     toUInt8(ifNull(f.present, 0) = 0) AS facts_missing,
@@ -402,7 +419,16 @@ SELECT r.source AS source, r.harness AS harness, toString(r.latest) AS source_la
     if(facts_missing = 1, NULL, greatest(dateDiff('second', f.latest, r.latest), 0)) AS lag_seconds,
     dateDiff('second', r.latest, now()) AS source_age_seconds
 FROM raw AS r LEFT JOIN facts AS f ON f.source = r.source AND f.harness = r.harness
-ORDER BY harness, source`;
+    )`;
+
+const FRESHNESS = `${FRESHNESS_CTES}
+SELECT * FROM fresh WHERE ${SELECTED} ORDER BY harness, source`;
+
+/** Sources compared, sources with SigNoz rows but no facts, and the largest lag (NULL lag counts 0). */
+const FRESHNESS_SUMMARY = `${FRESHNESS_CTES}
+SELECT count() AS sources, countIf(facts_missing = 1) AS missing_facts,
+    if(count() > 0, max(ifNull(lag_seconds, 0)), NULL) AS max_lag_seconds
+FROM fresh WHERE ${SELECTED}`;
 
 /**
  * Direct recount of the raw SigNoz usage source with the validated producer
@@ -414,7 +440,7 @@ ORDER BY harness, source`;
 const PARITY_WINDOW_END =
   "least({end:DateTime64(3, 'UTC')}, now64(3) - INTERVAL 10 MINUTE)";
 const PARITY_WINDOW_START = `greatest({start:DateTime64(3, 'UTC')}, ${PARITY_WINDOW_END} - INTERVAL 7 DAY)`;
-const PARITY = `WITH
+const PARITY_CTES = `WITH
     raw AS (
         SELECT resource.\`service.name\`::String AS harness, count() AS operations,
             sum(if(mapContains(attributes_number, 'input_token_count'), attributes_number['input_token_count'], toFloat64OrZero(attributes_string['input_token_count']))) AS input,
@@ -462,7 +488,8 @@ const PARITY = `WITH
         FROM introspection.usage_events_snapshot
         WHERE ts >= ${PARITY_WINDOW_START} AND ts < ${PARITY_WINDOW_END}
         GROUP BY harness
-    )
+    ),
+    checked AS (
 SELECT toString(${PARITY_WINDOW_START}) AS window_start, toString(${PARITY_WINDOW_END}) AS window_end,
     -- A full join also checks harnesses present only in facts; a missing side counts as 0.
     if(r.harness != '', r.harness, f.harness) AS harness,
@@ -474,7 +501,17 @@ SELECT toString(${PARITY_WINDOW_START}) AS window_start, toString(${PARITY_WINDO
         AND raw_cached = fact_cached AND raw_output = fact_output) AS ok
 FROM raw AS r FULL OUTER JOIN facts AS f ON f.harness = r.harness
 WHERE raw_operations > 0 OR fact_operations > 0
-ORDER BY harness`;
+    )`;
+
+const PARITY = `${PARITY_CTES}
+SELECT * FROM checked WHERE ${SELECTED} ORDER BY harness`;
+
+/** Harnesses compared, how many match, and the window label for the subtitle. */
+const PARITY_SUMMARY = `${PARITY_CTES}
+SELECT count() AS harnesses, countIf(ok = 1) AS matching,
+    if(count() > 0, concat(substring(toString(${PARITY_WINDOW_START}), 1, 16), ' → ',
+        substring(toString(${PARITY_WINDOW_END}), 1, 16), ' UTC'), '') AS window_label
+FROM checked WHERE ${SELECTED}`;
 
 /**
  * All = Σ harnesses. Each check computes the All value directly (no harness
@@ -566,7 +603,7 @@ export function recombine(results: Record<string, Row[]>): Row[] {
 }
 
 // A home path is `/Users/<name>`; the bare `/Users/` directory names nobody.
-const SANITIZATION = `SELECT 'spans' AS source, count() AS rows,
+const SANITIZATION_TABLES = `SELECT 'spans' AS source, count() AS rows,
     countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})) AS forbidden_keys,
     countIf(lengthUTF8(status_message) > 160) AS long_status,
     countIf(match(name, '/Users/[A-Za-z0-9._-]+') OR match(status_message, '/Users/[A-Za-z0-9._-]+')) AS home_paths
@@ -585,17 +622,108 @@ SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORB
 FROM introspection.hook_events`;
 
 /**
+ * Per table plus one All row (`source = ''`, ROLLUP): `violations` is the flagged
+ * rows of each kind added together, so the KPI needs no page arithmetic.
+ */
+const SANITIZATION = `SELECT source, sum(rows) AS rows, sum(forbidden_keys) AS forbidden_keys,
+    sum(long_status) AS long_status, sum(home_paths) AS home_paths, sum(violations) AS violations
+FROM (
+    SELECT source, rows, forbidden_keys, long_status, home_paths,
+        forbidden_keys + long_status + home_paths AS violations
+    FROM (${SANITIZATION_TABLES})
+) GROUP BY ROLLUP(source)
+ORDER BY indexOf(['spans', 'logs', 'hook_events'], source)`;
+
+/** Coverage cells in these states are the ones nothing explains (the Coverage KPI). */
+const UNEXPLAINED: Record<string, true> = {
+  "possible break": true,
+  "stray (unexplained)": true,
+  "not in use, rows present": true,
+};
+
+const coverageSummary = (rows: Row[]): Row => ({
+  cells: rows.length,
+  unexplained: rows.filter((row) => UNEXPLAINED[String(row.state)] === true)
+    .length,
+});
+
+/** What each coverage state means, in the status scale's order (docs/ux/principles.md P3). */
+const STATE_DEFINITIONS: Record<CoverageState, string> = {
+  healthy: "The route has rows and no unexplained rows elsewhere.",
+  "no events": "No rows; this route only has rows when a rare event happens.",
+  idle: "No rows because the harness produced nothing in the window.",
+  "not applicable":
+    "The harness does not produce this signal, and no rows exist.",
+  "stray (explained)":
+    "Rows on another harness's route that a registered stray explains.",
+  "possible break":
+    "The harness is active and should have rows on this route, but has none.",
+  "stray (unexplained)": "Rows on a route that no registered stray explains.",
+  "not in use": "This machine does not enable the harness.",
+  "not in use, rows present":
+    "The harness is not enabled here, but its route still has rows.",
+};
+
+/** One row per state in scale order with its cell count: the legend and the coverage band. */
+const coverageStates = (rows: Row[]): Row[] =>
+  (Object.keys(STATE_DEFINITIONS) as CoverageState[]).map((state) => ({
+    state,
+    cells: rows.filter((row) => row.state === state).length,
+    definition: STATE_DEFINITIONS[state],
+  }));
+
+/** One row per view in registry order: cells, healthy cells and unexplained cells. */
+function coverageByView(registry: Registry, rows: Row[]): Row[] {
+  const views = [...new Set(rows.map((row) => String(row.view)))];
+  return views.map((view) => {
+    const cells = rows.filter((row) => row.view === view);
+    return {
+      view,
+      view_title:
+        registry.signals.find((entry) => entry.view === view)?.view_title ??
+        view,
+      cells: cells.length,
+      healthy: cells.filter((row) => row.state === "healthy").length,
+      unexplained: coverageSummary(cells).unexplained,
+    };
+  });
+}
+
+/** Exact unrouted names and rows for the selected harness, from the uncapped totals. */
+const unroutedSummary = (totals: Row[]): Row => ({
+  names: totals.reduce((sum, row) => sum + Number(row.names ?? 0), 0),
+  rows: totals.reduce((sum, row) => sum + Number(row.rows ?? 0), 0),
+});
+
+/** Stale or failing loaders only: the exceptions of the refresh table. */
+const loaderExceptions = (rows: Row[]): Row[] =>
+  rows.filter((row) => Number(row.stale) === 1);
+
+/** Sources with SigNoz rows but no fact rows: the only freshness rule the server has. */
+const freshnessExceptions = (rows: Row[]): Row[] =>
+  rows.filter((row) => Number(row.facts_missing) === 1);
+
+/** Keeps the selected harness's rows; All (empty) keeps every row. */
+const selectedHarness = (params: Params) => {
+  const harness = params.harness ?? "";
+  return (rows: Row[]): Row[] =>
+    harness === "" ? rows : rows.filter((row) => row.harness === harness);
+};
+
+/**
  * Per harness: tasks, tasks whose session has a project, and tasks whose session the
  * resolver found in no session store (for example a run that kept no session).
  */
 const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks,
     countIf(s.status = 'attributed') AS attributed,
-    countIf(s.status = '') AS no_session_record
+    countIf(s.status = '') AS no_session_record,
+    if(tasks > 0, 100 * attributed / tasks, NULL) AS share_rate
 FROM introspection.task_outcomes_snapshot AS t
 LEFT JOIN (
     SELECT session_id, any(status) AS status FROM introspection.session_projects FINAL GROUP BY session_id
 ) AS s ON s.session_id = t.session_id
 WHERE t.start_ts >= {start:DateTime64(3, 'UTC')} AND t.start_ts < {end:DateTime64(3, 'UTC')}
+    AND ({harness:String} = '' OR t.harness = {harness:String})
 GROUP BY harness ORDER BY harness`;
 
 /** Sessions the resolver could not attribute, by session store and reason. */
@@ -610,51 +738,93 @@ const PROJECT_SYNC = `SELECT toString(max(loaded_at)) AS last_load,
     dateDiff('second', max(loaded_at), now64(3)) AS age_seconds, count() AS events
 FROM introspection.session_projects FINAL`;
 
-const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, source, count() AS n FROM (
+const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, count() AS n FROM (
     SELECT ts, harness, 'spans' AS source FROM introspection.spans FINAL WHERE ${inWindow("ts")}
     UNION ALL
     SELECT ts, harness, 'logs' FROM introspection.logs FINAL WHERE ${inWindow("ts")}
     UNION ALL
-    SELECT ts, harness, 'hooks' FROM introspection.hook_rows WHERE ${inWindow("ts")}
-) GROUP BY day, harness, source ORDER BY day`;
+    SELECT ts, harness, 'hooks' FROM introspection.hook_rows
+    WHERE ts >= ${START} AND ts < {end:DateTime64(3, 'UTC')}
+        AND (${HARNESS_FILTER} OR (harness = '' AND {harness:String} = ''))
+) GROUP BY day, harness ORDER BY day, harness`;
+
+/** Sanitization scans every fact row ever stored; callers cache it. */
+export const sanitizationRows = (query: Query): Promise<Row[]> =>
+  query(SANITIZATION);
+
+/** The capped list and the uncapped per-harness totals behind it. */
+export type Unrouted = { list: Row[]; totals: Row[] };
+
+/** Unrouted rows scan the window's raw facts against every route; callers cache it. */
+export const unroutedRows = async (
+  query: Query,
+  registry: Registry,
+  params: Params,
+): Promise<Unrouted> => {
+  const [list, totals] = await Promise.all([
+    query(unroutedQuery(registry), params),
+    query(unroutedTotalsQuery(registry), params),
+  ]);
+  return { list, totals };
+};
+
+/** Results the caller may share between loads, already started. */
+export type PipelineShared = {
+  counts: Promise<RouteCounts>;
+  sanitization: Promise<Row[]>;
+  unrouted: Promise<Unrouted>;
+};
 
 export async function pipelineData(
   query: Query,
   registry: Registry,
   params: Params,
-  counts: RouteCounts,
-  withinSnapshots = true,
+  withinSnapshots: boolean,
+  shared: PipelineShared,
 ): Promise<Record<string, Row[]>> {
   const queries: Record<string, string> = {
     loaders: LOADERS,
+    loader_summary: LOADER_SUMMARY,
     freshness: FRESHNESS,
+    freshness_summary: FRESHNESS_SUMMARY,
     parity: PARITY,
-    sanitization: SANITIZATION,
+    parity_summary: PARITY_SUMMARY,
     daily_rows: DAILY_ROWS,
-    unrouted: unroutedQuery(registry),
     project_coverage: PROJECT_COVERAGE,
     project_rejections: PROJECT_REJECTIONS,
     project_sync: PROJECT_SYNC,
     ...recombinationQueries(),
   };
-  const results = await batch(
-    query,
-    withinSnapshots ? queries : live(queries),
-    params,
-  );
+  const [results, routes, sanitization, unrouted] = await Promise.all([
+    batch(query, withinSnapshots ? queries : live(queries), params),
+    shared.counts,
+    shared.sanitization,
+    shared.unrouted,
+  ]);
+  const selected = selectedHarness(params);
+  const coverage = selected(coverageGrid(registry, routes));
   return {
     loaders: results.loaders!,
+    loader_summary: results.loader_summary!,
     freshness: results.freshness!,
+    freshness_summary: results.freshness_summary!,
     parity: results.parity!,
+    parity_summary: results.parity_summary!,
     recombination: recombine(results),
-    sanitization: results.sanitization!,
+    sanitization,
     daily_rows: results.daily_rows!,
-    coverage: coverageGrid(registry, counts),
-    unrouted: results.unrouted!,
+    coverage,
+    coverage_summary: [coverageSummary(coverage)],
+    coverage_states: coverageStates(coverage),
+    coverage_by_view: coverageByView(registry, coverage),
+    loader_exceptions: loaderExceptions(results.loaders!),
+    freshness_exceptions: freshnessExceptions(results.freshness!),
+    unrouted: selected(unrouted.list),
+    unrouted_summary: [unroutedSummary(selected(unrouted.totals))],
     project_coverage: results.project_coverage!,
     project_rejections: results.project_rejections!,
     project_sync: results.project_sync!,
-    strays: registry.strays.map((entry) => ({ ...entry })),
+    strays: selected(registry.strays.map((entry) => ({ ...entry }))),
     exclusions: registry.exclusions.map((entry) => ({ ...entry })),
     hidden: registry.hidden.map((entry) => ({ ...entry })),
   };

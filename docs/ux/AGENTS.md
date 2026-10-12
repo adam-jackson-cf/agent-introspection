@@ -8,8 +8,10 @@ going only as deep as the task needs:
 2. [`DESIGN.md`](DESIGN.md): how it looks (tokens, palettes, components, layout). Read it for any visual
    change, and lint it after editing: `npx @google/design.md lint docs/ux/DESIGN.md`.
 3. [`discovery.md`](discovery.md): what each existing element is for. Read it before changing or removing one.
-4. The newest dated files in `reviews/`, when any exist: current scores, the open backlog and the feature
-   inventory. Every inventory row must still exist after your change; record its new home.
+4. The newest dated files in `reviews/`, when any exist: current scores and the open backlog.
+5. [`feature-audit/`](feature-audit/README.md): every feature, signal and calculation on each page and how each
+   signal is formed. Read the page's file before changing it. Every row must still exist after your change:
+   fill its **New home**, and remove a row only for a decided change listed there.
 
 Grade a changed page with the rubric in [`rubrics/ux-page.yaml`](rubrics/ux-page.yaml). If this file ever
 disagrees with those standards, the standards win: fix this file. The decisions behind them are in
