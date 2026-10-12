@@ -7,6 +7,7 @@ import {
   Notices,
   PageBody,
   PageHead,
+  PartialNotice,
   RangeNotice,
   Sidebar,
   Topbar,
@@ -133,6 +134,7 @@ export default function App() {
             failure={data.failure}
             onRetry={refresh}
           />
+          <PartialNotice response={viewResponse} />
           <RangeNotice response={viewResponse} />
           <div className={data.lastGoodView ? "stale-data" : undefined}>
             <PageBody

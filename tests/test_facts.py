@@ -90,6 +90,12 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
     assert ran[-1] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
 
 
+def _refresher_settings(refresher: str) -> dict[str, str]:
+    """Return a snapshot refresher's own settings, without its table-filter map."""
+    clause = refresher.split("SETTINGS ", 1)[1].split(", additional")[0]
+    return dict(part.split(" = ", 1) for part in clause.split(", "))
+
+
 def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_parts() -> None:
     for snapshot in facts.SNAPSHOTS:
         statements = facts.snapshot_statements(snapshot)
@@ -103,6 +109,13 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
             # Each part replaces its table whole, so it never holds duplicates.
             assert "APPEND" not in refresher
             assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
+            # A refresher must spill before it reaches a memory ceiling below the server's.
+            settings = _refresher_settings(refresher)
+            ceiling = int(settings["max_memory_usage"])
+            assert ceiling <= 2 * 1024**3
+            assert int(settings["max_bytes_before_external_group_by"]) <= ceiling // 2
+            assert int(settings["max_bytes_before_external_sort"]) <= ceiling // 2
+            assert "grace_hash" in settings["join_algorithm"]
     labels = next(s for s in facts.SNAPSHOTS if s.view == "task_labels")
     waits = [s for s in facts.snapshot_statements(labels) if "DEPENDS ON" in s]
     assert "introspection.refresh_task_outcomes_history" in waits[0]

@@ -1,10 +1,11 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_introspection import facts, schedule
+from agent_introspection import cli, facts, schedule
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
 from agent_introspection.findings import CORRECTION_DETECTOR_ID
@@ -357,3 +358,30 @@ def test_proposal_draft_dry_run_and_evaluate_commands(
     with pytest.raises(SystemExit) as raised:
         main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00"])
     assert raised.value.code == EXIT_VALIDATION
+
+
+def test_a_logged_sync_writes_its_summary_and_errors_to_the_timestamped_log(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "sync.log"
+    monkeypatch.setattr(schedule, "LOG", log)
+    outcomes: list[Any] = [{"synced": 3}, FactsError("clickhouse is down")]
+
+    def fake(_args: object) -> Any:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(cli, "facts_command", fake)
+
+    assert main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"]) == 0
+    with pytest.raises(SystemExit):
+        main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"])
+
+    stamped = [line.split(" ", 1) for line in log.read_text().splitlines()]
+    assert [rest for _, rest in stamped] == ['{"synced":3}', "FactsError: clickhouse is down"]
+    assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp) for stamp, _ in stamped)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

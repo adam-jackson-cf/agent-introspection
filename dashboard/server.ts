@@ -17,13 +17,16 @@ import {
 } from "./src/contracts";
 import {
   batch,
+  batchSettled,
   clickhouse,
   clickhouseUrl,
   credentialsFromEnv,
   live,
+  shortMessage,
   SNAPSHOT_DAYS,
   type Query,
 } from "./server/clickhouse";
+import { asOfFor, REFRESHERS, refreshersFor } from "./server/refreshers";
 import { enabledHarnesses, hiddenSignals } from "./src/harness-scope";
 import {
   contributions,
@@ -53,10 +56,6 @@ const REGISTRY_TTL_MS = 60_000;
  * are shared for 10 minutes, the cadence the fact snapshots rebuild on.
  */
 const SHARED_TTL_MS = 600_000;
-type FactsAsOf = ViewResponse["asOf"];
-const FACTS_AS_OF = `SELECT toString(max(last_success_time)) AS as_of,
-    toUInt8(max(exception != '' OR now() > next_refresh_time + INTERVAL 2 MINUTE)) AS stale
-FROM system.view_refreshes WHERE database = 'introspection'`;
 const CACHE_ENTRIES = 32;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CSP =
@@ -402,17 +401,13 @@ export function createApp(
   const tenMinutes = (bound: Record<string, string>) =>
     `${bound.start!.slice(0, 15)}|${bound.end!.slice(0, 15)}`;
 
-  // "Data as of": the newest successful fact refresh. `stale` is the loader's own test
-  // (a refresh failed, or the next one is more than 2 minutes late), as on Pipeline.
-  const asOfCache = ttlCache<FactsAsOf>(SHARED_TTL_MS, 1, clock);
-  const factsAsOf = (): Promise<FactsAsOf> =>
-    asOfCache("facts", async () => {
-      const [row] = await query(FACTS_AS_OF);
-      const at = typeof row?.as_of === "string" ? row.as_of : "";
-      return at && !at.startsWith("1970")
-        ? { at: at.replace(" ", "T") + "Z", stale: Number(row?.stale) === 1 }
-        : null;
-    }).catch(() => null);
+  // "Data as of": the refreshers feeding the view (see server/refreshers.ts). `stale` is
+  // the loader's own test (a refresh failed, or the next one is more than 2 minutes late).
+  const refreshersCache = ttlCache<Row[]>(SHARED_TTL_MS, 1, clock);
+  const factsAsOf = (scope: string[] | null): Promise<ViewResponse["asOf"]> =>
+    refreshersCache("facts", () => query(REFRESHERS))
+      .then((rows) => asOfFor(rows, scope))
+      .catch(() => null);
 
   async function view(id: ViewId, filters: Filters): Promise<ViewResponse> {
     const started = performance.now();
@@ -430,37 +425,58 @@ export function createApp(
       },
       () => undefined,
     );
-    const asOf = factsAsOf();
     // Snapshots keep one extra day (facts.SNAPSHOT_DAYS + 1), so a "Last 90 days"
     // window whose start was computed a moment before this request still reads them.
     const withinSnapshots =
       Date.parse(filters.start) >=
       dependencies.now().getTime() - (SNAPSHOT_DAYS + 1) * 86_400_000;
     let data: Record<string, Row[]>;
+    let errors: Record<string, string>;
+    let asOf: Promise<ViewResponse["asOf"]>;
     if (id === "pipeline") {
-      data = await pipelineData(query, reg, bound, withinSnapshots, {
-        counts,
-        sanitization: checkCache("sanitization", () => sanitizationRows(query)),
-        unrouted: unroutedCache(`unrouted|${tenMinutes(bound)}`, () =>
-          unroutedRows(query, reg, bound),
-        ),
-      });
+      // Pipeline reads every fact table, so every refresher is in scope.
+      asOf = factsAsOf(null);
+      ({ data, errors } = await pipelineData(
+        query,
+        reg,
+        bound,
+        withinSnapshots,
+        {
+          counts,
+          sanitization: checkCache("sanitization", () =>
+            sanitizationRows(query),
+          ),
+          unrouted: unroutedCache(`unrouted|${tenMinutes(bound)}`, () =>
+            unroutedRows(query, reg, bound),
+          ),
+        },
+      ));
       data.project_sync = (data.project_sync ?? []).map((row) => ({
         ...row,
         inbox_backlog: dependencies.inbox(),
       }));
     } else {
       const queries = VIEW_QUERIES[id];
-      data = await batch(
+      asOf = factsAsOf(refreshersFor(queries, withinSnapshots));
+      ({ data, errors } = await batchSettled(
         query,
         withinSnapshots ? queries : live(queries),
         bound,
-      );
+      ));
+      const names = Object.keys(queries);
+      // Every branch failing means ClickHouse is down, not that one query is bad.
+      if (names.length > 0 && Object.keys(errors).length === names.length)
+        throw new Error(Object.values(errors)[0]);
       if (id === "interventions")
         data = interventionsData(data, dependencies.workflow(), filters);
     }
     const sqlDone = performance.now();
-    const contributed = contributions(reg, await counts, id);
+    // Chips need the route counts; without them the view shows no chips.
+    const totals = await counts.catch((error: unknown) => {
+      errors.route_counts = shortMessage(error);
+      return null;
+    });
+    const contributed = totals ? contributions(reg, totals, id) : {};
     return {
       view: id,
       filters,
@@ -473,6 +489,7 @@ export function createApp(
       },
       asOf: await asOf,
       data,
+      errors,
       thresholds: { minRateN: MIN_RATE_N },
       contributions: contributed,
     };

@@ -154,11 +154,65 @@ export const live = (queries: Record<string, string>): Record<string, string> =>
   );
 
 /**
- * Runs several named read-only queries as one HTTP request. Each query becomes
- * a UNION ALL branch that tags its rows with the query name and renders each
- * row as a JSON object, so result schemas can differ. One request per view
- * avoids opening many connections at once: Bun's HTTP client on this machine
- * stalls about one second on some new connections to OrbStack.
+ * Branches in flight at once. ClickHouse here runs near its memory cap and a UNION
+ * ALL's peak memory is the sum of its branches, so branches run apart and a few at
+ * a time. A small pool also keeps connections few: Bun's HTTP client on this machine
+ * stalls about one second on some new connections to OrbStack, and a reused
+ * keep-alive connection avoids the stall.
+ */
+export const BRANCH_CONCURRENCY = 3;
+
+/** Longest error message kept per failed branch. */
+const ERROR_LIMIT = 200;
+
+/** Named results plus a short message for each branch that failed (its rows are empty). */
+export type Settled = {
+  data: Record<string, Row[]>;
+  errors: Record<string, string>;
+};
+
+/** A failure as one short line: ClickHouse's exception line, or the error's message. */
+export const shortMessage = (error: unknown): string =>
+  (error instanceof Error ? error.message : String(error))
+    .replace(/\s+/g, " ")
+    .slice(0, ERROR_LIMIT);
+
+/**
+ * Runs several named read-only queries, each as its own request, at most
+ * `BRANCH_CONCURRENCY` at a time. A failing branch does not fail the others: it
+ * returns no rows and is named in `errors`.
+ */
+export async function batchSettled(
+  query: Query,
+  named: Record<string, string>,
+  params: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<Settled> {
+  const names = Object.keys(named);
+  const data: Record<string, Row[]> = Object.fromEntries(
+    names.map((name) => [name, []]),
+  );
+  const errors: Record<string, string> = {};
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < names.length) {
+      const name = names[next++]!;
+      const [outcome] = await Promise.allSettled([
+        query(named[name]!, params, signal),
+      ]);
+      if (outcome.status === "fulfilled") data[name] = outcome.value;
+      else errors[name] = shortMessage(outcome.reason);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(BRANCH_CONCURRENCY, names.length) }, worker),
+  );
+  return { data, errors };
+}
+
+/**
+ * Like `batchSettled`, but any failed branch fails the whole call: for data a caller
+ * cannot use in part (the registry, route counts, a session).
  */
 export async function batch(
   query: Query,
@@ -166,21 +220,8 @@ export async function batch(
   params: Record<string, string> = {},
   signal?: AbortSignal,
 ): Promise<Record<string, Row[]>> {
-  const names = Object.keys(named);
-  const result: Record<string, Row[]> = Object.fromEntries(
-    names.map((name) => [name, []]),
-  );
-  if (names.length === 0) return result;
-  const branches = names.map(
-    (name, index) =>
-      `SELECT ${index} AS __q, rowNumberInAllBlocks() AS __n, formatRowNoNewline('JSONEachRow', *) AS __row FROM (\n${named[name]}\n)`,
-  );
-  const rows = await query(
-    `SELECT __q, __row FROM (\n${branches.join("\nUNION ALL\n")}\n) ORDER BY __q, __n`,
-    params,
-    signal,
-  );
-  for (const row of rows)
-    result[names[Number(row.__q)]!]!.push(JSON.parse(String(row.__row)) as Row);
-  return result;
+  const { data, errors } = await batchSettled(query, named, params, signal);
+  const failed = Object.values(errors)[0];
+  if (failed !== undefined) throw new ClickHouseError(failed);
+  return data;
 }

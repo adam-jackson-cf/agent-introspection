@@ -324,7 +324,7 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
       return [];
     };
     const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
-    const data = await pipelineData(query, registry(), params, true, {
+    const { data } = await pipelineData(query, registry(), params, true, {
       counts: Promise.resolve(counts),
       sanitization: Promise.resolve([]),
       unrouted: Promise.resolve({ list, totals }),

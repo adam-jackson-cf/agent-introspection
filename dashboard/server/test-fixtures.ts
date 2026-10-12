@@ -32,18 +32,29 @@ export const enabling = (
   return { ...reg, harnesses, hidden: hiddenSignals({ ...reg, harnesses }) };
 };
 
-/** The registry tables in the order `loadRegistry` batches them, as ClickHouse returns them. */
-export const registryRows = (reg: Registry): Row[] =>
-  batched(
-    [
-      reg.signals,
-      reg.support,
-      reg.routes,
-      reg.strays,
-      reg.exclusions,
-      reg.harnesses,
-    ].map((rows) => rows as unknown as Row[]),
-  );
+/** The registry table each `loadRegistry` query reads, in the order it queries them. */
+const REGISTRY_TABLES = [
+  "FROM introspection.signals ",
+  "FROM introspection.signal_support",
+  "FROM introspection.signal_routes",
+  "FROM introspection.signal_strays",
+  "FROM introspection.signal_exclusions",
+  "FROM introspection.harnesses",
+] as const;
+
+/** The registry rows a registry query returns; no rows for any other statement. */
+export const registryRows = (reg: Registry, sql: string): Row[] => {
+  const tables = [
+    reg.signals,
+    reg.support,
+    reg.routes,
+    reg.strays,
+    reg.exclusions,
+    reg.harnesses,
+  ];
+  const index = REGISTRY_TABLES.findIndex((table) => sql.includes(table));
+  return index < 0 ? [] : (tables[index] as unknown as Row[]);
+};
 
 /**
  * A registry with one signal: omp and Codex reach it; it is not applicable to
@@ -263,9 +274,3 @@ export const counting = (
   reg: Registry = registry(),
   hooks: Row[] = [],
 ) => countsFromRows(reg, { spans, logs, hooks });
-
-/** Rows as a batched ClickHouse request returns them: tagged and JSON-encoded. */
-export const batched = (results: Row[][]): Row[] =>
-  results.flatMap((rows, index) =>
-    rows.map((row) => ({ __q: index, __row: JSON.stringify(row) })),
-  );

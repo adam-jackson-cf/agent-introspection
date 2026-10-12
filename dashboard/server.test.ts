@@ -6,7 +6,6 @@ import { join } from "node:path";
 import type { Registry, Row, ViewResponse } from "./src/contracts";
 import { createApp, parseFilters, sqliteWorkflow } from "./server";
 import {
-  batch,
   clickhouse,
   clickhouseUrl,
   credentialsFromEnv,
@@ -18,7 +17,6 @@ import { HARNESS_FILTER, SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
 import { panelContribution } from "./src/components";
 
 import {
-  batched,
   enabling,
   END,
   HOST,
@@ -73,10 +71,7 @@ describe("request handling", () => {
     const seen: { sql: string; params?: Record<string, string> }[] = [];
     const query: Query = async (sql, params) => {
       seen.push({ sql, params });
-      const reg = registry();
-      return sql.includes("FROM introspection.signals")
-        ? registryRows(reg)
-        : [];
+      return registryRows(registry(), sql);
     };
     const app = createApp({ query, workflow: () => ({}) });
     const response = await app(
@@ -203,28 +198,6 @@ describe("ClickHouse credentials", () => {
   });
 });
 
-describe("batch", () => {
-  test("sends named queries as one request and returns each result in order", async () => {
-    const sent: string[] = [];
-    const query: Query = async (sql) => {
-      sent.push(sql);
-      return batched([[{ n: 1 }, { n: 2 }], [], [{ day: "2026-09-28" }]]);
-    };
-    const results = await batch(query, {
-      first: "SELECT 1 AS n",
-      empty: "SELECT 1 WHERE 0",
-      third: "SELECT today() AS day",
-    });
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain("formatRowNoNewline('JSONEachRow', *)");
-    expect(results).toEqual({
-      first: [{ n: 1 }, { n: 2 }],
-      empty: [],
-      third: [{ day: "2026-09-28" }],
-    });
-  });
-});
-
 describe("snapshot horizon", () => {
   test("live queries read the fact views and the horizon matches facts.py", async () => {
     expect(
@@ -242,10 +215,7 @@ describe("snapshot horizon", () => {
     const seen: string[] = [];
     const query: Query = async (sql) => {
       seen.push(sql);
-      const reg = registry();
-      return sql.includes("FROM introspection.signals")
-        ? registryRows(reg)
-        : [];
+      return registryRows(registry(), sql);
     };
     const app = createApp({ query, workflow: () => ({}), now: () => now });
     const response = await app(
@@ -262,14 +232,12 @@ describe("snapshot horizon", () => {
     );
   });
 
-  test("live-preset loads in one 10-minute slot share a route count query; the next slot counts again", async () => {
+  test("live-preset loads in one 10-minute slot share the route count queries; the next slot counts again", async () => {
     let now = new Date("2026-09-30T12:00:10.000Z");
     const seen: string[] = [];
     const query: Query = async (sql) => {
       seen.push(sql);
-      return sql.includes("FROM introspection.signals")
-        ? registryRows(registry())
-        : [];
+      return registryRows(registry(), sql);
     };
     const app = createApp({ query, workflow: () => ({}), now: () => now });
     const load = async (end: Date) => {
@@ -288,12 +256,14 @@ describe("snapshot horizon", () => {
       ).length;
 
     await load(now);
+    const perSlot = countQueries();
+    expect(perSlot).toBeGreaterThan(0);
     now = new Date("2026-09-30T12:09:50.000Z");
     await load(now);
-    expect(countQueries()).toBe(1);
+    expect(countQueries()).toBe(perSlot);
     now = new Date("2026-09-30T12:10:05.000Z");
     await load(now);
-    expect(countQueries()).toBe(2);
+    expect(countQueries()).toBe(2 * perSlot);
   });
 
   test("a view reports its timings and the facts' freshness, loaded once per 10 minutes", async () => {
@@ -302,11 +272,12 @@ describe("snapshot horizon", () => {
     const query: Query = async (sql) => {
       if (sql.includes("system.view_refreshes")) {
         refreshes += 1;
-        return [{ as_of: "2026-09-30 11:58:00", stale: 1 }];
+        return [
+          { view: "load_spans", as_of: "2026-09-30 11:58:00", stale: 1 },
+          { view: "load_logs", as_of: "2026-09-30 11:57:00", stale: 0 },
+        ];
       }
-      return sql.includes("FROM introspection.signals")
-        ? registryRows(registry())
-        : [];
+      return registryRows(registry(), sql);
     };
     const app = createApp({ query, workflow: () => ({}), now: () => now });
     const load = async () =>
@@ -320,7 +291,12 @@ describe("snapshot horizon", () => {
       ).json()) as ViewResponse;
     const first = await load();
     await load();
-    expect(first.asOf).toEqual({ at: "2026-09-30T11:58:00Z", stale: true });
+    expect(first.asOf).toEqual({
+      at: "2026-09-30T11:58:00Z",
+      stale: true,
+      historyStale: false,
+      failing: ["load_spans"],
+    });
     expect(Object.keys(first.timings)).toEqual([
       "registryMs",
       "routeCountsMs",
@@ -339,36 +315,34 @@ describe("snapshot horizon", () => {
         failSanitization = false;
         throw new Error("Timeout exceeded");
       }
-      return sql.includes("FROM introspection.signals")
-        ? registryRows(registry())
-        : [];
+      return registryRows(registry(), sql);
     };
     const app = createApp({ query, workflow: () => ({}), now: () => now });
     const load = async () => {
       const start = new Date(now.getTime() - 7 * 86_400_000);
-      return (
-        await app(
-          new Request(
-            `http://127.0.0.1:4173/api/view?view=pipeline&start=${start.toISOString()}&end=${now.toISOString()}&harness=`,
-            { headers: HOST },
-          ),
-        )
-      ).status;
+      const response = await app(
+        new Request(
+          `http://127.0.0.1:4173/api/view?view=pipeline&start=${start.toISOString()}&end=${now.toISOString()}&harness=`,
+          { headers: HOST },
+        ),
+      );
+      const body = (await response.json()) as ViewResponse;
+      return { status: response.status, failed: Object.keys(body.errors) };
     };
     const runs = (marker: string) =>
       seen.filter((sql) => sql.includes(marker)).length;
     const SANITIZATION = "AS long_status";
     const UNROUTED = "ORDER BY n DESC LIMIT 40";
 
-    expect(await load()).toBe(503);
+    expect(await load()).toEqual({ status: 200, failed: ["sanitization"] });
     now = new Date("2026-09-30T12:03:00.000Z");
-    expect(await load()).toBe(200);
+    expect(await load()).toEqual({ status: 200, failed: [] });
     now = new Date("2026-09-30T12:09:50.000Z");
-    expect(await load()).toBe(200);
+    expect(await load()).toEqual({ status: 200, failed: [] });
     expect(runs(SANITIZATION)).toBe(2);
     expect(runs(UNROUTED)).toBe(1);
     now = new Date("2026-09-30T12:13:30.000Z");
-    expect(await load()).toBe(200);
+    expect((await load()).status).toBe(200);
     expect(runs(SANITIZATION)).toBe(3);
     expect(runs(UNROUTED)).toBe(2);
   });
@@ -557,11 +531,10 @@ describe("sqliteWorkflow", () => {
 describe("registry", () => {
   test("serves the excluded signals with the registry and in the Pipeline view", async () => {
     const reg = registry();
-    const rows = registryRows(reg);
     const seen: string[] = [];
     const query: Query = async (sql) => {
       seen.push(sql);
-      return sql.includes("FROM introspection.signals") ? rows : [];
+      return registryRows(reg, sql);
     };
     const app = createApp({ query, workflow: () => ({}) });
     const served = (await (
@@ -570,7 +543,9 @@ describe("registry", () => {
       )
     ).json()) as Registry;
     expect(served.exclusions).toEqual(reg.exclusions);
-    expect(seen[0]).toContain("FROM introspection.signal_exclusions");
+    expect(
+      seen.some((sql) => sql.includes("FROM introspection.signal_exclusions")),
+    ).toBe(true);
 
     const view = (await (
       await app(
@@ -589,11 +564,10 @@ describe("registry", () => {
       "codex_cli_rs",
       "claude-code",
     ]);
-    const rows = registryRows(reg);
     const seen: string[] = [];
     const query: Query = async (sql) => {
       seen.push(sql);
-      return sql.includes("FROM introspection.signals") ? rows : [];
+      return registryRows(reg, sql);
     };
     const app = createApp({ query, workflow: () => ({}) });
     const served = (await (
@@ -601,9 +575,13 @@ describe("registry", () => {
         new Request("http://127.0.0.1:4173/api/registry", { headers: HOST }),
       )
     ).json()) as Registry;
-    expect(seen[0]).toContain(
-      "SELECT harness, label, enabled FROM introspection.harnesses",
-    );
+    expect(
+      seen.some((sql) =>
+        sql.includes(
+          "SELECT harness, label, enabled FROM introspection.harnesses",
+        ),
+      ),
+    ).toBe(true);
     expect(served.harnesses).toEqual(reg.harnesses);
     expect(served.hidden).toEqual([
       {
@@ -635,7 +613,7 @@ describe("registry", () => {
     const sessionApp = createApp({
       query: async (sql) => {
         queried.push(sql);
-        return sql.includes("FROM introspection.signals") ? rows : [];
+        return registryRows(reg, sql);
       },
       workflow: () => ({}),
     });
@@ -655,8 +633,7 @@ describe("registry", () => {
   test("a machine with no enabled harness is reported as not installed", async () => {
     const reg = enabling(registry(), []);
     const app = createApp({
-      query: async (sql) =>
-        sql.includes("FROM introspection.signals") ? registryRows(reg) : [],
+      query: async (sql) => registryRows(reg, sql),
     });
     const response = await app(
       new Request("http://127.0.0.1:4173/api/registry", { headers: HOST }),

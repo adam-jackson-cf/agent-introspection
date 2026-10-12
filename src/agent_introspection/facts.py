@@ -126,6 +126,19 @@ SNAPSHOT_FILTERS = (
     f"additional_table_filters = {{'{DATABASE}.spans': '{_SNAPSHOT_BOUND}', "
     f"'{DATABASE}.logs': '{_SNAPSHOT_BOUND}'}}"
 )
+# The SigNoz ClickHouse container runs near its ~4 GiB memory cap, but the default
+# profile lets one query use 10 GB, so a heavy refresh is killed (Code 241) instead of
+# slowing down. Each refresher gets a realistic per-query ceiling, and grouping, sorting
+# and joining spill to disk at half of it, so it finishes slower rather than failing.
+REFRESH_MAX_MEMORY = 1536 * 1024 * 1024
+REFRESH_SPILL_BYTES = REFRESH_MAX_MEMORY // 2
+REFRESH_SETTINGS = (
+    "max_threads = 2, "
+    f"max_memory_usage = {REFRESH_MAX_MEMORY}, "
+    f"max_bytes_before_external_group_by = {REFRESH_SPILL_BYTES}, "
+    f"max_bytes_before_external_sort = {REFRESH_SPILL_BYTES}, "
+    "join_algorithm = 'grace_hash,hash'"
+)
 # Each snapshot is two tables behind one view. Recent holds the days whose facts can
 # still change and is rebuilt every 10 minutes: the minute log loader accepts a log up
 # to 7 days after its event (it selects by arrival time), so recent covers 8 days and
@@ -258,7 +271,8 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
     wait for the minute loaders, and for the refreshes of a snapshot the view reads.
     ``additional_table_filters`` bounds the spans and logs each part reads, leaving
     the view SQL unchanged. Refreshers run with two threads so dashboard queries keep
-    the CPU. The pre-split single-table refresher and table are dropped too.
+    the CPU, and with a memory ceiling below the server's that spills to disk
+    (``REFRESH_SETTINGS``). The pre-split single-table refresher and table are dropped too.
     """
     base = f"{DATABASE}.{snapshot.view}"
     column = snapshot.time_column
@@ -274,7 +288,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
             f"CREATE MATERIALIZED VIEW {DATABASE}.{snapshot_refreshers(snapshot)[part]}\n"
             f"REFRESH {schedule} DEPENDS ON {', '.join(waits)}\n"
             f"TO {table}\nAS SELECT * FROM {base} WHERE {keep}\n"
-            f"SETTINGS max_threads = 2, {filters}"
+            f"SETTINGS {REFRESH_SETTINGS}, {filters}"
         )
 
     return [

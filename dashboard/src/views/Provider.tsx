@@ -90,6 +90,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           value={fmtCount(num(all.calls))}
           detail={`${fmtCount(num(all.failed))} failed · ${fmtCount(num(all.cancelled))} cancelled by the user`}
           signals={["provider.calls"]}
+          source="kpi"
         />
         <Kpi
           title="Call error rate"
@@ -97,6 +98,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           detail={`failed / model calls not cancelled by the user · n=${fmtCount(num(all.rated_calls))}`}
           n={num(all.rated_calls)}
           signals={["provider.error_rate"]}
+          source="kpi"
         />
         {disconnectsShown ? (
           <Kpi
@@ -104,6 +106,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
             value={fmtCount(num(all.disconnects))}
             detail={`of ${fmtCount(num(all.disconnect_den))} response streams`}
             signals={["provider.stream_disconnects"]}
+            source="kpi"
           />
         ) : (
           <Kpi
@@ -111,6 +114,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
             value={fmtCount(extraAttempts)}
             detail="attempts beyond the first per logical call"
             signals={["provider.retries"]}
+            source="retries"
           />
         )}
         <Kpi
@@ -118,6 +122,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           value={fmtCount(num(all.unknown))}
           detail="calls with no success flag, error, or finish reason"
           signals={["provider.unknown_outcomes"]}
+          source="kpi"
         />
       </Section>
       <Section title="Daily trend">
@@ -125,6 +130,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           title="Daily call error rate"
           subtitle="Per harness"
           signals={["provider.error_rate"]}
+          source="daily"
         >
           <DailyChart
             rows={errorDaily}
@@ -144,6 +150,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           title="Daily median time to first token"
           subtitle="Per harness"
           signals={["provider.ttft"]}
+          source="daily"
         >
           <DailyChart
             rows={ttftDaily}
@@ -173,6 +180,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           }
           subtitle="Codex latency is the sampling step (includes retries and tool draining); its calls are response streams"
           signals={["provider.latency", "provider.ttft", "provider.throughput"]}
+          source="latency"
           span={12}
         >
           <DataTable
@@ -241,6 +249,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
         <Panel
           title="Call errors by class"
           signals={["provider.error_rate", "provider.stream_disconnects"]}
+          source="errors"
         >
           <DataTable
             columns={[
@@ -267,6 +276,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           title="Retries"
           subtitle="Attempts beyond the first"
           signals={["provider.retries"]}
+          source="retries"
         >
           <DataTable
             columns={[
@@ -291,6 +301,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
           title="Model conformance"
           subtitle="Calls whose served model differs from the requested model"
           signals={["provider.model_conformance"]}
+          source="conformance"
           span={12}
         >
           <DataTable

@@ -10,7 +10,13 @@ import type {
 } from "../src/contracts";
 import { HARNESSES } from "../src/contracts";
 import { enabledHarnesses, isHidden } from "../src/harness-scope";
-import { batch, live, type Query } from "./clickhouse";
+import {
+  batch,
+  batchSettled,
+  live,
+  shortMessage,
+  type Query,
+} from "./clickhouse";
 import { HARNESS_FILTER, inWindow } from "./views";
 
 type Params = Record<string, string>;
@@ -579,9 +585,14 @@ const sumMeasure = (grouped: Row[], name: string): number =>
   grouped.reduce((total, row) => total + Number(row[name] ?? 0), 0);
 
 /** Compares each direct All aggregate with the sum of its per-harness rows. */
-export function recombine(results: Record<string, Row[]>): Row[] {
+export function recombine(
+  results: Record<string, Row[]>,
+  errors: Record<string, string> = {},
+): Row[] {
   const rows: Row[] = [];
   for (const [check, spec] of Object.entries(RECOMBINATION)) {
+    // A check missing one side would read as 0 = 0; leave it out instead.
+    if (`${check}:all` in errors || `${check}:harness` in errors) continue;
     const all = results[`${check}:all`] ?? [];
     const grouped = results[`${check}:harness`] ?? [];
     for (const name of measureNames(spec.measures)) {
@@ -775,13 +786,27 @@ export type PipelineShared = {
   unrouted: Promise<Unrouted>;
 };
 
+/** The result of a shared load, or its failure as a short message under `key`. */
+async function settle<T>(
+  load: Promise<T>,
+  key: string,
+  errors: Record<string, string>,
+): Promise<T | null> {
+  try {
+    return await load;
+  } catch (error) {
+    errors[key] = shortMessage(error);
+    return null;
+  }
+}
+
 export async function pipelineData(
   query: Query,
   registry: Registry,
   params: Params,
   withinSnapshots: boolean,
   shared: PipelineShared,
-): Promise<Record<string, Row[]>> {
+): Promise<{ data: Record<string, Row[]>; errors: Record<string, string> }> {
   const queries: Record<string, string> = {
     loaders: LOADERS,
     loader_summary: LOADER_SUMMARY,
@@ -795,37 +820,53 @@ export async function pipelineData(
     project_sync: PROJECT_SYNC,
     ...recombinationQueries(),
   };
-  const [results, routes, sanitization, unrouted] = await Promise.all([
-    batch(query, withinSnapshots ? queries : live(queries), params),
-    shared.counts,
-    shared.sanitization,
-    shared.unrouted,
+  // Each part fails alone: its dataset is empty and named in `errors`.
+  const failed: Record<string, string> = {};
+  const [settled, routes, sanitization, unrouted] = await Promise.all([
+    batchSettled(query, withinSnapshots ? queries : live(queries), params),
+    settle(shared.counts, "coverage", failed),
+    settle(shared.sanitization, "sanitization", failed),
+    settle(shared.unrouted, "unrouted", failed),
   ]);
+  const results = settled.data;
+  // The recombination branches feed one panel, so they report as one dataset.
+  const errors: Record<string, string> = { ...failed };
+  for (const [key, message] of Object.entries(settled.errors))
+    errors[/:(all|harness)$/.test(key) ? "recombination" : key] = message;
+  // Every part failing means ClickHouse is down, not that one query is bad.
+  const parts = Object.keys(queries).length + 3;
+  if (Object.keys(settled.errors).length + Object.keys(failed).length === parts)
+    throw new Error(Object.values(errors)[0]);
   const selected = selectedHarness(params);
-  const coverage = selected(coverageGrid(registry, routes));
+  const coverage = selected(routes ? coverageGrid(registry, routes) : []);
+  const noUnrouted: Unrouted = { list: [], totals: [] };
+  const missed = unrouted ?? noUnrouted;
   return {
-    loaders: results.loaders!,
-    loader_summary: results.loader_summary!,
-    freshness: results.freshness!,
-    freshness_summary: results.freshness_summary!,
-    parity: results.parity!,
-    parity_summary: results.parity_summary!,
-    recombination: recombine(results),
-    sanitization,
-    daily_rows: results.daily_rows!,
-    coverage,
-    coverage_summary: [coverageSummary(coverage)],
-    coverage_states: coverageStates(coverage),
-    coverage_by_view: coverageByView(registry, coverage),
-    loader_exceptions: loaderExceptions(results.loaders!),
-    freshness_exceptions: freshnessExceptions(results.freshness!),
-    unrouted: selected(unrouted.list),
-    unrouted_summary: [unroutedSummary(selected(unrouted.totals))],
-    project_coverage: results.project_coverage!,
-    project_rejections: results.project_rejections!,
-    project_sync: results.project_sync!,
-    strays: selected(registry.strays.map((entry) => ({ ...entry }))),
-    exclusions: registry.exclusions.map((entry) => ({ ...entry })),
-    hidden: registry.hidden.map((entry) => ({ ...entry })),
+    data: {
+      loaders: results.loaders!,
+      loader_summary: results.loader_summary!,
+      freshness: results.freshness!,
+      freshness_summary: results.freshness_summary!,
+      parity: results.parity!,
+      parity_summary: results.parity_summary!,
+      recombination: recombine(results, settled.errors),
+      sanitization: sanitization ?? [],
+      daily_rows: results.daily_rows!,
+      coverage,
+      coverage_summary: [coverageSummary(coverage)],
+      coverage_states: coverageStates(coverage),
+      coverage_by_view: coverageByView(registry, coverage),
+      loader_exceptions: loaderExceptions(results.loaders!),
+      freshness_exceptions: freshnessExceptions(results.freshness!),
+      unrouted: selected(missed.list),
+      unrouted_summary: [unroutedSummary(selected(missed.totals))],
+      project_coverage: results.project_coverage!,
+      project_rejections: results.project_rejections!,
+      project_sync: results.project_sync!,
+      strays: selected(registry.strays.map((entry) => ({ ...entry }))),
+      exclusions: registry.exclusions.map((entry) => ({ ...entry })),
+      hidden: registry.hidden.map((entry) => ({ ...entry })),
+    },
+    errors,
   };
 }

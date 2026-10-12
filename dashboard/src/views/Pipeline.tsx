@@ -76,6 +76,7 @@ function CoverageKpi({ data }: { data: Data }) {
       value={`${num(summary.unexplained)} unexplained`}
       detail={`${num(summary.cells)} signal × harness cells · ${unroutedText} · ${presetFor(filters).toLowerCase()}`}
       signals={["pipeline.coverage"]}
+      source={["coverage", "unrouted"]}
       span={1}
     >
       <ViewLink view="pipeline/coverage">Open coverage grid</ViewLink>
@@ -107,6 +108,7 @@ function GlanceBand({ data }: { data: Data }) {
             : `${num(loaderSummary.failing)} stale or failing`
         } · ${PERIOD.loaders}`}
         signals={["pipeline.loader_refresh"]}
+        source={["loaders", "loader_summary"]}
         span={1}
       >
         <ShowLink target="loader-refresh">Show loader refresh</ShowLink>
@@ -120,6 +122,7 @@ function GlanceBand({ data }: { data: Data }) {
             : "SigNoz latest row minus fact latest row"
         } · ${PERIOD.freshness}`}
         signals={["pipeline.freshness"]}
+        source={["freshness", "freshness_summary"]}
         span={1}
       />
       <CoverageKpi data={data} />
@@ -134,6 +137,7 @@ function GlanceBand({ data }: { data: Data }) {
             : "harnesses match the raw source"
         } · ${PERIOD.parity}`}
         signals={["pipeline.parity"]}
+        source={["parity", "parity_summary"]}
         span={1}
       >
         <ShowLink target="source-parity">Show source parity</ShowLink>
@@ -143,6 +147,7 @@ function GlanceBand({ data }: { data: Data }) {
         value={`${fmtCount(num(sanitizationAll.violations))} violations`}
         detail={`flagged stored rows · ${PERIOD.sanitization}`}
         signals={["pipeline.sanitization"]}
+        source="sanitization"
         span={1}
       >
         <ShowLink target="sanitization">Show sanitization</ShowLink>
@@ -245,6 +250,7 @@ function FreshnessBand({ data }: { data: Data }) {
         title="Loader and snapshot refresh"
         subtitle="Refreshable materialized views in the introspection database"
         signals={["pipeline.loader_refresh"]}
+        source={["loaders", "loader_summary"]}
       >
         <ExceptionTable
           summary={loaderSummaryText(data.loader_summary?.[0] ?? {})}
@@ -258,6 +264,7 @@ function FreshnessBand({ data }: { data: Data }) {
         title="Freshness by harness"
         subtitle="Latest row in the last day: SigNoz versus facts"
         signals={["pipeline.freshness"]}
+        source={["freshness", "freshness_summary"]}
       >
         <ExceptionTable
           summary={freshnessSummaryText(data.freshness_summary?.[0] ?? {})}
@@ -281,6 +288,7 @@ function DailyPanel({ data }: { data: Data; signals: string[] }) {
       title="Fact rows per day"
       subtitle="Curated spans, logs, and activity-hook events loaded per harness (UTC days) · rows per day"
       signals={["pipeline.freshness"]}
+      source="daily_rows"
       span={8}
     >
       <DailyChart
@@ -313,6 +321,7 @@ function checksPanels(data: Data) {
         title="Source parity"
         subtitle={`usage_events versus a direct SigNoz recount · ${window}`}
         signals={["pipeline.parity"]}
+        source={["parity", "parity_summary"]}
       >
         <DataTable
           columns={[
@@ -352,6 +361,7 @@ function checksPanels(data: Data) {
         title="All = Σ harnesses"
         subtitle="Direct All aggregate versus the sum of per-harness aggregates"
         signals={["pipeline.recombination"]}
+        source="recombination"
       >
         <DataTable
           columns={[
@@ -382,6 +392,7 @@ function attributionPanels(data: Data) {
         title="Sanitization"
         subtitle="Stored rows holding raw text, identity keys, or home paths · all time"
         signals={["pipeline.sanitization"]}
+        source="sanitization"
       >
         <DataTable
           columns={[
@@ -398,6 +409,7 @@ function attributionPanels(data: Data) {
         title="Project attribution"
         subtitle="Tasks whose session has a Git project, resolved from the harness session stores · selected range"
         signals={["pipeline.project_attribution"]}
+        source={["project_coverage", "project_sync", "project_rejections"]}
       >
         <DataTable
           columns={[
@@ -482,6 +494,7 @@ function RegistryLists({ data }: { data: Data }) {
           title="Stray and unrouted rows"
           subtitle="Registered strays, then rows no route claims (not used by any signal)"
           signals={["pipeline.coverage"]}
+          source="unrouted"
           span={12}
         >
           <DataTable

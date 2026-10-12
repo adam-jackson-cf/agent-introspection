@@ -127,7 +127,12 @@ def add_facts_parser(commands: Any) -> None:
         "--rescan", action="store_true", help="re-read every session file, not only new ones"
     )
     facts_parser.add_parser("findings")
-    facts_parser.add_parser("sync")
+    sync = facts_parser.add_parser("sync")
+    sync.add_argument(
+        "--log",
+        action="store_true",
+        help="log the summary and errors to the rotated, timestamped sync log (scheduled job)",
+    )
     classify_parser = facts_parser.add_parser("classify", help="label exported prompts now")
     classify_parser.add_argument("--days", type=int, default=2)
     classify_parser.add_argument("--limit", type=int, default=60)

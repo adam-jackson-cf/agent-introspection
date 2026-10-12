@@ -64,6 +64,7 @@ export const isViewResponse = (value: unknown): value is ViewResponse =>
   isRecord(value) &&
   typeof value.view === "string" &&
   isRecord(value.data) &&
+  isRecord(value.errors) &&
   isRecord(value.contributions) &&
   isRecord(value.filters);
 export const isRegistry = (value: unknown): value is Registry =>

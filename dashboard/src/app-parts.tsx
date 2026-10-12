@@ -138,6 +138,7 @@ function ViewDetail({ response }: { response: ViewResponse }) {
         <div className={asOf.stale ? "as-of-stale" : undefined}>
           Data as of {asOf.at.slice(11, 16)} UTC
           {asOf.stale ? " · older than the refresh schedule" : ""}
+          {asOf.historyStale ? " · older history not refreshed" : ""}
         </div>
       )}
     </>
@@ -277,7 +278,7 @@ export function Notices(props: {
         <div className="state-notice" role="alert">
           <div className="state-notice-row">
             <div>
-              <b>Query failed — outcome unknown</b>
+              <b>Query failed. Try a shorter range or retry.</b>
               <span>{props.failure}</span>
             </div>
             <button className="refresh" onClick={props.onRetry}>
@@ -306,6 +307,19 @@ export function RangeNotice({ response }: { response: ViewResponse | null }) {
   return (
     <p className="range-notice">
       No data for this view in the selected range or harness.
+    </p>
+  );
+}
+
+/** Said once when some datasets failed: panels not tied to one (`source`) may be incomplete. */
+export function PartialNotice({ response }: { response: ViewResponse | null }) {
+  const failed = Object.keys(response?.errors ?? {});
+  if (failed.length === 0) return null;
+  return (
+    <p className="range-notice" role="status">
+      {failed.length} of this view&apos;s datasets could not be loaded (
+      {failed.join(", ")}). Panels built from them show the failure; the rest is
+      unaffected.
     </p>
   );
 }
@@ -347,6 +361,7 @@ export function PageBody(props: {
         value={{
           registry,
           contributions: viewResponse.contributions,
+          errors: viewResponse.errors,
           filters,
           sessionHref,
           minRateN: viewResponse.thresholds.minRateN,
@@ -372,6 +387,7 @@ export function PageBody(props: {
           minRateN: 0,
           viewHref,
           navigate,
+          errors: {},
         }}
       >
         <Session response={sessionResponse} />

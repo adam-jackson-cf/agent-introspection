@@ -15,6 +15,7 @@ const link = (filters: Filters) =>
         sessionHref: () => "",
         viewHref: (id) => `/${id}?${filterQuery(filters)}`,
         navigate: () => {},
+        errors: {},
       }}
     >
       <ViewLink view="tools">Open Tool failures</ViewLink>

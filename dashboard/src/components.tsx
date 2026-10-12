@@ -32,6 +32,8 @@ export type ViewContextValue = {
   sessionHref: (harness: string, session: string) => string;
   viewHref: (id: ViewPath) => string;
   navigate: (path: string, next: Filters) => void;
+  /** Datasets of the view whose query failed (`ViewResponse.errors`). */
+  errors: Record<string, string>;
 };
 export const ViewContext = createContext<ViewContextValue | null>(null);
 export const useView = (): ViewContextValue => {
@@ -283,6 +285,23 @@ class Boundary extends Component<
   }
 }
 
+/** The failure messages of the datasets a panel shows, in `source` order. */
+export const failedSources = (
+  errors: Record<string, string>,
+  source: string | string[] = [],
+): string[] =>
+  [source].flat().flatMap((key) => (key in errors ? [errors[key]!] : []));
+
+/** A panel whose query failed: read-only, so the data is simply unavailable. */
+export function PanelError({ messages }: { messages: string[] }) {
+  return (
+    <div className="state-notice" role="alert">
+      <b>Query failed. Try a shorter range or retry.</b>
+      <span>{[...new Set(messages)].join(" · ")}</span>
+    </div>
+  );
+}
+
 export function NotApplicableNotice({ entries }: { entries: SignalSupport[] }) {
   const notes = [...new Set(entries.map((entry) => entry.note))];
   return (
@@ -337,11 +356,14 @@ export function InfoPopover({
  * applicable to any selected harness, the body is replaced by the registry's
  * reason, never by zero. A panel whose measured signal (the first) is hidden on
  * this machine is not rendered; other hidden signals drop out of its chips and note.
+ * A panel whose `source` dataset failed to load shows that failure instead of an
+ * empty body, because an empty dataset would read as zero.
  */
 export function Panel({
   title,
   subtitle,
   signals,
+  source,
   span = 6,
   id,
   children,
@@ -349,6 +371,8 @@ export function Panel({
   title: string;
   subtitle?: string;
   signals: string[];
+  /** The `data` keys this panel shows; any of them in the view's `errors` fails the panel. */
+  source?: string | string[];
   span?: 1 | 3 | 4 | 5 | 6 | 7 | 8 | 12;
   /** Anchor for in-page links such as a KPI's "Show …" link. */
   id?: string;
@@ -360,6 +384,7 @@ export function Panel({
   const missing = notApplicable(context, shown);
   if (signals[0] !== undefined && shown[0] !== signals[0]) return null;
   const chips = panelChips(context, shown);
+  const failed = failedSources(context.errors, source);
   return (
     <article className="panel" data-span={span} id={id}>
       <header className="panel-head">
@@ -379,7 +404,13 @@ export function Panel({
           value={{ label: title, harnessChips: chips.length > 0 }}
         >
           <Boundary label={title}>
-            {missing ? <NotApplicableNotice entries={missing} /> : children}
+            {missing ? (
+              <NotApplicableNotice entries={missing} />
+            ) : failed.length > 0 ? (
+              <PanelError messages={failed} />
+            ) : (
+              children
+            )}
           </Boundary>
         </PanelContext.Provider>
       </div>
@@ -393,6 +424,7 @@ export function Kpi({
   value,
   detail,
   signals,
+  source,
   n,
   span = 3,
   children,
@@ -401,6 +433,8 @@ export function Kpi({
   value: string;
   detail?: string;
   signals: string[];
+  /** The `data` keys this figure comes from; see `Panel`. */
+  source?: string | string[];
   /** Sample size of a rate value: muted when below the server's threshold. */
   n?: number;
   /** 1 is one column of a five-column band (`Section columns={5}`). */
@@ -411,7 +445,7 @@ export function Kpi({
   const { minRateN } = useView();
   const muted = n !== undefined && isMutedRate(n, minRateN);
   return (
-    <Panel title={title} signals={signals} span={span}>
+    <Panel title={title} signals={signals} source={source} span={span}>
       <div className="kpi">
         <strong className={muted ? "muted-rate" : undefined}>{value}</strong>
         {detail && <span>{detail}</span>}

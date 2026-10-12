@@ -123,6 +123,7 @@ export function CoverageSummary(props: {
       title="Coverage by view"
       subtitle="Signal × harness cells for the selected window"
       signals={["pipeline.coverage"]}
+      source="coverage"
       span={span}
     >
       <p className="coverage-total">
@@ -187,6 +188,7 @@ export default function PipelineCoverage({
           title="Coverage grid"
           subtitle="Registry versus data for the selected window; open a cell for its counts"
           signals={["pipeline.coverage"]}
+          source="coverage"
           span={12}
         >
           <ul className="state-legend" aria-label="Coverage states">

@@ -18,6 +18,7 @@ from agent_introspection.cli_proposals import (
     candidates_export,
 )
 from agent_introspection.config import ConfigurationError
+from agent_introspection.schedule import log_line
 
 EXIT_CONFIG = 10
 EXIT_FACTS = 30
@@ -27,8 +28,12 @@ EXIT_CONFLICT = 60
 EXIT_INTERNAL = 70
 
 
-def _emit(value: object) -> None:
-    print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+def _emit(value: object, log: bool = False) -> None:
+    line = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if log:
+        log_line(line)
+    else:
+        print(line)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,8 +57,12 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
     return PROPOSAL_HANDLERS[args.proposal_command](args)
 
 
-def _fail(code: int, exc: BaseException) -> NoReturn:
-    diagnostic(f"{type(exc).__name__}: {exc}")
+def _fail(code: int, exc: BaseException, log: bool = False) -> NoReturn:
+    message = f"{type(exc).__name__}: {exc}"
+    if log:
+        log_line(message)
+    else:
+        diagnostic(message)
     raise SystemExit(code)
 
 
@@ -64,21 +73,22 @@ def main(argv: list[str] | None = None) -> int:
 
         # Hooks never fail the harness: failures go to the hook log, never stdout.
         return hooks.main(args.producer, args.event)
+    log = bool(getattr(args, "log", False))
     try:
         result = _dispatch(args)
     except ConfigurationError as exc:
-        _fail(EXIT_CONFIG, exc)
+        _fail(EXIT_CONFIG, exc, log)
     except facts.FactsError as exc:
-        _fail(EXIT_FACTS, exc)
+        _fail(EXIT_FACTS, exc, log)
     except sqlite3.Error as exc:
-        _fail(EXIT_DATABASE, exc)
+        _fail(EXIT_DATABASE, exc, log)
     except (ValueError, KeyError, PermissionError) as exc:
-        _fail(EXIT_VALIDATION, exc)
+        _fail(EXIT_VALIDATION, exc, log)
     except RuntimeError as exc:
-        _fail(EXIT_CONFLICT, exc)
+        _fail(EXIT_CONFLICT, exc, log)
     except Exception as exc:
-        _fail(EXIT_INTERNAL, exc)
-    _emit(result)
+        _fail(EXIT_INTERNAL, exc, log)
+    _emit(result, log)
     # A failed preflight or snapshot comparison still prints every result, then exits
     # non-zero.
     checked = getattr(args, "facts_command", None) in ("preflight", "verify")

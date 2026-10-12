@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,10 @@ from agent_introspection.inbox import backlog
 LABEL = "com.adamjackson.agent-introspection.sync"
 PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
 LOG = Path.home() / ".local/share/agent-introspection/sync.log"
+# What launchd itself captures (a crash before the sync can log): not rotated, rarely written.
+LAUNCHD_LOG = LOG.with_name("sync-launchd.log")
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_FILES = 3
 INTERVAL_SECONDS = 60
 
 
@@ -24,17 +29,47 @@ def plist(executable: Path, path_dirs: Iterable[str], config: Path | None = None
     """Return the launchd job that runs ``facts sync`` every minute.
 
     A selected ``config`` is passed through, so the job syncs the same deployment.
+    ``--log`` makes the sync write its summary and errors to the rotated ``LOG`` with
+    a UTC timestamp, which launchd's own file redirection cannot do.
     """
     selected = ["--config", str(config)] if config is not None else []
     return plistlib.dumps({
         "Label": LABEL,
-        "ProgramArguments": [str(executable), *selected, "facts", "sync"],
+        "ProgramArguments": [str(executable), *selected, "facts", "sync", "--log"],
         "StartInterval": INTERVAL_SECONDS,
         "RunAtLoad": True,
         "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},
-        "StandardOutPath": str(LOG),
-        "StandardErrorPath": str(LOG),
+        "StandardOutPath": str(LAUNCHD_LOG),
+        "StandardErrorPath": str(LAUNCHD_LOG),
     })
+
+
+def _rotate(path: Path) -> None:
+    """Shift ``sync.log`` to ``sync.log.1`` and so on once it reaches ``LOG_MAX_BYTES``."""
+    if not path.exists() or path.stat().st_size < LOG_MAX_BYTES:
+        return
+    for index in range(LOG_FILES - 1, 0, -1):
+        source = path if index == 1 else path.with_name(f"{path.name}.{index - 1}")
+        if source.exists():
+            source.replace(path.with_name(f"{path.name}.{index}"))
+
+
+def log_line(message: str, path: Path | None = None, now: datetime | None = None) -> None:
+    """Append ``message`` to the sync log, each line stamped with its UTC time.
+
+    The log keeps ``LOG_FILES`` files of about ``LOG_MAX_BYTES``. A log that cannot be
+    written falls back to stderr, so the line still reaches launchd's capture.
+    """
+    path = path or LOG
+    stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = "".join(f"{stamp} {line}\n" for line in message.splitlines() or [""])
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _rotate(path)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(text)
+    except OSError:
+        print(text, end="", file=sys.stderr)
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:

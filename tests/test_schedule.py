@@ -1,5 +1,6 @@
 import plistlib
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ def test_launchd_job_runs_the_sync_every_minute_with_docker_on_path() -> None:
         "/venv/bin/agent-introspection",
         "facts",
         "sync",
+        "--log",
     ]
     assert document["StartInterval"] == 60
     assert document["EnvironmentVariables"]["PATH"] == "/opt/docker/bin:/usr/bin"
@@ -36,6 +38,7 @@ def test_launchd_job_keeps_a_selected_configuration() -> None:
         "/etc/ai/custom.toml",
         "facts",
         "sync",
+        "--log",
     ]
 
 
@@ -136,3 +139,46 @@ def test_missing_executable_is_rejected_before_the_loaded_job_is_stopped(
     monkeypatch.setattr(schedule, "_launchctl", lambda *a: pytest.fail("launchctl ran"))
     with pytest.raises(RuntimeError, match="not found"):
         schedule.schedule_install()
+
+
+def test_sync_log_lines_carry_a_utc_timestamp(tmp_path: Path) -> None:
+    log = tmp_path / "sync.log"
+    now = datetime(2026, 10, 12, 8, 30, 5, tzinfo=UTC)
+
+    schedule.log_line('{"synced":1}', log, now)
+    schedule.log_line("FactsError: first\nsecond line", log, now)
+
+    assert log.read_text().splitlines() == [
+        '2026-10-12T08:30:05Z {"synced":1}',
+        "2026-10-12T08:30:05Z FactsError: first",
+        "2026-10-12T08:30:05Z second line",
+    ]
+
+
+def test_sync_log_rotates_by_size_and_keeps_a_bounded_number_of_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "sync.log"
+    monkeypatch.setattr(schedule, "LOG_MAX_BYTES", 100)
+    for index in range(12):
+        schedule.log_line(f"line {index} " + "x" * 40, log)
+
+    files = sorted(path.name for path in tmp_path.iterdir())
+    assert files == ["sync.log", "sync.log.1", "sync.log.2"]
+    assert len(files) == schedule.LOG_FILES
+    kept = "".join((tmp_path / name).read_text() for name in files)
+    # The newest lines survive; only the oldest are dropped.
+    assert "line 11 " in kept
+    assert "line 0 " not in kept
+    assert all((tmp_path / name).stat().st_size <= 100 + 80 for name in files)
+
+
+def test_an_unwritable_sync_log_falls_back_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocked = tmp_path / "file"
+    blocked.write_text("not a directory")
+
+    schedule.log_line("kept", blocked / "sync.log")
+
+    assert "kept" in capsys.readouterr().err

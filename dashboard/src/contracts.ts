@@ -155,9 +155,20 @@ export type ViewResponse = {
   elapsedMs: number;
   /** Where `elapsedMs` went: the registry, the shared route counts, the view's own SQL. */
   timings: { registryMs: number; routeCountsMs: number; sqlMs: number };
-  /** Latest successful fact refresh; `stale` is the loader's own staleness test. Null when unknown. */
-  asOf: { at: string; stale: boolean } | null;
+  /**
+   * Latest successful refresh of the facts this view reads. `stale` is the loader's own
+   * test over the loaders and recent refreshes; `historyStale` is the same for the daily
+   * history refreshes (older days only); `failing` names the stale refreshers. Null when unknown.
+   */
+  asOf: {
+    at: string;
+    stale: boolean;
+    historyStale: boolean;
+    failing: string[];
+  } | null;
   data: Record<string, Row[]>;
+  /** Dataset key (a `data` key) to a short message, for each query that failed; its rows are empty. */
+  errors: Record<string, string>;
   thresholds: { minRateN: number };
   contributions: Contributions;
 };
