@@ -17,6 +17,38 @@ re-reads the last 3 days by event time. A log whose event is older than 7 days w
 arrives is never loaded. This limit is accepted; `facts backfill` can recover such rows
 by hand.
 
+Hook events and session attribution records (see [Hook Events](../hook-events.md))
+are not read from a local inbox: every machine sends them over OTLP to SigNoz, and
+the loaders `load_hook_events` and `load_session_projects` (every minute, selecting by
+`observed_timestamp` over the last 30 minutes) plus their hourly sweeps (last 3 days)
+copy them into `introspection.hook_events` and `introspection.session_projects`. The
+session loader keeps the newest `resolved_at` per session. Consequences:
+
+- These records sit in SigNoz for its 90-day log retention; a record that arrives more
+  than 90 days after it was produced is lost. The facts tables keep what was loaded.
+- A collector acknowledgement is not durable storage: a collector restart before the
+  ClickHouse write can drop a batch even though the sender deleted its files. This
+  exposure is accepted. It is detected by comparing each host's cumulative sent counts
+  (spool status heartbeat) with the rows loaded for that host (`host` column on both
+  tables); the Pipeline view shows the gap per host.
+- Readers select these families by `service.name`, `event.name`, and the body's
+  `schema`. Older rows under the same service name come from a retired pipeline and are
+  never loaded.
+- Session identity is machine independent: `project_id` is keyed on the normalized git
+  remote when there is one (else on the host and path), and is stored. The dashboard
+  and findings still group by project **name**, so one project checked out on two
+  machines merges; switching to `project_id` would change finding fingerprints and is a
+  separate change.
+- Hook-derived facts reach the snapshots after the loader minute plus the 10-minute
+  recent rebuild.
+
+Home paths are redacted (`/Users/<name>`, `/home/<name>`, `/root` become `~`) in the
+hook, the attribution record, and the SQL projections. Rows loaded before the home
+redaction widening (the deploy cutoff constant in the Pipeline view's sanitization
+query) can still hold a Linux home path. They are not rewritten; the sanitization row
+counts home paths only for rows loaded at or after the cutoff, and the facts store
+stays on this machine.
+
 Diagnostic text (failure signatures and span status messages) has credential
 assignments (`token=`, `password=`, `credential=`, `auth=`, `private_key:`, `api_key:`,
 quoted `token="..."` and JSON `"api_key": "..."` values, `Authorization: Bearer ...`),
@@ -92,6 +124,14 @@ uv run agent-introspection facts install             # tables, loaders, views, s
 uv run agent-introspection facts backfill --days 90  # re-project everything SigNoz retains
 uv run agent-introspection facts status              # loader state and per-harness freshness
 ```
+
+`facts sync` (the Mac's scheduled job, `facts schedule install`) runs in this order:
+`spool sync` (attribution scan into the spool, status record, OTLP drain), then
+`SYSTEM REFRESH VIEW` and `SYSTEM WAIT VIEW` for `load_hook_events` and
+`load_session_projects`, then prompt labels, findings, and evaluations. Other machines
+run only `agent-introspection spool sync`, from a systemd user timer. `facts backfill`
+re-projects hook events and session attribution from SigNoz with the same family
+filters.
 
 ## What To Check
 

@@ -43,7 +43,7 @@ SELECT
     toString(traceID) AS trace_id,
     spanID AS span_id,
     parentSpanID AS parent_span_id,
-    replaceRegexpAll(distributed_signoz_index_v3.name, '/Users/[^/ ]+', '~') AS name,
+    replaceRegexpAll(distributed_signoz_index_v3.name, '/(?:Users|home)/[^/ ]+|/root($|[/ ])', '~\\1') AS name,
     duration_nano AS duration_ns,
     has_error,
     status_code_string AS status_code,
@@ -83,8 +83,8 @@ SELECT
                     '⟦[^⟧]*⟧',
                     '[REDACTED]'
                 ),
-                '/Users/[^/ ]+',
-                '~'
+                '/(?:Users|home)/[^/ ]+|/root($|[/ ])',
+                '~\\1'
             ),
             '[0-9a-f]{8,}|\\d+',
             'N'

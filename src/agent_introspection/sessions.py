@@ -3,9 +3,11 @@
 Every harness keeps its sessions on disk with the session ID its telemetry reports
 and the working directory the session ran in (``session_stores.toml`` says where and
 in which record). ``resolve`` reads only that record from each new session file,
-resolves the working directory to its Git project on this machine, and stores one
-row per session in ``introspection.session_projects``: ``attributed`` with the
-project, or the reason it has none (``non_git_workspace``, ``missing_workspace``).
+resolves the working directory to its Git project on this machine, and spools one
+``session-project/1`` record per session (``spool.py`` ships it to the facts store):
+``attributed`` with the project, or the reason it has none (``non_git_workspace``,
+``missing_workspace``). A project with a safe ``host/path`` remote has the same ID on
+every machine; one without is keyed by host and root.
 When the working directory is gone (a deleted worktree, a moved repository) and the
 store records the session's Git remote, the session is attributed to the repository
 on this machine with that remote (``resolved_by = 'remote'``); paths are never guessed.
@@ -13,7 +15,7 @@ No harness hook or configuration is involved, and message content is never read.
 
 Processed files are remembered in ``SCAN_STATE`` so each minute only new files are
 read; a file whose record has not been written yet is retried. ``rescan`` forgets
-the state, and ``ReplacingMergeTree`` keeps one row per session.
+the state; the loaders keep the newest record per session.
 """
 
 from __future__ import annotations
@@ -33,13 +35,13 @@ from itertools import islice
 from pathlib import Path
 from typing import Any
 
-from agent_introspection.facts import SqlRunner
-from agent_introspection.inbox import insert_statements
+from agent_introspection import hooks, spool
 from agent_introspection.json_types import JsonMapping
 
 DATA_DIR = Path.home() / ".local/share/agent-introspection"
 SCAN_STATE = DATA_DIR / "session-scan.json"
-_HOME = re.compile(r"^/Users/[^/]+")
+_HOME = re.compile(r"^/(?:Users|home)/[^/]+|^/root(?=/|$)")
+_SAFE_REMOTE = re.compile(r"[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+/[^\s@\\]+")
 _VARIABLE = re.compile(r"\$(\w+)")
 _GIT_TIMEOUT_SECONDS = 10
 
@@ -158,6 +160,7 @@ class Project:
     name: str = ""
     root: str = ""
     resolved_by: str = ""
+    remote: str = ""
 
 
 def _run_git(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -178,7 +181,7 @@ def resolve_project(cwd: str) -> Project:
     """Resolve a working directory to the root of its Git repository on this machine.
 
     A linked worktree resolves to its main repository, so every checkout of one
-    repository is one project. The project ID is SHA-256 of "git", a NUL byte, and the root.
+    repository on any machine with the same remote is one project (see ``_project``).
     """
     if not cwd or not os.path.isabs(cwd) or not os.path.isdir(cwd):
         return Project("missing_workspace")
@@ -192,13 +195,22 @@ def resolve_project(cwd: str) -> Project:
     return _project(os.path.realpath(os.path.dirname(common.rstrip("/"))), "workspace")
 
 
-def _project(root: str, resolved_by: str) -> Project:
+def _project(root: str, resolved_by: str, remote: str | None = None) -> Project:
+    """Build an attributed project; ``remote`` is its safe host/path origin, else ''.
+
+    A repository with a safe remote has one ID on every machine and checkout path
+    (SHA-256 of ``git-remote`` and the remote); one without is keyed by this host and
+    root, so unrelated machines never collide.
+    """
+    origin = safe_remote(remote_of(root)) if remote is None else remote
+    key = f"git-remote\0{origin}" if origin else f"git\0{spool.host_name()}\0{root}"
     return Project(
         "attributed",
-        hashlib.sha256(f"git\0{root}".encode()).hexdigest(),
+        hashlib.sha256(key.encode()).hexdigest(),
         os.path.basename(root),
         _HOME.sub("~", root),
         resolved_by,
+        origin,
     )
 
 
@@ -209,6 +221,15 @@ def normalize_remote(url: str) -> str:
     text = re.sub(r"^[^@/]+@", "", text)
     host, _, rest = text.partition(":")
     return f"{host}/{rest}" if rest and "/" not in host else text
+
+
+def safe_remote(remote: str) -> str:
+    """Return ``remote`` when it is a dotted host plus path without credentials, else ''.
+
+    Filesystem remotes (a local bare repository) and anything holding ``@`` could carry
+    a user name or a secret, so they never leave the machine.
+    """
+    return remote if _SAFE_REMOTE.fullmatch(remote) else ""
 
 
 def remote_of(root: str) -> str:
@@ -255,8 +276,18 @@ def session_files(store: Store) -> Iterator[Path]:
             yield path
 
 
-def _row(store: Store, session: Session, project: Project) -> Row:
+def _row(store: Store, session: Session, project: Project, resolved_at: str) -> Row:
+    """Build the ``session-project/1`` record; its ID is stable for one resolution."""
+    identity = (
+        spool.SESSION_PROJECT_SCHEMA,
+        session.session_id,
+        project.status,
+        project.project_id,
+        resolved_at,
+    )
     return {
+        "schema": spool.SESSION_PROJECT_SCHEMA,
+        "event_id": hashlib.sha256("\0".join(identity).encode()).hexdigest(),
         "session_id": session.session_id,
         "store": store.name,
         "status": project.status,
@@ -264,7 +295,9 @@ def _row(store: Store, session: Session, project: Project) -> Row:
         "project_name": project.name,
         "project_root": project.root,
         "resolved_by": project.resolved_by,
-        "started_at": session.started_at or datetime.now(UTC).isoformat(),
+        "remote": project.remote,
+        "started_at": session.started_at or resolved_at,
+        "resolved_at": resolved_at,
     }
 
 
@@ -289,16 +322,18 @@ def collect(stores: Iterable[Store], state: ScanState) -> list[Row]:
             if session is not None:
                 found.append((store, session))
                 finished.add(key)
+    resolved_at = hooks.timestamp(datetime.now(UTC))
     projects = {cwd: resolve_project(cwd) for cwd in {session.cwd for _, session in found}}
     _index_remotes(state, (project.root for project in projects.values() if project.root))
     best: dict[str, Row] = {}
     for store, session in found:
         project = projects[session.cwd]
         if project.status == "missing_workspace" and session.remote:
-            root = state.remotes.get(normalize_remote(session.remote))
+            remote = normalize_remote(session.remote)
+            root = state.remotes.get(remote)
             if root is not None and os.path.isdir(root):
-                project = _project(root, "remote")
-        row = _row(store, session, project)
+                project = _project(root, "remote", safe_remote(remote))
+        row = _row(store, session, project, resolved_at)
         current = best.get(session.session_id)
         if current is None or _PREFERENCE[row["status"]] < _PREFERENCE[current["status"]]:
             best[session.session_id] = row
@@ -317,22 +352,22 @@ def _index_remotes(state: ScanState, roots: Iterable[str]) -> None:
 
 
 def resolve(
-    run: SqlRunner,
     *,
     stores: Iterable[Store] | None = None,
-    state: Path = SCAN_STATE,
+    state: Path | None = None,
     rescan: bool = False,
+    inbox: Path | None = None,
 ) -> dict[str, Any]:
-    """Attribute every session file not yet processed and store the results."""
+    """Attribute every session file not yet processed and spool one record per session."""
     selected = list(stores) if stores is not None else load_stores()
-    scan = _load_state(state)
+    state_path = state if state is not None else SCAN_STATE
+    scan = _load_state(state_path)
     if rescan:
         scan.done = set()
     rows = collect(selected, scan)
-    if rows:
-        for statement in insert_statements("session_projects", rows):
-            run(statement)
-    _save_state(state, scan)
+    for row in rows:
+        hooks.write(row, inbox)
+    _save_state(state_path, scan)
     counts: dict[str, int] = {}
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1

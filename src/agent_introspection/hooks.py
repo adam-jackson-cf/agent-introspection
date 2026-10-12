@@ -3,8 +3,8 @@
 The activity shim hands each hook envelope (JSON on stdin) to
 ``agent-introspection hook <producer> <event>``, which runs ``main`` detached from
 the harness. ``normalize`` reduces the envelope to the fields in
-``docs/hook-events.md`` and ``write`` stores each record atomically in the inbox
-that ``facts sync`` drains into ``introspection.hook_events``.
+``docs/hook-events.md`` and ``write`` stores each record atomically in the spool
+(``spool.py``), which ships records to the OTLP route ``facts sync`` loads from.
 
 Raw prompt, argument, and output text is read only in memory. The derivations
 mirror the Codex projection in ``facts_sql/select_logs.sql`` so a field means the
@@ -62,7 +62,7 @@ _FILE_EXTENSION = re.compile(
 _NUMBER = re.compile(r"^[0-9.]+$")
 _TOKEN_QUOTES = (re.compile(r"^[\"']+"), re.compile(r"[\"';,)]+$"))
 _PATCH_FILE = re.compile(r"\*\*\* (?:Update|Add|Delete) File: ([^\n\\]+)")
-_HOME_ANYWHERE = re.compile(r"/Users/[^/ ]+")
+_HOME_ANYWHERE = re.compile(r"/(?:Users|home)/[^/ ]+|/root(?=[/ ]|$)")
 _GATE_BYPASS = re.compile(r"(--no-verify|(^|[\s\"'])HUSKY=0|(^|[\s\"'])SKIP=|--no-gpg-sign)")
 _OUTPUT_NOISE = re.compile(
     r"^(Chunk ID|Wall time|Process exited|Exit code|Original token count|Output:"
@@ -111,11 +111,14 @@ _PATH_KEYS = ("path", "file_path", "notebook_path")
 _ERROR_CLASS = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
-_HOME_PATHS = re.compile(r"/Users/[^/\s;:,'\"]+")
+_HOME_PATHS = re.compile(r"/(?:Users|home)/[^/\s;:,'\"]+|/root(?=[/\s;:,'\"]|$)")
 
 
 def redact_home(path: str) -> str:
-    """Replace every ``/Users/<name>`` with ``~``; one argument can hold several paths."""
+    """Replace every ``/Users/<name>``, ``/home/<name>`` and ``/root`` with ``~``.
+
+    One argument can hold several paths.
+    """
     return _HOME_PATHS.sub("~", path)
 
 
@@ -325,7 +328,7 @@ def open_turn(context: Context, producer: str, session_id: str, prompt_id: str) 
     """Mark this session's turn as running."""
     context.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     marker = {"prompt_id": prompt_id, "opened_at": timestamp(context.now())}
-    _atomic_write(_state_path(context, producer, session_id), json.dumps(marker) + "\n")
+    atomic_write(_state_path(context, producer, session_id), json.dumps(marker) + "\n")
 
 
 def close_turn(context: Context, producer: str, session_id: str) -> None:
@@ -548,7 +551,7 @@ def normalize(
 # --- Output -----------------------------------------------------------------------
 
 
-def _atomic_write(destination: Path, content: str) -> None:
+def atomic_write(destination: Path, content: str) -> None:
     descriptor, temporary = tempfile.mkstemp(
         prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
     )
@@ -565,11 +568,12 @@ def write(item: Record, inbox: Path | None = None) -> Path:
     inbox = inbox or INBOX
     inbox.mkdir(parents=True, exist_ok=True)
     destination = inbox / f"{item['event_id']}.json"
-    _atomic_write(destination, json.dumps(item, separators=(",", ":")) + "\n")
+    atomic_write(destination, json.dumps(item, separators=(",", ":")) + "\n")
     return destination
 
 
-def _log(producer: str, hook_event: str, problem: str) -> None:
+def log(producer: str, hook_event: str, problem: str) -> None:
+    """Append ``<UTC> <producer> <hook_event> <problem>`` to the hook log; never raises."""
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
         with LOG.open("a", encoding="utf-8") as handle:
@@ -578,10 +582,21 @@ def _log(producer: str, hook_event: str, problem: str) -> None:
         pass
 
 
-def main(producer: str, hook_event: str) -> int:
-    """Read one envelope from stdin, write its records, and always return 0.
+def _drain_one_batch(config: Path | None) -> None:
+    """Send at most one spooled batch when an endpoint resolves; failures are logged by class."""
+    from agent_introspection import spool
 
-    A failure is logged by exception type only, never with envelope text.
+    endpoint = spool.hook_endpoint(config)
+    if endpoint is not None:
+        spool.drain(endpoint, max_batches=1)
+
+
+def main(producer: str, hook_event: str, config: Path | None = None) -> int:
+    """Read one envelope from stdin, spool its records, drain one batch, and return 0.
+
+    A failure is logged by exception type only, never with envelope text; neither the
+    spool write nor the network send can fail the harness or block it past the send
+    timeout.
     """
     try:
         envelope = json.loads(sys.stdin.read())
@@ -590,5 +605,9 @@ def main(producer: str, hook_event: str) -> int:
         for item in iter_records(producer, hook_event, envelope):
             write(item)
     except Exception as exc:
-        _log(producer[:32], hook_event[:64], type(exc).__name__)
+        log(producer[:32], hook_event[:64], type(exc).__name__)
+    try:
+        _drain_one_batch(config)
+    except Exception as exc:
+        log("spool", type(exc).__name__, "0")
     return 0

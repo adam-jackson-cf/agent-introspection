@@ -12,10 +12,10 @@ from agent_introspection import (
     evaluation,
     facts,
     findings,
-    inbox,
     preflight,
     schedule,
     sessions,
+    spool,
 )
 from agent_introspection.cli_common import app_config, diagnostic, open_store
 from agent_introspection.config import AppConfig, load_config
@@ -46,7 +46,7 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "install": lambda: _install(args, config, run),
         "backfill": lambda: facts.backfill(run, days=args.days),
-        "sessions": lambda: _sessions(config, run, rescan=args.rescan),
+        "sessions": lambda: _sessions(config, rescan=args.rescan),
         "findings": lambda: _findings(args, run),
         "sync": lambda: _sync(args, run),
         "classify": lambda: _labels(run, days=args.days, limit=args.limit),
@@ -79,16 +79,26 @@ def _labels(run: facts.SqlRunner, *, days: int = 2, limit: int = 60) -> dict[str
         return {"status": "skipped", "reason": str(exc)}
 
 
-def _sessions(config: AppConfig, run: facts.SqlRunner, *, rescan: bool = False) -> dict[str, Any]:
-    """Attribute new sessions from the harnesses' session stores to Git projects."""
+def _sessions(config: AppConfig, *, rescan: bool = False) -> dict[str, Any]:
+    """Attribute new sessions from the harnesses' session stores into the spool."""
     stores = sessions.load_stores(config.session_roots)
-    return sessions.resolve(run, stores=stores, rescan=rescan)
+    return sessions.resolve(stores=stores, rescan=rescan)
+
+
+_LOADERS = ("load_hook_events", "load_session_projects")
+
+
+def _load_spooled(run: facts.SqlRunner) -> None:
+    """Run the loaders now, so records the drain just delivered are in their tables."""
+    for name in _LOADERS:
+        run(f"SYSTEM REFRESH VIEW {facts.DATABASE}.{name}")
+        run(f"SYSTEM WAIT VIEW {facts.DATABASE}.{name}")
 
 
 def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
-    """Load hook events and sessions, label prompts, promote findings, evaluate proposals."""
-    hooks = inbox.sync(run)
-    attributed = _sessions(app_config(args), run)
+    """Ship the spool, load it, label prompts, promote findings, evaluate proposals."""
+    shipped = spool.sync(app_config(args))
+    _load_spooled(run)
     labels = _labels(run)
     connection = open_store(args)
     try:
@@ -97,8 +107,7 @@ def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
     finally:
         connection.close()
     return {
-        "hooks": hooks,
-        "sessions": attributed,
+        "spool": shipped,
         "labels": labels,
         "findings": refreshed,
         "evaluations": evaluated,
@@ -141,3 +150,24 @@ def add_facts_parser(commands: Any) -> None:
     )
     for action in ("install", "remove", "status"):
         schedule.add_parser(action)
+
+
+def add_spool_parser(commands: Any) -> None:
+    spool_parser = commands.add_parser(
+        "spool", help="ship this machine's records to the OTLP route"
+    ).add_subparsers(dest="spool_command", required=True)
+    sync = spool_parser.add_parser(
+        "sync", help="attribute new sessions, record spool status, and send the spool"
+    )
+    sync.add_argument("--rescan", action="store_true", help="re-read every session file")
+    spool_parser.add_parser("status", help="count pending and rejected spool files (read-only)")
+
+
+def spool_command(args: argparse.Namespace) -> dict[str, Any]:
+    if args.spool_command == "status":
+        return {
+            "pending": spool.backlog(),
+            "rejected": spool.rejected_count(),
+            **spool.read_state(),
+        }
+    return spool.sync(app_config(args), rescan=args.rescan)

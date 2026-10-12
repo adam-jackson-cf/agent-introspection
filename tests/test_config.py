@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection.config import ConfigurationError, load_config, parse_config
+from agent_introspection.config import (
+    ConfigurationError,
+    load_config,
+    parse_config,
+    resolve_otlp_logs_endpoint,
+)
 
 
 def test_documented_defaults_are_canonical() -> None:
@@ -175,3 +180,65 @@ def test_enabled_harnesses_reject_malformed_lists(
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
         parse_config({"harnesses": harnesses})
+
+
+def test_the_hooks_endpoint_is_optional_and_may_be_a_remote_host() -> None:
+    assert parse_config({}).hooks_otlp_logs_endpoint is None
+    url = "http://100.80.132.50:4318/v1/logs"
+    assert parse_config({"hooks": {"otlp_logs_endpoint": url}}).hooks_otlp_logs_endpoint == url
+    secure = "https://collector.example.net/v1/logs"
+    config = parse_config({"hooks": {"otlp_logs_endpoint": secure}})
+    assert config.hooks_otlp_logs_endpoint == secure
+
+
+@pytest.mark.parametrize(
+    ("hooks", "message"),
+    [
+        ({"otlp_logs_endpoint": "grpc://host:4317"}, "http:// or https://"),
+        ({"otlp_logs_endpoint": "http://user:pw@host/v1/logs"}, "must not embed credentials"),
+        ({"otlp_logs_endpoint": "http://user@host/v1/logs"}, "must not embed credentials"),
+        ({"otlp_logs_endpoint": ""}, "non-empty string"),
+        ({"endpoint": "http://host"}, "unsupported keys in hooks"),
+    ],
+)
+def test_the_hooks_endpoint_rejects_bad_urls_and_unknown_keys(
+    hooks: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        parse_config({"hooks": hooks})
+
+
+PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
+HTTP_ENV = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318/"}
+DERIVED = "http://collector:4318/v1/logs"
+
+
+@pytest.mark.parametrize(
+    ("configured", "environ", "expected"),
+    [
+        ("http://cfg/v1/logs", HTTP_ENV, "http://cfg/v1/logs"),
+        ("http://cfg/v1/logs", {PROTOCOL: "grpc", **HTTP_ENV}, "http://cfg/v1/logs"),
+        (None, {}, None),
+        (None, HTTP_ENV, DERIVED),
+        (None, {PROTOCOL: "http/protobuf", **HTTP_ENV}, DERIVED),
+        (None, {PROTOCOL: "http/json", **HTTP_ENV}, DERIVED),
+        (None, {PROTOCOL: "grpc", **HTTP_ENV}, None),
+        (None, {"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "grpc", **HTTP_ENV}, None),
+        (
+            None,
+            {"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/json", PROTOCOL: "grpc", **HTTP_ENV},
+            DERIVED,
+        ),
+        (
+            None,
+            {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4318/custom"} | HTTP_ENV,
+            "http://logs:4318/custom",
+        ),
+        (None, {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://u:p@logs/x"}, None),
+        (None, {"OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4317"}, None),
+    ],
+)
+def test_the_endpoint_comes_from_config_first_then_only_an_http_environment(
+    configured: str | None, environ: dict[str, str], expected: str | None
+) -> None:
+    assert resolve_otlp_logs_endpoint(configured, environ) == expected

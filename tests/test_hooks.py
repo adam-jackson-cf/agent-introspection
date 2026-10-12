@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import command_shape, facts, hooks, inbox
-from tests.test_inbox import recorder
+from agent_introspection import command_shape, facts, hooks, spool
+from tests.support.otlp_collector import Collector, names, spool_records
 
 SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
 NOW = datetime(2026, 9, 30, 12, 0, 0, 123456, tzinfo=UTC)
@@ -491,54 +491,104 @@ def test_write_is_atomic_and_main_never_fails(
     monkeypatch.setattr(hooks, "LOG", tmp_path / "hooks.log")
     envelope = {"session_id": SESSION, "tool_name": "Bash", "tool_input": {"command": "ls"}}
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(envelope)))
-    assert hooks.main("claude-code", "PreToolUse") == 0
+    assert hooks.main("claude-code", "PreToolUse", tmp_path / "missing.toml") == 0
     (written,) = hook_inbox.iterdir()
     assert json.loads(written.read_text())["schema"] == hooks.SCHEMA
     assert written.name == json.loads(written.read_text())["event_id"] + ".json"
 
     monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "' + PROMPT + '"'))
-    assert hooks.main("claude-code", "UserPromptSubmit") == 0
+    assert hooks.main("claude-code", "UserPromptSubmit", tmp_path / "missing.toml") == 0
     log = (tmp_path / "hooks.log").read_text()
     assert "claude-code UserPromptSubmit JSONDecodeError" in log
     assert PROMPT not in log
 
 
-def test_sync_ingests_hook_events_into_their_table(tmp_path: Path) -> None:
-    hook_inbox = tmp_path / "inbox"
-    ctx = context(tmp_path)
-    envelope = {
-        "session_id": SESSION,
-        "tool_use_id": "t",
-        "tool_name": "Edit",
-        "tool_input": {"file_path": "/Users/me/p/a.py"},
-    }
-    (item,) = hooks.normalize("claude-code", "PreToolUse", envelope, ctx)
-    hooks.write(item, hook_inbox)
-    executed: list[str] = []
-
-    result = inbox.sync(recorder(executed), inbox=hook_inbox)
-
-    assert result["hook_events"] == 1
-    assert result["invalid"] == 0
-    (statement,) = executed
-    assert statement.startswith("INSERT INTO introspection.hook_events (event_id, producer,")
-    # Declared column types: JSON inference would read the attrs objects as tuples.
-    assert "attrs_string Map(String, String), attrs_number Map(String, Float64)" in statement
-    assert "SELECT event_id, producer," in statement
-    literal = statement.split("Float64)', '", 1)[1].rsplit("') SETTINGS", 1)[0]
-    row = json.loads(literal.replace("\\'", "'").replace("\\\\", "\\"))
-    assert row["attrs_string"]["targets"] == '["~/p/a.py"]'
-    assert row["attrs_number"]["gate_bypass"] == 0
-    assert row["attrs_string"]["tool_name"] == "Edit"
-    assert "arguments_length" in row["attrs_number"]
-    assert list(hook_inbox.iterdir()) == []
+def test_home_directories_redact_on_every_platform() -> None:
+    assert hooks.redact_home("/Users/me/a /home/adam-ai/b /root/c") == "~/a ~/b ~/c"
+    assert hooks.redact_home("--dir=/root") == "--dir=~"
+    assert hooks.redact_home("/rootfs/x") == "/rootfs/x"
+    signature = hooks.failure_signature("FileNotFoundError: /home/adam-ai/p/x.py and /root/y")
+    assert "adam-ai" not in signature
+    assert "/root" not in signature
+    assert signature.startswith("FileNotFoundError: ~/p/x.py and ~")
 
 
-def test_large_rows_are_split_by_size() -> None:
-    rows = [{"event_id": str(index), "blob": "x" * 5000} for index in range(100)]
-    statements = inbox.insert_statements("hook_events", rows)
-    assert len(statements) > 1
-    assert all(len(statement) < 256 * 1024 for statement in statements)
+def hook_config(tmp_path: Path, endpoint: str | None) -> Path:
+    config = tmp_path / "config.toml"
+    config.write_text("" if endpoint is None else f'[hooks]\notlp_logs_endpoint = "{endpoint}"\n')
+    return config
+
+
+def feed_envelope(monkeypatch: pytest.MonkeyPatch, **fields: object) -> None:
+    envelope = {"session_id": SESSION, "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(envelope | fields)))
+
+
+def test_a_hook_drains_one_batch_of_the_spool_and_leaves_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
+) -> None:
+    spool_records(inbox, 60)
+    feed_envelope(monkeypatch)
+
+    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, collector.url)) == 0
+
+    assert len(collector.bodies) == 1
+    assert len(collector.records) == spool.BATCH_SIZE
+    assert len(names(inbox)) == 61 - spool.BATCH_SIZE
+
+
+def test_a_hook_without_an_endpoint_only_spools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
+) -> None:
+    feed_envelope(monkeypatch)
+
+    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+
+    assert collector.bodies == []
+    assert len(names(inbox)) == 1
+
+
+def test_a_grpc_environment_never_receives_records_and_keeps_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
+) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
+    feed_envelope(monkeypatch)
+
+    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+
+    assert collector.bodies == []
+    assert len(names(inbox)) == 1
+    assert not (inbox / "rejected").exists()
+
+
+def test_a_hook_falls_back_to_the_http_environment_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
+) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
+    feed_envelope(monkeypatch)
+
+    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+
+    assert len(collector.records) == 1
+    assert names(inbox) == set()
+
+
+def test_a_hook_survives_an_unreachable_collector_and_an_invalid_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path
+) -> None:
+    config = hook_config(tmp_path, "http://127.0.0.1:9/v1/logs")
+    feed_envelope(monkeypatch)
+    assert hooks.main("claude-code", "PreToolUse", config) == 0
+    assert len(names(inbox)) == 1
+    assert " spool ConnectionRefusedError 1" in hooks.LOG.read_text()
+
+    config.write_text("[hooks\n")
+    feed_envelope(monkeypatch, tool_name="Read")
+    assert hooks.main("claude-code", "PreToolUse", config) == 0
+    assert " spool ConfigurationError 0" in hooks.LOG.read_text()
+    assert len(names(inbox)) == 2
 
 
 # --- Shim and installers ----------------------------------------------------------

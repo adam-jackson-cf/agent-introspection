@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -71,9 +72,13 @@ class AppConfig:
     # Extra session-store roots per store name (`[sessions.roots]`), for example an
     # Orca per-account Codex home; `~`, `$VAR`, and globs expand at scan time.
     session_roots: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # OTLP/HTTP logs URL every record is sent to (`[hooks] otlp_logs_endpoint`); any
+    # reachable host. None falls back to the OTEL_* environment, else spool only.
+    hooks_otlp_logs_endpoint: str | None = None
 
 
-_ROOT_KEYS = frozenset({"database", "signoz", "dashboard", "harnesses", "sessions"})
+_ROOT_KEYS = frozenset({"database", "signoz", "dashboard", "harnesses", "sessions", "hooks"})
+_HOOKS_KEYS = frozenset({"otlp_logs_endpoint"})
 _SESSIONS_KEYS = frozenset({"roots"})
 _HARNESSES_KEYS = frozenset({"enabled"})
 _DASHBOARD_KEYS = frozenset({"clickhouse_url"})
@@ -132,6 +137,17 @@ def _http_url(value: object, *, field: str) -> str:
             "container name such as OrbStack's *.orb.local): "
             "Agent Introspection runs only against a local SigNoz"
         )
+    return url
+
+
+def _otlp_url(value: object, *, field: str) -> str:
+    """Validate an OTLP/HTTP logs URL: http(s), a host, no credentials; any host is allowed."""
+    url = _non_empty_string(value, field=field).strip()
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigurationError(f"{field} must be an http:// or https:// URL")
+    if parts.username is not None or parts.password is not None:
+        raise ConfigurationError(f"{field} must not embed credentials")
     return url
 
 
@@ -255,6 +271,8 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(dashboard), _DASHBOARD_KEYS, location="dashboard")
     _reject_unknown(set(harnesses), _HARNESSES_KEYS, location="harnesses")
+    hooks = _table(data, "hooks")
+    _reject_unknown(set(hooks), _HOOKS_KEYS, location="hooks")
     defaults = AppConfig()
     return AppConfig(
         database=DatabaseConfig(
@@ -277,6 +295,11 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         ),
         harnesses_enabled=_enabled_harnesses(harnesses),
         session_roots=_session_roots(sessions),
+        hooks_otlp_logs_endpoint=(
+            _otlp_url(hooks["otlp_logs_endpoint"], field="hooks.otlp_logs_endpoint")
+            if "otlp_logs_endpoint" in hooks
+            else None
+        ),
     )
 
 
@@ -290,6 +313,39 @@ def _session_roots(sessions: dict[str, Any]) -> dict[str, tuple[str, ...]]:
     ):
         raise ConfigurationError("sessions.roots must map a store name to a list of paths")
     return {name: tuple(paths) for name, paths in roots.items()}
+
+
+_OTLP_LOGS_ENDPOINT = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
+_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
+_OTLP_LOGS_PROTOCOL = "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"
+_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
+
+
+def resolve_otlp_logs_endpoint(
+    configured: str | None, environ: Mapping[str, str] | None = None
+) -> str | None:
+    """Return the OTLP/HTTP logs URL records are sent to, or None when none applies.
+
+    ``[hooks] otlp_logs_endpoint`` wins. Otherwise the standard OpenTelemetry variables
+    apply, but only when the exporter protocol is unset or ``http/*``: records are sent
+    as OTLP/HTTP JSON, so a gRPC endpoint (a port that speaks another protocol) is never
+    used. An invalid environment value is ignored, never an error.
+    """
+    if configured is not None:
+        return configured
+    env = os.environ if environ is None else environ
+    protocol = env.get(_OTLP_LOGS_PROTOCOL) or env.get(_OTLP_PROTOCOL) or ""
+    if protocol and not protocol.startswith("http/"):
+        return None
+    candidate = env.get(_OTLP_LOGS_ENDPOINT)
+    if not candidate and env.get(_OTLP_ENDPOINT):
+        candidate = f"{env[_OTLP_ENDPOINT].rstrip('/')}/v1/logs"
+    if not candidate:
+        return None
+    try:
+        return _otlp_url(candidate, field=_OTLP_LOGS_ENDPOINT)
+    except ConfigurationError:
+        return None
 
 
 def load_config(path: Path | None = None) -> AppConfig:

@@ -32,6 +32,93 @@ def test_span_loaders_select_by_end_time_and_log_loader_by_ingest_time() -> None
     assert windows["load_logs"].startswith("observed_timestamp")
 
 
+def test_record_loaders_window_on_collector_time_and_filter_their_family() -> None:
+    loaders = {loader.name: loader for loader in facts.LOADERS}
+    families = {
+        "hook_events": ("agent_introspection.hook_event", "agent-introspection.hook-event/1"),
+        "session_projects": (
+            "agent_introspection.session_project",
+            "agent-introspection.session-project/1",
+        ),
+    }
+
+    for target, (event_name, schema) in families.items():
+        minute, sweep = loaders[f"load_{target}"], loaders[f"sweep_{target}"]
+        assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", target)
+        assert (sweep.schedule, sweep.target) == ("EVERY 1 HOUR", target)
+        assert "INTERVAL 30 MINUTE" in minute.window
+        assert "INTERVAL 3 DAY" in sweep.window
+        for loader in (minute, sweep):
+            assert loader.window.startswith("observed_timestamp")
+            assert "timestamp >" not in loader.window.replace("observed_timestamp", "")
+            ddl = facts.loader_ddl(loader)
+            assert "resources_string['service.name'] = 'agent-introspection'" in ddl
+            assert f"attributes_string['event.name'] = '{event_name}'" in ddl
+            assert f"JSONExtractString(body, 'schema') = '{schema}'" in ddl
+
+
+def test_no_select_reads_the_agent_introspection_service_without_a_family_filter() -> None:
+    for name in ("select_logs.sql", "select_spans.sql"):
+        assert "agent-introspection" not in facts._sql(name)
+    for name in ("select_hook_events.sql", "select_session_projects.sql"):
+        select = facts._sql(name)
+        assert select.count("'agent-introspection'") == 1
+        assert select.count("attributes_string['event.name']") == 1
+        assert select.count("JSONExtractString(body, 'schema')") == 1
+
+
+def test_hook_event_select_flattens_attrs_by_json_type() -> None:
+    # Numbers and flags go to attrs_number as Float64, text to attrs_string, and every
+    # other JSON value (lists, objects, null) to JSON text, as the hook record defines.
+    select = facts._sql("select_hook_events.sql")
+
+    assert "'Map(LowCardinality(String), String)'" in select
+    assert "'Map(LowCardinality(String), Float64)'" in select
+    assert select.count("IN ('Int64', 'UInt64', 'Double', 'Bool')") == 2
+    assert "NOT IN ('Int64', 'UInt64', 'Double', 'Bool')" in select
+    assert "toFloat64(JSONExtractBool(body, 'attrs', k))" in select
+    assert "JSONExtractRaw(body, 'attrs', k)" in select
+    assert "resources_string['host.name'] AS host" in select
+    # Added columns come last: backfills insert by position.
+    assert select.index("AS loaded_at") < select.index("AS host")
+
+
+def test_session_projects_select_keeps_the_newest_record_per_session() -> None:
+    select = facts._sql("select_session_projects.sql")
+
+    assert "GROUP BY session_id" in select
+    for column in ("project_id", "status", "remote", "host", "started_at"):
+        assert f"argMax(r_{column}, r_resolved_at) AS {column}" in select
+    assert select.index("AS loaded_at") < select.index("AS host") < select.index("AS resolved_at")
+    # ReplacingMergeTree(loaded_at) must keep the newest resolution across refreshes.
+    assert "toDateTime64(max(r_resolved_at), 3, 'UTC') AS loaded_at" in select
+    assert "now64" not in select
+
+
+def test_tables_add_the_cross_machine_columns_after_their_create() -> None:
+    statements = facts.split_statements(facts._sql("001_tables.sql"))
+
+    def index(fragment: str) -> int:
+        return next(i for i, s in enumerate(statements) if fragment in s)
+
+    for table, column in (
+        ("session_projects", "host"),
+        ("session_projects", "remote"),
+        ("session_projects", "resolved_at"),
+        ("hook_events", "host"),
+    ):
+        alter = index(f"ALTER TABLE introspection.{table} ADD COLUMN IF NOT EXISTS {column} ")
+        assert index(f"CREATE TABLE IF NOT EXISTS introspection.{table}\n") < alter
+
+
+def test_home_redaction_covers_users_home_and_root_everywhere() -> None:
+    for name in ("select_logs.sql", "select_spans.sql"):
+        select = facts._sql(name)
+        assert "/Users/[" not in select
+    assert facts._sql("select_logs.sql").count("/root(") == 3
+    assert facts._sql("select_spans.sql").count("/root(") == 2
+
+
 def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> None:
     statements = facts.install_statements()
 
@@ -109,7 +196,10 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
         for refresher in refreshers:
             # Each part replaces its table whole, so it never holds duplicates.
             assert "APPEND" not in refresher
-            assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
+            assert (
+                "DEPENDS ON introspection.load_spans, introspection.load_logs,"
+                " introspection.load_hook_events, introspection.load_session_projects"
+            ) in refresher
             # A refresher must spill before it reaches a memory ceiling below the server's.
             settings = _refresher_settings(refresher)
             ceiling = int(settings["max_memory_usage"])
@@ -557,7 +647,7 @@ def test_attribute_filter_evaluator_rejects_a_retaining_predicate() -> None:
 def test_span_projection_normalizes_status() -> None:
     select = facts.render_select("select_spans.sql", "1")
     normalising = select.split("AS status_normalised")[0]
-    assert "'~'" in normalising
+    assert "'~\\\\1'" in normalising
     assert "'N'" in normalising
 
 
@@ -633,9 +723,14 @@ def test_backfill_reports_final_row_counts() -> None:
 
     result = facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
 
-    assert result["rows"] == {"spans": 7, "logs": 7}
+    assert result["rows"] == {"spans": 7, "logs": 7, "hook_events": 7, "session_projects": 7}
     assert result["start"] == "2026-09-27T00:00:00+00:00"
-    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 2 * 5
+    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4 * 5
+    inserted = {sql.split("\n")[0] for sql in executed if sql.startswith("INSERT INTO")}
+    assert inserted == {
+        f"INSERT INTO introspection.{t}"
+        for t in ("spans", "logs", "hook_events", "session_projects")
+    }
 
 
 def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_arguments() -> None:
@@ -648,7 +743,7 @@ def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_a
     assert bypass.startswith("args,")
     targets = select.split("AS targets,")[0].rsplit("AS command_paths,", 1)[1]
     assert "command_paths" in targets
-    assert "'~'" in targets
+    assert "'~\\\\1'" in targets
 
 
 @pytest.mark.parametrize(
@@ -879,7 +974,7 @@ def test_projection_redacts_credentials_before_normalizing_diagnostics(template:
         assert sql_literal(repl) in select[found:]
         position = found
     # Redaction wraps the window before home and digit normalization.
-    assert select.index("[REDACTED]") < select.index("'/Users/[^/ ]+',\n")
+    assert select.index("[REDACTED]") < select.index("'/(?:Users|home)/[^/ ]+|/root($|[/ ])',\n")
 
 
 def test_opencode_is_a_registered_producer_stray_and_not_a_harness() -> None:

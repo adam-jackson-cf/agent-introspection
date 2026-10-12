@@ -2,8 +2,9 @@
 
 Native producer telemetry leaves some dashboard signals unreachable for a harness.
 Where a harness hook exposes the missing field, an **activity hook** derives a
-normalized value from it and writes one JSON record to the inbox that `facts sync`
-already drains. This closes the gap without storing raw prompt, command, argument,
+normalized value from it and writes one JSON record to a local spool. The spool is
+delivered to SigNoz over OTLP from every machine and loaded into the facts store from
+there. This closes the gap without storing raw prompt, command, argument,
 or output text (decision D4). A signal that no hook or native field can supply for
 every harness is excluded from the dashboard (see
 [Dashboard Data Gaps](dashboard-data-gaps.md)).
@@ -17,10 +18,27 @@ harness hook (Claude Code settings, omp extension)
   └─> activity shim: reads the hook envelope on stdin, returns at once,
       hands the envelope to a detached `agent-introspection hook <producer> <event>`
         └─> normalizer (src/agent_introspection/hooks.py): derives fields, drops text
-              └─> ~/.local/share/agent-introspection/hook-inbox/<event_id>.json
-                    └─> facts sync (every minute) ─> introspection.hook_events
-                          └─> fact views (tool_calls, task_outcomes, task_labels, …)
+              └─> spool: ~/.local/share/agent-introspection/hook-inbox/<event_id>.json
+                    └─> OTLP/HTTP logs POST (`[hooks] otlp_logs_endpoint`)
+                          └─> SigNoz collector ─> signoz_logs
+                                └─> loader load_hook_events (every minute)
+                                      └─> introspection.hook_events
+                                            └─> fact views (tool_calls, task_outcomes, …)
 ```
+
+Every machine runs the same route; there is no direct ClickHouse write. The record
+families that share it are:
+
+| Family          | Schema                                  | `event.name`                          | Producer                                          | Stored in                                          |
+| --------------- | --------------------------------------- | ------------------------------------- | ------------------------------------------------- | -------------------------------------------------- |
+| Hook event      | `agent-introspection.hook-event/1`      | `agent_introspection.hook_event`      | `agent-introspection hook`                        | `introspection.hook_events`                        |
+| Session project | `agent-introspection.session-project/1` | `agent_introspection.session_project` | the attribution scan in `spool sync`/`facts sync` | `introspection.session_projects`                   |
+| Spool status    | `agent-introspection.spool-status/1`    | `agent_introspection.spool_status`    | each `spool sync`                                 | not stored; the Pipeline view reads it from SigNoz |
+
+SigNoz holds older rows under the same `service.name` (`agent-introspection`) that
+belong to a retired pipeline. Every reader of these logs (loaders, backfill, Pipeline
+freshness and sanitization) therefore selects a family by `service.name`,
+`event.name`, **and** the JSON body's `schema`, never by service name alone.
 
 - Hooks never block the harness: the shim reads stdin, starts the normalizer in the
   background, and exits 0 with no output. A failing normalizer loses one record; it
@@ -28,6 +46,42 @@ harness hook (Claude Code settings, omp extension)
 - Prompt text reaches the normalizer only from Claude Code's `UserPromptSubmit`, and
   only its length is kept.
 - Tool arguments and outputs are read in memory and reduced to the fields below.
+- Session attribution records carry the project identity, name, home-redacted root,
+  and a normalized remote (empty unless it is `host/path` without credentials), so a
+  session is attributed to the same project from any machine. The status heartbeat
+  carries counts, the oldest pending age, and an exception class name only.
+
+## Delivery
+
+- A hook process writes its record atomically, then sends at most one batch of 50.
+  `agent-introspection spool sync` (the Mac's `facts sync`, a systemd timer elsewhere)
+  drains the rest within a 20-second budget under a non-blocking lock on
+  `hook-inbox/.drain.lock`.
+- The endpoint is `[hooks] otlp_logs_endpoint`, the full logs URL on the collector's
+  OTLP/HTTP port (never the gRPC port). Without it, an `OTEL_EXPORTER_OTLP_*`
+  environment is used only when its protocol is unset or `http/*`. With no endpoint
+  records stay in the spool.
+- Outcome per batch: a 2xx with an empty body, `{}`, or no rejected count deletes the
+  files. `partialSuccess.rejectedLogRecords` above zero, or a 400 carrying an OTLP
+  status, moves the batch to `hook-inbox/rejected/` (it may hold accepted records;
+  duplicates are harmless because readers use `FINAL`). A 404, 405, 415, or other 4xx
+  except 429 is class `endpoint_misconfigured`: files stay and the Pipeline view shows
+  the class. A 429, 5xx, timeout, or connection error keeps the files for the next
+  pass. `hooks.log` records only `<UTC> spool <class> <count>`.
+- A collector 2xx is not durable storage: a collector restart between its ack and the
+  ClickHouse write can lose a batch while the backlog reads 0. That exposure is
+  accepted and detected, not prevented: each status heartbeat carries cumulative sent
+  counts per family and the Pipeline view compares them with the rows loaded per host.
+
+### Lag
+
+| Stage                             | Typical lag                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Hook to SigNoz (online)           | seconds (one batch from the hook process)                                                              |
+| Hook to SigNoz (offline or timer) | up to the timer interval (1 minute), or the outage                                                     |
+| SigNoz to `hook_events`           | up to 1 minute (loader), 30-minute window by arrival time                                              |
+| Late records                      | hourly sweep re-reads the last 3 days by arrival time                                                  |
+| Hook-derived facts in snapshots   | up to the 10-minute recent rebuild; hooks more than 8 days late wait for the 00:30 UTC history rebuild |
 
 ## Record
 
@@ -115,7 +169,10 @@ the installers copy it to
 `~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
 See the [adapter READMEs](../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
 for the commands. Failures are logged by exception type only to
-`~/.local/share/agent-introspection/hooks.log`.
+`~/.local/share/agent-introspection/hooks.log`. Delivery also needs
+`[hooks] otlp_logs_endpoint` in `~/.config/agent-introspection/config.toml` and, on a
+machine without `facts sync`, the `spool sync` timer (see the onboarding setup
+workflow).
 
 ## Prompt export
 

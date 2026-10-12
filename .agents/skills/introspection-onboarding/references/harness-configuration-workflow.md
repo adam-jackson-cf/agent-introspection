@@ -66,7 +66,8 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
      `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_SERVICE_NAME=oh-my-pi`.
 4. **Session store.** Project attribution reads it; nothing is installed. Confirm the
    harness's store exists and holds recent sessions (`ls -t` its root), and after the
-   first `facts sync`, that `agent-introspection facts sessions` reports them.
+   first `facts sync` (or `spool sync`), that `agent-introspection facts sessions`
+   reports them.
 5. **Activity hooks.**
    - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
      then without `--dry-run` (backs up, idempotent, `--remove` undoes).

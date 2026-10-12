@@ -242,6 +242,69 @@ const freshnessSummaryText = (summary: Row) => {
   return `${sources} sources, ${missing === 0 ? "all with facts" : `${sources - missing} with facts`}`;
 };
 
+const dash = (value: unknown, render: (n: number) => string) =>
+  value == null ? "—" : render(num(value));
+
+const SPOOL_COLUMNS: Column[] = [
+  { key: "host", label: "Host" },
+  { key: "state", label: "State" },
+  {
+    key: "pending",
+    label: "Pending",
+    numeric: true,
+    render: (row) => dash(row.pending, fmtCount),
+  },
+  {
+    key: "rejected",
+    label: "Rejected",
+    numeric: true,
+    render: (row) => dash(row.rejected, fmtCount),
+  },
+  {
+    key: "oldest_pending_seconds",
+    label: "Oldest pending",
+    numeric: true,
+    render: (row) => dash(row.oldest_pending_seconds, fmtSeconds),
+  },
+  {
+    key: "last_error_class",
+    label: "Last error",
+    render: (row) => String(row.last_error_class ?? "") || "—",
+  },
+  { key: "cli_version", label: "CLI version" },
+  {
+    key: "age_seconds",
+    label: "Reported",
+    numeric: true,
+    render: (row) => `${fmtSeconds(num(row.age_seconds))} ago`,
+  },
+];
+
+const spoolSummaryText = (summary: Row) => {
+  const unknown = num(summary.unknown);
+  return `${num(summary.reporting)} hosts reporting${unknown > 0 ? `, ${unknown} unknown` : ""}`;
+};
+
+function SpoolPanel({ data }: { data: Data }) {
+  return (
+    <Panel
+      id="spool-status"
+      title="Hook spool by host"
+      subtitle="Latest spool status per machine; a host silent for over 5 minutes is unknown, never a backlog of 0"
+      signals={["pipeline.loader_refresh"]}
+      source="spool_status"
+    >
+      <ExceptionTable
+        summary={spoolSummaryText(data.spool_summary?.[0] ?? {})}
+        columns={SPOOL_COLUMNS}
+        exceptions={data.spool_exceptions ?? []}
+        all={data.spool_status ?? []}
+        empty="No host reported a spool status."
+      />
+    </Panel>
+  );
+}
+
 function FreshnessBand({ data }: { data: Data }) {
   return (
     <Section title="Is the loader fresh?">
@@ -260,6 +323,7 @@ function FreshnessBand({ data }: { data: Data }) {
           empty="No loader reported."
         />
       </Panel>
+      <SpoolPanel data={data} />
       <Panel
         title="Freshness by harness"
         subtitle="Latest row in the last day: SigNoz versus facts"

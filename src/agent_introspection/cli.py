@@ -6,11 +6,17 @@ import argparse
 import json
 import os
 import sqlite3
+from pathlib import Path
 from typing import Any, NoReturn
 
 from agent_introspection import facts
 from agent_introspection.cli_common import diagnostic
-from agent_introspection.cli_facts import add_facts_parser, facts_command
+from agent_introspection.cli_facts import (
+    add_facts_parser,
+    add_spool_parser,
+    facts_command,
+    spool_command,
+)
 from agent_introspection.cli_proposals import (
     PROPOSAL_HANDLERS,
     add_candidates_parser,
@@ -41,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
     commands = parser.add_subparsers(dest="command", required=True)
     add_facts_parser(commands)
+    add_spool_parser(commands)
     add_candidates_parser(commands)
     add_proposal_parser(commands)
     hook = commands.add_parser("hook", help="normalize one activity-hook envelope from stdin")
@@ -52,6 +59,8 @@ def _parser() -> argparse.ArgumentParser:
 def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "facts":
         return facts_command(args)
+    if args.command == "spool":
+        return spool_command(args)
     if args.command == "candidates":
         return candidates_export(args)
     return PROPOSAL_HANDLERS[args.proposal_command](args)
@@ -72,7 +81,9 @@ def main(argv: list[str] | None = None) -> int:
         from agent_introspection import hooks
 
         # Hooks never fail the harness: failures go to the hook log, never stdout.
-        return hooks.main(args.producer, args.event)
+        return hooks.main(
+            args.producer, args.event, Path(args.config) if args.config is not None else None
+        )
     log = bool(getattr(args, "log", False))
     try:
         result = _dispatch(args)

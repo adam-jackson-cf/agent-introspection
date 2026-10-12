@@ -32,8 +32,8 @@ WITH
     arraySlice(
         arrayDistinct(
             arrayMap(
-                -- Every /Users/<name> becomes ~: one argument can hold several paths.
-                p -> substring(replaceRegexpAll(trimBoth(p), '/Users/[^/\\s;:,]+', '~'), 1, 300),
+                -- Every /Users/<name>, /home/<name> and /root becomes ~: one argument can hold several paths.
+                p -> substring(replaceRegexpAll(trimBoth(p), '/(?:Users|home)/[^/\\s;:,]+|/root($|[/\\s;:,])', '~\\1'), 1, 300),
                 arrayConcat(
                     -- Patches arrive with real or JSON-escaped newlines; stop at either.
                     extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),
@@ -117,7 +117,7 @@ SELECT
                     'x.command_sub', command_sub,
                     'x.verification_kinds', toJSONString(verification_kinds),
                     'x.gate_bypass', toString(match(args, '(--no-verify|(^|[\\s"\\x27])HUSKY=0|(^|[\\s"\\x27])SKIP=|--no-gpg-sign)')),
-                    'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^/Users/[^/]+', '~'),
+                    'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^(?:/(?:Users|home)/[^/]+|/root($|/))', '~\\1'),
                     'x.targets', toJSONString(targets),
                     'x.arguments_hash', toString(cityHash64(args)),
                     'x.failure_signature', if(
@@ -158,8 +158,8 @@ SELECT
                                         '⟦[^⟧]*⟧',
                                         '[REDACTED]'
                                     ),
-                                    '/Users/[^/ ]+',
-                                    '~'
+                                    '/(?:Users|home)/[^/ ]+|/root($|[/ ])',
+                                    '~\\1'
                                 ),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'

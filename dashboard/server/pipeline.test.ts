@@ -11,6 +11,7 @@ import {
   unroutedQuery,
   unroutedTotalsQuery,
 } from "./pipeline";
+import { HOME_PATH_CUTOFF } from "./record-route";
 import {
   counting,
   enabling,
@@ -310,6 +311,100 @@ describe("pipeline checks", () => {
       expect(sql).toContain(`'${key}'`);
     expect(sql).toContain(
       "SELECT ts, harness, 'hooks' FROM introspection.hook_rows",
+    );
+  });
+
+  const everySql = async (): Promise<string[]> => {
+    const sent: string[] = [];
+    const query: Query = async (sql) => {
+      sent.push(sql);
+      return [];
+    };
+    await pipelineData(query, registry(), {}, true, {
+      counts: Promise.resolve(counting([], [])),
+      sanitization: sanitizationRows(query),
+      unrouted: Promise.resolve({ list: [], totals: [] }),
+    });
+    return sent;
+  };
+
+  test("every read of the agent-introspection service names its event and schema", async () => {
+    for (const sql of await everySql()) {
+      const reads = sql.split(
+        "resources_string['service.name'] = 'agent-introspection'",
+      );
+      for (const read of reads.slice(1)) {
+        expect(read).toContain("attributes_string['event.name'] = '");
+        expect(read).toContain("JSONExtractString(body, 'schema') = '");
+      }
+    }
+  });
+
+  test("freshness compares hook and attribution logs with their fact tables", async () => {
+    const sql = (await everySql()).join("\n");
+    expect(sql).toContain(
+      "SELECT 'hooks', 'agent-introspection', max(occurred_at)",
+    );
+    expect(sql).toContain(
+      "SELECT 'attribution', 'agent-introspection', max(loaded_at)",
+    );
+    expect(sql).toContain("'agent_introspection.hook_event'");
+    expect(sql).toContain("'agent_introspection.session_project'");
+  });
+
+  test("home paths count only rows loaded after the cutoff, on both machines' paths", async () => {
+    const sql = (await everySql()).join("\n");
+    expect(HOME_PATH_CUTOFF).toBe("2026-10-13 00:00:00");
+    expect(sql).toContain(
+      "loaded_at >= toDateTime64('2026-10-13 00:00:00', 3, 'UTC')",
+    );
+    expect(sql).toContain("(Users|home)/[A-Za-z0-9._-]+|/root");
+    expect(sql).not.toContain("match(name, '/Users/");
+    expect(sql).toContain("'signoz_hook_logs'");
+  });
+
+  test("a host silent for over 5 minutes is unknown with no backlog figures", async () => {
+    const rows: Row[] = [
+      {
+        host: "mac",
+        state: "reporting",
+        pending: 0,
+        rejected: 0,
+        last_error_class: "",
+      },
+      {
+        host: "nuc",
+        state: "unknown",
+        pending: null,
+        rejected: null,
+        last_error_class: "",
+      },
+      {
+        host: "bad",
+        state: "reporting",
+        pending: 3,
+        rejected: 2,
+        last_error_class: "",
+      },
+    ];
+    const query: Query = async (sql) =>
+      sql.includes("AS last_error_class") ? rows : [];
+    const { data } = await pipelineData(query, registry(), {}, true, {
+      counts: Promise.resolve(counting([], [])),
+      sanitization: Promise.resolve([]),
+      unrouted: Promise.resolve({ list: [], totals: [] }),
+    });
+    expect(data.spool_exceptions!.map((row) => row.host)).toEqual([
+      "nuc",
+      "bad",
+    ]);
+    expect(data.spool_summary).toEqual([{ reporting: 2, unknown: 1 }]);
+    const sql = (await everySql()).join("\n");
+    expect(sql).toContain(
+      "if(age_seconds > 300, 'unknown', 'reporting') AS state",
+    );
+    expect(sql).toContain(
+      "if(state = 'unknown', NULL, JSONExtract(latest, 'pending'",
     );
   });
 });

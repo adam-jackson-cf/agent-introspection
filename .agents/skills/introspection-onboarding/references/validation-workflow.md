@@ -12,15 +12,21 @@ then, only when the user wants a live check, run one short session.
 - The settings in the harness configuration workflow's table are present for each
   harness in use, in every Codex root, and `omp plugin list` shows
   `agent-introspection-activity` while `~/.omp/agent/config.yml` does not list it.
-- `agent-introspection` resolves for the shim, and an OpenRouter key is present for
-  `facts sync` (presence only).
+- `agent-introspection` resolves for the shim, `[hooks] otlp_logs_endpoint` is set to
+  the collector's OTLP/HTTP logs URL (not the gRPC port), and on the host machine an
+  OpenRouter key is present for `facts sync` (presence only).
 
 ## Live check
 
 1. In each harness, start a fresh session, submit a harmless prompt, run one command
    that fails (for example reading a missing file), and let the turn finish. For Codex
    exec, run one `codex exec` prompt.
-2. After the next minute's `facts sync` (or run it), check:
+2. After the next minute (the host's `facts sync`, or the other machine's
+   `spool sync` timer; run either now), check:
+   - the spool backlog (`*.json` in `~/.local/share/agent-introspection/hook-inbox/`)
+     drains to 0 and `hook-inbox/rejected/` stays empty;
+   - a probe record (the session's first hook event) is in
+     `introspection.hook_events FINAL` with this machine's `host`;
    - `introspection.session_projects FINAL` has the session with `status = 'attributed'`
      and its project (or the reason it has none, such as `non_git_workspace`);
    - the prompt event (`user_prompt`, `codex.user_prompt`, `omp.user_prompt`) reached

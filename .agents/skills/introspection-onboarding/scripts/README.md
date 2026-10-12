@@ -5,11 +5,14 @@ identity, targets, and gate-bypass flags; Claude Code interrupts, steers, reason
 tokens, subagents, and failure text; omp approvals, retries, steers, and its prompt
 event). The record contract and derivations are in
 [`docs/hook-events.md`](../../../../docs/hook-events.md). Project attribution needs no
-hook: `facts sync` reads each harness's session store (`session_stores.toml`).
+hook: the spool sync reads each harness's session store (`session_stores.toml`) and
+sends session-project records over the same OTLP route.
 
 ```text
 scripts/
 ├── activity-shim.sh             # detaches `agent-introspection hook PRODUCER EVENT`
+├── agent-introspection-spool-sync.service  # systemd user unit: `spool sync`
+├── agent-introspection-spool-sync.timer    # runs it every minute (non-host machines)
 └── adapters/
     ├── claude-code/             # install_activity.py: registers six Claude Code hooks
     └── omp/                     # activity.ts: omp extension
@@ -18,8 +21,15 @@ scripts/
 ```text
 harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook PRODUCER EVENT (detached)
   ─> ~/.local/share/agent-introspection/hook-inbox/<event_id>.json
-  ─> facts sync ─> introspection.hook_events
+  ─> OTLP/HTTP logs POST ─> SigNoz ─> load_hook_events ─> introspection.hook_events
 ```
+
+Delivery needs `[hooks] otlp_logs_endpoint` (the collector's OTLP/HTTP logs URL). The
+host machine's `facts sync` drains the spool; every other machine runs
+`agent-introspection spool sync` from the systemd user timer here (copy both units to
+`~/.config/systemd/user/`, then
+`systemctl --user enable --now agent-introspection-spool-sync.timer`; `loginctl
+enable-linger` keeps it running without a login).
 
 - The shim reads the whole envelope from stdin, pipes it to a detached
   `agent-introspection hook` (no temporary file), prints nothing, and exits 0, so a hook

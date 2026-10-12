@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_introspection import spool
 from agent_introspection.config import SigNozConfig, load_config
-from agent_introspection.inbox import backlog
 
 LABEL = "com.adamjackson.agent-introspection.sync"
 PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
@@ -145,10 +145,11 @@ def schedule_remove() -> dict[str, Any]:
 
 
 def schedule_status() -> dict[str, Any]:
-    """Report whether the job is loaded and how many hook-inbox files wait."""
+    """Report whether the job is loaded and how many spool files wait or were rejected."""
     listed = _launchctl("list", LABEL)
     return {
         "installed": PLIST.exists(),
         "loaded": listed.returncode == 0,
-        "inbox_backlog": backlog(),
+        "inbox_backlog": spool.backlog(),
+        "inbox_rejected": spool.rejected_count(),
     }

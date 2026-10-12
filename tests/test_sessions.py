@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -7,8 +8,7 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import sessions
-from agent_introspection.facts import SqlRunner
+from agent_introspection import sessions, spool
 
 
 def store(name: str, root: Path, **overrides: Any) -> sessions.Store:
@@ -47,22 +47,8 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def recorder(log: list[str]) -> SqlRunner:
-    def run(sql: str) -> str:
-        log.append(sql)
-        return ""
-
-    return run
-
-
-def rows_of(statements: list[str]) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for statement in statements:
-        # The declared structure ends with DateTime64(3, \'UTC\'); the rows follow it.
-        literal = statement.split("UTC\\')', '", 1)[1].rsplit("') SETTINGS", 1)[0]
-        text = literal.replace("\\'", "'").replace("\\\\", "\\")
-        rows.extend(json.loads(line) for line in text.splitlines())
-    return rows
+def spooled(inbox: Path) -> list[dict[str, Any]]:
+    return [json.loads(path.read_text()) for path in sorted(inbox.glob("*.json"))]
 
 
 def test_the_bundled_stores_name_every_known_harness() -> None:
@@ -133,27 +119,27 @@ def test_resolve_stores_each_session_once_and_retries_files_without_a_record(
     pending = write_jsonl(root / "a" / "two.jsonl", {"type": "summary"})
     stores = [store("claude-code", root)]
     state = tmp_path / "scan.json"
-    executed: list[str] = []
+    inbox = tmp_path / "spool"
 
-    first = sessions.resolve(recorder(executed), stores=stores, state=state)
+    first = sessions.resolve(stores=stores, state=state, inbox=inbox)
 
     assert first == {"sessions": 1, "attributed": 1}
-    (row,) = rows_of(executed)
+    (row,) = spooled(inbox)
     assert (row["session_id"], row["store"], row["project_name"]) == ("s1", "claude-code", "demo")
+    assert row["schema"] == spool.SESSION_PROJECT_SCHEMA
+    assert row["event_id"] + ".json" in {path.name for path in inbox.iterdir()}
+    assert row["resolved_at"].endswith("Z")
     assert "prompt" not in json.dumps(row)
 
     write_jsonl(
         pending, {"sessionId": "s2", "cwd": "/nowhere", "timestamp": "2026-10-01T11:00:00Z"}
     )
-    again: list[str] = []
-    second = sessions.resolve(recorder(again), stores=stores, state=state)
+    again = tmp_path / "again"
+    second = sessions.resolve(stores=stores, state=state, inbox=again)
 
     assert second == {"sessions": 1, "missing_workspace": 1}
-    assert [row["session_id"] for row in rows_of(again)] == ["s2"]
-    rescan: list[str] = []
-    assert (
-        sessions.resolve(recorder(rescan), stores=stores, state=state, rescan=True)["sessions"] == 2
-    )
+    assert [row["session_id"] for row in spooled(again)] == ["s2"]
+    assert sessions.resolve(stores=stores, state=state, rescan=True, inbox=again)["sessions"] == 2
 
 
 def test_an_unset_root_variable_is_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -211,13 +197,69 @@ def test_a_session_whose_workspace_is_gone_is_attributed_by_its_remote(
         max_lines=1,
         remote="payload.git.repository_url",
     )
-    executed: list[str] = []
+    inbox = tmp_path / "spool"
 
-    result = sessions.resolve(recorder(executed), stores=[codex], state=tmp_path / "scan.json")
+    result = sessions.resolve(stores=[codex], state=tmp_path / "scan.json", inbox=inbox)
 
-    rows = {row["session_id"]: row for row in rows_of(executed)}
+    rows = {row["session_id"]: row for row in spooled(inbox)}
     assert result == {"sessions": 2, "attributed": 2}
     assert (rows["moved"]["project_name"], rows["moved"]["resolved_by"]) == ("demo", "remote")
     assert (rows["live"]["status"], rows["live"]["resolved_by"]) == ("attributed", "workspace")
+    assert rows["moved"]["project_id"] == rows["live"]["project_id"]
+    assert rows["moved"]["remote"] == "github.com/acme/demo"
     saved = json.loads((tmp_path / "scan.json").read_text())
     assert saved["remotes"] == {"github.com/acme/demo": str(repo.resolve())}
+
+
+def clone(tmp_path: Path, name: str, remote: str) -> Path:
+    root = tmp_path / name / "checkout"
+    root.mkdir(parents=True)
+    git("init", "-q", str(root))
+    git("-C", str(root), "remote", "add", "origin", remote)
+    return root
+
+
+def test_a_remote_keyed_project_has_one_id_across_checkouts_and_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = clone(tmp_path, "one", "git@github.com:acme/demo.git")
+    second = clone(tmp_path, "two", "https://github.com/acme/demo")
+    elsewhere = clone(tmp_path, "three", "https://github.com/acme/other")
+
+    ids = {sessions.resolve_project(str(root)).project_id for root in (first, second)}
+    monkeypatch.setattr("agent_introspection.spool.host_name", lambda: "omarchy")
+    ids.add(sessions.resolve_project(str(first)).project_id)
+
+    assert ids == {hashlib.sha256(b"git-remote\0github.com/acme/demo").hexdigest()}
+    other = sessions.resolve_project(str(elsewhere))
+    assert other.project_id not in ids
+    assert sessions.resolve_project(str(first)).remote == "github.com/acme/demo"
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["/Users/me/bare.git", "file:///home/me/bare.git", "../bare", "git@host:me", "localhost/x"],
+)
+def test_an_unsafe_remote_is_dropped_and_the_project_is_keyed_by_host_and_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str
+) -> None:
+    root = clone(tmp_path, "local", url)
+    monkeypatch.setattr("agent_introspection.spool.host_name", lambda: "mac")
+
+    project = sessions.resolve_project(str(root))
+
+    real = os.path.realpath(root)
+    assert project.remote == ""
+    assert project.project_id == hashlib.sha256(f"git\0mac\0{real}".encode()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("root", "expected"),
+    [("/Users/me/p", "~/p"), ("/home/adam-ai/p", "~/p"), ("/root", "~"), ("/root/p", "~/p")],
+)
+def test_project_roots_redact_every_home_form(root: str, expected: str) -> None:
+    assert sessions._HOME.sub("~", root) == expected
+
+
+def test_a_root_directory_that_only_starts_with_root_is_not_a_home() -> None:
+    assert sessions._HOME.sub("~", "/rootfs/x") == "/rootfs/x"

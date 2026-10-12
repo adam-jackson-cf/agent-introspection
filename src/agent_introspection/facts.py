@@ -56,6 +56,20 @@ class Loader:
     window: str
 
 
+# Hook-event and session-attribution records come from spool exporters on every
+# machine, so their loaders key on `observed_timestamp` (the collector's receive time)
+# alone: a record's own time is the producer's clock and can trail by an outage.
+_RECORD_LOAD_WINDOW = (
+    "observed_timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 30 MINUTE)) * 1000000000"
+)
+_RECORD_SWEEP_WINDOW = (
+    "observed_timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 3 DAY)) * 1000000000"
+)
+_RECORD_BACKFILL_WINDOW = (
+    "observed_timestamp >= toUInt64(toUnixTimestamp64Nano(toDateTime64('{start}', 9, 'UTC')))"
+    " AND observed_timestamp < toUInt64(toUnixTimestamp64Nano(toDateTime64('{end}', 9, 'UTC')))"
+)
+
 # Spans are exported when they end, and turns can run for more than a day, so the
 # minute loader selects spans that ended recently. Logs carry an ingest time, which
 # can trail the event time by days, so their loader keys on `observed_timestamp`.
@@ -102,6 +116,34 @@ LOADERS = (
             " AND timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 7 DAY)) * 1000000000"
         ),
     ),
+    Loader(
+        name="sweep_hook_events",
+        target="hook_events",
+        select_file="select_hook_events.sql",
+        schedule="EVERY 1 HOUR",
+        window=_RECORD_SWEEP_WINDOW,
+    ),
+    Loader(
+        name="load_hook_events",
+        target="hook_events",
+        select_file="select_hook_events.sql",
+        schedule="EVERY 1 MINUTE",
+        window=_RECORD_LOAD_WINDOW,
+    ),
+    Loader(
+        name="sweep_session_projects",
+        target="session_projects",
+        select_file="select_session_projects.sql",
+        schedule="EVERY 1 HOUR",
+        window=_RECORD_SWEEP_WINDOW,
+    ),
+    Loader(
+        name="load_session_projects",
+        target="session_projects",
+        select_file="select_session_projects.sql",
+        schedule="EVERY 1 MINUTE",
+        window=_RECORD_LOAD_WINDOW,
+    ),
 )
 
 _BACKFILL_WINDOWS = {
@@ -113,8 +155,15 @@ _BACKFILL_WINDOWS = {
         "timestamp >= toUInt64(toUnixTimestamp64Nano(toDateTime64('{start}', 9, 'UTC')))"
         " AND timestamp < toUInt64(toUnixTimestamp64Nano(toDateTime64('{end}', 9, 'UTC')))"
     ),
+    "hook_events": _RECORD_BACKFILL_WINDOW,
+    "session_projects": _RECORD_BACKFILL_WINDOW,
 }
-_SELECT_FILES = {"spans": "select_spans.sql", "logs": "select_logs.sql"}
+_SELECT_FILES = {
+    "spans": "select_spans.sql",
+    "logs": "select_logs.sql",
+    "hook_events": "select_hook_events.sql",
+    "session_projects": "select_session_projects.sql",
+}
 
 
 # Snapshots serve windows that start within the last 90 days (SigNoz's retention),
@@ -297,7 +346,8 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
     history, recent = (f"{base}_history", f"{base}_recent")
 
     def refresher(part: int, schedule: str, table: str, keep: str, filters: str) -> str:
-        waits = [f"{DATABASE}.load_spans", f"{DATABASE}.load_logs"]
+        minute_loaders = (loader for loader in LOADERS if loader.schedule.endswith("MINUTE"))
+        waits = [f"{DATABASE}.{loader.name}" for loader in minute_loaders]
         if snapshot.reads:
             upstream = next(s for s in SNAPSHOTS if s.view == snapshot.reads)
             waits.append(f"{DATABASE}.{snapshot_refreshers(upstream)[part]}")
@@ -1011,7 +1061,7 @@ def backfill(run: SqlRunner, *, days: int, now: datetime | None = None) -> dict[
     end = now or datetime.now(UTC)
     start = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     counts = {}
-    for target in ("spans", "logs"):
+    for target in _SELECT_FILES:
         for lower, upper in backfill_windows(start, end):
             try:
                 run(backfill_statement(target, lower, upper))

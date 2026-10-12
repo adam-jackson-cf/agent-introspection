@@ -18,6 +18,17 @@ import {
   type Query,
 } from "./clickhouse";
 import { HARNESS_FILTER, inWindow } from "./views";
+import {
+  AFTER_CUTOFF,
+  HOME_PATH,
+  HOME_PATH_CUTOFF,
+  NS_AGO,
+  RAW_ANY_FAMILY,
+  SPOOL_STATUS,
+  rawFamily,
+  spoolExceptions,
+  spoolSummary,
+} from "./record-route";
 
 type Params = Record<string, string>;
 type Source = RouteSource;
@@ -405,6 +416,12 @@ const FRESHNESS_CTES = `WITH
         UNION ALL
         SELECT 'logs', harness, max(ts), toUInt8(1) FROM introspection.logs
         WHERE ts > now() - INTERVAL 1 DAY GROUP BY harness
+        UNION ALL
+        SELECT 'hooks', 'agent-introspection', max(occurred_at), toUInt8(1) FROM introspection.hook_events
+        WHERE occurred_at > now() - INTERVAL 1 DAY HAVING count() > 0
+        UNION ALL
+        SELECT 'attribution', 'agent-introspection', max(loaded_at), toUInt8(1) FROM introspection.session_projects
+        WHERE loaded_at > now() - INTERVAL 1 DAY HAVING count() > 0
     ),
     raw AS (
         SELECT 'spans' AS source, serviceName AS harness, max(timestamp) AS latest
@@ -420,6 +437,20 @@ const FRESHNESS_CTES = `WITH
             AND observed_timestamp < toUInt64(toUnixTimestamp(now() - INTERVAL 1 MINUTE)) * 1000000000
             AND resource.\`service.name\`::String IN (${SERVICES})
         GROUP BY 2
+        UNION ALL
+        SELECT 'hooks', 'agent-introspection', fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC')
+        FROM signoz_logs.distributed_logs_v2
+        WHERE timestamp > ${NS_AGO("1 DAY")}
+            AND observed_timestamp < ${NS_AGO("1 MINUTE")}
+            AND ${rawFamily("hooks")}
+        HAVING count() > 0
+        UNION ALL
+        SELECT 'attribution', 'agent-introspection', fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC')
+        FROM signoz_logs.distributed_logs_v2
+        WHERE timestamp > ${NS_AGO("1 DAY")}
+            AND observed_timestamp < ${NS_AGO("1 MINUTE")}
+            AND ${rawFamily("attribution")}
+        HAVING count() > 0
     ),
     fresh AS (
 SELECT r.source AS source, r.harness AS harness, toString(r.latest) AS source_latest,
@@ -617,24 +648,32 @@ export function recombine(
   );
 }
 
-// A home path is `/Users/<name>`; the bare `/Users/` directory names nobody.
+// Home paths only count rows loaded at or after HOME_PATH_CUTOFF (M4 option b).
 const SANITIZATION_TABLES = `SELECT 'spans' AS source, count() AS rows,
     countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})) AS forbidden_keys,
     countIf(lengthUTF8(status_message) > 160) AS long_status,
-    countIf(match(name, '/Users/[A-Za-z0-9._-]+') OR match(status_message, '/Users/[A-Za-z0-9._-]+')) AS home_paths
+    countIf(${AFTER_CUTOFF} AND (match(name, ${HOME_PATH}) OR match(status_message, ${HOME_PATH}))) AS home_paths
 FROM introspection.spans
 UNION ALL
 SELECT 'logs', count(), countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})),
     countIf(lengthUTF8(attrs_string['x.failure_signature']) > 160),
-    countIf(match(attrs_string['x.workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['x.targets'], '/Users/[A-Za-z0-9._-]+')
-        OR match(attrs_string['x.failure_signature'], '/Users/[A-Za-z0-9._-]+'))
+    countIf(${AFTER_CUTOFF} AND (match(attrs_string['x.workdir'], ${HOME_PATH}) OR match(attrs_string['x.targets'], ${HOME_PATH})
+        OR match(attrs_string['x.failure_signature'], ${HOME_PATH})))
 FROM introspection.logs
 UNION ALL
 SELECT 'hook_events', count(), countIf(hasAny(mapKeys(attrs_string), ${HOOK_FORBIDDEN_KEYS})),
     countIf(lengthUTF8(attrs_string['failure_signature']) > 160),
-    countIf(match(attrs_string['workdir'], '/Users/[A-Za-z0-9._-]+') OR match(attrs_string['targets'], '/Users/[A-Za-z0-9._-]+')
-        OR match(attrs_string['failure_signature'], '/Users/[A-Za-z0-9._-]+'))
-FROM introspection.hook_events`;
+    countIf(${AFTER_CUTOFF} AND (match(attrs_string['workdir'], ${HOME_PATH}) OR match(attrs_string['targets'], ${HOME_PATH})
+        OR match(attrs_string['failure_signature'], ${HOME_PATH})))
+FROM introspection.hook_events
+UNION ALL
+-- The raw bodies SigNoz holds for the three record families, before any loader.
+SELECT 'signoz_hook_logs', count(),
+    countIf(hasAny(JSONExtractKeys(body, 'attrs'), ${HOOK_FORBIDDEN_KEYS})),
+    toUInt64(0),
+    countIf(timestamp >= toUInt64(toUnixTimestamp(toDateTime('${HOME_PATH_CUTOFF}', 'UTC'))) * 1000000000 AND match(body, ${HOME_PATH}))
+FROM signoz_logs.distributed_logs_v2
+WHERE ${RAW_ANY_FAMILY}`;
 
 /**
  * Per table plus one All row (`source = ''`, ROLLUP): `violations` is the flagged
@@ -647,7 +686,7 @@ FROM (
         forbidden_keys + long_status + home_paths AS violations
     FROM (${SANITIZATION_TABLES})
 ) GROUP BY ROLLUP(source)
-ORDER BY indexOf(['spans', 'logs', 'hook_events'], source)`;
+ORDER BY indexOf(['spans', 'logs', 'hook_events', 'signoz_hook_logs'], source)`;
 
 /** Coverage cells in these states are the ones nothing explains (the Coverage KPI). */
 const UNEXPLAINED: Record<string, true> = {
@@ -822,6 +861,7 @@ export async function pipelineData(
     project_coverage: PROJECT_COVERAGE,
     project_rejections: PROJECT_REJECTIONS,
     project_sync: PROJECT_SYNC,
+    spool_status: SPOOL_STATUS,
     ...recombinationQueries(),
   };
   // Each part fails alone: its dataset is empty and named in `errors`.
@@ -867,6 +907,9 @@ export async function pipelineData(
       project_coverage: results.project_coverage!,
       project_rejections: results.project_rejections!,
       project_sync: results.project_sync!,
+      spool_status: results.spool_status!,
+      spool_exceptions: spoolExceptions(results.spool_status!),
+      spool_summary: [spoolSummary(results.spool_status!)],
       strays: selected(registry.strays.map((entry) => ({ ...entry }))),
       exclusions: registry.exclusions.map((entry) => ({ ...entry })),
       hidden: registry.hidden.map((entry) => ({ ...entry })),
