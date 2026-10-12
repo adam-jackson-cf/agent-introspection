@@ -65,7 +65,12 @@ export const spoolSummary = (rows: Row[]): Row => {
   return { reporting: rows.length - unknown, unknown };
 };
 
-/** A host whose latest spool status is older than this reports nothing about its backlog. */
+/**
+ * A host whose latest spool status was received longer ago than this reports
+ * nothing about its backlog. Ageing uses \`observed_timestamp\`, which the
+ * collector stamps, never the producer's own \`timestamp\`: a skewed host clock
+ * must not make a silent host look fresh.
+ */
 const SPOOL_STALE_SECONDS = 300;
 
 /**
@@ -81,11 +86,12 @@ export const SPOOL_STATUS = `SELECT host, toString(reported) AS reported_at, age
     JSONExtractString(latest, 'cli_version') AS cli_version
 FROM (
     -- \`latest\`, not \`body\`: the alias would shadow the column the family filter reads.
-    SELECT resources_string['host.name'] AS host, argMax(body, timestamp) AS latest,
-        fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC') AS reported,
+    SELECT resources_string['host.name'] AS host, argMax(body, observed_timestamp) AS latest,
+        fromUnixTimestamp64Nano(toInt64(max(observed_timestamp)), 'UTC') AS reported,
         dateDiff('second', reported, now()) AS age_seconds
     FROM signoz_logs.distributed_logs_v2
-    WHERE timestamp > ${NS_AGO("30 DAY")} AND ${rawFamily("spool")}
+    WHERE timestamp > ${NS_AGO("31 DAY")} AND observed_timestamp > ${NS_AGO("30 DAY")}
+        AND ${rawFamily("spool")}
     GROUP BY host
 )
 ORDER BY host`;
@@ -95,27 +101,40 @@ const DELIVERY_LAG_MINUTES = 5;
 /** Window of the sent-versus-received comparison. */
 const DELIVERY_WINDOW = "24 HOUR";
 
+/** Sent records from `totals`, an array of cumulative counter values in arrival order. */
+/** A group's cumulative counter values in arrival order (`observed_ns`, `sent_total` columns). */
+export const ORDERED_TOTALS =
+  "arrayMap(beat -> beat.2, arraySort(groupArray((observed_ns, sent_total))))";
+
+export const SENT_FROM_TOTALS = (totals: string): string =>
+  `arraySum(arrayMap((cur, prev) -> if(cur >= prev, cur - prev, cur), arrayPopFront(${totals}), arrayPopBack(${totals})))`;
+
 /**
  * Per host and record family: records the host's spool reports sending in the
  * window against records SigNoz holds for that host, to find batches the
  * collector accepted and then lost.
  *
- * Sent is the cumulative \`sent_total\` counter's growth between the earliest and
- * latest heartbeat in the window; a counter that went down was reset, so its
- * latest value is the sent count. Heartbeats from the last
- * ${DELIVERY_LAG_MINUTES} minutes are excluded so in-flight batches never
- * read as lost. Received counts the family's records by arrival
- * (\`observed_timestamp\`, the loaders' basis) between those same two heartbeats.
+ * Sent is the growth of the cumulative \`sent_total\` counter across the window's
+ * heartbeats in arrival order (\`observed_timestamp\`, collector-stamped, so a
+ * skewed host clock changes neither order nor window): the sum of positive
+ * increments between consecutive heartbeats, where a decrease is a counter
+ * reset and the post-reset value itself is the increment (100, 0, 150 sent 150).
+ * Heartbeats from the last ${DELIVERY_LAG_MINUTES} minutes are excluded so
+ * in-flight batches never read as lost. Received counts the family's records by
+ * arrival (\`observed_timestamp\`, the loaders' basis) between the first and last
+ * of those heartbeats.
  */
 export const SPOOL_DELIVERY = `WITH beats AS (
-    SELECT host, family, argMin(sent_total, ts) AS first_total, argMax(sent_total, ts) AS last_total,
-        min(ts) AS first_ns, max(ts) AS last_ns
+    SELECT host, family,
+        ${ORDERED_TOTALS} AS totals,
+        min(observed_ns) AS first_ns, max(observed_ns) AS last_ns
     FROM (
-        SELECT resources_string['host.name'] AS host, timestamp AS ts, family,
+        SELECT resources_string['host.name'] AS host, observed_timestamp AS observed_ns, family,
             JSONExtractInt(body, 'sent_total', family) AS sent_total
         FROM signoz_logs.distributed_logs_v2
         ARRAY JOIN ['hook-event', 'session-project'] AS family
-        WHERE timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
+        WHERE timestamp > ${NS_AGO("48 HOUR")}
+            AND observed_timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND observed_timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
             AND ${rawFamily("spool")}
     )
     GROUP BY host, family
@@ -125,14 +144,15 @@ arrived AS (
         if(attributes_string['event.name'] = 'agent_introspection.hook_event', 'hook-event', 'session-project') AS family,
         observed_timestamp AS observed_ns
     FROM signoz_logs.distributed_logs_v2
-    WHERE timestamp > ${NS_AGO("25 HOUR")} AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
+    WHERE timestamp > ${NS_AGO("48 HOUR")} AND observed_timestamp > ${NS_AGO("25 HOUR")}
+        AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
 )
 SELECT b.host AS host, b.family AS family,
-    if(b.last_total < b.first_total, b.last_total, b.last_total - b.first_total) AS sent,
+    ${SENT_FROM_TOTALS("b.totals")} AS sent,
     countIf(a.observed_ns > b.first_ns AND a.observed_ns <= b.last_ns) AS received
 FROM beats AS b
 LEFT JOIN arrived AS a ON a.host = b.host AND a.family = b.family
-GROUP BY b.host, b.family, b.first_total, b.last_total
+GROUP BY b.host, b.family, b.totals, b.first_ns, b.last_ns
 ORDER BY host, family`;
 
 /** Records short of sent that still read as in flight or load lag, not loss. */

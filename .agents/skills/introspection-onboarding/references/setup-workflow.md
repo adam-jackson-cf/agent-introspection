@@ -73,13 +73,14 @@ each such machine; the host machine keeps steps 1 to 10 above.
    sent earlier wait for the 3-day sweep or `facts backfill`.
 3. **Harnesses.** Run the harness configuration workflow (omp plugin, Claude hooks,
    Codex export) as on the host machine.
-4. **Timer.** Install the systemd user units from `scripts/` and enable them; the
+4. **Timer.** Install the systemd user units from `.agents/skills/introspection-onboarding/scripts/` (paths are relative to the repository root) and enable them; the
    service runs `agent-introspection spool sync` (attribution scan, status record,
    OTLP drain) every minute:
 
    ```sh
    mkdir -p ~/.config/systemd/user
-   cp scripts/agent-introspection-spool-sync.service scripts/agent-introspection-spool-sync.timer ~/.config/systemd/user/
+   cp .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.service \
+      .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.timer ~/.config/systemd/user/
    systemctl --user daemon-reload
    systemctl --user enable --now agent-introspection-spool-sync.timer
    loginctl enable-linger "$USER"   # keeps the timer running with no login session

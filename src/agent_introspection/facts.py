@@ -340,7 +340,9 @@ def loader_ddl(loader: Loader) -> str:
     """Return the refreshable materialized view definition for one loader."""
     return (
         f"CREATE MATERIALIZED VIEW {DATABASE}.{loader.name}\n"
-        f"REFRESH {loader.schedule} APPEND TO {DATABASE}.{loader.target}\n"
+        f"REFRESH {loader.schedule}\n"
+        f"SETTINGS {REFRESH_RETRY_SETTINGS}\n"
+        f"APPEND TO {DATABASE}.{loader.target}\n"
         f"AS\n{render_select(loader.select_file, loader.window)}"
     )
 

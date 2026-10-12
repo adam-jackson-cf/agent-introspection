@@ -20,7 +20,10 @@ def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
         ddl = facts.loader_ddl(loader)
 
         assert ddl.startswith(f"CREATE MATERIALIZED VIEW introspection.{loader.name}")
-        assert f"REFRESH {loader.schedule} APPEND TO introspection.{loader.target}" in ddl
+        assert (
+            f"REFRESH {loader.schedule}\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\n"
+            f"APPEND TO introspection.{loader.target}\n"
+        ) in ddl
         assert loader.window in ddl
         assert "{window}" not in ddl
 
@@ -160,8 +163,7 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     for refresher in refreshers:
         assert "REFRESH EVERY 1 YEAR" in refresher
         assert " EMPTY\nAS" in refresher
-        if "APPEND" not in refresher:
-            assert facts.REFRESH_RETRY_SETTINGS in refresher
+        assert facts.REFRESH_RETRY_SETTINGS in refresher
     # A rejected history offset must fail in the scratch database, so it survives.
     history = [s for s in refreshers if "_history\nREFRESH" in s]
     assert len(history) == len(facts.SNAPSHOTS)

@@ -13,6 +13,9 @@ import {
 } from "./pipeline";
 import {
   HOME_PATH_CUTOFF,
+  ORDERED_TOTALS,
+  SENT_FROM_TOTALS,
+  SPOOL_STATUS,
   SPOOL_DELIVERY,
   spoolExceptions,
   withDelivery,
@@ -466,12 +469,12 @@ describe("spool delivery: sent counters against records received", () => {
     });
   });
 
-  test("the query handles counter resets, skips fresh heartbeats and counts arrivals in the window", () => {
+  test("the query orders and windows heartbeats by collector arrival, not producer time", () => {
+    expect(SPOOL_DELIVERY).toContain("observed_timestamp AS observed_ns");
+    expect(SPOOL_DELIVERY).toContain(ORDERED_TOTALS);
+    expect(SPOOL_DELIVERY).toContain(SENT_FROM_TOTALS("b.totals"));
     expect(SPOOL_DELIVERY).toContain(
-      "if(b.last_total < b.first_total, b.last_total, b.last_total - b.first_total) AS sent",
-    );
-    expect(SPOOL_DELIVERY).toContain(
-      "<= toUInt64(toUnixTimestamp(now() - INTERVAL 5 MINUTE))",
+      "observed_timestamp <= toUInt64(toUnixTimestamp(now() - INTERVAL 5 MINUTE))",
     );
     expect(SPOOL_DELIVERY).toContain(
       "a.observed_ns > b.first_ns AND a.observed_ns <= b.last_ns",
@@ -479,7 +482,46 @@ describe("spool delivery: sent counters against records received", () => {
     expect(SPOOL_DELIVERY).toContain(
       "JSONExtractInt(body, 'sent_total', family)",
     );
+    expect(SPOOL_DELIVERY).not.toMatch(/timestamp AS ts\b/);
   });
+
+  test("the status query selects and ages the latest heartbeat by collector arrival", () => {
+    expect(SPOOL_STATUS).toContain("argMax(body, observed_timestamp)");
+    expect(SPOOL_STATUS).toContain("max(observed_timestamp)");
+    expect(SPOOL_STATUS).not.toContain("max(timestamp)");
+  });
+
+  // Evaluates the real sent arithmetic in ClickHouse over inline values(): read-only.
+  const live = process.env.AGENT_INTROSPECTION_LIVE_CLICKHOUSE === "1";
+  const sentFor = async (totals: number[]): Promise<number> => {
+    // Rows are fed in reverse so the arrival ordering is part of what is checked.
+    const rows = totals
+      .map((total, index) => `(${index + 1}, ${total})`)
+      .reverse()
+      .join(", ");
+    const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('observed_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
+    const proc = Bun.spawn(
+      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
+      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+    );
+    const [out, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
+    return Number(out.trim());
+  };
+
+  test.skipIf(!live)(
+    "sent sums positive counter increments and counts a post-reset value as its own increment",
+    async () => {
+      expect(await sentFor([100, 0, 150])).toBe(150);
+      expect(await sentFor([100, 120, 0, 30])).toBe(50);
+      expect(await sentFor([10, 20, 35])).toBe(25);
+      expect(await sentFor([40])).toBe(0);
+    },
+    120000,
+  );
 
   test("the pipeline response carries the delivery columns", async () => {
     const query: Query = async (sql) =>
