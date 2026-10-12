@@ -41,7 +41,7 @@ from agent_introspection.json_types import JsonMapping
 DATA_DIR = Path.home() / ".local/share/agent-introspection"
 SCAN_STATE = DATA_DIR / "session-scan.json"
 _HOME = re.compile(r"^/(?:Users|home)/[^/]+|^/root(?=/|$)")
-_SAFE_REMOTE = re.compile(r"[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+/[^\s@\\]+")
+_SAFE_REMOTE = re.compile(r"[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+/[^\s@\\?#]+")
 _VARIABLE = re.compile(r"\$(\w+)")
 _GIT_TIMEOUT_SECONDS = 10
 
@@ -215,8 +215,13 @@ def _project(root: str, resolved_by: str, remote: str | None = None) -> Project:
 
 
 def normalize_remote(url: str) -> str:
-    """Reduce a Git remote URL to host/path, so SSH and HTTPS forms compare equal."""
-    text = url.strip().lower().removesuffix("/").removesuffix(".git")
+    """Reduce a Git remote URL to host/path, so SSH and HTTPS forms compare equal.
+
+    Userinfo, query string and fragment are dropped: repository identity is host plus
+    path, and tokens travel in those other parts (``?access_token=``, ``#token``).
+    """
+    text = re.split(r"[?#]", url.strip().lower(), maxsplit=1)[0]
+    text = text.removesuffix("/").removesuffix(".git")
     text = re.sub(r"^[a-z+]+://", "", text)
     text = re.sub(r"^[^@/]+@", "", text)
     host, _, rest = text.partition(":")
@@ -226,8 +231,8 @@ def normalize_remote(url: str) -> str:
 def safe_remote(remote: str) -> str:
     """Return ``remote`` when it is a dotted host plus path without credentials, else ''.
 
-    Filesystem remotes (a local bare repository) and anything holding ``@`` could carry
-    a user name or a secret, so they never leave the machine.
+    Filesystem remotes (a local bare repository) and anything holding ``@``, ``?`` or
+    ``#`` could carry a user name or a secret, so they never leave the machine.
     """
     return remote if _SAFE_REMOTE.fullmatch(remote) else ""
 

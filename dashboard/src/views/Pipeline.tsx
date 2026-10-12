@@ -245,6 +245,11 @@ const freshnessSummaryText = (summary: Row) => {
 const dash = (value: unknown, render: (n: number) => string) =>
   value == null ? "—" : render(num(value));
 
+const delivery = (received: unknown, sent: unknown) =>
+  received == null || sent == null
+    ? "—"
+    : `${fmtCount(num(received))} / ${fmtCount(num(sent))}`;
+
 const SPOOL_COLUMNS: Column[] = [
   { key: "host", label: "Host" },
   { key: "state", label: "State" },
@@ -265,6 +270,24 @@ const SPOOL_COLUMNS: Column[] = [
     label: "Oldest pending",
     numeric: true,
     render: (row) => dash(row.oldest_pending_seconds, fmtSeconds),
+  },
+  {
+    key: "hooks_received",
+    label: "Hooks received / sent (24h)",
+    numeric: true,
+    render: (row) => delivery(row.hooks_received, row.hooks_sent),
+  },
+  {
+    key: "attribution_received",
+    label: "Attribution received / sent (24h)",
+    numeric: true,
+    render: (row) => delivery(row.attribution_received, row.attribution_sent),
+  },
+  {
+    key: "delivery_gap",
+    label: "Delivery",
+    render: (row) =>
+      num(row.delivery_gap) === 1 ? "records lost after send" : "ok",
   },
   {
     key: "last_error_class",
@@ -290,7 +313,7 @@ function SpoolPanel({ data }: { data: Data }) {
     <Panel
       id="spool-status"
       title="Hook spool by host"
-      subtitle="Latest spool status per machine; a host silent for over 5 minutes is unknown, never a backlog of 0"
+      subtitle="Latest spool status per machine; a host silent for over 5 minutes is unknown, never a backlog of 0. Received vs sent compares records SigNoz holds with the host's own sent counter over 24h, ignoring the last 5 minutes; fewer received than sent means the collector accepted batches it lost"
       signals={["pipeline.loader_refresh"]}
       source="spool_status"
     >

@@ -159,10 +159,21 @@ def test_an_unset_root_variable_is_skipped(monkeypatch: pytest.MonkeyPatch, tmp_
         "https://github.com/acme/demo.git",
         "ssh://git@github.com/acme/demo",
         "https://user@github.com/Acme/Demo/",
+        "https://user:pass@github.com/acme/demo.git",
+        "https://github.com/acme/demo.git?access_token=secret",
+        "https://github.com/acme/demo.git#token",
+        "ssh://git@github.com/acme/demo.git?y=1",
+        "git@github.com:acme/demo.git#frag",
+        "https://github.com/acme/demo?x=a@b",
     ],
 )
 def test_remote_forms_normalize_to_one_identity(url: str) -> None:
     assert sessions.normalize_remote(url) == "github.com/acme/demo"
+
+
+@pytest.mark.parametrize("remote", ["github.com/acme/demo?token=s", "github.com/acme/demo#s"])
+def test_safe_remote_rejects_query_and_fragment(remote: str) -> None:
+    assert sessions.safe_remote(remote) == ""
 
 
 def test_a_session_whose_workspace_is_gone_is_attributed_by_its_remote(

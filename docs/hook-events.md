@@ -47,7 +47,7 @@ freshness and sanitization) therefore selects a family by `service.name`,
   only its length is kept.
 - Tool arguments and outputs are read in memory and reduced to the fields below.
 - Session attribution records carry the project identity, name, home-redacted root,
-  and a normalized remote (empty unless it is `host/path` without credentials), so a
+  and a normalized remote (host/path only: userinfo, query string and fragment are dropped, and it is empty unless it is a dotted host plus path), so a
   session is attributed to the same project from any machine. The status heartbeat
   carries counts, the oldest pending age, and an exception class name only.
 
@@ -71,7 +71,7 @@ freshness and sanitization) therefore selects a family by `service.name`,
 - A collector 2xx is not durable storage: a collector restart between its ack and the
   ClickHouse write can lose a batch while the backlog reads 0. That exposure is
   accepted and detected, not prevented: each status heartbeat carries cumulative sent
-  counts per family and the Pipeline view compares them with the rows loaded per host.
+  counts per family and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging hosts that received fewer than they sent.
 
 ### Lag
 

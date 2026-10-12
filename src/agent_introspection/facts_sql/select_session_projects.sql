@@ -30,7 +30,8 @@ FROM (
         JSONExtractString(body, 'resolved_by') AS r_resolved_by,
         parseDateTime64BestEffort(JSONExtractString(body, 'started_at'), 3, 'UTC') AS r_started_at,
         resources_string['host.name'] AS r_host,
-        JSONExtractString(body, 'remote') AS r_remote,
+        -- Defense in depth: a remote with userinfo, query or fragment is never stored.
+        if(match(JSONExtractString(body, 'remote'), '[?#@]'), '', JSONExtractString(body, 'remote')) AS r_remote,
         parseDateTime64BestEffort(JSONExtractString(body, 'resolved_at'), 6, 'UTC') AS r_resolved_at
     FROM signoz_logs.distributed_logs_v2
     WHERE resources_string['service.name'] = 'agent-introspection'

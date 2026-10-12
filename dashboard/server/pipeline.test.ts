@@ -11,7 +11,12 @@ import {
   unroutedQuery,
   unroutedTotalsQuery,
 } from "./pipeline";
-import { HOME_PATH_CUTOFF } from "./record-route";
+import {
+  HOME_PATH_CUTOFF,
+  SPOOL_DELIVERY,
+  spoolExceptions,
+  withDelivery,
+} from "./record-route";
 import {
   counting,
   enabling,
@@ -406,6 +411,90 @@ describe("pipeline checks", () => {
     expect(sql).toContain(
       "if(state = 'unknown', NULL, JSONExtract(latest, 'pending'",
     );
+  });
+});
+
+describe("spool delivery: sent counters against records received", () => {
+  const status: Row[] = [
+    {
+      host: "mac",
+      state: "reporting",
+      pending: 0,
+      rejected: 0,
+      last_error_class: "",
+    },
+    {
+      host: "nuc",
+      state: "reporting",
+      pending: 0,
+      rejected: 0,
+      last_error_class: "",
+    },
+    {
+      host: "new",
+      state: "reporting",
+      pending: 0,
+      rejected: 0,
+      last_error_class: "",
+    },
+  ];
+  const delivery: Row[] = [
+    { host: "mac", family: "hook-event", sent: 500, received: 500 },
+    { host: "mac", family: "session-project", sent: 10, received: 9 },
+    { host: "nuc", family: "hook-event", sent: 500, received: 480 },
+    { host: "nuc", family: "session-project", sent: 3, received: 3 },
+  ];
+
+  test("a host short of sent beyond the tolerance is flagged, a small lag is not", () => {
+    const merged = withDelivery(status, delivery);
+    expect(merged[0]).toMatchObject({
+      hooks_sent: 500,
+      hooks_received: 500,
+      attribution_sent: 10,
+      attribution_received: 9,
+      delivery_gap: 0,
+    });
+    expect(merged[1]).toMatchObject({ hooks_received: 480, delivery_gap: 1 });
+    expect(spoolExceptions(merged).map((row) => row.host)).toEqual(["nuc"]);
+  });
+
+  test("a host with no windowed heartbeat has unknown counts and no flag", () => {
+    expect(withDelivery(status, delivery)[2]).toMatchObject({
+      hooks_sent: null,
+      attribution_received: null,
+      delivery_gap: 0,
+    });
+  });
+
+  test("the query handles counter resets, skips fresh heartbeats and counts arrivals in the window", () => {
+    expect(SPOOL_DELIVERY).toContain(
+      "if(b.last_total < b.first_total, b.last_total, b.last_total - b.first_total) AS sent",
+    );
+    expect(SPOOL_DELIVERY).toContain(
+      "<= toUInt64(toUnixTimestamp(now() - INTERVAL 5 MINUTE))",
+    );
+    expect(SPOOL_DELIVERY).toContain(
+      "a.observed_ns > b.first_ns AND a.observed_ns <= b.last_ns",
+    );
+    expect(SPOOL_DELIVERY).toContain(
+      "JSONExtractInt(body, 'sent_total', family)",
+    );
+  });
+
+  test("the pipeline response carries the delivery columns", async () => {
+    const query: Query = async (sql) =>
+      sql.includes("AS last_error_class")
+        ? status.slice(0, 2)
+        : sql.includes("AS received")
+          ? delivery
+          : [];
+    const { data } = await pipelineData(query, registry(), {}, true, {
+      counts: Promise.resolve(counting([], [])),
+      sanitization: Promise.resolve([]),
+      unrouted: Promise.resolve({ list: [], totals: [] }),
+    });
+    expect(data.spool_status!.map((row) => row.delivery_gap)).toEqual([0, 1]);
+    expect(data.spool_exceptions!.map((row) => row.host)).toEqual(["nuc"]);
   });
 });
 

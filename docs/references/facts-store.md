@@ -29,8 +29,13 @@ session loader keeps the newest `resolved_at` per session. Consequences:
 - A collector acknowledgement is not durable storage: a collector restart before the
   ClickHouse write can drop a batch even though the sender deleted its files. This
   exposure is accepted. It is detected by comparing each host's cumulative sent counts
-  (spool status heartbeat) with the rows loaded for that host (`host` column on both
-  tables); the Pipeline view shows the gap per host.
+  (spool status heartbeat `sent_total`, per family) with the records SigNoz holds for that
+  host (the `host.name` resource, counted by arrival `observed_timestamp` like the
+  loaders). Over the last 24 hours, sent is the counter's growth between the first and
+  last heartbeat (a counter that went down was reset, so its latest value is used);
+  heartbeats from the last 5 minutes are ignored so in-flight batches do not read as
+  lost. The Pipeline "Hook spool by host" panel shows received / sent per family and
+  flags a host when received falls short of sent by more than 2 records or 2%.
 - Readers select these families by `service.name`, `event.name`, and the body's
   `schema`. Older rows under the same service name come from a retired pipeline and are
   never loaded.

@@ -49,11 +49,12 @@ export const RAW_ANY_FAMILY = `(${(
 export const NS_AGO = (interval: string) =>
   `toUInt64(toUnixTimestamp(now() - INTERVAL ${interval})) * 1000000000`;
 
-/** Hosts that cannot be trusted or need a look: unknown, rejected files or a failing drain. */
+/** Hosts that cannot be trusted or need a look: unknown, rejected files, a failing drain or sent records that never arrived. */
 export const spoolExceptions = (rows: Row[]): Row[] =>
   rows.filter(
     (row) =>
       row.state === "unknown" ||
+      Number(row.delivery_gap) === 1 ||
       Number(row.rejected) > 0 ||
       String(row.last_error_class ?? "") !== "",
   );
@@ -88,3 +89,85 @@ FROM (
     GROUP BY host
 )
 ORDER BY host`;
+
+/** Heartbeats newer than this are left out of the sent window: their records may still be arriving. */
+const DELIVERY_LAG_MINUTES = 5;
+/** Window of the sent-versus-received comparison. */
+const DELIVERY_WINDOW = "24 HOUR";
+
+/**
+ * Per host and record family: records the host's spool reports sending in the
+ * window against records SigNoz holds for that host, to find batches the
+ * collector accepted and then lost.
+ *
+ * Sent is the cumulative \`sent_total\` counter's growth between the earliest and
+ * latest heartbeat in the window; a counter that went down was reset, so its
+ * latest value is the sent count. Heartbeats from the last
+ * ${DELIVERY_LAG_MINUTES} minutes are excluded so in-flight batches never
+ * read as lost. Received counts the family's records by arrival
+ * (\`observed_timestamp\`, the loaders' basis) between those same two heartbeats.
+ */
+export const SPOOL_DELIVERY = `WITH beats AS (
+    SELECT host, family, argMin(sent_total, ts) AS first_total, argMax(sent_total, ts) AS last_total,
+        min(ts) AS first_ns, max(ts) AS last_ns
+    FROM (
+        SELECT resources_string['host.name'] AS host, timestamp AS ts, family,
+            JSONExtractInt(body, 'sent_total', family) AS sent_total
+        FROM signoz_logs.distributed_logs_v2
+        ARRAY JOIN ['hook-event', 'session-project'] AS family
+        WHERE timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
+            AND ${rawFamily("spool")}
+    )
+    GROUP BY host, family
+),
+arrived AS (
+    SELECT resources_string['host.name'] AS host,
+        if(attributes_string['event.name'] = 'agent_introspection.hook_event', 'hook-event', 'session-project') AS family,
+        observed_timestamp AS observed_ns
+    FROM signoz_logs.distributed_logs_v2
+    WHERE timestamp > ${NS_AGO("25 HOUR")} AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
+)
+SELECT b.host AS host, b.family AS family,
+    if(b.last_total < b.first_total, b.last_total, b.last_total - b.first_total) AS sent,
+    countIf(a.observed_ns > b.first_ns AND a.observed_ns <= b.last_ns) AS received
+FROM beats AS b
+LEFT JOIN arrived AS a ON a.host = b.host AND a.family = b.family
+GROUP BY b.host, b.family, b.first_total, b.last_total
+ORDER BY host, family`;
+
+/** Records short of sent that still read as in flight or load lag, not loss. */
+const GAP_FLOOR = 2;
+const GAP_FRACTION = 0.02;
+
+const DELIVERY_COLUMNS = {
+  "hook-event": ["hooks_sent", "hooks_received"],
+  "session-project": ["attribution_sent", "attribution_received"],
+} as const;
+
+/** Whether a family received fewer records than it sent beyond the tolerance. */
+const hasGap = (entry: Row | undefined): boolean =>
+  entry !== undefined &&
+  Number(entry.sent) - Number(entry.received) >
+    Math.max(GAP_FLOOR, Math.ceil(Number(entry.sent) * GAP_FRACTION));
+
+/**
+ * Adds each host's sent and received counts per family to its spool status row,
+ * with \`delivery_gap = 1\` when any family received fewer records than sent
+ * beyond the tolerance. A host with no windowed heartbeat gets nulls and no flag.
+ */
+export const withDelivery = (status: Row[], delivery: Row[]): Row[] =>
+  status.map((row) => hostDelivery(row, delivery));
+
+const hostDelivery = (row: Row, delivery: Row[]): Row => {
+  const merged: Row = { ...row, delivery_gap: 0 };
+  const mine = delivery.filter((entry) => entry.host === row.host);
+  const entries: [readonly string[], Row | undefined][] = [];
+  for (const [family, keys] of Object.entries(DELIVERY_COLUMNS))
+    entries.push([keys, mine.find((entry) => entry.family === family)]);
+  for (const [[sentKey, receivedKey], entry] of entries) {
+    merged[sentKey!] = entry ? Number(entry.sent) : null;
+    merged[receivedKey!] = entry ? Number(entry.received) : null;
+    if (hasGap(entry)) merged.delivery_gap = 1;
+  }
+  return merged;
+};

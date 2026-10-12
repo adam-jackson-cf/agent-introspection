@@ -24,10 +24,12 @@ import {
   HOME_PATH_CUTOFF,
   NS_AGO,
   RAW_ANY_FAMILY,
+  SPOOL_DELIVERY,
   SPOOL_STATUS,
   rawFamily,
   spoolExceptions,
   spoolSummary,
+  withDelivery,
 } from "./record-route";
 
 type Params = Record<string, string>;
@@ -862,6 +864,7 @@ export async function pipelineData(
     project_rejections: PROJECT_REJECTIONS,
     project_sync: PROJECT_SYNC,
     spool_status: SPOOL_STATUS,
+    spool_delivery: SPOOL_DELIVERY,
     ...recombinationQueries(),
   };
   // Each part fails alone: its dataset is empty and named in `errors`.
@@ -883,6 +886,8 @@ export async function pipelineData(
     throw new Error(Object.values(errors)[0]);
   const selected = selectedHarness(params);
   const coverage = selected(routes ? coverageGrid(registry, routes) : []);
+  // A failed delivery query leaves the counts empty (shown as unknown), not a clean bill.
+  const spool = withDelivery(results.spool_status!, results.spool_delivery!);
   const noUnrouted: Unrouted = { list: [], totals: [] };
   const missed = unrouted ?? noUnrouted;
   return {
@@ -907,9 +912,9 @@ export async function pipelineData(
       project_coverage: results.project_coverage!,
       project_rejections: results.project_rejections!,
       project_sync: results.project_sync!,
-      spool_status: results.spool_status!,
-      spool_exceptions: spoolExceptions(results.spool_status!),
-      spool_summary: [spoolSummary(results.spool_status!)],
+      spool_status: spool,
+      spool_exceptions: spoolExceptions(spool),
+      spool_summary: [spoolSummary(spool)],
       strays: selected(registry.strays.map((entry) => ({ ...entry }))),
       exclusions: registry.exclusions.map((entry) => ({ ...entry })),
       hidden: registry.hidden.map((entry) => ({ ...entry })),
