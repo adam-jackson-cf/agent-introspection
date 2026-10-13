@@ -40,9 +40,8 @@ the harnesses this machine enables (config `[harnesses] enabled`, loaded into
 `introspection.harnesses` by `facts install`). All is the union of the enabled
 harnesses' rows for the same signal, and ratios are aggregated before division. A cell
 that cannot exist for a harness (headless Codex exec has no user to interrupt or follow
-up) shows the registry's reason, never zero. A signal an enabled harness does not emit
-is hidden on this machine: its panels are not rendered, and the Pipeline view lists it
-under "Signals hidden on this machine". Harnesses are never ranked against each other.
+up) shows the registry's reason, never zero. Signals an enabled harness does not emit are hidden (see the
+[harness support matrix](data-gaps.md#harness-support-matrix)). Harnesses are never ranked against each other.
 
 Each panel's chips show, per enabled harness, the coverage state of its route in the
 window: rows (with `from <date>` when the route's first row falls inside the window,

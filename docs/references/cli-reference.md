@@ -12,18 +12,19 @@ other than `~/.config/agent-introspection/config.toml`.
 
 ## Facts
 
-| Command                                  | What it does                                                                                                                          | When to use it                                                |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `facts preflight`                        | Read-only checks of version, SigNoz columns, grants, and recent producer data.                                                        | Before `facts install`.                                       |
-| `facts install`                          | Creates tables, loaders, views, snapshots, and loads the signal registry.                                                             | First install; after any change under `facts_sql/`.           |
-| `facts refresh <refresher>`              | Refreshes and waits for one named loader or refresher, retrying once (not when still running after 30 min). An unknown name exits 50. | Filling one empty table without a full rebuild.               |
-| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains.                                                                                                | After a span or log projection change.                        |
-| `facts status`                           | Loader state and per-harness freshness.                                                                                               | Health checks.                                                |
-| `facts sessions [--rescan]`              | Attributes new sessions from the harness session stores; `--rescan` re-reads every session file.                                      | After adding a session-store root, or to rebuild attribution. |
-| `facts findings`                         | Promotes failure clusters and repeated corrections into workflow findings.                                                            | Refreshing findings on demand.                                |
-| `facts sync`                             | Hook events, session attribution, prompt labels, findings, and due proposal evaluations.                                              | What the schedule runs every minute.                          |
-| `facts classify [--days 2] [--limit 60]` | Labels exported prompts now.                                                                                                          | On-demand prompt labelling.                                   |
-| `facts schedule install\|remove\|status` | Manages the launchd job that runs `facts sync` every minute.                                                                          | Install, uninstall, or check the schedule.                    |
+| Command                                  | What it does                                                                                                                            | When to use it                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `facts preflight`                        | Read-only checks of version, SigNoz columns, grants, and recent producer data.                                                          | Before `facts install`.                                       |
+| `facts install`                          | Creates tables, loaders, views, snapshots, and loads the signal registry.                                                               | First install; after any change under `facts_sql/`.           |
+| `facts refresh <refresher>`              | Refreshes and waits for one named loader or refresher, retrying once (not when still running after 30 min). An unknown name exits 50.   | Filling one empty table without a full rebuild.               |
+| `facts verify [--compare]`               | Builds the store in a scratch database to check every statement; `--compare` also checks each snapshot against a full read of its view. | After an install, or on demand before one.                    |
+| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains.                                                                                                  | After a span or log projection change.                        |
+| `facts status`                           | Loader state and per-harness freshness.                                                                                                 | Health checks.                                                |
+| `facts sessions [--rescan]`              | Attributes new sessions from the harness session stores; `--rescan` re-reads every session file.                                        | After adding a session-store root, or to rebuild attribution. |
+| `facts findings`                         | Promotes failure clusters and repeated corrections into workflow findings.                                                              | Refreshing findings on demand.                                |
+| `facts sync`                             | Hook events, session attribution, prompt labels, findings, and due proposal evaluations.                                                | What the schedule runs every minute.                          |
+| `facts classify [--days 2] [--limit 60]` | Labels exported prompts now.                                                                                                            | On-demand prompt labelling.                                   |
+| `facts schedule install\|remove\|status` | Manages the launchd job that runs `facts sync` every minute.                                                                            | Install, uninstall, or check the schedule.                    |
 
 ## Proposals
 

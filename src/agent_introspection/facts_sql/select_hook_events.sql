@@ -1,4 +1,4 @@
--- Activity-hook events (docs/hook-events.md) that reached SigNoz as OTLP logs from the
+-- Activity-hook events (docs/references/hook-events.md) that reached SigNoz as OTLP logs from the
 -- spool exporter on every machine. The record is the JSON `body`; the attributes are
 -- flattened as the hook record defines them: numbers and flags to `attrs_number`,
 -- text to `attrs_string`, every other value (lists such as targets) to compact JSON

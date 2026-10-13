@@ -5,9 +5,9 @@ Where a harness hook exposes the missing field, an **activity hook** derives a
 normalized value from it and writes one JSON record to a local spool. The spool is
 delivered to SigNoz over OTLP from every machine and loaded into the facts store from
 there. This closes the gap without storing raw prompt, command, argument,
-or output text (decision D4). A signal that no hook or native field can supply for
+or output text (decision D4, in [Facts Store](facts-store.md#standing-decisions)). A signal that no hook or native field can supply for
 every harness is excluded from the dashboard (see
-[Dashboard Data Gaps](dashboard-data-gaps.md)).
+[Dashboard Data Gaps](data-gaps.md)).
 
 Prompt labels do not use hooks: see [Prompt export](#prompt-export).
 
@@ -76,7 +76,8 @@ freshness and sanitization) therefore selects a family by `service.name`,
   a heartbeat never counts a record observed after it, except for a microsecond race with
   a hook drain that the delivery check's 2-record floor absorbs;
   heartbeats from before this ordering can show a first-window gap for up to 24 hours)
-  and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging hosts that received fewer than they sent.
+  and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging a host when received falls short of sent by more than 2 records or 2%
+  (`GAP_FLOOR = 2`, `GAP_FRACTION = 0.02` in `dashboard/server/record-route.ts`).
 
 ### Lag
 
@@ -172,7 +173,7 @@ than six hours counts as closed.
 The shim is `.agents/skills/introspection-onboarding/scripts/activity-shim.sh`;
 the installers copy it to
 `~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
-See the [adapter READMEs](../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
+See the [adapter READMEs](../../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
 for the commands. Failures are logged by exception type only to
 `~/.local/share/agent-introspection/hooks.log`. Delivery also needs
 `[hooks] otlp_logs_endpoint` in `~/.config/agent-introspection/config.toml` and, on a

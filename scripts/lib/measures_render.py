@@ -12,8 +12,8 @@ from pathlib import Path
 from agent_introspection import facts
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
-DOC = DOCS / "dashboard-measure-v3.md"
-GAPS = DOCS / "dashboard-data-gaps.md"
+DOC = DOCS / "references" / "signal-catalog.md"
+GAPS = DOCS / "references" / "data-gaps.md"
 _MARK = {"aligned": "✓", "differs": "≈", "not applicable": "—", "not emitted": "✗"}
 BEGIN = "<!-- BEGIN GENERATED FROM signal_support.toml -->"
 END = "<!-- END GENERATED FROM signal_support.toml -->"

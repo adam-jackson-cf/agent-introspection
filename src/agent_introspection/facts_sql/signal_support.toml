@@ -13,7 +13,7 @@
 #   not applicable  the signal cannot exist for the harness by construction
 #                   (headless Codex exec has no user to interrupt, steer, or follow up)
 #   not emitted  the producer has no route, natively or through an activity hook
-#                (docs/hook-events.md); `note` says why
+#                (docs/references/hook-events.md); `note` says why
 #
 # Visibility rule: parity is judged over the harnesses this machine uses (config
 # `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`).

@@ -53,8 +53,8 @@ DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
    so allow a minute before checking them.
 9. **Validate.** The validation workflow, then the `introspection-operations` health
    workflow over 90 days.
-10. **Record** a reinstall in `docs/dashboard-v3-plan.md`'s findings log: date, commit,
-    steps, row counts, parity results, and anything unresolved.
+10. **Record** a reinstall in the commit or pull request message: date, commit, steps,
+    row counts, parity results, and anything unresolved.
 
 ## Other machines (no SigNoz, no facts store)
 

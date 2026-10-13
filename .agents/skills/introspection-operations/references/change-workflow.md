@@ -12,6 +12,8 @@ as headless Codex exec having no user to steer), or `not emitted` (no route; the
 says why). Parity is judged over the harnesses a machine enables (config `[harnesses]
 enabled`): a signal is shown only when every enabled harness reaches it, and is hidden
 on a machine where an enabled harness does not emit it. Never rank or compare harnesses.
+The generated rule and matrix are in
+[data-gaps](../../../../docs/references/data-gaps.md#harness-support-matrix).
 
 ## Steps
 
@@ -25,7 +27,7 @@ on a machine where an enabled harness does not emit it. Never rank or compare ha
       counts in SigNoz read-only; never print prompt or command text);
    2. a native field the projection drops or does not derive yet (store only
       normalized forms, never raw text);
-   3. a new activity-hook event: add it to `docs/hook-events.md`, implement it in
+   3. a new activity-hook event: add it to `docs/references/hook-events.md`, implement it in
       `hooks.py` with tests (normalize; never keep raw text), register it in the
       harness's installer or extension, and route it with `source = "hooks"`; mark the
       cell `differs` when inferred or when history starts at the hook's install;
@@ -41,7 +43,7 @@ on a machine where an enabled harness does not emit it. Never rank or compare ha
    come only from the registry. Wrap a panel of a signal some harness does not emit in
    a visibility check, so it renders only where every enabled harness reaches it.
 5. **Apply**:
-   - `uv run python scripts/render-measures.py` (regenerates Measure v3 and the
+   - `uv run python scripts/render-measures.py` (regenerates the signal catalog and the
      data-gaps doc; a test fails when they drift);
    - `bash scripts/run-ci-quality-gates.sh`;
    - `uv tool install --force --reinstall .` after any Python change;
@@ -50,8 +52,9 @@ on a machine where an enabled harness does not emit it. Never rank or compare ha
      removes stored text;
    - for a new hook event, reinstall the harness's hooks and run the onboarding
      validation workflow.
-6. **Verify** with the health workflow over 90 days, and log anomalies in the plan's
-   findings log (finding, evidence, fix, validated result); never patch silently.
+6. **Verify** with the health workflow over 90 days, and record anomalies (finding, evidence, fix, validated result) in the commit or PR
+   message or the dated Gaps tables of
+   [data-gaps.md](../../../../docs/references/data-gaps.md); never patch silently.
 
 ## Add a harness
 

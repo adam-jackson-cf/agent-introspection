@@ -72,7 +72,7 @@ const SERVICES =
   "'codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code'";
 const FORBIDDEN_KEYS =
   "['prompt', 'user_prompt', 'arguments', 'output', 'content', 'user.email', 'user.account_id', 'user.account_uuid', 'user.id', 'organization.id', 'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent', 'omp.gen_ai.tool.call.intent']";
-/** Raw-text keys the activity hooks must never store (docs/hook-events.md). */
+/** Raw-text keys the activity hooks must never store (docs/references/hook-events.md). */
 const HOOK_FORBIDDEN_KEYS =
   "['prompt', 'user_prompt', 'tool_input', 'tool_response', 'arguments', 'output', 'content', 'message']";
 

@@ -70,7 +70,7 @@ ALTER TABLE introspection.session_projects ADD COLUMN IF NOT EXISTS remote Strin
 ALTER TABLE introspection.session_projects ADD COLUMN IF NOT EXISTS resolved_at DateTime64(6, 'UTC') DEFAULT loaded_at;
 
 
--- Normalized activity-hook events (see docs/hook-events.md) that close signals the
+-- Normalized activity-hook events (see docs/references/hook-events.md) that close signals the
 -- producers' own telemetry lacks. Hooks keep no raw prompt, argument, or output
 -- text. Events from every machine arrive as OTLP logs through SigNoz
 -- (load_hook_events), which keeps them for its retention, so this table is the durable

@@ -1,12 +1,12 @@
-# Dashboard Measure v3
+# Signal Catalog
 
-Source of truth: [`signal_support.toml`](../src/agent_introspection/facts_sql/signal_support.toml),
+Source of truth: [`signal_support.toml`](../../src/agent_introspection/facts_sql/signal_support.toml),
 loaded by `agent-introspection facts install` into `introspection.signals`,
 `signal_routes`, `signal_support`, and `signal_strays`. The fact views are in
-[`003_views.sql`](../src/agent_introspection/facts_sql/003_views.sql). Sections 3
+[`003_views.sql`](../../src/agent_introspection/facts_sql/003_views.sql). Sections 3
 and 4 are generated from the registry by `scripts/render-measures.py`; a test fails
-when they drift. The design and phase history are in the
-[Dashboard v3 Plan](dashboard-v3-plan.md). This document supersedes
+when they drift. The standing design decisions (D1 to D5) are in
+[Facts Store](facts-store.md#standing-decisions). This document supersedes
 Measure v2, kept in git at the tag `archive/proof-gated-dashboard`.
 
 This document records the producer routes and calculations behind every dashboard
@@ -19,10 +19,10 @@ The dashboard surfaces **the same signal from every harness that has it**. It is
 a benchmark: harnesses are never ranked or compared against each other.
 
 - **One definition per signal.** Each signal has one question, unit, and formula.
-- **One route per producer.** Each harness reaches the signal by its own route and is
-  `aligned`, `differs` (the note says how), `not applicable`, or `not emitted` (the
-  note says why). A signal is shown only when every harness the machine enables
-  (`[harnesses] enabled`) reaches it; otherwise it is hidden there, never shown as zero.
+- **One route per producer.** Each harness reaches the signal by its own route, and a
+  signal is shown only where every enabled harness reaches it; the rule and the
+  per-signal cells are in the
+  [harness support matrix](data-gaps.md#harness-support-matrix).
 - **All is the union of each.** "All harnesses" aggregates the per-harness rows of the
   same signal. Counts are summed; ratios sum numerators and denominators before
   dividing (token-weighted, never an average of percentages). The Pipeline view checks
@@ -32,7 +32,7 @@ a benchmark: harnesses are never ranked or compared against each other.
   observe (`friction_observed`), and the info note states them.
 - **NULL means no signal.** A missing field stays NULL and is excluded from
   denominators; it is never counted as zero.
-- **Privacy (D4).** Raw prompt, command, argument, output, and tool-intent text and
+- **Privacy ([D4](facts-store.md#standing-decisions)).** Raw prompt, command, argument, output, and tool-intent text and
   identity keys are never stored. Only normalized `x.*` fields, digit-normalized
   failure signatures, and home-redacted paths are kept.
 - **Time.** Trends bucket by Europe/London days; actionable repeats use a 7-day Europe/London window.
@@ -43,9 +43,11 @@ Harnesses: omp (`oh-my-pi`), Codex app-server (`codex-app-server`), Codex CLI
 ## 2. Normalized fact rows
 
 Views whose window starts within the last 90 days read snapshot tables
-(`<view>_snapshot`) of these fact views, rebuilt over the last 91 days right after each
-minute load; earlier windows and session drill-downs read the live views, which cover
-all history.
+(`<view>_snapshot`) of these fact views. Each snapshot holds the last 91 days in a
+`_recent` table rebuilt every 10 minutes and a `_history` table rebuilt daily, so the
+dashboard trails SigNoz by up to about 10 minutes (see
+[Fact views and snapshots](facts-store.md#fact-views-and-snapshots)). Earlier windows
+and session drill-downs read the live views, which cover all history.
 
 ### 2.1 `usage_events`: one row per accepted model usage record
 
@@ -116,8 +118,8 @@ latency and retry counts from it instead of the raw tables.
 
 ### 2.6 `session_project`: one project per session
 
-The latest Git project the session-context hooks recorded for a session, from
-`introspection.session_projects`. Session IDs are producer-native UUIDs and join the
+The latest Git project the attribution scan recorded for a session (see
+[Project Attribution](project-attribution.md)), from `introspection.session_projects`. Session IDs are producer-native UUIDs and join the
 facts without the harness.
 
 <!-- BEGIN GENERATED FROM signal_support.toml -->

@@ -119,7 +119,7 @@ No removed rows. New: FRIC-F14..F20, FRIC-S08..S12, FRIC-C10..C12.
 
 ### Fixed 2026-10-01
 
-- Recovery windows on the start of the task the calls belong to (`views.ts:240,255`), so all Friction measures cover the same tasks. Rows FRIC-S04, FRIC-F04, FRIC-F10, FRIC-F11. Registry formula and `dashboard-measure-v3.md` updated.
+- Recovery windows on the start of the task the calls belong to (`views.ts:240,255`), so all Friction measures cover the same tasks. Rows FRIC-S04, FRIC-F04, FRIC-F10, FRIC-F11. Registry formula and `docs/references/signal-catalog.md` updated.
 - "Operations that fail most" shows "Showing N of M" when cut at 25 (FRIC-F11).
 
 ## Batch C changes (2026-10-12)

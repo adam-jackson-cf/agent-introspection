@@ -3,7 +3,7 @@
 The activity shim hands each hook envelope (JSON on stdin) to
 ``agent-introspection hook <producer> <event>``, which runs ``main`` detached from
 the harness. ``normalize`` reduces the envelope to the fields in
-``docs/hook-events.md`` and ``write`` stores each record atomically in the spool
+``docs/references/hook-events.md`` and ``write`` stores each record atomically in the spool
 (``spool.py``), which ships records to the OTLP route ``facts sync`` loads from.
 
 Raw prompt, argument, and output text is read only in memory. The derivations
