@@ -58,11 +58,18 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
 
 def _install(args: argparse.Namespace, config: AppConfig, run: facts.SqlRunner) -> dict[str, Any]:
     try:
-        return facts.install(run, config.harnesses_enabled)
-    finally:
+        result = facts.install(run, config.harnesses_enabled)
+    except Exception:
         # The dashboard reads the workflow store, so install creates and migrates it
         # too, even when a refresh failed after the ClickHouse store was created.
-        open_store(args).close()
+        # A store error here must not hide the install failure that is propagating.
+        try:
+            open_store(args).close()
+        except Exception as store_error:
+            diagnostic(f"workflow store setup also failed: {store_error}")
+        raise
+    open_store(args).close()
+    return result
 
 
 def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:

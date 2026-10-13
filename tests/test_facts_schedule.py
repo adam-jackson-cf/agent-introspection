@@ -6,6 +6,7 @@ import itertools
 import json
 import os
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -226,7 +227,7 @@ def test_refresh_named_refreshes_one_known_view_and_rejects_others() -> None:
         "SYSTEM REFRESH VIEW introspection.refresh_tool_calls_recent",
         "SYSTEM WAIT VIEW introspection.refresh_tool_calls_recent",
     ]
-    with pytest.raises(facts.FactsError, match="unknown refresher nope"):
+    with pytest.raises(ValueError, match="unknown refresher nope"):
         facts.refresh_named(run, "nope", _no_sleep)
     assert len(ran) == 2
 
@@ -302,3 +303,63 @@ def test_verify_uses_a_scratch_database_per_run_and_drops_only_stale_ones() -> N
     # Each run builds and drops its own database, and the name embeds time and pid.
     assert first["database"] == f"introspection_verify_{int(now)}_{os.getpid()}"
     assert ran.count(f"DROP DATABASE IF EXISTS {first['database']} SYNC") == 2
+
+
+def test_refresh_with_retry_does_not_requeue_a_refresh_that_is_still_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[str] = []
+    slept: list[float] = []
+
+    def refresh_view(_run: object, name: str) -> None:
+        attempts.append(name)
+        raise facts.RefreshStillRunningError(f"refresh of {name} failed: still running")
+
+    monkeypatch.setattr(facts, "refresh_view", refresh_view)
+    with pytest.raises(facts.RefreshStillRunningError):
+        facts.refresh_with_retry(lambda _sql: "", "load_spans", slept.append)
+    assert attempts == ["load_spans"]
+    assert slept == []
+
+    with pytest.raises(facts.FactsError, match="refresh of load_spans failed: still running"):
+        facts.refresh_all(lambda _sql: "", [("load_spans", "")], slept.append)
+    assert attempts == ["load_spans", "load_spans"]
+
+
+def test_refresh_view_still_running_error_is_the_budget_exhaustion_type() -> None:
+    now = 0.0
+
+    def run(sql: str) -> str:
+        nonlocal now
+        if sql.startswith("SYSTEM WAIT"):
+            now += 600
+            raise facts.StatementTimeoutError("ClickHouse statement timed out")
+        return ""
+
+    with pytest.raises(facts.RefreshStillRunningError):
+        facts.refresh_view(run, "load_spans", budget=1800, clock=lambda: now)
+
+
+def test_verify_keeps_a_recently_modified_legacy_scratch_database() -> None:
+    now = 1_000_000.0
+
+    def make_run(modified: int | None, ran: list[str]) -> Callable[[str], str]:
+        def run(sql: str) -> str:
+            ran.append(sql)
+            if "system.databases" in sql:
+                return json.dumps({"name": "introspection_verify"}) + "\n"
+            if "system.tables" in sql:
+                return json.dumps({"modified": modified}) + "\n"
+            return ""
+
+        return run
+
+    busy: list[str] = []
+    assert facts.drop_stale_scratch_databases(make_run(int(now) - 60, busy), now) == []
+    assert "DROP DATABASE IF EXISTS introspection_verify SYNC" not in busy
+
+    for modified in (int(now) - 7200, None):
+        ran: list[str] = []
+        assert facts.drop_stale_scratch_databases(make_run(modified, ran), now) == [
+            "introspection_verify"
+        ]

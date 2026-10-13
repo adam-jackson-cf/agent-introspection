@@ -57,6 +57,10 @@ class FactsError(RuntimeError):
     """A ClickHouse statement for the facts store failed."""
 
 
+class RefreshStillRunningError(FactsError):
+    """A refresh outlived its wait budget; the server is still running it."""
+
+
 class StatementTimeoutError(FactsError):
     """A statement outlived the runner timeout; ClickHouse may still be running it."""
 
@@ -1079,6 +1083,22 @@ def verify_statements(
     ]
 
 
+def _legacy_scratch_is_idle(run: SqlRunner, now: float) -> bool:
+    """Return whether the fixed-name scratch database has no table changed within an hour.
+
+    An older-version verify (another worktree) may be building in it right now.
+    """
+    output = run(
+        "SELECT toUnixTimestamp(max(metadata_modification_time)) AS modified "
+        f"FROM system.tables WHERE database = '{VERIFY_PREFIX}' FORMAT JSONEachRow"
+    )
+    for line in output.splitlines():
+        modified = json.loads(line).get("modified") if line.strip() else None
+        if modified:
+            return now - int(modified) > _VERIFY_STALE_SECONDS
+    return True
+
+
 def drop_stale_scratch_databases(run: SqlRunner, now: float) -> list[str]:
     """Drop scratch databases an interrupted run left behind; return their names.
 
@@ -1094,7 +1114,9 @@ def drop_stale_scratch_databases(run: SqlRunner, now: float) -> list[str]:
             continue
         name = json.loads(line)["name"]
         match = _VERIFY_NAME.match(name)
-        if name == VERIFY_PREFIX or (match and now - int(match.group(1)) > _VERIFY_STALE_SECONDS):
+        if (name == VERIFY_PREFIX and _legacy_scratch_is_idle(run, now)) or (
+            match and now - int(match.group(1)) > _VERIFY_STALE_SECONDS
+        ):
             run(f"DROP DATABASE IF EXISTS {name} SYNC")
             dropped.append(name)
     return dropped
@@ -1173,7 +1195,11 @@ def refresh_view(
                 return
             except StatementTimeoutError:
                 if clock() >= deadline:
-                    raise FactsError(f"still running after {budget:.0f} s") from None
+                    raise RefreshStillRunningError(
+                        f"refresh of {name} failed: still running after {budget:.0f} s"
+                    ) from None
+    except RefreshStillRunningError:
+        raise
     except FactsError as exc:
         raise FactsError(f"refresh of {name} failed: {exc}") from exc
 
@@ -1206,9 +1232,15 @@ def refresh_known_names() -> list[str]:
 def refresh_with_retry(
     run: SqlRunner, name: str, sleep: Callable[[float], None] = time.sleep
 ) -> None:
-    """Refresh one view; on failure pause and try once more (the server will not retry)."""
+    """Refresh one view; on failure pause and try once more (the server will not retry).
+
+    A refresh still running after its budget is not retried: another request would
+    queue a second full run behind the first.
+    """
     try:
         refresh_view(run, name)
+    except RefreshStillRunningError:
+        raise
     except FactsError:
         sleep(REFRESH_RETRY_PAUSE_SECONDS)
         refresh_view(run, name)
@@ -1248,7 +1280,7 @@ def refresh_named(
     """Refresh and wait for one named loader or snapshot refresher."""
     known = refresh_known_names()
     if name not in known:
-        raise FactsError(f"unknown refresher {name}; known: {', '.join(known)}")
+        raise ValueError(f"unknown refresher {name}; known: {', '.join(known)}")
     refresh_with_retry(run, name, sleep)
     return {"refreshed": name}
 
