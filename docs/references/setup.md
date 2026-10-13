@@ -114,9 +114,11 @@ Each run changes only the settings its profile manages, backs up every file it
 changes, and lists any `next_steps`. Then, per harness:
 
 - **Claude Code** also needs its activity hooks:
+
   ```bash
   python3 .agents/skills/introspection-onboarding/scripts/adapters/claude-code/install_activity.py --dry-run  # then without
   ```
+
 - **Codex** needs no hooks.
 - **omp**: follow the
   [harness configuration workflow](../../.agents/skills/introspection-onboarding/references/harness-configuration-workflow.md).

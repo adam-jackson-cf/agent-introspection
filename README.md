@@ -1,6 +1,4 @@
-<div align="center">
-
-<h1>Agent Introspection</h1>
+# Agent Introspection
 
 **See how your coding agents use models and work, across Claude Code, Codex, and omp,
 and turn recurring problems into fixes you approve.**
@@ -10,8 +8,6 @@ and turn recurring problems into fixes you approve.**
 ![Dashboard](https://img.shields.io/badge/dashboard-bun%20%2B%20react-lightgrey.svg?style=flat-square)
 ![Primary CLI](https://img.shields.io/badge/cli-agent--introspection-orange.svg?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-local%20self--hosted%20SigNoz-purple.svg?style=flat-square)
-
-</div>
 
 Everything runs on your own desktop: your agents send telemetry to a SigNoz on the same
 machine, and Agent Introspection turns it into a local dashboard and a list of
