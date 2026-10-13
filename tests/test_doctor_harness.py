@@ -133,9 +133,7 @@ def test_prompt_export_is_reported_on_or_off_and_never_fails(machine: Machine) -
     assert claude["status"] == "off"
     assert "OTEL_LOG_USER_PROMPTS" in claude["detail"]
     assert "--prompt-export" in claude["fix"]
-    codex = one(result, "prompt_export", "codex")
-    assert codex["status"] == "off"
-    assert "~/.codex/config.toml" in codex["detail"]
+    assert result["passed"] is True
     # Claude Code's prompt switch alone also exports assistant responses: a warning.
     replace_settings(machine, {**CLAUDE_ENV, "OTEL_LOG_USER_PROMPTS": "1"})
     partly = one(machine.report(), "prompt_export", "claude-code")
@@ -145,13 +143,80 @@ def test_prompt_export_is_reported_on_or_off_and_never_fails(machine: Machine) -
     )
     assert partly["fix"] == (
         "`agent-introspection harness configure claude-code --prompt-export` sets "
-        "OTEL_LOG_ASSISTANT_RESPONSES to '0'; or remove the ones set to keep prompt export off"
+        "OTEL_LOG_ASSISTANT_RESPONSES to '0'; or remove OTEL_LOG_USER_PROMPTS from "
+        "~/.claude/settings.json to keep prompt export off"
     )
     replace_settings(
         machine,
         {**CLAUDE_ENV, "OTEL_LOG_USER_PROMPTS": "1", "OTEL_LOG_ASSISTANT_RESPONSES": "0"},
     )
     assert one(machine.report(), "prompt_export", "claude-code")["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("main", "orca", "expected"),
+    [
+        (
+            "false",
+            "true",
+            (
+                "warn",
+                "partly on: on in {orca}; "
+                "log_user_prompt in ~/.codex/config.toml is false, where the profile writes true",
+                "`agent-introspection harness configure codex --prompt-export --root ~/.codex` "
+                "sets log_user_prompt to true; or remove log_user_prompt from {orca} "
+                "to keep prompt export off",
+            ),
+        ),
+        (
+            "true",
+            None,
+            (
+                "warn",
+                "partly on: on in ~/.codex/config.toml; log_user_prompt in {orca} not set",
+                "`agent-introspection harness configure codex --prompt-export --root "
+                "{orca_root}` sets log_user_prompt to true; or remove log_user_prompt from "
+                "~/.codex/config.toml to keep prompt export off",
+            ),
+        ),
+        (
+            "false",
+            None,
+            (
+                "off",
+                "off: log_user_prompt in ~/.codex/config.toml is false, where the profile "
+                "writes true; log_user_prompt in {orca} not set",
+                "optional: `agent-introspection harness configure codex --prompt-export "
+                "--root ~/.codex --root {orca_root}` exports prompt text so `facts sync` can "
+                "label prompts; the facts store keeps only the labels",
+            ),
+        ),
+        ("true", "true", ("pass", "on: prompt text is exported for prompt labels", "")),
+    ],
+    ids=["only-orca-exports", "only-main-exports", "neither-exports", "both-export"],
+)
+def test_codex_prompt_export_names_every_home_that_exports_or_differs(
+    machine: Machine, main: str, orca: str | None, expected: tuple[str, str, str]
+) -> None:
+    # Codex reads `[otel]` from each of its homes: one that exports prompt text while
+    # another does not is never reported as off, and each fix names the homes it writes.
+    main_config = machine.home / ".codex/config.toml"
+    orca_config = machine.orca / "config.toml"
+    for config, value in ((main_config, main), (orca_config, orca)):
+        line = "" if value is None else f"log_user_prompt = {value}\n"
+        config.write_text(re.sub(r"(?m)^log_user_prompt = \w+\n", line, config.read_text()))
+    names = {
+        "orca": doctor_harness.shown_path(orca_config, machine.home),
+        "orca_root": doctor_harness.shell_path(machine.orca, machine.home),
+    }
+
+    result = machine.report()
+
+    item = one(result, "prompt_export", "codex")
+    assert (item["status"], item["detail"], item["fix"]) == tuple(
+        text.format(**names) for text in expected
+    )
+    assert result["passed"] is True
 
 
 @pytest.mark.parametrize("responses", ["1", "false"])
@@ -181,16 +246,51 @@ def test_a_prompt_export_value_set_by_hand_is_reported_as_it_is_never_as_unset(
     assert result["passed"] is True
 
 
-def test_prompt_export_switched_off_by_hand_is_off_with_its_value(machine: Machine) -> None:
-    replace_settings(machine, {**CLAUDE_ENV, "OTEL_LOG_USER_PROMPTS": "0"})
-
-    item = one(machine.report(), "prompt_export", "claude-code")
-
-    assert item["status"] == "off"
-    assert item["detail"] == (
-        "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json is '0', where the profile "
-        "writes '1'; OTEL_LOG_ASSISTANT_RESPONSES in ~/.claude/settings.json not set"
+@pytest.mark.parametrize(
+    ("prompts", "responses", "detail"),
+    [
+        (
+            "0",
+            None,
+            "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json is '0', where the profile "
+            "writes '1'; OTEL_LOG_ASSISTANT_RESPONSES in ~/.claude/settings.json not set",
+        ),
+        # Switched off after `--prompt-export`: the redaction setting it wrote stays.
+        (
+            "0",
+            "0",
+            "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json is '0', where the profile "
+            "writes '1'",
+        ),
+        (None, "0", "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json not set"),
+        (
+            None,
+            "1",
+            "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json not set; "
+            "OTEL_LOG_ASSISTANT_RESPONSES in ~/.claude/settings.json is '1', where the profile "
+            "writes '0'",
+        ),
+    ],
+    ids=["switch-0", "switch-0-partner-0", "switch-unset-partner-0", "switch-unset-partner-1"],
+)
+def test_prompt_export_is_off_while_its_switch_is_off_whatever_its_partner_holds(
+    machine: Machine, prompts: str | None, responses: str | None, detail: str
+) -> None:
+    # Claude Code exports no prompt text unless OTEL_LOG_USER_PROMPTS is on, so its
+    # partner never makes the harness "partly on"; a partner set by hand is still named.
+    settings = {"OTEL_LOG_USER_PROMPTS": prompts, "OTEL_LOG_ASSISTANT_RESPONSES": responses}
+    replace_settings(
+        machine, {**CLAUDE_ENV, **{key: v for key, v in settings.items() if v is not None}}
     )
+
+    result = machine.report()
+
+    item = one(result, "prompt_export", "claude-code")
+    assert (item["status"], item["detail"]) == ("off", detail)
+    assert item["fix"].startswith(
+        "optional: `agent-introspection harness configure claude-code --prompt-export` "
+    )
+    assert result["passed"] is True
 
 
 def test_unreadable_config_files_fail_and_skip_their_settings(machine: Machine) -> None:

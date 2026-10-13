@@ -52,8 +52,10 @@ CLAUDE_ENV = {
 }
 
 
+# Both Codex homes export prompts, as `harness configure codex --prompt-export` leaves
+# them: a healthy machine has no home that exports while another does not.
 CODEX_GRPC = """[otel]
-log_user_prompt = false
+log_user_prompt = true
 exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
 trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
 metrics_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }

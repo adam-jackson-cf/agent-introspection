@@ -37,12 +37,16 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
   or `CODEX_HOME` names the file even when it does not exist yet, and `config_files`
   then fails as missing. Codex homes: every configured home that is set or exists,
   plus the parent of each `[sessions.roots] codex` root that holds a `config.toml`.
-- `prompt_export` warns when a file holds only part of its group, such as Claude
-  Code's `OTEL_LOG_USER_PROMPTS` without `OTEL_LOG_ASSISTANT_RESPONSES=0`, which also
-  exports assistant response text. A value set by hand, such as
-  `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant responses exported on purpose), is
-  `info`: its detail names the value, and its fix says what `--prompt-export` would
-  write over it. Leave it if the user chose it.
+- `prompt_export` reads a file's first prompt-export setting as its switch (Claude
+  Code's `OTEL_LOG_USER_PROMPTS`, Codex's `log_user_prompt`). While the switch is not
+  on, the check is `off`, whatever the file's other settings hold. It warns when the
+  switch is on and another setting is unset, such as `OTEL_LOG_USER_PROMPTS=1` without
+  `OTEL_LOG_ASSISTANT_RESPONSES=0`, which also exports assistant response text, and
+  when some Codex homes export prompts and others do not: its detail names the homes
+  that do, and its fix has a `--root` for each home that differs. A value set by hand
+  beside a switch that is on, such as `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant
+  responses exported on purpose), is `info`: its detail names the value, and its fix
+  says what `--prompt-export` would write over it. Leave it if the user chose it.
 - A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
   scheduled sync: set `[hooks] otlp_logs_endpoint` and
   `[labels] openrouter_key_command` in the config instead.

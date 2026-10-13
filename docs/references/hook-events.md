@@ -203,7 +203,9 @@ and cannot be labelled.
 Claude Code's `OTEL_LOG_USER_PROMPTS` also exports the text of every assistant
 response on `assistant_response` events while `OTEL_LOG_ASSISTANT_RESPONSES` is unset,
 so `harness configure claude-code --prompt-export` sets that to `0` and `doctor` warns
-when only one of the two is set. `doctor` reports a value set by hand, such as `1` to
-export responses on purpose, as `info` rather than as unset. Under Claude Code's detailed beta tracing
+when `OTEL_LOG_USER_PROMPTS=1` is set without it. While `OTEL_LOG_USER_PROMPTS` is not
+`1`, `doctor` reports prompt export `off`, whatever `OTEL_LOG_ASSISTANT_RESPONSES`
+holds. Beside `OTEL_LOG_USER_PROMPTS=1`, `doctor` reports a value set by hand, such as
+`1` to export responses on purpose, as `info` rather than as unset. Under Claude Code's detailed beta tracing
 (`ENABLE_BETA_TRACING_DETAILED`, which the profile does not set), the same switch would
 also export system prompt and model output text on spans.

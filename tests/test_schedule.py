@@ -1,6 +1,7 @@
 import getpass
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -290,19 +291,72 @@ def test_launchd_reinstall_stops_the_loaded_job_before_loading_the_new_one(
     assert arguments[0] == str(home / "agent-introspection")
 
 
-def test_a_legacy_job_that_cannot_be_stopped_blocks_the_install(
-    monkeypatch: pytest.MonkeyPatch, home: Path
+_STILL_RUNNING = (
+    rf"^could not stop the job {re.escape(schedule.LABEL)}: Operation not permitted; "
+    "it is still loaded, its plist unchanged$"
+)
+
+
+@pytest.mark.parametrize(
+    ("job", "change", "error"),
+    [
+        ("legacy", "install", r"could not stop the legacy job.*not permitted"),
+        ("current", "install", _STILL_RUNNING),
+        # A loaded job whose plist is gone is not given one it would never use.
+        ("current without plist", "install", _STILL_RUNNING),
+        ("current", "remove", _STILL_RUNNING),
+    ],
+    ids=["legacy-install", "reinstall", "reinstall-without-plist", "remove"],
+)
+def test_a_loaded_job_that_cannot_be_stopped_blocks_the_change_and_is_left_as_it_was(
+    monkeypatch: pytest.MonkeyPatch, home: Path, job: str, change: str, error: str
 ) -> None:
-    schedule.LEGACY_PLIST.parent.mkdir(parents=True)
-    schedule.LEGACY_PLIST.write_bytes(_legacy_plist())
-    launchd = Launchd(loaded={schedule.LEGACY_LABEL}, stuck=True)
+    # `launchctl bootout` fails outside the user's GUI session (over SSH, say): the job
+    # keeps running, so the command must neither report it stopped nor change its files.
+    label, path, content = (
+        (schedule.LEGACY_LABEL, schedule.LEGACY_PLIST, _legacy_plist())
+        if job == "legacy"
+        else (schedule.LABEL, schedule.PLIST, schedule.plist(Path("/old/ai"), ["/usr/bin"]))
+    )
+    path.parent.mkdir(parents=True)
+    if job != "current without plist":
+        path.write_bytes(content)
+    plists = (schedule.PLIST, schedule.LEGACY_PLIST)
+    before = {plist: plist.read_bytes() if plist.exists() else None for plist in plists}
+    launchd = Launchd(loaded={label}, stuck=True)
     _on(monkeypatch, "darwin", launchd)
 
-    with pytest.raises(RuntimeError, match=r"could not stop the legacy job.*not permitted"):
+    with pytest.raises(RuntimeError, match=error):
+        getattr(schedule, f"schedule_{change}")()
+    assert launchd.loaded == {label}
+    assert {plist: plist.read_bytes() if plist.exists() else None for plist in plists} == before
+    assert "bootstrap" not in [call[0] for call in launchd.calls]
+    assert not schedule.BACKUPS.exists()
+
+
+def test_a_job_that_cannot_be_stopped_after_the_legacy_plist_was_retired_says_so(
+    monkeypatch: pytest.MonkeyPatch, home: Path
+) -> None:
+    # The legacy job was not loaded, so install moved its plist away before it found
+    # the current job stuck; putting it back would not restore anything that ran.
+    previous = schedule.plist(Path("/old/ai"), ["/usr/bin"])
+    schedule.PLIST.parent.mkdir(parents=True)
+    schedule.PLIST.write_bytes(previous)
+    schedule.LEGACY_PLIST.write_bytes(_legacy_plist())
+    launchd = Launchd(loaded={schedule.LABEL}, stuck=True)
+    _on(monkeypatch, "darwin", launchd)
+
+    with pytest.raises(RuntimeError) as raised:
         schedule.schedule_install()
-    assert launchd.loaded == {schedule.LEGACY_LABEL}
-    assert schedule.LEGACY_PLIST.read_bytes() == _legacy_plist()
-    assert not schedule.PLIST.exists()
+    (backup,) = schedule.BACKUPS.iterdir()
+    assert str(raised.value) == (
+        f"could not stop the job {schedule.LABEL}: Operation not permitted; it is still "
+        f"loaded, its plist unchanged; the legacy job {schedule.LEGACY_LABEL} was retired "
+        f"first, its plist moved to {backup}"
+    )
+    assert backup.read_bytes() == _legacy_plist()
+    assert launchd.loaded == {schedule.LABEL}
+    assert schedule.PLIST.read_bytes() == previous
 
 
 def test_failed_bootstrap_restores_and_reloads_the_previous_job(

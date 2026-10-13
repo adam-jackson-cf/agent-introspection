@@ -311,18 +311,33 @@ def _launchd_domain() -> str:
     return f"gui/{os.getuid()}"
 
 
+def _launchd_loaded(label: str) -> bool:
+    return _launchctl("list", label).returncode == 0
+
+
+def _bootout(domain: str, label: str, *, loaded: bool) -> str | None:
+    """Stop the job under ``label``; return why a loaded one could not be, else None.
+
+    Stopping a job that is not loaded fails harmlessly, so only a loaded job's failure
+    is returned: that job is still running, and the caller must not go on as if it
+    were stopped.
+    """
+    stopped = _launchctl("bootout", f"{domain}/{label}")
+    if loaded and stopped.returncode != 0:
+        return stopped.stderr.strip() or "launchctl bootout failed"
+    return None
+
+
 def _retire_legacy_job(domain: str) -> RetiredJob | None:
     """Stop the job under ``LEGACY_LABEL`` and move its plist to ``BACKUPS``.
 
     Returns None when no legacy job is installed or loaded. A loaded job that cannot
     be stopped is an error, so two jobs never sync at once.
     """
-    loaded = _launchctl("list", LEGACY_LABEL).returncode == 0
+    loaded = _launchd_loaded(LEGACY_LABEL)
     if not (loaded or LEGACY_PLIST.exists()):
         return None
-    stopped = _launchctl("bootout", f"{domain}/{LEGACY_LABEL}")
-    if loaded and stopped.returncode != 0:
-        detail = stopped.stderr.strip() or "launchctl bootout failed"
+    if (detail := _bootout(domain, LEGACY_LABEL, loaded=loaded)) is not None:
         raise RuntimeError(f"could not stop the legacy job {LEGACY_LABEL}: {detail}")
     backup = None
     if LEGACY_PLIST.exists():
@@ -341,8 +356,14 @@ def _install_launchd(
     PLIST.write_bytes(plist(executable, path_dirs, config))
     # Whether the job being replaced runs: a job the user stopped stays stopped if
     # the new one fails to load and the old one is put back.
-    was_loaded = _launchctl("list", LABEL).returncode == 0
-    _launchctl("bootout", f"{domain}/{LABEL}")
+    was_loaded = _launchd_loaded(LABEL)
+    if (detail := _bootout(domain, LABEL, loaded=was_loaded)) is not None:
+        # The job still runs as it was loaded: put its plist back as it was too.
+        if previous is None:
+            PLIST.unlink()
+        else:
+            PLIST.write_bytes(previous)
+        raise RuntimeError(_still_running(detail, retired))
     loaded = _launchctl("bootstrap", domain, str(PLIST))
     if loaded.returncode != 0:
         message = loaded.stderr.strip() or "launchctl bootstrap failed"
@@ -355,6 +376,19 @@ def _install_launchd(
         "interval_seconds": INTERVAL_SECONDS,
         "legacy": retired.report() if retired is not None else None,
     }
+
+
+def _still_running(detail: str, retired: RetiredJob | None) -> str:
+    """Return the error for a loaded job under ``LABEL`` that could not be stopped.
+
+    It names what already changed: the legacy job install retires first stays retired,
+    since putting it back would leave two jobs syncing at once.
+    """
+    message = f"could not stop the job {LABEL}: {detail}; it is still loaded, its plist unchanged"
+    if retired is None:
+        return message
+    moved = f", its plist moved to {retired.backup}" if retired.backup is not None else ""
+    return f"{message}; the legacy job {LEGACY_LABEL} was retired first{moved}"
 
 
 def _restore_launchd_job(
@@ -394,7 +428,8 @@ def _restore_launchd_job(
 
 def _remove_launchd() -> dict[str, Any]:
     domain = _launchd_domain()
-    _launchctl("bootout", f"{domain}/{LABEL}")
+    if (detail := _bootout(domain, LABEL, loaded=_launchd_loaded(LABEL))) is not None:
+        raise RuntimeError(_still_running(detail, None))
     existed = PLIST.exists()
     PLIST.unlink(missing_ok=True)
     retired = _retire_legacy_job(domain)
@@ -407,13 +442,13 @@ def _remove_launchd() -> dict[str, Any]:
 
 
 def _launchd_status() -> dict[str, Any]:
-    legacy_loaded = _launchctl("list", LEGACY_LABEL).returncode == 0
+    legacy_loaded = _launchd_loaded(LEGACY_LABEL)
     legacy_installed = LEGACY_PLIST.exists()
     return {
         "scheduler": "launchd",
         "label": LABEL,
         "installed": PLIST.exists(),
-        "loaded": _launchctl("list", LABEL).returncode == 0,
+        "loaded": _launchd_loaded(LABEL),
         # A job left by an earlier release; `facts schedule install` retires it.
         "legacy": (
             {"label": LEGACY_LABEL, "installed": legacy_installed, "loaded": legacy_loaded}

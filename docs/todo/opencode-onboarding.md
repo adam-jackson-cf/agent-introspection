@@ -20,7 +20,7 @@ the rows in turn traces, against 0.2% on 2026-10-11).
   hide 48 of the 53 signals visible today. Only Fact freshness, Tool calls, Tool failure
   rate, Failure signature, and Project concentration would stay.
 - An opencode plugin adapter for the capabilities opencode's plugin surface offers would
-  cut the cost to 8 hidden signals, and to 1 (Time to first token) once interrupts and
+  cut the cost to 9 hidden signals, and to 1 (Time to first token) once interrupts and
   steers are verified.
 - Recommendation: keep opencode a candidate until a plugin adapter supplies at least
   model usage and the task boundary.

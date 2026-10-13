@@ -41,6 +41,10 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
   `~/.local/share/agent-introspection/schedule-backups/`, outside `LaunchAgents` so
   launchd never loads the backup; `status` reports that job under `legacy` until then.
   Reinstall the standalone CLI first: an older copy installs the old label again.
+  When `launchctl bootout` cannot stop a loaded job (as over SSH, outside the user's
+  GUI session), `install` and `remove` stop with an error (exit 60) that says the job
+  is still loaded, and leave its plist as it was, so two jobs never sync at once and
+  a running job is never reported stopped.
 - **Linux:** the systemd user units `agent-introspection-sync.service` and
   `agent-introspection-sync.timer` in `~/.config/systemd/user/` (`OnCalendar=minutely`,
   `Persistent=true`). `install` backs up units it replaces to the same backups folder.
@@ -169,9 +173,13 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
   its retention, so confirm with the user first. For Claude Code it also writes
   `OTEL_LOG_ASSISTANT_RESPONSES=0`, which keeps assistant responses redacted, and
   writes over a value set by hand (`--dry-run` shows it as a `change`). `doctor`
-  warns when only one of the pair is set, and reports a value set by hand (such as
-  `OTEL_LOG_ASSISTANT_RESPONSES=1`) as `info`, with what `--prompt-export` would
-  write over it.
+  reads a file's first prompt-export setting as its switch: while that is not on,
+  prompt export is `off`, whatever the others hold. It warns when the switch is on
+  and another setting is unset (`OTEL_LOG_USER_PROMPTS=1` alone), or when some Codex
+  homes export prompts and others do not, naming the homes that do, with a `--root`
+  in its fix for each home that differs. It reports a value set by hand beside a
+  switch that is on (such as `OTEL_LOG_ASSISTANT_RESPONSES=1`) as `info`, with what
+  `--prompt-export` would write over it.
 - **Writes:** each changed file is first copied to `<file>.bak-<UTC timestamp>` beside
   it (`%Y%m%dT%H%M%S%fZ`). The write is atomic and keeps the file's permissions, and a
   second run changes nothing. JSON keeps its indentation. TOML is edited line by line;

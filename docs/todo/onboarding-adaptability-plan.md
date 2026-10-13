@@ -245,7 +245,9 @@ otlp_endpoint` and `[machine] export_endpoint`, and `{otlp_protocol}` is always
   exporter still counts as equivalent.
 - Claude Code's `prompt_export` group pairs `OTEL_LOG_USER_PROMPTS=1` with
   `OTEL_LOG_ASSISTANT_RESPONSES=0`, which otherwise follows it and exports assistant
-  response text; `doctor` warns on a file holding only part of a group.
+  response text. `doctor` reads a file's first `prompt_export` setting as its switch:
+  it warns when the switch is on while another setting is unset, and when some of a
+  harness's config roots export prompts while others do not.
 - Additional machines are a config role, `[machine] role = "additional"` with
   `export_endpoint` (the host collector's OTLP/HTTP base URL, the one export setting
   that may name another machine). `harness configure` renders `{otlp_endpoint}` from

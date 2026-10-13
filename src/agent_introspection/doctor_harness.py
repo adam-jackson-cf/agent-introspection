@@ -495,49 +495,127 @@ class _PromptSetting:
         return f"{where} is {actual}, where the profile writes {shown_value(self.wanted)}"
 
 
+@dataclass(frozen=True)
+class _PromptFile:
+    """One config file's prompt-export settings, in profile order.
+
+    The first is the file's switch: prompt text is exported only while it holds the
+    profile's value. Any others qualify what the switch exports (Claude Code's keeps
+    assistant responses redacted); one left unset follows the switch.
+    """
+
+    item: LoadedFile
+    settings: tuple[_PromptSetting, ...]
+
+    @property
+    def exporting(self) -> bool:
+        """Whether the switch is on, so the harness exports prompt text from this file."""
+        return self.settings[0].state == "on"
+
+    @property
+    def differing(self) -> list[_PromptSetting]:
+        """The settings not at the profile's value."""
+        return [row for row in self.settings if row.state != "on"]
+
+
+def _prompt_files(
+    profile: profiles.Profile, files: Sequence[LoadedFile], rendering: Mapping[str, str]
+) -> list[_PromptFile]:
+    """Return each readable file's prompt-export settings; files with none are left out."""
+    found = (
+        _PromptFile(
+            item,
+            tuple(
+                _PromptSetting(item, setting, setting.render(rendering))
+                for setting in profile.settings
+                if setting.group == "prompt_export" and setting.file == item.spec.id
+            ),
+        )
+        for item in files
+        if not item.error
+    )
+    return [prompt_file for prompt_file in found if prompt_file.settings]
+
+
+def _prompt_state(prompt_files: Sequence[_PromptFile]) -> str:
+    """Return ``on``, ``off``, ``partly``, or ``by_hand`` for a harness's files together.
+
+    ``partly``: some files export and others do not (one Codex home of several), or an
+    exporting file leaves a qualifying setting unset. ``by_hand``: every file exports
+    and a qualifying setting holds a value set by hand.
+    """
+    exporting = [prompt_file for prompt_file in prompt_files if prompt_file.exporting]
+    if not exporting:
+        return "off"
+    if len(exporting) < len(prompt_files) or any(
+        row.state == "unset" for prompt_file in exporting for row in prompt_file.settings
+    ):
+        return "partly"
+    return "by_hand" if any(prompt_file.differing for prompt_file in exporting) else "on"
+
+
+def _prompt_configure(
+    profile: profiles.Profile, prompt_files: Sequence[_PromptFile], home: Path
+) -> str:
+    """Return the ``--prompt-export`` command for the files that differ.
+
+    A file kept in each root (a Codex home) is named with ``--root``, as
+    ``export_check`` does, so the command writes the files that differ.
+    """
+    roots = "".join(
+        f" --root {shell_path(prompt_file.item.path.parent, home)}"
+        for prompt_file in prompt_files
+        if prompt_file.differing and prompt_file.item.spec.roots == "each"
+    )
+    return f"`agent-introspection harness configure {profile.key} --prompt-export{roots}`"
+
+
 def prompt_check(
     profile: profiles.Profile, files: Sequence[LoadedFile], context: HarnessContext
 ) -> list[Check]:
     """Report whether prompt export is on; off is a choice, never a failure.
 
-    The settings of a file work together (Claude Code's prompt switch also exports
-    assistant responses unless its partner keeps them redacted). A file that holds
-    some at the profile's value and leaves others unset warns: ``harness configure``
-    writes all of them or none. One whose other settings hold a value set by hand
-    (such as ``OTEL_LOG_ASSISTANT_RESPONSES=1``) is ``info``: a deliberate choice,
-    reported with the value and what ``harness configure --prompt-export`` would
-    write over it.
+    A file exports prompt text only while its switch (its first prompt-export setting)
+    holds the profile's value, so a file whose switch is unset or set otherwise is
+    ``off`` whatever its other settings hold. A harness some of whose files export and
+    others do not warns, naming the files that export. So does an exporting file that
+    leaves a qualifying setting unset (Claude Code's switch alone also exports
+    assistant responses): ``harness configure`` writes all of them or none. An
+    exporting file whose qualifying settings hold a value set by hand (such as
+    ``OTEL_LOG_ASSISTANT_RESPONSES=1``) is ``info``: a deliberate choice, reported with
+    the value and what ``harness configure --prompt-export`` would write over it.
     """
     rendering = profiles.export_context(profile, context.config.collector_endpoint)
-    rows = [
-        _PromptSetting(item, setting, setting.render(rendering))
-        for item in files
-        if not item.error
-        for setting in profile.settings
-        if setting.group == "prompt_export" and setting.file == item.spec.id
-    ]
-    if not rows:
+    prompt_files = _prompt_files(profile, files, rendering)
+    if not prompt_files:
         return []
-    differing = [row for row in rows if row.state != "on"]
-    if not differing:
+    state = _prompt_state(prompt_files)
+    if state == "on":
         return [check("prompt_export", "pass", "on: prompt text is exported for prompt labels")]
     home = context.probes.home
+    differing = [row for prompt_file in prompt_files for row in prompt_file.differing]
     detail = "; ".join(row.describe(home) for row in differing)
-    configure = f"`agent-introspection harness configure {profile.key} --prompt-export`"
+    configure = _prompt_configure(profile, prompt_files, home)
     writes = ", ".join(
         dict.fromkeys(f"{row.setting.key} to {shown_value(row.wanted)}" for row in differing)
     )
-    with_on = {row.item.path for row in rows if row.state == "on"}
-    if with_on & {row.item.path for row in differing if row.state == "unset"}:
+    if state == "partly":
+        exporting = [prompt_file for prompt_file in prompt_files if prompt_file.exporting]
+        paths = [shown_path(prompt_file.item.path, home) for prompt_file in exporting]
+        where = f"on in {', '.join(paths)}; " if len(exporting) < len(prompt_files) else ""
+        switches = ", ".join(
+            f"{prompt_file.settings[0].setting.key} from {path}"
+            for prompt_file, path in zip(exporting, paths, strict=True)
+        )
         return [
             check(
                 "prompt_export",
                 "warn",
-                f"partly on: {detail}",
-                f"{configure} sets {writes}; or remove the ones set to keep prompt export off",
+                f"partly on: {where}{detail}",
+                f"{configure} sets {writes}; or remove {switches} to keep prompt export off",
             )
         ]
-    if with_on & {row.item.path for row in differing}:
+    if state == "by_hand":
         return [
             check(
                 "prompt_export",

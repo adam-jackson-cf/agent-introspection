@@ -123,8 +123,8 @@ profile does not name (for example Orca's per-account Codex homes) is added with
    first. Without the flag, prompt-export settings are left as they are and reported
    with `opt_in` and `on`. For Claude Code it writes `OTEL_LOG_USER_PROMPTS=1` with
    `OTEL_LOG_ASSISTANT_RESPONSES=0`: unset, the second follows the first, and Claude
-   Code would also export each assistant response's text; `doctor` warns when only one
-   is set. It writes `0` over a value set by hand, such as
+   Code would also export each assistant response's text; `doctor` warns when the
+   first is set without the second. It writes `0` over a value set by hand, such as
    `OTEL_LOG_ASSISTANT_RESPONSES=1`: when the dry run shows such a `change` and the
    user chose that value, do not run the write. For omp, `activity.ts` sends no prompt text until its
    setting is on; omp's own content-capture option sends whole conversations, so
