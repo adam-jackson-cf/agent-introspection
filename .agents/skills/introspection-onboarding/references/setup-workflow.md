@@ -73,12 +73,17 @@ each such machine; the host machine keeps steps 1 to 10 above.
    sent earlier wait for the 3-day sweep or `facts backfill`.
 3. **Harnesses.** Run the harness configuration workflow (omp plugin, Claude hooks,
    Codex export) as on the host machine.
-4. **Timer.** Install the systemd user units from `.agents/skills/introspection-onboarding/scripts/` (paths are relative to the repository root) and enable them; the
+4. **Timer.** Fetch the repository at the same tag (the CLI install in step 1 does not
+   leave a clone): `git clone --depth 1 --branch <tag> <repository-url> "$UNITS_SRC"`, where
+   `UNITS_SRC` is a fresh temporary directory such as `$(mktemp -d)/repo`. Then install the
+   systemd user units from its `.agents/skills/introspection-onboarding/scripts/` (paths
+   below are relative to that clone) and enable them; the
    service runs `agent-introspection spool sync` (attribution scan, status record,
    OTLP drain) every minute:
 
    ```sh
    mkdir -p ~/.config/systemd/user
+   cd "$UNITS_SRC"
    cp .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.service \
       .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.timer ~/.config/systemd/user/
    systemctl --user daemon-reload

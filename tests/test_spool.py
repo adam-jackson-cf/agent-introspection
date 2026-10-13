@@ -352,6 +352,63 @@ def test_sync_ships_records_before_a_heartbeat_that_counts_them(
     assert result["drain"]["batches"] == 2
 
 
+def seed_stale_heartbeat(inbox: Path) -> str:
+    stale = spool.status_record(inbox, now=datetime(2026, 10, 1, tzinfo=UTC))
+    hooks.write(stale, inbox)
+    return str(stale["event_id"])
+
+
+def heartbeat_files(inbox: Path) -> list[dict[str, Any]]:
+    items = [json.loads(path.read_text()) for path in inbox.glob("*.json")]
+    return [item for item in items if item["schema"] == spool.STATUS_SCHEMA]
+
+
+def test_sync_sends_the_heartbeat_alone_when_the_record_drain_stops_early(
+    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
+    stale_id = seed_stale_heartbeat(inbox)
+    spool_records(inbox, 120)
+    collector.script = [(200, "{}"), (503, "")]
+
+    spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+
+    last = [e["body"]["stringValue"] for e in body_logs(collector.bodies[-1])]
+    assert [json.loads(text)["schema"] for text in last] == [spool.STATUS_SCHEMA]
+    assert stale_id not in {r["event_id"] for r in collector.records}
+    (beat,) = [r for r in collector.records if r["schema"] == spool.STATUS_SCHEMA]
+    assert beat["sent_total"] == {"hook-event": 50, "session-project": 0}
+    assert beat["pending"] == 70
+    assert heartbeat_files(inbox) == []
+
+
+def test_sync_spools_only_the_fresh_heartbeat_when_it_cannot_be_sent(
+    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
+    stale_id = seed_stale_heartbeat(inbox)
+    collector.default = (503, "")
+
+    spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+
+    (kept,) = heartbeat_files(inbox)
+    assert kept["event_id"] != stale_id
+
+
+def test_sync_skips_the_heartbeat_while_another_drain_holds_the_lock(
+    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
+    spool_records(inbox, 2)
+    with (inbox / ".drain.lock").open("a") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        result = spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+
+    assert result["drain"]["busy"] is True
+    assert collector.bodies == []
+    assert heartbeat_files(inbox) == []
+
+
 def body_logs(body: dict[str, Any]) -> list[dict[str, Any]]:
     logs: list[dict[str, Any]] = body["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
     return logs

@@ -386,21 +386,40 @@ def drain(
     result = DrainResult()
     if not directory.is_dir():
         return result
-    deadline = clock() + budget
     with _lock(directory) as held:
         if not held:
             result.busy = True
             return result
-        state = read_state(directory)
-        while clock() < deadline and (max_batches is None or result.batches < max_batches):
-            paths = pending_paths(directory, BATCH_SIZE)
-            if not paths:
-                break
-            keep_going = _ship(endpoint, paths, directory, state, result)
-            _save_state(directory, state)
-            if not keep_going or all(path.exists() for path in paths):
-                break
+        deadline = clock() + budget
+        _drain_held(endpoint, directory, result, lambda: clock() < deadline, max_batches)
     return result
+
+
+def _drain_held(
+    endpoint: str,
+    directory: Path,
+    result: DrainResult,
+    in_budget: Callable[[], bool],
+    max_batches: int | None,
+) -> None:
+    """Drain while the caller holds the drain lock and ``in_budget`` stays true."""
+    state = read_state(directory)
+    while in_budget() and (max_batches is None or result.batches < max_batches):
+        paths = pending_paths(directory, BATCH_SIZE)
+        if not paths:
+            break
+        keep_going = _ship(endpoint, paths, directory, state, result)
+        _save_state(directory, state)
+        if not keep_going or all(path.exists() for path in paths):
+            break
+
+
+def _prune_heartbeats(directory: Path) -> None:
+    """Delete unsent status heartbeats: the counter is cumulative, so a new one supersedes them."""
+    for path in pending_paths(directory):
+        item = _read_record(path)
+        if item is not None and item["schema"] == STATUS_SCHEMA:
+            path.unlink(missing_ok=True)
 
 
 def hook_endpoint(
@@ -464,13 +483,15 @@ def sync(
     Without an endpoint nothing is sent (and no heartbeat is written, which would only
     pile up), so records wait in the spool until one is configured.
 
-    Ordering invariant: records are drained first, the status snapshot is taken after,
-    and the heartbeat is then written and drained as its own request. So heartbeat k's
-    ``sent_total`` counts every record shipped before it, each of which the collector
-    observed at or before heartbeat k, and the records in the increment k-1 -> k are
-    observed in (heartbeat k-1, heartbeat k]: the window the Pipeline delivery check
-    counts. (If the first drain stops early on a backlog or a failure, the heartbeat can
-    share a later batch with leftover records, which the next heartbeat then counts.)
+    Ordering invariant: under one drain lock, unsent heartbeats from earlier runs are
+    deleted (superseded; the counter is cumulative), records are drained, the status
+    snapshot is taken, and the heartbeat is sent as its own request (spooled only when
+    that send fails). So heartbeat k's ``sent_total`` counts every record shipped before
+    it, each of which the collector observed at or before heartbeat k, and the records in
+    the increment k-1 -> k are observed in (heartbeat k-1, heartbeat k]: the window the
+    Pipeline delivery check counts. This holds except for a microsecond race with a hook
+    drain that ships a batch as the lock changes hands, which the check's GAP_FLOOR
+    absorbs. A busy lock skips the heartbeat.
     """
     from agent_introspection import sessions
 
@@ -484,15 +505,20 @@ def sync(
     endpoint = resolve_otlp_logs_endpoint(config.hooks_otlp_logs_endpoint, environ)
     if endpoint is None:
         return {"sessions": attributed, "drain": {"skipped": "no_endpoint"}}
-    sent = drain(endpoint, inbox=directory)
-    status = status_record(directory)
-    hooks.write(status, directory)
-    beat = drain(endpoint, inbox=directory)
-    sent.batches += beat.batches
-    sent.sent += beat.sent
-    sent.rejected += beat.rejected
-    sent.busy = sent.busy or beat.busy
-    sent.error_class = sent.error_class or beat.error_class
+    sent = DrainResult()
+    directory.mkdir(parents=True, exist_ok=True)
+    with _lock(directory) as held:
+        if not held:
+            sent.busy = True
+            return {"sessions": attributed, "drain": sent.as_dict()}
+        _prune_heartbeats(directory)
+        deadline = time.monotonic() + DRAIN_BUDGET_SECONDS
+        _drain_held(endpoint, directory, sent, lambda: time.monotonic() < deadline, None)
+        status = status_record(directory)
+        beat = hooks.write(status, directory)
+        state = read_state(directory)
+        _ship(endpoint, [beat], directory, state, sent)
+        _save_state(directory, state)
     return {
         "sessions": attributed,
         "status": {key: status[key] for key in ("pending", "rejected")},

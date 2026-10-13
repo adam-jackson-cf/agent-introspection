@@ -13,8 +13,11 @@ import {
 } from "./pipeline";
 import {
   HOME_PATH_CUTOFF,
+  NS_AGO,
   ORDERED_TOTALS,
+  PRODUCER_PRUNE,
   SENT_FROM_TOTALS,
+  spoolDelivery,
   SPOOL_STATUS,
   SPOOL_DELIVERY,
   spoolExceptions,
@@ -469,8 +472,10 @@ describe("spool delivery: sent counters against records received", () => {
     });
   });
 
-  test("the query orders and windows heartbeats by collector arrival, not producer time", () => {
+  test("the query orders heartbeats by their producer timestamp and windows them by collector arrival", () => {
     expect(SPOOL_DELIVERY).toContain("observed_timestamp AS observed_ns");
+    expect(SPOOL_DELIVERY).toContain("timestamp AS produced_ns");
+    expect(SPOOL_DELIVERY).toContain(`timestamp > ${NS_AGO(PRODUCER_PRUNE)}`);
     expect(SPOOL_DELIVERY).toContain(ORDERED_TOTALS);
     expect(SPOOL_DELIVERY).toContain(SENT_FROM_TOTALS("b.totals"));
     expect(SPOOL_DELIVERY).toContain(
@@ -499,7 +504,7 @@ describe("spool delivery: sent counters against records received", () => {
       .map((total, index) => `(${index + 1}, ${total})`)
       .reverse()
       .join(", ");
-    const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('observed_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
+    const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
     const proc = Bun.spawn(
       ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
       { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
@@ -523,37 +528,68 @@ describe("spool delivery: sent counters against records received", () => {
     120000,
   );
 
-  // Mirrors SPOOL_DELIVERY's window over inline values(): heartbeats h1..h3 carry
-  // sent_total; records are observed before the heartbeat that counts them.
+  // Runs SPOOL_DELIVERY's own arrived/beats logic over inline rows shaped like the
+  // logs table (offsets are seconds before now). Read-only.
+  const logRow = (
+    kind: "beat" | "record",
+    host: string,
+    observedAgo: number,
+    producedAgo: number,
+    sentTotal = 0,
+  ): string => {
+    const body =
+      kind === "beat"
+        ? `{"schema":"agent-introspection.spool-status/1","sent_total":{"hook-event":${sentTotal},"session-project":0}}`
+        : `{"schema":"agent-introspection.hook-event/1"}`;
+    const event =
+      kind === "beat"
+        ? "agent_introspection.spool_status"
+        : "agent_introspection.hook_event";
+    const ns = (ago: number) =>
+      `toUInt64(toUnixTimestamp(now() - INTERVAL ${ago} SECOND)) * 1000000000`;
+    return `SELECT ${ns(producedAgo)} AS timestamp, ${ns(observedAgo)} AS observed_timestamp, '${body}' AS body, map('service.name', 'agent-introspection', 'host.name', '${host}') AS resources_string, map('event.name', '${event}') AS attributes_string`;
+  };
+  const deliveryFor = async (rows: string[]): Promise<Row[]> => {
+    const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
+    const proc = Bun.spawn(
+      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
+      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+    );
+    const [out, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
+    return out
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Row);
+  };
+
   test.skipIf(!live)(
-    "records shipped just before a heartbeat are received inside its window (sync order)",
+    "SPOOL_DELIVERY counts a window by arrival, keeps old-producer records, and ignores shipping order",
     async () => {
-      // h1 at 1000 (total 0), sync ships 20 records at 1001..1020, h2 at 1021 counts 20.
-      const heartbeats = [
-        [1000, 0],
-        [1021, 20],
+      const hour = 3600;
+      // Heartbeats produced at totals 100, 130, 160; the 130 beat is stale and
+      // ships last, so arrival order is 100, 160, 130. Producer order gives 60.
+      const beats = [
+        logRow("beat", "h", 5 * hour, 5 * hour, 100),
+        logRow("beat", "h", 3 * hour, 3 * hour, 160),
+        logRow("beat", "h", 2 * hour, 4 * hour, 130),
       ];
-      const records = Array.from({ length: 20 }, (_, i) => 1001 + i);
-      const hb = heartbeats
-        .map(([ns, total]) => `(${ns}, ${total})`)
-        .join(", ");
-      const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent, (SELECT count() FROM values('ns UInt64', ${records.map((n) => `(${n})`).join(", ")}) WHERE ns > 1000 AND ns <= 1021) AS received FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('observed_ns UInt64, sent_total Int64', ${hb})) FORMAT TSV`;
-      const proc = Bun.spawn(
-        ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-        {
-          stdin: new TextEncoder().encode(sql),
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-      const [out, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        proc.exited,
-      ]);
-      if (code !== 0) throw new Error(await new Response(proc.stderr).text());
-      const [sent, received] = out.trim().split("\t").map(Number);
-      expect(sent).toBe(20);
-      expect(received).toBe(sent);
+      // Within the window (arrived after the first beat, by the last beat):
+      // one produced 3 days ago (past the old 48 hour guard) but observed 3.5 hours ago, one produced just
+      // before arriving, one outside the window.
+      const records = [
+        logRow("record", "h", 3.5 * hour, 3 * 24 * hour),
+        logRow("record", "h", 3.5 * hour, 3.5 * hour),
+        logRow("record", "h", 6 * hour, 6 * hour),
+      ];
+      const rows = await deliveryFor([...beats, ...records]);
+      const hook = rows.find((row) => row.family === "hook-event");
+      expect(Number(hook!.sent)).toBe(60);
+      expect(Number(hook!.received)).toBe(2);
     },
     120000,
   );

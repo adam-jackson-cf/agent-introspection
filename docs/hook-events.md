@@ -71,8 +71,10 @@ freshness and sanitization) therefore selects a family by `service.name`,
 - A collector 2xx is not durable storage: a collector restart between its ack and the
   ClickHouse write can lose a batch while the backlog reads 0. That exposure is
   accepted and detected, not prevented: each status heartbeat carries cumulative sent
-  counts per family (`spool sync` drains records, then snapshots, then sends the heartbeat
-  as its own later request, so a heartbeat never counts a record observed after it;
+  counts per family (`spool sync`, under one drain lock, deletes unsent older
+  heartbeats, drains records, snapshots, then sends the heartbeat as its own request, so
+  a heartbeat never counts a record observed after it, except for a microsecond race with
+  a hook drain that the delivery check's 2-record floor absorbs;
   heartbeats from before this ordering can show a first-window gap for up to 24 hours)
   and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging hosts that received fewer than they sent.
 

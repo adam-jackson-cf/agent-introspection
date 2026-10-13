@@ -101,13 +101,62 @@ const DELIVERY_LAG_MINUTES = 5;
 /** Window of the sent-versus-received comparison. */
 const DELIVERY_WINDOW = "24 HOUR";
 
-/** Sent records from `totals`, an array of cumulative counter values in arrival order. */
-/** A group's cumulative counter values in arrival order (`observed_ns`, `sent_total` columns). */
+/**
+ * A group's cumulative counter values in the producer's order (`produced_ns`,
+ * `sent_total` columns). \`produced_ns\` is the heartbeat's own \`timestamp\`
+ * (reported_at), monotonic per host, so a stale heartbeat shipped late cannot
+ * read as a counter reset the way collector arrival order would.
+ */
 export const ORDERED_TOTALS =
-  "arrayMap(beat -> beat.2, arraySort(groupArray((observed_ns, sent_total))))";
+  "arrayMap(beat -> beat.2, arraySort(groupArray((produced_ns, sent_total))))";
 
+/** Sent records from `totals`, an array of cumulative counter values in producer order. */
 export const SENT_FROM_TOTALS = (totals: string): string =>
   `arraySum(arrayMap((cur, prev) -> if(cur >= prev, cur - prev, cur), arrayPopFront(${totals}), arrayPopBack(${totals})))`;
+
+/**
+ * Partition-pruning guard on the producer \`timestamp\` of delivery sources. It
+ * only prunes; it must never be tighter than the loaders' sweep horizon (3 days
+ * on \`observed_timestamp\`, facts.py), or records the sender counted as sent
+ * and the loaders still pick up would drop out of received. Hence 4 days.
+ */
+export const PRODUCER_PRUNE = "4 DAY";
+
+/** The logs table the delivery check reads. */
+export const LOGS_TABLE = "signoz_logs.distributed_logs_v2";
+
+/**
+ * Per host and family, the heartbeats' cumulative counters in producer order
+ * and the window bounds (collector \`observed_timestamp\`) of the delivery
+ * window, ending a few minutes ago. \`source\`
+ * is any table or subquery with the logs columns.
+ */
+export const deliveryBeats = (source: string): string => `beats AS (
+    SELECT host, family,
+        ${ORDERED_TOTALS} AS totals,
+        min(observed_ns) AS first_ns, max(observed_ns) AS last_ns
+    FROM (
+        SELECT resources_string['host.name'] AS host, observed_timestamp AS observed_ns,
+            timestamp AS produced_ns, family,
+            JSONExtractInt(body, 'sent_total', family) AS sent_total
+        FROM ${source}
+        ARRAY JOIN ['hook-event', 'session-project'] AS family
+        WHERE timestamp > ${NS_AGO(PRODUCER_PRUNE)}
+            AND observed_timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND observed_timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
+            AND ${rawFamily("spool")}
+    )
+    GROUP BY host, family
+)`;
+
+/** Per host and family, the arrival time of each record the host's loaders can see. */
+export const deliveryArrived = (source: string): string => `arrived AS (
+    SELECT resources_string['host.name'] AS host,
+        if(attributes_string['event.name'] = 'agent_introspection.hook_event', 'hook-event', 'session-project') AS family,
+        observed_timestamp AS observed_ns
+    FROM ${source}
+    WHERE timestamp > ${NS_AGO(PRODUCER_PRUNE)} AND observed_timestamp > ${NS_AGO("25 HOUR")}
+        AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
+)`;
 
 /**
  * Per host and record family: records the host's spool reports sending in the
@@ -115,38 +164,20 @@ export const SENT_FROM_TOTALS = (totals: string): string =>
  * collector accepted and then lost.
  *
  * Sent is the growth of the cumulative \`sent_total\` counter across the window's
- * heartbeats in arrival order (\`observed_timestamp\`, collector-stamped, so a
- * skewed host clock changes neither order nor window): the sum of positive
+ * heartbeats in producer order (each heartbeat's own \`timestamp\`, monotonic per
+ * host, so a late-shipped stale heartbeat is not a reset): the sum of positive
  * increments between consecutive heartbeats, where a decrease is a counter
  * reset and the post-reset value itself is the increment (100, 0, 150 sent 150).
- * Heartbeats from the last ${DELIVERY_LAG_MINUTES} minutes are excluded so
- * in-flight batches never read as lost. Received counts the family's records by
- * arrival (\`observed_timestamp\`, the loaders' basis) between the first and last
- * of those heartbeats.
+ * The window bounds stay on collector-stamped \`observed_timestamp\`, which a
+ * skewed host clock cannot move. Heartbeats from the last ${DELIVERY_LAG_MINUTES}
+ * minutes are excluded so in-flight batches never read as lost. Received counts
+ * the family's records by arrival (\`observed_timestamp\`, the loaders' basis)
+ * between the first and last of those heartbeats.
  */
-export const SPOOL_DELIVERY = `WITH beats AS (
-    SELECT host, family,
-        ${ORDERED_TOTALS} AS totals,
-        min(observed_ns) AS first_ns, max(observed_ns) AS last_ns
-    FROM (
-        SELECT resources_string['host.name'] AS host, observed_timestamp AS observed_ns, family,
-            JSONExtractInt(body, 'sent_total', family) AS sent_total
-        FROM signoz_logs.distributed_logs_v2
-        ARRAY JOIN ['hook-event', 'session-project'] AS family
-        WHERE timestamp > ${NS_AGO("48 HOUR")}
-            AND observed_timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND observed_timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
-            AND ${rawFamily("spool")}
-    )
-    GROUP BY host, family
-),
-arrived AS (
-    SELECT resources_string['host.name'] AS host,
-        if(attributes_string['event.name'] = 'agent_introspection.hook_event', 'hook-event', 'session-project') AS family,
-        observed_timestamp AS observed_ns
-    FROM signoz_logs.distributed_logs_v2
-    WHERE timestamp > ${NS_AGO("48 HOUR")} AND observed_timestamp > ${NS_AGO("25 HOUR")}
-        AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
-)
+export const spoolDelivery = (
+  source: string,
+): string => `WITH ${deliveryBeats(source)},
+${deliveryArrived(source)}
 SELECT b.host AS host, b.family AS family,
     ${SENT_FROM_TOTALS("b.totals")} AS sent,
     countIf(a.observed_ns > b.first_ns AND a.observed_ns <= b.last_ns) AS received
@@ -154,6 +185,8 @@ FROM beats AS b
 LEFT JOIN arrived AS a ON a.host = b.host AND a.family = b.family
 GROUP BY b.host, b.family, b.totals, b.first_ns, b.last_ns
 ORDER BY host, family`;
+
+export const SPOOL_DELIVERY = spoolDelivery(LOGS_TABLE);
 
 /** Records short of sent that still read as in flight or load lag, not loss. */
 const GAP_FLOOR = 2;
