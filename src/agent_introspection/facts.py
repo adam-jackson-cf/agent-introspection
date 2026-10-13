@@ -6,6 +6,12 @@ views normalize them, snapshot tables hold the last 90 days of each view's resul
 rebuilt every 10 minutes after a load, and the signal support registry records how
 each producer reaches each dashboard signal. The dashboard reads small aggregates
 from the snapshots.
+
+Refreshers are staggered across the hour so no two heavy queries overlap, because
+the server kills a query when total memory passes its limit. Minute map, in UTC:
+``:x0`` minute loaders only; ``:x1``-``:x4`` and ``:x6``-``:x8`` one recent
+refresher each; ``:x5`` one history refresher (00:35-01:35); ``:09`` the hourly
+sweeps.
 """
 
 from __future__ import annotations
@@ -77,12 +83,14 @@ _RECORD_BACKFILL_WINDOW = (
 # (a delayed collector export keeps its original observed time), so an hourly sweep
 # re-reads three days of each source. The span sweep keys on end time, bounded only
 # by retention, so a span that ran for days is still loaded once it is exported.
+MINUTE_SCHEDULE = "EVERY 1 MINUTE"
+SWEEP_SCHEDULE = "EVERY 1 HOUR OFFSET 9 MINUTE"
 LOADERS = (
     Loader(
         name="load_spans",
         target="spans",
         select_file="select_spans.sql",
-        schedule="EVERY 1 MINUTE",
+        schedule=MINUTE_SCHEDULE,
         window=(
             "timestamp > now() - INTERVAL 1 DAY"
             " AND timestamp + toIntervalNanosecond(duration_nano) > now() - INTERVAL 30 MINUTE"
@@ -92,7 +100,7 @@ LOADERS = (
         name="sweep_spans",
         target="spans",
         select_file="select_spans.sql",
-        schedule="EVERY 1 HOUR",
+        schedule=SWEEP_SCHEDULE,
         window=(
             "timestamp > now() - INTERVAL 90 DAY"
             " AND timestamp + toIntervalNanosecond(duration_nano) > now() - INTERVAL 3 DAY"
@@ -102,14 +110,14 @@ LOADERS = (
         name="sweep_logs",
         target="logs",
         select_file="select_logs.sql",
-        schedule="EVERY 1 HOUR",
+        schedule=SWEEP_SCHEDULE,
         window="timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 3 DAY)) * 1000000000",
     ),
     Loader(
         name="load_logs",
         target="logs",
         select_file="select_logs.sql",
-        schedule="EVERY 1 MINUTE",
+        schedule=MINUTE_SCHEDULE,
         window=(
             "observed_timestamp"
             " > toUInt64(toUnixTimestamp(now() - INTERVAL 30 MINUTE)) * 1000000000"
@@ -120,28 +128,28 @@ LOADERS = (
         name="sweep_hook_events",
         target="hook_events",
         select_file="select_hook_events.sql",
-        schedule="EVERY 1 HOUR",
+        schedule=SWEEP_SCHEDULE,
         window=_RECORD_SWEEP_WINDOW,
     ),
     Loader(
         name="load_hook_events",
         target="hook_events",
         select_file="select_hook_events.sql",
-        schedule="EVERY 1 MINUTE",
+        schedule=MINUTE_SCHEDULE,
         window=_RECORD_LOAD_WINDOW,
     ),
     Loader(
         name="sweep_session_projects",
         target="session_projects",
         select_file="select_session_projects.sql",
-        schedule="EVERY 1 HOUR",
+        schedule=SWEEP_SCHEDULE,
         window=_RECORD_SWEEP_WINDOW,
     ),
     Loader(
         name="load_session_projects",
         target="session_projects",
         select_file="select_session_projects.sql",
-        schedule="EVERY 1 MINUTE",
+        schedule=MINUTE_SCHEDULE,
         window=_RECORD_LOAD_WINDOW,
     ),
 )
@@ -189,11 +197,13 @@ REFRESH_SETTINGS = (
     f"max_bytes_before_external_sort = {REFRESH_SPILL_BYTES}, "
     "join_algorithm = 'grace_hash,hash'"
 )
-# Backfill INSERT ... SELECT runs the heavy projections over raw source rows, so it uses
-# the refresh ceiling plus small blocks and one insert thread, over short windows. Rows
-# are identical to a whole-day run, and ReplacingMergeTree makes a rerun idempotent.
+# Loaders, sweeps and backfill INSERT ... SELECT run the heavy projections over raw
+# source rows, so they use the refresh ceiling plus small blocks and one insert thread.
+# Backfill runs over short windows; rows are identical to a whole-day run, and
+# ReplacingMergeTree makes a rerun idempotent. Do not cap below 1.5 GiB: the log sweep
+# peaks near 1.05 GiB.
 BACKFILL_WINDOW = timedelta(hours=6)
-BACKFILL_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_threads = 1"
+LOAD_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_threads = 1"
 # Each snapshot is two tables behind one view. Recent holds the days whose facts can
 # still change and is rebuilt every 10 minutes: the minute log loader accepts a log up
 # to 7 days after its event (it selects by arrival time), so recent covers 8 days and
@@ -202,14 +212,17 @@ BACKFILL_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_thre
 # view takes rows before the boundary from history and the rest from recent; both
 # tables overlap the boundary, so between rebuilds no row is missed or repeated:
 # history built yesterday still reaches the boundary, recent always starts before it.
-SNAPSHOT_SCHEDULE = "EVERY 10 MINUTE"
+RECENT_PERIOD_MINUTES = 10
+# Minute map within each 10-minute period (see the module docstring): :x0 is left to the
+# minute loaders, :x5 to history, and the sweeps run at :09, so recents take the rest.
+RECENT_OFFSET_MINUTES = (1, 2, 3, 4, 6, 7, 8)
 # Each history refresher scans the most data, and the server kills a query when total
 # server RSS (not one query's memory) passes its limit. So history refreshers run one at
-# a time, 10 minutes apart from 00:35 UTC, and never on a :x0 minute, where the recent
-# refreshers, the hourly sweeps and the minute loaders also fire. Offsets are minute-only
+# a time, 10 minutes apart from 00:35 UTC, always on a :x5 minute: the minute loaders own
+# :x0, the recent refreshers :x1-:x4 and :x6-:x8, and the hourly sweeps :09. Offsets are minute-only
 # because `_REFRESH_SCHEDULE` rewrites a single-unit OFFSET for `facts verify`. A view
-# that DEPENDS ON another must come later in SNAPSHOTS: ClickHouse waits only for a
-# dependency whose offset is earlier in the same period.
+# that DEPENDS ON another must come later in SNAPSHOTS, for recent and history alike:
+# ClickHouse waits only for a dependency whose offset is earlier in the same period.
 HISTORY_FIRST_OFFSET_MINUTES = 35
 HISTORY_OFFSET_STEP_MINUTES = 10
 # A failed refresh backs off 30 s to 5 min, instead of the default 100-200 ms that
@@ -268,12 +281,19 @@ SNAPSHOTS = (
     Snapshot("model_call_attempts", "(harness, ts)"),
     Snapshot("task_labels", "(harness, start_ts)", "start_ts", "004_labels.sql", "task_outcomes"),
 )
+assert len(RECENT_OFFSET_MINUTES) == len(SNAPSHOTS), "one recent minute slot per snapshot"
 
 
 def history_schedule(snapshot: Snapshot) -> str:
     """Return the daily schedule of a snapshot's history refresher, staggered by position."""
     offset = HISTORY_FIRST_OFFSET_MINUTES + HISTORY_OFFSET_STEP_MINUTES * SNAPSHOTS.index(snapshot)
     return f"EVERY 1 DAY OFFSET {offset} MINUTE"
+
+
+def recent_schedule(snapshot: Snapshot) -> str:
+    """Return the schedule of a snapshot's recent refresher, one minute slot per position."""
+    offset = RECENT_OFFSET_MINUTES[SNAPSHOTS.index(snapshot)]
+    return f"EVERY {RECENT_PERIOD_MINUTES} MINUTE OFFSET {offset} MINUTE"
 
 
 REGISTRY_FILE = "signal_support.toml"
@@ -343,7 +363,8 @@ def loader_ddl(loader: Loader) -> str:
         f"REFRESH {loader.schedule}\n"
         f"SETTINGS {REFRESH_RETRY_SETTINGS}\n"
         f"APPEND TO {DATABASE}.{loader.target}\n"
-        f"AS\n{render_select(loader.select_file, loader.window)}"
+        f"AS\n{render_select(loader.select_file, loader.window).rstrip()}\n"
+        f"SETTINGS {LOAD_SETTINGS}"
     )
 
 
@@ -369,7 +390,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
     history, recent = (f"{base}_history", f"{base}_recent")
 
     def refresher(part: int, schedule: str, table: str, keep: str, filters: str) -> str:
-        minute_loaders = (loader for loader in LOADERS if loader.schedule.endswith("MINUTE"))
+        minute_loaders = (loader for loader in LOADERS if loader.schedule == MINUTE_SCHEDULE)
         waits = [f"{DATABASE}.{loader.name}" for loader in minute_loaders]
         if snapshot.reads:
             upstream = next(s for s in SNAPSHOTS if s.view == snapshot.reads)
@@ -405,7 +426,7 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         ),
         refresher(
             1,
-            SNAPSHOT_SCHEDULE,
+            recent_schedule(snapshot),
             recent,
             f"{column} >= {_days_before_today(RECENT_START_DAYS)}",
             RECENT_FILTERS,
@@ -750,7 +771,7 @@ def backfill_statement(target: str, lower: datetime, upper: datetime) -> str:
     )
     return (
         f"INSERT INTO {DATABASE}.{target}\n{render_select(_SELECT_FILES[target], window)}\n"
-        f"SETTINGS {BACKFILL_SETTINGS}"
+        f"SETTINGS {LOAD_SETTINGS}"
     )
 
 

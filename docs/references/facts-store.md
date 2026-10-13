@@ -91,12 +91,28 @@ through one `<view>_snapshot` view:
 
 - `<view>_recent` holds the last 8 days, the days whose facts can still change (late
   logs up to 7 days, span and log sweeps over 3 days, prompt labels over 2 days). It is
-  rebuilt every 10 minutes after the minute loaders, reading one extra day of spans and
+  rebuilt every 10 minutes after the minute loaders, at its own minute (see the schedule
+  map below), reading one extra day of spans and
   logs so rows near its start are computed with their neighbours.
 - `<view>_history` holds the older days and is rebuilt once a day, between 00:35 and 01:35 UTC, one view at a time.
 - `<view>_snapshot` takes rows from history before the start of today minus 7 days (UTC)
   and from recent after it. Both tables overlap that boundary, so between rebuilds no
   row is missed or repeated.
+
+Refreshers are staggered so the heaviest queries never overlap; ClickHouse kills a
+query when total server memory passes its limit. Within each 10-minute period (UTC):
+
+| Minute                   | Runs                                                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:x0`                    | the minute loaders only                                                                                                                            |
+| `:x1`-`:x4`, `:x6`-`:x8` | one `_recent` refresher each, in view order (usage_events, task_outcomes, tool_calls, user_signals, model_calls, model_call_attempts, task_labels) |
+| `:x5`                    | one `_history` refresher a day, 00:35 to 01:35                                                                                                     |
+| `:09`                    | the four hourly sweeps (all at minute 9 of the hour)                                                                                               |
+
+A view that reads another snapshot (`task_labels` on `task_outcomes`) sits later in the
+order, because ClickHouse waits for a dependency only when its offset is earlier in the
+same period. Loader and sweep queries share the backfill memory settings
+(`LOAD_SETTINGS`: 1.5 GiB ceiling, spilling to disk).
 
 Each table is replaced whole on every rebuild, so neither holds duplicates or rows the
 facts no longer produce. The dashboard trails SigNoz by up to about 10 minutes, and
