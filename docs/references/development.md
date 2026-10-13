@@ -57,8 +57,9 @@ re-stage); CI runs it check-only.
    `--fix --stage`, so a commit auto-fixes and re-stages lint changes; it refuses to
    stage over unstaged changes. CI runs the check-only suite.
 
-6. After any Python change, reinstall the standalone CLI, because the launchd job and
-   every activity hook run that copy: `uv tool install --force --reinstall .`
+6. After any Python change, reinstall the standalone CLI, because the scheduled sync
+   (a launchd agent on macOS, a systemd user timer on Linux) and every activity hook
+   run that copy: `uv tool install --force --reinstall .`
 
 ## Guardrails
 

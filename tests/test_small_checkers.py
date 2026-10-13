@@ -114,10 +114,16 @@ def test_render_measures_handles_missing_outputs(
     script = _load("render-measures")
     monkeypatch.setattr(script, "DOC", tmp_path / "measure.md")
     monkeypatch.setattr(script, "GAPS", tmp_path / "gaps.md")
+    monkeypatch.setattr(script, "HARNESSES_MODULE", tmp_path / "harnesses.generated.ts")
+    monkeypatch.setattr(script, "CAPABILITIES_DOC", tmp_path / "capabilities.md")
     monkeypatch.setattr(script, "render_gaps", lambda: "gaps")
+    monkeypatch.setattr(script, "render_harnesses", lambda: "harnesses")
+    monkeypatch.setattr(script, "render_capabilities", lambda: "capabilities")
     monkeypatch.setattr(script, "updated", lambda _text, content=None: f"rendered {content}")
     assert script.main(["--check"]) == 1
     assert "out of date" in capsys.readouterr().out
     assert script.main([]) == 0
     assert (tmp_path / "gaps.md").exists()
+    assert (tmp_path / "harnesses.generated.ts").read_text() == "harnesses"
+    assert (tmp_path / "capabilities.md").read_text() == "rendered capabilities"
     assert script.main(["--check"]) == 0

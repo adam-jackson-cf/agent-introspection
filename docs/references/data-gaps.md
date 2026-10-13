@@ -18,7 +18,7 @@ harness does not emit it, so the signal is hidden wherever that harness is enabl
 
 ## Harness support matrix
 
-58 per-harness signals across 5 harnesses: 290 cells, 165 aligned (✓), 104 reached by a different route (≈), 7 not applicable by construction (—), 14 not emitted (✗).
+58 per-harness signals across 5 harnesses: 290 cells, 165 aligned (✓), 103 reached by a different route (≈), 8 not applicable by construction (—), 14 not emitted (✗).
 
 Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
@@ -81,7 +81,7 @@ Parity is judged per machine, over the harnesses it uses (config `[harnesses] en
 | Requests and corrections    | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
 | Requests and corrections    | Correction kinds             | ≈   | ✓                | ✓         | —          | ✓           |
 | Requests and corrections    | Frustrated follow-ups        | ≈   | ✓                | ✓         | —          | ✓           |
-| Requests and corrections    | Effort payoff by task type   | ≈   | ✓                | ✓         | ≈          | ✓           |
+| Requests and corrections    | Effort payoff by task type   | ≈   | ✓                | ✓         | —          | ✓           |
 
 ## Signals a harness does not emit
 
@@ -106,15 +106,16 @@ Each is hidden on a machine that enables the harness.
 
 ## Signals not applicable to a harness
 
-| Signal                       | Harness    | Why                                                               |
-| ---------------------------- | ---------- | ----------------------------------------------------------------- |
-| Interrupted tasks            | Codex exec | Headless: no user can interrupt.                                  |
-| Steered tasks                | Codex exec | Headless: no user can steer.                                      |
-| Quick follow-up              | Codex exec | Headless one-shot runs: nobody can follow up.                     |
-| Clean completion             | Codex exec | Headless: follow-up is unobservable, so clean completion is NULL. |
-| Corrected by the next prompt | Codex exec | Headless one-shot runs have no next prompt.                       |
-| Correction kinds             | Codex exec | Headless one-shot runs have no next prompt.                       |
-| Frustrated follow-ups        | Codex exec | Headless one-shot runs have no next prompt.                       |
+| Signal                       | Harness    | Why                                                                                                             |
+| ---------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
+| Interrupted tasks            | Codex exec | Headless: no user can interrupt.                                                                                |
+| Steered tasks                | Codex exec | Headless: no user can steer.                                                                                    |
+| Quick follow-up              | Codex exec | Headless one-shot runs: nobody can follow up.                                                                   |
+| Clean completion             | Codex exec | Headless: follow-up is unobservable, so clean completion is NULL.                                               |
+| Corrected by the next prompt | Codex exec | Headless one-shot runs have no next prompt.                                                                     |
+| Correction kinds             | Codex exec | Headless one-shot runs have no next prompt.                                                                     |
+| Frustrated follow-ups        | Codex exec | Headless one-shot runs have no next prompt.                                                                     |
+| Effort payoff by task type   | Codex exec | Headless one-shot runs have no next prompt, so neither rate applies; their labelled tasks still count in Tasks. |
 
 ## Signals reached by a different route
 
@@ -225,7 +226,6 @@ These are emitted, but the route differs from the shared definition; the note sa
 | Correction kinds             | omp              | Prompt event sent by the omp activity extension.                                                                                                                                                                                |
 | Frustrated follow-ups        | omp              | Prompt event sent by the omp activity extension.                                                                                                                                                                                |
 | Effort payoff by task type   | omp              | Prompt event sent by the omp activity extension.                                                                                                                                                                                |
-| Effort payoff by task type   | Codex exec       | Task type only; corrections and clean completion are not applicable to headless runs.                                                                                                                                           |
 
 ## Excluded signals
 

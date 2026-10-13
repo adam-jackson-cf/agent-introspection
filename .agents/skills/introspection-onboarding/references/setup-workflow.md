@@ -1,107 +1,134 @@
 # Setup workflow
 
-Install Agent Introspection against the SigNoz already running on this machine, or
-reinstall it after a change that re-projects the facts or changes finding identities.
+Install Agent Introspection on one machine, the user's own desktop, against the SigNoz
+on it; or reinstall it after a change that re-projects the facts or changes finding
+identities. This single-machine path is the default. To also send records from other
+machines, finish here first, then follow the
+[additional machines workflow](additional-machines-workflow.md).
+
+Run every command from the repository root. Until step 5 installs the CLI, run it as
+`uv run agent-introspection …` (an older installed copy may lack the newer commands).
+Before and after each step, `agent-introspection doctor` (read-only) shows what is
+missing: every check that is not `pass` carries a `fix` (statuses are explained in the
+[validation workflow](validation-workflow.md#configuration-check)).
 
 ## Requirements
 
-- A self-hosted SigNoz on the host machine with ClickHouse 24.10 or later, on a single
+- A self-hosted SigNoz on this machine with ClickHouse 24.10 or later, on a single
   node. SigNoz Cloud (no ClickHouse access) and multi-node clusters are unsupported.
-- ClickHouse reachable locally, one of:
-  - **docker mode:** `docker exec` into its container (the name `docker ps` shows);
+- ClickHouse reachable from this machine in one of two modes; ask the user which:
+  - **docker mode:** `docker exec` into the ClickHouse container (the name `docker ps`
+    shows);
   - **http mode:** its HTTP interface at a local address: loopback, `localhost`, or a
-    container name the runtime resolves on the host (for example OrbStack's
+    container name the runtime resolves on this machine (for example OrbStack's
     `*.orb.local`). The config refuses other hosts.
-- The dashboard reads ClickHouse over HTTP in both modes. SigNoz's Compose file does
-  not publish the HTTP port by default; if the runtime cannot resolve the container
-  name, the user publishes it on loopback (their change to SigNoz, not ours).
+- The dashboard reads ClickHouse over HTTP in both modes. SigNoz does not publish
+  ClickHouse's HTTP port by default; if the runtime cannot resolve the container name,
+  the user may publish it on loopback with the opt-in
+  `scripts/signoz/docker-compose.clickhouse-http.yaml` (their change to SigNoz). The
+  override also moves SigNoz's OTLP and UI ports to loopback.
 - A ClickHouse user with `SELECT` on `signoz_traces.*`, `signoz_logs.*`, and
   `system.view_refreshes`, plus `CREATE DATABASE, CREATE TABLE, CREATE VIEW,
 DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
   default user usually has them).
 
+SigNoz is installed in one of two layouts, which name things differently:
+
+| Layout                                        | ClickHouse container                   | Collector service | Collector config                |
+| --------------------------------------------- | -------------------------------------- | ----------------- | ------------------------------- |
+| Foundry (current; used by the guided install) | `signoz-telemetrystore-clickhouse-0-0` | `ingester`        | `config.data` in `casting.yaml` |
+| `deploy/docker` Compose files (deprecated)    | `signoz-clickhouse`                    | `otel-collector`  | `otel-collector-config.yaml`    |
+
+Docker mode names the ClickHouse container in `[signoz] clickhouse_container`;
+`config.example.toml` shows the older name. On its own, a Foundry install publishes the
+OTLP ports 4317 and 4318 and the UI port 8080 on all interfaces, and does not publish
+ClickHouse's HTTP port 8123. The override, which the guided install applies, publishes
+all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
+`deploy/docker` install, rename its three service keys first (its header says how).
+
 ## Steps
 
-1. **Connect.** With the user (never asking them to paste a secret), find how
-   ClickHouse is reached and the local collector endpoints, then write
-   `~/.config/agent-introspection/config.toml` from `config.example.toml`:
-   - `[signoz]`: exactly one mode. Docker: `clickhouse_container`, and
-     `docker_context` only if it is not the current context. HTTP: `clickhouse_url`,
-     `clickhouse_user`, and, only if there is a password, `clickhouse_password_command`
-     (for example a Keychain lookup; the launchd job runs it too).
-     `clickhouse_password_env` works interactively but `facts schedule install`
-     refuses it. `otlp_endpoint` records the collector.
+1. **Find SigNoz.** `agent-introspection signoz detect` (read-only, always exits 0)
+   lists SigNoz and ClickHouse containers, whether Docker answers, which of the local
+   ports 4317, 4318, 8123, and 8080 are open, `signoz_present`, `clickhouse_ping`
+   (ClickHouse answered `/ping` on loopback), and `notes`. When it finds a SigNoz,
+   connect to that one (step 3) and never change it.
+2. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
+   whether the user wants a new one; without that request, stop and say so. Run
+   `bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run`,
+   show the plan, and run it again without `--dry-run` only after the user confirms. It
+   refuses (exit 3) when it finds any SigNoz or ClickHouse, running or stopped, or
+   their leftovers, and stops (exit 1) on a missing requirement (including Docker
+   Compose older than 2.24.4), a Docker daemon on another machine, or a non-empty
+   `--dir`. It prints the `[signoz]` settings for http mode. The new SigNoz listens on
+   `127.0.0.1` only (ClickHouse HTTP, OTLP, and the UI), and its ClickHouse needs no
+   password key. Details are in the [scripts README](../scripts/signoz/README.md).
+3. **Configure.** With the user (never asking them to paste a secret), write
+   `~/.config/agent-introspection/config.toml` from `config.example.toml`, which
+   documents every table:
+   - `[signoz]`: exactly one mode. Docker: `clickhouse_container`, and `docker_context`
+     only if it is not the current context. HTTP: `clickhouse_url`, `clickhouse_user`,
+     and, only if there is a password, `clickhouse_password_command` (for example a
+     Keychain lookup; the scheduled sync runs it too). `clickhouse_password_env` works
+     interactively, but `facts schedule install` refuses it. `otlp_endpoint` is the
+     local collector's OTLP/HTTP base URL (default `http://127.0.0.1:4318`, which suits
+     the guided install's loopback-only ports; `localhost` also works where it resolves
+     to 127.0.0.1 first), which `harness configure` writes into each harness.
    - `[dashboard] clickhouse_url`: the local HTTP address, needed in docker mode.
-2. **Preflight.** `uv run agent-introspection facts preflight` must pass (version,
-   SigNoz columns, grants, `system.view_refreshes`, recent producer data). Fix each
-   failure at its owner; never weaken a check.
-3. **Gates and CLI.** `bash scripts/run-ci-quality-gates.sh`, then
-   `uv tool install --force --reinstall .` (the launchd job and every hook run this copy).
-4. **Facts.** `agent-introspection facts install`, then `facts backfill --days 90`. If
+   - `[harnesses] enabled`: the harnesses the user chose (see the
+     [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses)).
+   - `[sessions.roots]`: extra session-store roots, such as Orca's per-account Codex
+     homes.
+   - `[labels] openrouter_key_command`: a command that prints the OpenRouter key for
+     prompt labels, which the scheduled sync can run. `OPENROUTER_API_KEY` works only
+     interactively; omp's stored credential is the last fallback.
+   - `[hooks] otlp_logs_endpoint`: leave unset until step 8.
+   - `[machine]`: leave it out; this machine is the host. Only an additional machine
+     sets it ([additional machines workflow](additional-machines-workflow.md)).
+4. **Preflight.** `agent-introspection facts preflight` checks the version, the SigNoz
+   columns, grants, `system.view_refreshes`, and recent producer data, read-only. It
+   always prints one JSON report, with configuration and connection errors as failing
+   checks, and exits 30 when any check fails. Fix each failure at its owner; never
+   weaken a check.
+5. **Gates and CLI.** `bash scripts/run-ci-quality-gates.sh`, then
+   `uv tool install --force --reinstall .` (the scheduled job and every hook run this
+   copy).
+6. **Facts.** `agent-introspection facts install`, then `facts backfill --days 90`. If
    a reinstall drops a stored attribute, also run
    `OPTIMIZE TABLE introspection.spans FINAL` and `… introspection.logs FINAL`.
-5. **Workflow store** (reinstall that changes finding identities): copy
+7. **Workflow store** (only for a reinstall that changes finding identities): copy
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.
-6. **Harnesses.** Run the harness configuration workflow for every harness in use.
-7. **Endpoint and schedule.** Set `[hooks] otlp_logs_endpoint` (the local collector's
-   OTLP/HTTP logs URL) only now that the loaders exist, then
-   `agent-introspection facts schedule install` and `facts schedule status`.
-8. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
-   and `evaluations` report no error, and `labels` is not `skipped`. Hook and
-   attribution records now reach `hook_events` and `session_projects` through SigNoz,
-   so allow a minute before checking them.
-9. **Validate.** The validation workflow, then the `introspection-operations` health
-   workflow over 90 days.
-10. **Record** a reinstall in the commit or pull request message: date, commit, steps,
+8. **Harnesses and endpoint.** Run the
+   [harness configuration workflow](harness-configuration-workflow.md) for each
+   harness the user chose. Then, now that `facts install` has created the loaders, set
+   `[hooks] otlp_logs_endpoint` to the local collector's OTLP/HTTP logs URL, on the
+   same host and port as `otlp_endpoint` (such as `http://127.0.0.1:4318/v1/logs`;
+   never the gRPC port 4317).
+9. **Schedule.** `agent-introspection facts schedule install`, then
+   `facts schedule status`. The job runs `facts sync --log` every minute:
+   - macOS: a launchd agent labelled `dev.agent-introspection.sync`. Install retires
+     the job an earlier release installed under another label (status reports it
+     under `legacy`), moving its plist to
+     `~/.local/share/agent-introspection/schedule-backups/`. Reinstall the CLI first
+     (step 5): an older copy would install the old label again.
+   - Linux: the systemd user units `agent-introspection-sync.service` and
+     `agent-introspection-sync.timer` in `~/.config/systemd/user/`. The timer stops
+     when the user logs out unless lingering is on: install and status report `linger`
+     but never enable it, so ask the user to run `loginctl enable-linger "$USER"`.
+   - Any other platform is refused.
+10. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
+    and `evaluations` report no error, and `labels` is not `skipped`. Hook and
+    attribution records reach `hook_events` and `session_projects` through SigNoz, so
+    allow a minute before checking them.
+11. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
+    `warn`, `off`, or `info` has a reason the user accepts.
+12. **Validate.** The [validation workflow](validation-workflow.md), then the
+    `introspection-operations` health workflow over 90 days.
+13. **Record** a reinstall in the commit or pull request message: date, commit, steps,
     row counts, parity results, and anything unresolved.
-
-## Other machines (no SigNoz, no facts store)
-
-Every machine that runs a harness sends its hook, attribution, and spool-status
-records over OTLP to the collector of the machine that hosts SigNoz and the facts
-store, so each session is attributed to a project whichever machine ran it. Do this on
-each such machine; the host machine keeps steps 1 to 10 above.
-
-1. **CLI.** Install from the repository at a tag:
-   `uv tool install --force git+<repository-url>@<tag>` (run it again to upgrade).
-   `agent-introspection` must resolve at `~/.local/bin/agent-introspection`.
-2. **Endpoint.** In `~/.config/agent-introspection/config.toml` write
-   `[hooks]` `otlp_logs_endpoint = "http://<collector-host>:<otlp-http-port>/v1/logs"`:
-   the collector's OTLP/HTTP port (usually 4318), never the gRPC port (4317). Set it
-   on the host machine only after `facts install` has created the loaders; records
-   sent earlier wait for the 3-day sweep or `facts backfill`.
-3. **Harnesses.** Run the harness configuration workflow (omp plugin, Claude hooks,
-   Codex export) as on the host machine.
-4. **Timer.** Fetch the repository at the same tag (the CLI install in step 1 does not
-   leave a clone): `git clone --depth 1 --branch <tag> <repository-url> "$UNITS_SRC"`, where
-   `UNITS_SRC` is a fresh temporary directory such as `$(mktemp -d)/repo`. Then install the
-   systemd user units from its `.agents/skills/introspection-onboarding/scripts/` (paths
-   below are relative to that clone) and enable them; the
-   service runs `agent-introspection spool sync` (attribution scan, status record,
-   OTLP drain) every minute:
-
-   ```sh
-   mkdir -p ~/.config/systemd/user
-   cd "$UNITS_SRC"
-   cp .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.service \
-      .agents/skills/introspection-onboarding/scripts/agent-introspection-spool-sync.timer ~/.config/systemd/user/
-   systemctl --user daemon-reload
-   systemctl --user enable --now agent-introspection-spool-sync.timer
-   loginctl enable-linger "$USER"   # keeps the timer running with no login session
-   ```
-
-   The unit sets `PATH` to include `~/.local/bin` (where `uv tool` installs the CLI);
-   `Persistent=true` catches up after suspend or downtime. Back up any existing unit
-   with the same name first.
-
-5. **Validate.** `systemctl --user list-timers` shows the timer, `agent-introspection
-spool sync` exits 0, the spool backlog drains to 0, and the validation workflow's
-   probe record shows up in `hook_events` with this machine's host name.
 
 ## Done when
 
-- Preflight and every step pass, and the Pipeline view is healthy for 90 days for
-  every harness (or each gap has a recorded reason).
-- Every other machine's spool status is fresh in the Pipeline view, with a backlog
-  that drains and no rejected files.
+- `facts preflight` and `doctor` pass, every step has evidence, and the Pipeline view
+  is healthy for 90 days for every enabled harness (or each gap has a recorded reason).

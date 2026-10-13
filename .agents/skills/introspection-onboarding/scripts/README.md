@@ -12,10 +12,14 @@ sends session-project records over the same OTLP route.
 scripts/
 ├── activity-shim.sh             # detaches `agent-introspection hook PRODUCER EVENT`
 ├── agent-introspection-spool-sync.service  # systemd user unit: `spool sync`
-├── agent-introspection-spool-sync.timer    # runs it every minute (non-host machines)
-└── adapters/
-    ├── claude-code/             # install_activity.py: registers six Claude Code hooks
-    └── omp/                     # activity.ts: omp extension
+├── agent-introspection-spool-sync.timer    # runs it every minute (additional machines)
+├── adapters/
+│   ├── claude-code/             # install_activity.py: registers six Claude Code hooks
+│   └── omp/                     # activity.ts: omp extension
+└── signoz/                      # opt-in SigNoz files; see signoz/README.md
+    ├── install-signoz.sh        # guided install of a new SigNoz, only when asked
+    ├── docker-compose.clickhouse-http.yaml  # ClickHouse HTTP, OTLP, and UI on loopback only
+    └── otel-collector-opencode-filter.yaml  # drops opencode's plumbing spans
 ```
 
 ```text
@@ -25,11 +29,9 @@ harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook 
 ```
 
 Delivery needs `[hooks] otlp_logs_endpoint` (the collector's OTLP/HTTP logs URL). The
-host machine's `facts sync` drains the spool; every other machine runs
-`agent-introspection spool sync` from the systemd user timer here (copy both units to
-`~/.config/systemd/user/`, then
-`systemctl --user enable --now agent-introspection-spool-sync.timer`; `loginctl
-enable-linger` keeps it running without a login).
+host machine's scheduled `facts sync` drains the spool; each additional machine runs
+`agent-introspection spool sync` from the systemd user timer here, as the onboarding
+skill's additional machines workflow describes.
 
 - The shim reads the whole envelope from stdin, pipes it to a detached
   `agent-introspection hook` (no temporary file), prints nothing, and exits 0, so a hook
@@ -46,4 +48,5 @@ enable-linger` keeps it running without a login).
   never run a repository path.
 
 Codex needs no activity hook: its signals are native. Install commands are in each
-adapter's README and the onboarding skill's harness configuration workflow.
+adapter's README and the onboarding skill's harness configuration workflow;
+`agent-introspection doctor` checks the installed hooks and shim.

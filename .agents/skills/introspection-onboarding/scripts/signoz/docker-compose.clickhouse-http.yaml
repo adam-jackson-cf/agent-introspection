@@ -1,0 +1,44 @@
+# Publishes SigNoz on 127.0.0.1 only, this machine: ClickHouse HTTP (8123), the
+# collector's OTLP ports (4317 gRPC, 4318 HTTP), and the UI (8080).
+#
+# Agent Introspection's dashboard reads ClickHouse over HTTP, and so does the CLI in
+# http mode ([signoz] clickhouse_url). SigNoz does not publish ClickHouse's HTTP port,
+# so it is otherwise reachable only inside the Compose network. SigNoz publishes its
+# OTLP and UI ports on every interface; on a desktop, nothing outside this machine
+# needs them, so `!override` replaces those port lists rather than adding to them
+# (Docker Compose 2.24.4 or later).
+#
+# An additional machine that sends hook records to this one needs the collector's
+# OTLP/HTTP port reachable: delete the collector's entry below (SigNoz then publishes
+# 4317 and 4318 on every interface again), and recreate the stack.
+#
+# Exporters on this machine should name 127.0.0.1, not localhost, which can resolve
+# to ::1 first; the [signoz] settings install-signoz.sh prints do.
+#
+# This is the user's opt-in change to their own SigNoz; Agent Introspection never
+# applies it. install-signoz.sh starts a new SigNoz with it. For a SigNoz you already
+# run, decide first, then recreate the stack with this file added after its own:
+#
+#   docker compose -f compose.yaml -f docker-compose.clickhouse-http.yaml up -d
+#
+# Revert by running the same command without this file. Data stays in its volumes.
+#
+# Loopback only: in a Foundry install, ClickHouse's default user has no password.
+# The service names are Foundry's (pours/deployment/compose.yaml). A SigNoz installed
+# from the deprecated deploy/docker files (docker-compose.yaml) names these services
+# `clickhouse`, `otel-collector`, and `signoz`: rename the three keys below to match,
+# or Compose rejects a service with no image.
+services:
+  # ClickHouse
+  signoz-telemetrystore-clickhouse-0-0:
+    ports:
+      - "127.0.0.1:8123:8123"
+  # The collector
+  ingester:
+    ports: !override
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+  # The UI
+  signoz-signoz-0:
+    ports: !override
+      - "127.0.0.1:8080:8080"

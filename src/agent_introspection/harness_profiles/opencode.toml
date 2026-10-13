@@ -1,0 +1,55 @@
+# opencode: a candidate producer, not a harness. Measured on this machine on 2026-10-13
+# over 2026-09-30 to 2026-10-11 (opencode last sent spans on 2026-10-11): SigNoz service
+# `opencode` (resource keys `opencode.run`, `opencode.client`, `service.version`) holds
+# 17.88M spans on four days, 16.5M of them on 2026-10-09 and 2026-10-10, and no logs.
+# 93% are plumbing (`sql.execute` with `db.query.text`, `SessionProcessor.readToolCall`,
+# `Session.getPart`), which the onboarding skill's opt-in collector filter drops. Call and
+# turn counts below are of distinct span IDs, because SigNoz stored some spans twice on
+# the busiest days.
+#
+# Versions: the `opencode` on PATH prints 1.2.6, and the hook and event payload fields
+# below come from the installed `@opencode-ai/plugin` and `@opencode-ai/sdk` 1.2.6 type
+# definitions. The spans came from a newer build: their `service.version` is later than
+# 1.2.6 and equals the session version of 3,250 of the 3,259 store sessions in the window.
+# Payload key names were also checked, by name and count only, in that build's stored
+# events in opencode.db. Re-check both on the build that is meant to run.
+#
+# No [[config_file]] or [[setting]]: how opencode's export is switched on is not yet
+# verified, so `harness configure` has nothing to write for it. The pilot write-up is
+# docs/todo/opencode-onboarding.md.
+schema = "agent-introspection.harness-profile/1"
+key = "opencode"
+title = "opencode"
+status = "candidate"
+registry_keys = []
+service_names = ["opencode"]
+binary = "opencode"
+version_args = ["--version"]
+verified_versions = ["1.2.6"]
+session_store = ""
+hook_adapter = ""
+sources = ["https://opencode.ai/docs/plugins/"]
+
+[session_store_spec]
+name = "opencode"
+harnesses = ["opencode"]
+roots = ["~/.local/share/opencode/opencode.db"]
+format = "sqlite"
+query = "SELECT id AS session_id, directory AS cwd, strftime('%Y-%m-%dT%H:%M:%fZ', time_created / 1000.0, 'unixepoch') AS started_at FROM session"
+
+[capabilities]
+export = { status = "native", evidence = "Spans only, no logs, under `service.name` opencode: 220 span names and 17.88M spans in the window." }
+session_identity = { status = "native", evidence = "`session.id` on `Tool.execute` spans only; all 526 keys in the window are store session IDs. A turn's other spans reach it through the trace: 1,423 of the 1,546 turn traces hold exactly one key and none holds more, but the 123 turns without a tool call hold none." }
+task_boundary = { status = "hook_available", evidence = "No span bounds a turn. Each of the 1,546 turn traces has one `SessionRunState.runner` and one `SessionPrompt.createUserMessage`, but the runner lasts about 0 s, so it marks only the start; the root span was not exported in 1,538 of them; `SessionPrompt.prompt` (the synchronous prompt route) appears in only 31; and none of these spans carries an attribute. The plugin `session.status` event (`sessionID`; busy, idle) with the `chat.message` hook (`sessionID`, `messageID`) can bound each prompt, and `session.created` with `parentID` tells a subagent session apart." }
+model_usage = { status = "hook_available", evidence = "`LLM.run` spans carry no attributes. The assistant message on the plugin `message.updated` event carries `tokens` (input, output, reasoning, cache read and write), and one assistant message is one model step: each of the 32,347 stored assistant messages with a `step-finish` part (of 32,367 in the window) has exactly one. No adapter reads it yet." }
+reasoning_usage = { status = "hook_available", evidence = "`tokens.reasoning` on the assistant message of the plugin `message.updated` event and on its `step-finish` part." }
+model_identity = { status = "hook_available", evidence = "`modelID`, `providerID`, and `variant` (the model's effort preset) on the assistant message of `message.updated` (the newer build's stored events carry `variant` there; the 1.2.6 types have it only on the `chat.message` hook), and the requested model on the user message; whether `variant` maps to a reasoning effort is unverified." }
+model_outcome = { status = "hook_available", lacks = ["provider.ttft", "provider.stream_disconnects"], evidence = "`LLM.run` spans hold no outcome: no attributes, none of 9,787 errored, and a median of 0.01 s, too short to be the call. The assistant message on `message.updated` has `error` (`APIError` with `statusCode` and `isRetryable`; `MessageAbortedError` for a cancellation) and created and completed times, one model step per message; `session.status` reports retries with an attempt number. No field holds time to first token or stream state, so Time to first token and Stream disconnects are not emitted." }
+tool_calls = { status = "native", evidence = "`Tool.execute` spans carry `tool.name`, `tool.call_id`, `message.id`, and `session.id`, with the span error flag as the outcome: 11,162 calls in the window, 418 failed, 11,079 in a turn's trace." }
+tool_arguments = { status = "hook_available", evidence = "`Tool.execute` spans carry no arguments. The `tool.execute.before` hook receives the tool, `sessionID`, and `callID`, with `args` in its output." }
+tool_failure = { status = "native", evidence = "Every failed `Tool.execute` span carries a status message (418 of 418; 381 distinct texts, 364 characters on average), from which the span route takes one diagnostic line." }
+user_friction = { status = "unverified", evidence = "No abort, cancel, interrupt, or steer span, and `LLM.run` never errors. None of the 32,367 stored assistant messages in the window ended in `MessageAbortedError`, and the store's `session_input` queue table is empty, so neither an interrupt nor input sent while busy has been observed. The plugin surface exists (`MessageAbortedError` on the assistant message, `chat.message` per user message, `session.status` busy and idle), but how the running build records them is unverified." }
+approvals = { status = "hook_available", lacks = ["guard.sandbox"], evidence = "`Permission.ask` spans (11,679 in the window) carry no attributes. The `permission.ask` hook receives the request (type, pattern, `sessionID`, `callID`) and sets ask, allow, or deny; the `permission.replied` event carries the user's response. The SDK types have no sandbox concept, so no sandbox outcome." }
+delegation = { status = "hook_available", evidence = "No `task` tool call reached telemetry in the window, though the store holds 9 and 7 child sessions. The plugin `session.created` event carries `info.parentID`, which the newer build's stored events hold on exactly those 7 sessions; a child joins the task that started it through its parent session and the `task` tool call." }
+prompt_text = { status = "hook_available", evidence = "No logs, so no prompt event; the `chat.message` hook receives the user message and its parts, which a plugin could send as a prompt event." }
+session_store = { status = "native", evidence = "SQLite `~/.local/share/opencode/opencode.db`, table `session` (`id`, `directory`, `time_created` in epoch milliseconds); see [session_store_spec]. The spec reads 3,271 sessions, each with an absolute working directory, and holds every telemetry session key." }

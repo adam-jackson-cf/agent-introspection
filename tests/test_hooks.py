@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from agent_introspection import command_shape, facts, hooks, spool
+from agent_introspection.cli import main
 from tests.support.otlp_collector import Collector, names, spool_records
 
 SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
@@ -778,3 +779,14 @@ def test_claude_installer_backs_up_a_differing_shim_before_replacing_it(tmp_path
 def test_every_home_path_in_one_argument_is_redacted() -> None:
     value = "~/.omp/**/x;/Users/someone/.claude/**/x;/Users/someone/.agents/**/x"
     assert hooks.redact_home(value) == "~/.omp/**/x;~/.claude/**/x;~/.agents/**/x"
+
+
+def test_the_hook_command_help_names_exactly_the_producers_it_accepts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        main(["hook", "--help"])
+
+    lines = capsys.readouterr().out.splitlines()
+    producer = next(line.split(None, 1)[1] for line in lines if line.startswith("  producer "))
+    assert producer == " or ".join(hooks.PRODUCERS)

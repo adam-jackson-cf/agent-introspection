@@ -50,8 +50,6 @@ session loader keeps the newest `resolved_at` per session. Consequences:
 
 ## Sanitization
 
-recent rebuild.
-
 Home paths are redacted (`/Users/<name>`, `/home/<name>`, `/root` become `~`) in the
 hook, the attribution record, and the SQL projections. Rows loaded before the home
 redaction widening (the `HOME_PATH_CUTOFF` constant, currently 2026-10-13 00:00 UTC, in
@@ -205,13 +203,14 @@ uv run agent-introspection facts backfill --days 90  # re-project everything Sig
 uv run agent-introspection facts status              # loader state and per-harness freshness
 ```
 
-`facts sync` (the Mac's scheduled job, `facts schedule install`) runs in this order:
+`facts sync` (the SigNoz host's scheduled job from `facts schedule install`: a launchd
+agent on macOS, a systemd user timer on Linux) runs in this order:
 `spool sync` (attribution scan into the spool, status record, OTLP drain), then
 `SYSTEM REFRESH VIEW` and `SYSTEM WAIT VIEW` for `load_hook_events` and
-`load_session_projects`, then prompt labels, findings, and evaluations. Other machines
-run only `agent-introspection spool sync`, from a systemd user timer. `facts backfill`
-re-projects hook events and session attribution from SigNoz with the same family
-filters.
+`load_session_projects`, then prompt labels, findings, and evaluations. Additional
+machines without SigNoz run only `agent-introspection spool sync`, from the onboarding
+skill's systemd user timer. `facts backfill` re-projects hook events and session
+attribution from SigNoz with the same family filters.
 
 ## What To Check
 

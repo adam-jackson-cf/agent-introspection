@@ -1,5 +1,6 @@
 -- Curated span projection. The window placeholder is replaced with the loader or backfill
--- time predicate over the SigNoz source columns `timestamp` and `duration_nano`.
+-- time predicate over the SigNoz source columns `timestamp` and `duration_nano`. The
+-- services placeholder is the quoted list of `[harnesses]` keys in signal_support.toml.
 -- Codex emits almost all of its spans as internal plumbing (older builds also
 -- emitted h2/tokio frame spans), so only the task, sampling, and user-signal span
 -- names below are kept, plus `handle_responses` spans that carry token usage. Status messages can
@@ -113,7 +114,7 @@ SELECT
     mapApply((k, v) -> (replaceRegexpOne(k, '^omp\\.gen_ai\\.', 'pi.gen_ai.'), v), attributes_bool) AS attrs_bool,
     now64(3) AS loaded_at
 FROM signoz_traces.distributed_signoz_index_v3
-WHERE serviceName IN ('codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code')
+WHERE serviceName IN ({services})
     AND (
         serviceName NOT LIKE 'codex%'
         OR distributed_signoz_index_v3.name IN (

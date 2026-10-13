@@ -1,0 +1,68 @@
+# omp (oh-my-pi): the settings that switch on its telemetry, and the producer
+# capabilities it offers (docs/references/producer-capabilities.md). Routes are
+# registry [[route]] ids; a capability's status is its weakest part. omp reads its
+# environment from `~/.omp/.env`; it exports spans only, and the activity extension
+# (hook adapter `omp`) sends the prompt event and the hook records.
+schema = "agent-introspection.harness-profile/1"
+key = "omp"
+title = "omp"
+status = "registered"
+registry_keys = ["oh-my-pi"]
+service_names = ["oh-my-pi"]
+binary = "omp"
+version_args = ["--version"]
+verified_versions = ["18.4.4"]
+session_store = "omp"
+hook_adapter = "omp"
+
+[[config_file]]
+id = "env"
+paths = ["~/.omp/.env"]
+format = "dotenv"
+table = ""
+roots = "first"
+
+[[setting]]
+file = "env"
+key = "OTEL_EXPORTER_OTLP_ENDPOINT"
+value = "{otlp_endpoint}"
+group = "export"
+purpose = "The local collector's OTLP/HTTP endpoint."
+
+[[setting]]
+file = "env"
+key = "OTEL_EXPORTER_OTLP_PROTOCOL"
+value = "http/protobuf"
+group = "export"
+purpose = "omp exports over OTLP/HTTP only."
+
+[[setting]]
+file = "env"
+key = "OTEL_SERVICE_NAME"
+value = "{service_name}"
+group = "export"
+purpose = "Names the service `oh-my-pi`, the registry harness key."
+
+[[setting]]
+file = "env"
+key = "AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"
+value = "1"
+group = "prompt_export"
+purpose = "Lets the activity extension send `omp.user_prompt` with the prompt text, for prompt labels; omp exports no prompt event of its own."
+
+[capabilities]
+export = { status = "native", evidence = "Spans under `service.name` oh-my-pi once `~/.omp/.env` names the collector and the service." }
+session_identity = { status = "native", route = "omp.chat", evidence = "`gen_ai.conversation.id` on chat spans; runs and tool calls share the chat's trace; it equals the session file `id`." }
+task_boundary = { status = "native", route = "omp.run", evidence = "One root `invoke_agent` span per user-initiated run." }
+model_usage = { status = "native", route = "omp.chat", evidence = "`gen_ai.usage.input_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, and `gen_ai.usage.output_tokens` on each chat span." }
+reasoning_usage = { status = "native", route = "omp.chat", evidence = "`gen_ai.usage.reasoning.output_tokens` on chat spans, 0 when absent." }
+model_identity = { status = "native", route = "omp.chat", evidence = "`gen_ai.request.model`, `gen_ai.response.model`, and `pi.gen_ai.request.reasoning.effort` on chat spans." }
+model_outcome = { status = "hook", route = "hook.retry", lacks = ["provider.stream_disconnects"], evidence = "Span status, duration, `gen_ai.response.time_to_first_chunk`, and finish reasons on chat spans; retries come from the `auto_retry_start` hook. Stream state is not recorded, so Stream disconnects is not emitted." }
+tool_calls = { status = "native", route = "omp.execute_tool", evidence = "One `execute_tool <tool>` span per call with `pi.gen_ai.tool.status`, in the run's trace." }
+tool_arguments = { status = "hook", route = "hook.tool_call", evidence = "Spans carry no arguments; the `tool_call` hook hashes them and derives the command shape without storing them." }
+tool_failure = { status = "hook", route = "hook.tool_failure", evidence = "The `tool_result` hook (`isError`) supplies the diagnostic line; before the hooks, only the span status message." }
+user_friction = { status = "hook", route = "hook.steer", evidence = "Interrupts are runs with an aborted chat stop reason and follow-ups come from the runs; steers come from the `input` hook while a run is active." }
+approvals = { status = "hook", route = "hook.approval", lacks = ["guard.sandbox"], evidence = "The `tool_approval_resolved` hook; omp's default mode approves without asking. omp has no sandbox, so Sandbox outcomes is not emitted." }
+delegation = { status = "native", route = "omp.subagent", evidence = "`invoke_agent <agent>` spans in the run's trace, advisors excluded." }
+prompt_text = { status = "hook", route = "omp.user_prompt", evidence = "omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start` when `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1`." }
+session_store = { status = "native", evidence = "Session files in `~/.omp/agent/sessions/*/*.jsonl` (store `omp`): the `session` record with the id and cwd." }

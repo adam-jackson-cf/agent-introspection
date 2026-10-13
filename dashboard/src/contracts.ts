@@ -1,4 +1,5 @@
 /** Wire contract between the Bun server and the React companion. */
+import type { Harness } from "./harnesses.generated";
 
 export const VIEW_IDS = [
   "pipeline",
@@ -23,15 +24,8 @@ export type ViewPath =
   | (typeof DETAIL_PATHS)[number]
   | (typeof PAGE_PATHS)[number];
 
-/** Every known harness in registry order; the selector offers All plus each enabled one. */
-export const HARNESSES = [
-  "oh-my-pi",
-  "codex-app-server",
-  "codex_cli_rs",
-  "codex_exec",
-  "claude-code",
-] as const;
-export type Harness = (typeof HARNESSES)[number];
+/** Every known harness, generated from the signal registry's `[harnesses]` table. */
+export { HARNESSES, type Harness } from "./harnesses.generated";
 
 export type Filters = {
   start: string;

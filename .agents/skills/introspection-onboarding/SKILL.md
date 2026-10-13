@@ -1,41 +1,58 @@
 ---
 name: "introspection-onboarding"
-description: "Use when installing or reinstalling Agent Introspection, onboarding or re-checking a harness, or proving capture end to end. Installs, reinstalls, or validates Agent Introspection on the machine that hosts the self-hosted SigNoz (the SigNoz connection, the facts store, the launchd sync) and on every other machine that runs harnesses (CLI, OTLP endpoint, spool sync timer), including each harness's telemetry, hooks, and prompt export (omp, Codex, Claude Code). It never installs SigNoz."
+description: "Use when installing or reinstalling Agent Introspection, onboarding or re-checking a harness, exploring a producer it does not know yet, adding another machine, or proving capture end to end. Connects to the SigNoz on this desktop (installing a new one only when the user asks), installs the facts store and the scheduled sync, configures each harness's export, hooks, and prompt export (Claude Code, Codex, omp), assesses unknown producers (such as opencode) against the dashboard's capabilities, and diagnoses every step with `agent-introspection doctor`."
 ---
 
 # Onboarding
 
 ## Rules
 
-- The facts store and SigNoz live on one host machine; Agent Introspection never
-  installs, starts, or reconfigures SigNoz (without one, stop and say so). Every other
-  machine only installs the CLI, hooks, and a spool sync timer, and sends records to
-  the host's collector. Assume no container runtime; ask how ClickHouse is reached.
+- One machine is the default: SigNoz, the facts store, the scheduled sync, and the
+  harnesses all run on the user's own desktop. Sending records from more machines is
+  an add-on (the additional machines workflow).
+- Never reconfigure an existing SigNoz. Install a new one only when the user asks for
+  it and `agent-introspection signoz detect` finds none: run
+  `scripts/signoz/install-signoz.sh --dry-run` first, then without `--dry-run`.
+  Applying the other files in `scripts/signoz/` is the user's decision.
+- Ask how ClickHouse is reached: docker mode (`docker exec` into its container) or
+  http mode (its HTTP interface at a local address). Assume neither.
+- Run `agent-introspection doctor` (read-only) first at every step and follow each
+  check's `fix`. Never weaken or skip a failing check.
+- Never assume which harnesses to include; ask.
 - Keep hostnames, addresses, and user names out of skills and docs: ask the user, use
   placeholders.
 - Back up every file before changing it, show the diff first, and keep unrelated hooks
   and settings (for example Orca's and Codex Computer Use's).
 - Never print or write a secret; check presence only.
 - Confirm with the user before turning on prompt export: prompt text is then kept in
-  SigNoz for its retention. The facts store never keeps it.
+  SigNoz for its retention. The facts store never keeps it. For Claude Code,
+  `--prompt-export` also sets `OTEL_LOG_ASSISTANT_RESPONSES=0`, because without it
+  Claude Code exports each assistant response's text as well.
 
 ## Workflows
 
-- [Setup](references/setup-workflow.md): connect to the local SigNoz, then install or
-  reinstall in order (facts, harnesses, schedule, first sync); other machines follow
-  its "Other machines" section.
+- [Setup](references/setup-workflow.md): the single-machine path, from finding SigNoz
+  to the first sync, `doctor`, and validation; also a reinstall.
 - [Harness configuration](references/harness-configuration-workflow.md): choose the
-  harnesses to include (never assume any), explore an unknown one, and configure each
-  known one's OTLP export, session store, activity hooks, and prompt export.
-- [Validation](references/validation-workflow.md): check configuration without running
-  anything, then prove a live session end to end.
+  harnesses, then configure each registered one with `harness configure`, its activity
+  hooks, and opt-in prompt export.
+- [Producer onboarding](references/producer-onboarding-workflow.md): identify, explore,
+  and assess a producer that is not a harness yet, preview its parity cost with
+  `harness impact`, and watch known producers for drift.
+- [Validation](references/validation-workflow.md): `doctor` for configuration, then a
+  live session end to end.
+- [Additional machines](references/additional-machines-workflow.md): send another
+  machine's harness telemetry and hook and attribution records to this host's
+  collector.
 
-Closing a signal gap with a new hook event is a code change: see the
-`introspection-operations` change workflow.
+Closing a signal gap with a new hook event, or adding a harness, is a code change: see
+the `introspection-operations` change workflow.
 
 ## Output
 
-- Steps run, with evidence (preflight, install, sync results, validation rows).
+- Steps run, with evidence (`doctor` and preflight results, install and sync results,
+  validation rows).
 - Files changed, with backup paths, and any step the user must do (for example
   restarting a harness).
-- Per harness: what is captured, and any gap with its reason.
+- Per harness: what is captured, and any gap with its reason; per candidate producer,
+  the signals enabling it would hide.

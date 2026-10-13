@@ -1,5 +1,6 @@
 -- Curated log projection. The window placeholder is replaced with the loader or backfill
--- predicate over the SigNoz source columns `timestamp` / `observed_timestamp`.
+-- predicate over the SigNoz source columns `timestamp` / `observed_timestamp`. The
+-- services placeholder is the quoted list of `[harnesses]` keys in signal_support.toml.
 -- Raw prompt, tool argument, and tool output text is never stored. For Codex
 -- tool results, normalized `x.*` fields are derived from that text instead:
 -- command head/subcommand, gate-bypass flag, home-redacted targets, argument
@@ -197,5 +198,5 @@ SELECT
     attributes_bool AS attrs_bool,
     now64(3) AS loaded_at
 FROM signoz_logs.distributed_logs_v2
-WHERE resource.`service.name`::String IN ('codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code')
+WHERE resource.`service.name`::String IN ({services})
     AND ({window})

@@ -271,6 +271,43 @@ def test_proposal_create_rejects_a_proposal_for_an_unreviewed_finding(
     assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
 
 
+def test_an_additional_machine_refuses_every_command_that_needs_clickhouse(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = config_file(tmp_path)
+    config.write_text(
+        config.read_text()
+        + '[machine]\nrole = "additional"\nexport_endpoint = "http://signoz-host.example:4318"\n'
+    )
+
+    def reached(*_args: object) -> Any:
+        pytest.fail("an additional machine reached ClickHouse or a scheduler")
+
+    for name in ("docker_runner", "http_runner"):
+        monkeypatch.setattr(facts, name, reached)
+    monkeypatch.setattr(schedule, "_launchctl", reached)
+    monkeypatch.setattr(schedule, "_systemctl", reached)
+    refusal = 'which this additional machine ([machine] role = "additional") does not have'
+
+    for argv in (
+        ["facts", "status"],
+        ["facts", "sync"],
+        ["producers", "discover"],
+        ["candidates", "export", "--reserved-model-budget", "100"],
+        ["facts", "schedule", "install"],
+    ):
+        with pytest.raises(SystemExit) as raised:
+            main(["--config", str(config), *argv])
+        assert raised.value.code == EXIT_CONFIG, argv
+        assert refusal in capsys.readouterr().err, argv
+
+    assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
+    checks = {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
+    assert checks["connection"]["status"] == "fail"
+    assert refusal in checks["connection"]["detail"]
+    assert checks["otlp_endpoint"]["endpoint"] == "http://signoz-host.example:4318"
+
+
 def test_schedule_install_passes_the_selected_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -448,7 +485,12 @@ def test_a_logged_sync_writes_its_summary_and_errors_to_the_timestamped_log(
             raise outcome
         return outcome
 
+    def no_clickhouse(_config: object) -> Any:
+        raise AssertionError("the logged sync must never reach a real ClickHouse")
+
     monkeypatch.setattr(cli, "facts_command", fake)
+    # Should dispatch ever bypass the fake, the real sync stops before any live service.
+    monkeypatch.setattr(facts, "runner", no_clickhouse)
 
     assert main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"]) == 0
     with pytest.raises(SystemExit):

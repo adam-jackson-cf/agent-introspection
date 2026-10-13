@@ -5,18 +5,32 @@ without bypassing a failed check.
 
 ## Checks
 
-1. `agent-introspection facts preflight` passes (the local SigNoz is reachable and
-   compatible).
+1. `agent-introspection doctor` (read-only) exits 0 (no check is `fail`), and each
+   `warn`, `off`, or `info` has a known reason. It covers the config, SigNoz (every `facts preflight`
+   check folded into `signoz`; run `agent-introspection facts preflight` for each
+   check's detail), the collector and hooks endpoint, each enabled harness's
+   configuration, hooks, session store, and telemetry, the spool, the schedule, the
+   prompt-label key, and the dashboard's ClickHouse URL. Add `--drift` to compare each
+   enabled harness's telemetry with its saved fingerprint; a `drifted` service or an
+   `unregistered` one goes to the onboarding skill's producer onboarding workflow
+   (Watch). The onboarding validation workflow explains each status.
 2. `agent-introspection facts status`: every loader and snapshot refresher is
    `Scheduled` with no exception, and each harness's freshness is current. Judge an idle
    harness by its prompts and tasks, not log volume (Codex polls `/models` constantly).
-3. `agent-introspection facts schedule status`: the job is loaded. Spool backlog
-   (`*.json` in `hook-inbox/`) is a stall only if it stays non-zero across syncs;
+3. `agent-introspection facts schedule status`: the job is `installed` and `loaded`.
+   On macOS, `legacy` names a job an earlier release installed: reinstall the CLI, then
+   `facts schedule install` retires it. On Linux, the timer is `enabled`, and `linger`
+   is true, or the timer stops when the user logs out
+   (`loginctl enable-linger "$USER"`). Spool backlog (the `*.json` in `hook-inbox/`,
+   counted by `agent-introspection spool status`) is a stall only if it stays non-zero
+   across syncs;
    `hook-inbox/rejected/` files are batches the collector partly or wholly rejected.
-4. `~/.local/share/agent-introspection/projects-sync.log`: the latest `facts sync`
-   result has no error and its `labels` part is not `skipped` (the reason says why,
-   for example no OpenRouter key for the job). `hooks.log` shows no steady stream of
-   hook failures.
+4. `~/.local/share/agent-introspection/sync.log` (rotated to `sync.log.1` and
+   `sync.log.2`): the latest `facts sync` result has no error and its `labels` part is
+   not `skipped` (the reason says why, for example no OpenRouter key for the job).
+   Output the scheduler itself captured is in `sync-launchd.log` beside it on macOS,
+   and in the user journal on Linux. `hooks.log` shows no steady stream of hook
+   failures.
 5. Dashboard Pipeline view, for the window in question:
    - source parity (last 7 days) and All = Σ harnesses recombination;
    - sanitization: no forbidden keys (including tool-intent keys), no stored diagnostic

@@ -2,40 +2,89 @@
 
 Configure the harnesses the user asks for, and only those, so every dashboard signal
 each can produce reaches the facts: telemetry export, project attribution, activity
-hooks, and prompt export. Contracts: `session_stores.toml` (project attribution) and
+hooks, and prompt export. Each registered harness has a profile,
+`src/agent_introspection/harness_profiles/<key>.toml`, that names its config files and
+the settings to write, with each setting's purpose; `agent-introspection harness
+configure` writes them. Contracts: `session_stores.toml` (project attribution) and
 `docs/references/hook-events.md` (activity-hook records and prompt export).
 
 ## Choose the harnesses
 
-1. Ask which harnesses to include; never assume any. Offer what is installed
-   (`command -v claude codex omp`, plus any other agent CLI the user names).
-2. A **known** harness (below) is configured with the steps that follow. Known
-   harnesses the user does not include stay unconfigured; the Pipeline view shows them
-   `idle`, which is expected.
-3. An **unknown** harness goes through [Unknown harness](#unknown-harness) first; it
-   is not configured here until it is known.
+1. Ask which harnesses to include; never assume any.
+   `agent-introspection harness list` (read-only) shows every profile with its status
+   (`registered` or `candidate`), whether it is enabled, whether its binary is on
+   `PATH`, the version that binary prints (`installed_version`, and
+   `version_verified` against the profile's verified versions; `--no-version` runs no
+   binary), and its hook adapter.
+2. Record the choice in the config's `[harnesses] enabled` (the registry keys listed in
+   `config.example.toml`; `codex` names the three Codex surfaces; absent means every
+   registry harness). Parity is judged over this list: a signal is shown only when
+   every enabled harness reaches it. Before adding a harness to the list, show the user
+   `agent-introspection harness impact <key>`, which lists the signals it would hide.
+3. A **registered** harness (Claude Code, Codex, omp) is configured with the steps
+   below. Any other producer (opencode, or another agent harness) goes through the
+   [producer onboarding workflow](producer-onboarding-workflow.md) first, which checks
+   it against
+   [Producer capabilities](../../../../docs/references/producer-capabilities.md);
+   `harness configure` refuses a candidate.
 
-## What each known harness needs
+## What each registered harness needs
 
-| Harness                       | OTLP export                                 | Session store (project)                       | Activity hooks                    | Prompt export                                                                      |
-| ----------------------------- | ------------------------------------------- | --------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
-| Claude Code                   | `env` in `~/.claude/settings.json`          | `~/.claude/projects/` (nothing to install)    | 6 hooks via `install_activity.py` | `OTEL_LOG_USER_PROMPTS=1` in the same `env`                                        |
-| Codex (app-server, CLI, exec) | `[otel]` in each `<codex-root>/config.toml` | `<codex-root>/sessions/` (nothing to install) | none: its signals are native      | `log_user_prompt = true` in `[otel]`                                               |
-| omp                           | `~/.omp/.env`                               | `~/.omp/agent/sessions/` (nothing to install) | `activity.ts` extension           | `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (sent by `activity.ts`) |
+This summarizes the profiles; the profile is the source when they differ.
 
-`<codex-root>` is `$CODEX_HOME` when set to an absolute path, else `~/.codex`; configure
-every root in use. A root the bundled stores do not cover (for example Orca's
-per-account Codex homes) goes under `[sessions.roots]` in the config:
+| Harness (profile key)                  | Config file                                                                 | Export settings                                                                                                                                                                                                                                                                                                              | Prompt export                                                     | Session store                                              | Activity hooks                      |
+| -------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| Claude Code (`claude-code`)            | `env` in `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` | `CLAUDE_CODE_ENABLE_TELEMETRY=1`; `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` (the beta traces the task and model-call routes read); `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`, `OTEL_TRACES_EXPORTER` = `otlp`; `OTEL_EXPORTER_OTLP_ENDPOINT`; `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`; `OTEL_SERVICE_NAME=claude-code` | `OTEL_LOG_USER_PROMPTS=1` with `OTEL_LOG_ASSISTANT_RESPONSES=0`   | `$CLAUDE_CONFIG_DIR/projects/`, else `~/.claude/projects/` | six hooks via `install_activity.py` |
+| Codex (`codex`: app-server, CLI, exec) | `[otel]` in `config.toml` in every Codex home                               | `exporter`, `trace_exporter`, `metrics_exporter`: an `otlp-http` exporter posting to `<otlp_endpoint>/v1/logs`, `/v1/traces`, and `/v1/metrics` with protocol `binary`                                                                                                                                                       | `log_user_prompt = true`                                          | `<codex-home>/sessions/` and `archived_sessions/`          | none: its signals are native        |
+| omp (`omp`; service `oh-my-pi`)        | `~/.omp/.env`                                                               | `OTEL_EXPORTER_OTLP_ENDPOINT`; `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`; `OTEL_SERVICE_NAME=oh-my-pi`                                                                                                                                                                                                                     | `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` (sent by `activity.ts`) | `~/.omp/agent/sessions/`                                   | `activity.ts` plugin                |
+
+`OTEL_SERVICE_NAME` is set explicitly for Claude Code so that a session started from
+another harness's shell does not inherit that harness's service name. A Codex home is
+`$CODEX_HOME` when set (configured even before Codex creates it) and `~/.codex` when it exists. A home the
+profile does not name (for example Orca's per-account Codex homes) is added with
+`--root <home>` (the directory holding its `config.toml`), and its sessions go under
+`[sessions.roots]` in the config:
 `codex = ["~/Library/Application Support/orca/codex-accounts/*/home/sessions"]`.
 
 ## Steps
 
-1. **Check the surface.** Record `claude --version`, `codex --version`, `omp --version`.
-   The hooks above were verified on Claude Code 2.1.285, Codex 0.156.1, and omp
-   18.4.4; after an upgrade, confirm the event names and payload fields in the installed
-   types or docs, and look for renamed telemetry attributes (omp renamed `pi.gen_ai.*`
-   to `omp.gen_ai.*` on 2026-09-29).
-2. **Managed files.** Copy the shim and the omp extension so hooks never run a repo
+1. **Check the surface.** `agent-introspection doctor` runs each enabled harness's
+   `binary` check against the profile's `verified_versions`. A newer version is `info`:
+   confirm the event names and payload fields in the installed types or docs, run
+   `agent-introspection doctor --drift` against the saved fingerprints (see the
+   producer onboarding workflow's [Watch](producer-onboarding-workflow.md#watch)
+   step), and look for renamed telemetry attributes (omp renamed `pi.gen_ai.*` to
+   `omp.gen_ai.*` on 2026-09-29).
+2. **Export settings.** Run `agent-introspection harness configure <key> --dry-run`,
+   show the user the result, then run it again without `--dry-run`:
+   - It writes only the profile's `export` settings and prints only those keys, each
+     with an action: `add`, `change`, `unchanged`, or `satisfied`. A nested part it
+     does not manage (such as exporter headers) shows as `(not shown)`; every other
+     key and hook is kept.
+   - **Transport equivalence:** an existing exporter that already reaches the
+     collector by another route (OTLP/gRPC on port 4317, or OTLP/HTTP on port 4318 or
+     the configured port) is `satisfied` and left alone; `--force` rewrites it to the
+     profile's OTLP/HTTP value. It must name the collector's machine: any local name
+     (`127.0.0.1` and `localhost` alike) on the host, the host's own name on an
+     additional machine.
+   - Each changed file is first copied to `<file>.bak-<UTC timestamp>`; the write is
+     atomic and keeps the file's permissions, and a second run changes nothing. A TOML
+     table it cannot edit line by line is rewritten as one table of inline values; its
+     comments move above the key each described, and the file's `notes` say so.
+   - The endpoint is `[signoz] otlp_endpoint` (default `http://127.0.0.1:4318`), or on an
+     additional machine `[machine] export_endpoint`, the host's collector: an OTLP/HTTP
+     base URL, which config refuses on the gRPC port 4317, so every harness is written
+     the same transport.
+   - A set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` names the file to write even before the
+     harness has created it there; a file left at the default location is then not
+     the one that harness reads. `doctor` reads the same files.
+   - `--root PATH …` adds a config directory: another Codex home, beside the existing
+     ones; for a file configured once (Claude Code, omp), it replaces the profile's
+     path. Each must be an existing directory.
+   - It exits 50 for a candidate, an unknown name, a missing root, or a file it cannot
+     parse or change safely; fix that file by hand (diff and back up first), then rerun.
+   - `next_steps` lists the hook install and the restart that follow.
+3. **Managed files.** Copy the shim and the omp extension so hooks never run a repo
    path. Show the diff against each existing destination first, and back up every
    destination that exists before overwriting it. The subshell stops at the first
    failed backup or install without closing your shell:
@@ -54,66 +103,44 @@ per-account Codex homes) goes under `[sessions.roots]` in the config:
    )
    ```
 
-3. **OTLP export** to the local collector (gRPC usually `localhost:4317`, HTTP
-   `localhost:4318`):
-   - Claude Code `env`: `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`,
-     `OTEL_TRACES_EXPORTER` = `otlp`; `OTEL_EXPORTER_OTLP_ENDPOINT`;
-     `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf` to match the port);
-     `OTEL_RESOURCE_ATTRIBUTES` with `service.name=claude-code`.
-   - Codex `[otel]`: `exporter`, `trace_exporter`, `metrics_exporter` pointing at the
-     collector.
-   - omp `~/.omp/.env`: `OTEL_EXPORTER_OTLP_ENDPOINT` (HTTP),
-     `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_SERVICE_NAME=oh-my-pi`.
-4. **Session store.** Project attribution reads it; nothing is installed. Confirm the
-   harness's store exists and holds recent sessions (`ls -t` its root), and after the
-   first `facts sync` (or `spool sync`), that `agent-introspection facts sessions`
-   reports them.
-5. **Activity hooks.**
+4. **Activity hooks.**
    - Claude Code: `python3 "$S/adapters/claude-code/install_activity.py" --dry-run`,
-     then without `--dry-run` (backs up, idempotent, `--remove` undoes).
+     then without `--dry-run` (backs up, idempotent, `--remove` undoes). It edits
+     `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, else
+     `~/.claude/settings.json`: the file `harness configure` writes.
    - omp: link the managed package as a plugin with `omp plugin link "$R/omp"` and
      confirm `omp plugin list` shows `agent-introspection-activity`. The link lives in
      omp's plugin directory, so nothing is added to `~/.omp/agent/extensions/` or
      `~/.omp/agent/config.yml`. If an earlier install left
      `~/.omp/agent/extensions/agent-introspection-activity.ts` or its `extensions:`
      entry in `config.yml`, back up `config.yml`, show the diff, and remove both.
-     Restart omp sessions.
-6. **Prompt export** (after the user's confirmation): Claude Code
-   `OTEL_LOG_USER_PROMPTS=1`; Codex `log_user_prompt = true` in every root; omp
-   `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (`activity.ts` sends no
-   prompt text until it is set; omp's own content-capture option sends whole
-   conversations, so `activity.ts` sends just the prompt). Labelling needs an
-   OpenRouter key where
-   `facts sync` runs: `OPENROUTER_API_KEY`, or omp's stored credential
-   (`omp token openrouter`). New sessions pick up the change; running ones keep sending
-   `REDACTED`.
+5. **Session store.** Project attribution reads it; nothing is installed. `doctor`'s
+   `session_store` check confirms the store exists and holds recent sessions. After the
+   first `facts sync` (or `spool sync`), `agent-introspection facts sessions` reports
+   them.
+6. **Prompt export** (only after the user confirms): run
+   `agent-introspection harness configure <key> --prompt-export`, with `--dry-run`
+   first. Without the flag, prompt-export settings are left as they are and reported
+   with `opt_in` and `on`. For Claude Code it writes `OTEL_LOG_USER_PROMPTS=1` with
+   `OTEL_LOG_ASSISTANT_RESPONSES=0`: unset, the second follows the first, and Claude
+   Code would also export each assistant response's text; `doctor` warns when only one
+   is set. It writes `0` over a value set by hand, such as
+   `OTEL_LOG_ASSISTANT_RESPONSES=1`: when the dry run shows such a `change` and the
+   user chose that value, do not run the write. For omp, `activity.ts` sends no prompt text until its
+   setting is on; omp's own content-capture option sends whole conversations, so
+   `activity.ts` sends just the prompt. Labels need an OpenRouter key where `facts sync`
+   runs: `[labels] openrouter_key_command` (a command that prints it, which the
+   scheduled sync runs too), or `OPENROUTER_API_KEY` for interactive runs only; omp's
+   stored credential (`omp token openrouter`) is the last fallback. New sessions pick
+   up the change; running ones keep sending `REDACTED`.
+7. **Restart** running sessions of each changed harness: they read their settings at
+   start.
+8. **Check.** `agent-introspection doctor`: for each enabled harness, `config_files`,
+   `export_settings`, `activity_hooks`, `activity_shim`, and `session_store` pass, and
+   `prompt_export` is `pass` or `off`, as the user chose, or `info` for a value they
+   set by hand.
 
 ## Done when
 
-- Each configured file has a backup and parses, every hook points at a managed path,
-  and the validation workflow passes for the harness.
-
-## Unknown harness
-
-A harness becomes known only when every dashboard signal has a route for it or a
-recorded reason it cannot. Until then it is not configured and not added to the
-registry, so it cannot show partial or misleading data. Find, and record in a harness
-profile (version, evidence, and whether each item is native, needs a hook, or is
-missing):
-
-| Need                  | What to find                                                                                                                                   | Check                                                 |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Telemetry export      | Its OTLP settings; the `service.name` it reports                                                                                               | Rows for that service in SigNoz after a short session |
-| Session identity      | The attribute naming the session, stable across its turns                                                                                      | Same value on usage, task, and tool rows              |
-| Task boundary         | The span or event that is one user turn or run, with start and end                                                                             | One per prompt                                        |
-| Model calls and usage | Per-call tokens (input, cached, output, reasoning), model, effort, errors, latency                                                             | Sums match the harness's own accounting               |
-| Tool calls            | Tool name, outcome, failure text, arguments or a way to hash them, call ID                                                                     | One per call, joinable to the task                    |
-| User signals          | Interrupt, steer, approvals                                                                                                                    | Rare-event routes                                     |
-| Prompt text           | A prompt event with its text, or a hook that can send one                                                                                      | Not a placeholder                                     |
-| Project attribution   | Where it stores sessions on disk, and the record holding the session ID and absolute working directory (becomes a `session_stores.toml` entry) | Session ID equals the telemetry session key           |
-| Hook surface          | Documented hook or extension events and their payload fields                                                                                   | For each gap above that telemetry lacks               |
-
-Inspect only installed docs, configuration, types, and telemetry key names and counts;
-never print prompts, commands, or secrets. Then add it with the
-`introspection-operations` change workflow ("Add a harness") and return here to
-configure it.
+- `doctor` passes for each configured harness, each changed file has a backup, every
+  hook points at a managed path, and the validation workflow passes for the harness.

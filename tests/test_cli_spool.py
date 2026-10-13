@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,9 @@ def test_schedule_status_counts_the_spool_and_its_rejections(
     spool_records(inbox, 3)
     (inbox / "rejected").mkdir()
     (inbox / "rejected" / "old.json").write_text("{}")
+    monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(schedule, "PLIST", tmp_path / "missing.plist")
+    monkeypatch.setattr(schedule, "LEGACY_PLIST", tmp_path / "missing-legacy.plist")
     monkeypatch.setattr(schedule, "_launchctl", lambda *_args: type("R", (), {"returncode": 1})())
 
     status = schedule.schedule_status()

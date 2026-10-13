@@ -6,18 +6,11 @@ import {
   type Row,
 } from "../src/contracts";
 import { hiddenSignals } from "../src/harness-scope";
+import { HARNESS_LABEL } from "../src/harnesses.generated";
 
 export const HOST = { host: "127.0.0.1:4173" };
 export const START = "2026-09-21T00:00:00.000Z";
 export const END = "2026-09-28T00:00:00.000Z";
-
-const LABELS: Record<Harness, string> = {
-  "oh-my-pi": "omp",
-  "codex-app-server": "Codex app-server",
-  codex_cli_rs: "Codex CLI",
-  codex_exec: "Codex exec",
-  "claude-code": "Claude Code",
-};
 
 /** The registry as this machine sees it: only `enabled` in use, hidden signals derived. */
 export const enabling = (
@@ -26,7 +19,7 @@ export const enabling = (
 ): Registry => {
   const harnesses = HARNESSES.map((harness) => ({
     harness,
-    label: LABELS[harness],
+    label: HARNESS_LABEL[harness],
     enabled: enabled.includes(harness) ? 1 : 0,
   }));
   return { ...reg, harnesses, hidden: hiddenSignals({ ...reg, harnesses }) };
@@ -158,7 +151,7 @@ export const registry = (): Registry =>
     ],
     harnesses: HARNESSES.map((harness) => ({
       harness,
-      label: LABELS[harness],
+      label: HARNESS_LABEL[harness],
       enabled: 1,
     })),
     hidden: [],

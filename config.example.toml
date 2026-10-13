@@ -5,7 +5,10 @@ busy_timeout_ms = 5000
 # Configure exactly one connection mode to the SigNoz installed on this machine;
 # non-local addresses are refused.
 #
-# docker (default): the SigNoz ClickHouse container, found with `docker ps`.
+# docker (default): the SigNoz ClickHouse container, found with `docker ps`. A SigNoz
+# installed from its older deploy/docker Compose files names it signoz-clickhouse; one
+# installed with Foundry, SigNoz's current installer (which the onboarding skill's
+# install-signoz.sh uses), names it signoz-telemetrystore-clickhouse-0-0.
 [signoz]
 clickhouse_container = "signoz-clickhouse"
 # docker_context = "desktop-linux"   # optional; defaults to the current Docker context
@@ -16,7 +19,7 @@ clickhouse_container = "signoz-clickhouse"
 # clickhouse_url = "http://127.0.0.1:8123"   # ClickHouse's HTTP port, published on loopback
 # clickhouse_user = "default"
 # clickhouse_password_command = ["security", "find-generic-password", "-s", "signoz-clickhouse", "-w"]
-# otlp_endpoint = "http://localhost:4318"
+# otlp_endpoint = "http://127.0.0.1:4318"   # OTLP/HTTP collector harnesses export to (either mode; never 4317)
 
 # The dashboard reads ClickHouse over HTTP only. In docker mode, give it the local
 # address of ClickHouse's HTTP interface (a port published on loopback, or a local
@@ -32,3 +35,39 @@ clickhouse_container = "signoz-clickhouse"
 # Absent means every registry harness. `facts install` loads the list into ClickHouse.
 # [harnesses]
 # enabled = ["claude-code", "oh-my-pi", "codex"]
+
+# Where activity-hook, session-attribution, and spool-status records are sent: the
+# OTLP/HTTP logs URL of the collector on this machine (port 4318, never the gRPC port
+# 4317). Only an additional machine (see [machine] below) points it at the host's
+# collector instead. On the host, set it after `facts install` has created the
+# loaders. Absent means the OTEL_EXPORTER_OTLP_* variables apply when they name an
+# OTLP/HTTP endpoint; otherwise records wait in the local spool.
+# [hooks]
+# otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
+
+# Extra session-store roots, by store name in session_stores.toml, for sessions kept
+# outside a harness's usual home, such as Orca's per-account Codex homes. `~`, `$VAR`,
+# and glob patterns expand; a root that does not exist is skipped. A root is a
+# directory of session files for a jsonl store, and a database file for a sqlite one.
+# [sessions.roots]
+# codex = ["~/Library/Application Support/orca/codex-accounts/*/home/sessions"]
+
+# Prompt labels need an OpenRouter key. OPENROUTER_API_KEY works for interactive runs,
+# but the scheduled sync does not see it: give it a command that prints the key (an
+# argv list such as a Keychain lookup), so the key is never stored in this file. With
+# neither, labels use omp's stored credential (`omp token openrouter`) when omp is
+# installed.
+# [labels]
+# openrouter_key_command = ["security", "find-generic-password", "-s", "openrouter", "-w"]
+
+# This machine's role. Absent, or role = "host", means it runs SigNoz and the facts
+# store. An additional machine runs harnesses but no SigNoz and sends everything to the
+# host's collector: set role = "additional" and export_endpoint to that collector's
+# OTLP/HTTP base URL (another machine's address is allowed here; no credentials), and
+# point [hooks] otlp_logs_endpoint at its /v1/logs. `harness configure` then writes that
+# endpoint into each harness, `doctor` checks the host's collector and the spool-sync
+# timer instead of SigNoz, and commands that need ClickHouse (facts, producers) refuse
+# to run. [signoz], [dashboard], and [labels] are not used there.
+# [machine]
+# role = "additional"
+# export_endpoint = "http://signoz-host.local:4318"

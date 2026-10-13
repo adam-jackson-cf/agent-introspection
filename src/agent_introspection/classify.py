@@ -23,7 +23,7 @@ import re
 import subprocess
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
@@ -40,6 +40,9 @@ PROMPT_CHAR_LIMIT = 12_000
 MAX_ATTEMPTS = 3
 WORKERS = 4
 TIMEOUT_SECONDS = 15.0
+# omp's stored OpenRouter credential: the key's last source, after the environment and
+# `[labels] openrouter_key_command`.
+OMP_KEY_COMMAND = ("omp", "token", "openrouter")
 
 TASK_TYPES = {
     "bugfix": "Fix a defect, error, failing test, or broken behaviour.",
@@ -117,6 +120,8 @@ _SECRETS = (
 )
 
 type Poster = Callable[[bytes, str], dict[str, Any]]
+# Returns the OpenRouter key; called only when a prompt is pending.
+type KeySource = Callable[[], str]
 
 
 class JevUnavailableError(RuntimeError):
@@ -147,26 +152,40 @@ def clip(text: str, limit: int = PROMPT_CHAR_LIMIT) -> str:
     return f"{text[:head]}\n…[{len(text) - head - tail} characters omitted]…\n{text[-tail:]}"
 
 
-def _run_omp_token() -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["omp", "token", "openrouter"], capture_output=True, text=True, timeout=10, check=False
-    )
+def _run_key_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
 
 
-def api_key() -> str:
-    """Return the OpenRouter key from the environment or omp's stored credential."""
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if key:
-        return key
-    missing = "no OpenRouter key: set OPENROUTER_API_KEY or log in to omp"
+def _command_key(command: Sequence[str], missing: str) -> str:
+    """Return the key ``command`` prints; ``missing`` is the error when it prints none."""
     try:
-        result = _run_omp_token()
+        result = _run_key_command(command)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise JevUnavailableError(missing) from exc
     key = result.stdout.strip()
     if result.returncode != 0 or not key:
         raise JevUnavailableError(missing)
     return key
+
+
+def api_key(key_command: Sequence[str] | None = None) -> str:
+    """Return the OpenRouter key for Jev.
+
+    The order is OPENROUTER_API_KEY, then the output of ``key_command`` (``[labels]
+    openrouter_key_command``), then omp's stored credential. A configured command that
+    prints no key is an error, never a reason to try omp. The key and the command's
+    output are never logged or put in an error.
+    """
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if key:
+        return key
+    if key_command is not None:
+        return _command_key(key_command, "labels.openrouter_key_command printed no OpenRouter key")
+    return _command_key(
+        OMP_KEY_COMMAND,
+        "no OpenRouter key: set OPENROUTER_API_KEY or [labels] openrouter_key_command, "
+        "or log in to omp",
+    )
 
 
 def http_poster(body: bytes, key: str) -> dict[str, Any]:
@@ -329,19 +348,22 @@ def run(
     *,
     days: int = 2,
     limit: int = 60,
-    key: str | None = None,
+    key: KeySource = api_key,
     post: Poster = http_poster,
 ) -> dict[str, Any]:
-    """Label up to ``limit`` unlabelled prompts from the last ``days`` days of SigNoz."""
+    """Label up to ``limit`` unlabelled prompts from the last ``days`` days of SigNoz.
+
+    ``key`` is asked for the OpenRouter key only when a prompt is pending.
+    """
     query = PENDING_QUERY.format(
         days=int(days), limit=int(limit), database=DATABASE, max_attempts=MAX_ATTEMPTS
     )
     prompts = [json.loads(line) for line in run_sql(query).splitlines() if line]
     if not prompts:
         return {"pending": 0, "labelled": 0, "failed": 0, "cost_usd": 0.0}
-    key = key if key is not None else api_key()
+    secret = key()
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        rows = list(pool.map(lambda prompt: _row(prompt, key, post), prompts))
+        rows = list(pool.map(lambda prompt: _row(prompt, secret, post), prompts))
     run_sql(";\n".join(insert_statements("prompt_labels", rows)))
     labelled = [row for row in rows if row["status"] == "labelled"]
     return {

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_introspection.config import (
     ConfigurationError,
+    MachineRole,
     load_config,
     parse_config,
+    require_host,
     resolve_otlp_logs_endpoint,
 )
 
@@ -80,10 +84,63 @@ def test_retired_keys_are_named_as_safe_to_delete(
         parse_config(document)
 
 
-def test_example_configuration_is_valid() -> None:
-    example = Path(__file__).parents[1] / "config.example.toml"
+EXAMPLE = Path(__file__).parents[1] / "config.example.toml"
+# A commented-out table header or `key = value` line in the example.
+COMMENTED_SETTING = re.compile(r"^# (\[[\w.]+\]|\w+ = .*)$")
+SIGNOZ_MODE_KEYS = {
+    "docker": {"clickhouse_container", "docker_context"},
+    "http": {"clickhouse_url", "clickhouse_user", "clickhouse_password_command"},
+}
 
-    assert load_config(example).signoz.clickhouse_container == "signoz-clickhouse"
+
+def _example_with_every_setting(mode: str) -> str:
+    """Return the example with each commented setting switched on, for one [signoz] mode."""
+    other = SIGNOZ_MODE_KEYS["http" if mode == "docker" else "docker"]
+    lines: list[str] = []
+    table = ""
+    for line in EXAMPLE.read_text().splitlines():
+        match = COMMENTED_SETTING.match(line)
+        text = match.group(1) if match else line
+        if text.startswith("["):
+            table = text.strip("[]")
+        if not (table == "signoz" and text.split(" = ", 1)[0] in other):
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def test_example_configuration_is_valid() -> None:
+    assert load_config(EXAMPLE).signoz.clickhouse_container == "signoz-clickhouse"
+
+
+@pytest.mark.parametrize("mode", ["docker", "http"])
+def test_every_setting_the_example_documents_is_accepted(tmp_path: Path, mode: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(_example_with_every_setting(mode))
+
+    config = load_config(path)
+
+    assert config.signoz.mode == mode
+    assert config.dashboard_clickhouse_url is not None
+    assert config.harnesses_enabled is not None
+    assert config.hooks_otlp_logs_endpoint is not None
+    assert config.session_roots["codex"]
+    assert config.labels_openrouter_key_command is not None
+    assert (config.signoz.clickhouse_password_command is not None) == (mode == "http")
+    assert config.machine.role is MachineRole.ADDITIONAL
+    assert config.collector_endpoint == config.machine.export_endpoint
+
+
+def test_the_openrouter_key_command_is_an_argv_list_and_never_the_key() -> None:
+    assert parse_config({}).labels_openrouter_key_command is None
+    config = parse_config({"labels": {"openrouter_key_command": ["security", "-w"]}})
+    assert config.labels_openrouter_key_command == ("security", "-w")
+    for bad in ("sk-or-v1-0000", [], ["security", ""], [1]):
+        with pytest.raises(ConfigurationError, match="openrouter_key_command must be a non-empty"):
+            parse_config({"labels": {"openrouter_key_command": bad}})
+    with pytest.raises(ConfigurationError, match="unsupported keys in labels: openrouter_api_key"):
+        parse_config({"labels": {"openrouter_api_key": "sk-or-v1-0000"}})
+    with pytest.raises(ConfigurationError, match="labels must be a TOML table"):
+        parse_config({"labels": "security"})
 
 
 def test_http_mode_reads_url_user_and_password_variable_name() -> None:
@@ -206,6 +263,66 @@ def test_the_hooks_endpoint_rejects_bad_urls_and_unknown_keys(
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
         parse_config({"hooks": hooks})
+
+
+def test_a_machine_is_the_signoz_host_unless_it_says_it_is_additional() -> None:
+    host = parse_config({"signoz": {"otlp_endpoint": "http://127.0.0.1:4318"}})
+    assert host.machine.role is MachineRole.HOST
+    assert host.collector_endpoint == "http://127.0.0.1:4318"
+    assert parse_config({"machine": {"role": "host"}}).collector_endpoint is None
+    require_host(host, "facts")
+
+    additional = parse_config({
+        "machine": {"role": "additional", "export_endpoint": "https://signoz-host.example:4318/"},
+        "signoz": {"otlp_endpoint": "http://127.0.0.1:4318"},
+    })
+
+    assert additional.machine.additional
+    # The host's collector, even when the host's own [signoz] setting was copied over.
+    assert additional.collector_endpoint == "https://signoz-host.example:4318"
+    with pytest.raises(ConfigurationError, match=r'additional machine \(\[machine\] role = "addi'):
+        require_host(additional, "this command needs SigNoz's ClickHouse")
+
+
+@pytest.mark.parametrize(
+    ("machine", "message"),
+    [
+        ({"role": "satellite"}, 'machine.role must be "host" or "additional"'),
+        ({"role": "host", "export_endpoint": "http://h:4318"}, 'applies only to role = "addi'),
+        ({"export_endpoint": "http://h:4318"}, 'applies only to role = "additional"'),
+        ({"role": "additional"}, "export_endpoint is required"),
+        ({"role": "additional", "export_endpoint": "grpc://h:4317"}, "http:// or https://"),
+        (
+            {"role": "additional", "export_endpoint": "http://user:pw@h:4318"},
+            "must not embed credentials",
+        ),
+        ({"role": "additional", "export_endpoint": ""}, "non-empty string"),
+        ({"role": "additional", "export_endpoint": "http://h:99999"}, "must name a valid port"),
+        ({"role": "additional", "host": "h"}, "unsupported keys in machine: host"),
+    ],
+)
+def test_the_machine_table_rejects_a_bad_role_or_export_endpoint(
+    machine: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=re.escape(message)):
+        parse_config({"machine": machine})
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"signoz": {"otlp_endpoint": "http://127.0.0.1:4317"}},
+        {"machine": {"role": "additional", "export_endpoint": "http://signoz-host.example:4317/"}},
+    ],
+)
+def test_a_collector_endpoint_on_the_otlp_grpc_port_is_refused(
+    document: dict[str, Any],
+) -> None:
+    # Every harness profile writes the collector endpoint with an OTLP/HTTP exporter.
+    with pytest.raises(
+        ConfigurationError, match=re.escape("OTLP/HTTP base URL (port 4318), not its OTLP/gRPC")
+    ):
+        parse_config(document)
 
 
 PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
