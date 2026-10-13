@@ -21,8 +21,8 @@ def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
 
         assert ddl.startswith(f"CREATE MATERIALIZED VIEW introspection.{loader.name}")
         assert (
-            f"REFRESH {loader.schedule}\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\n"
-            f"APPEND TO introspection.{loader.target}\n"
+            f"REFRESH {loader.schedule}\nSETTINGS {facts.LOADER_RETRY_SETTINGS}\n"
+            f"APPEND TO introspection.{loader.target} EMPTY\nAS\n"
         ) in ddl
         assert loader.window in ddl
         assert "{window}" not in ddl
@@ -52,7 +52,8 @@ def test_record_loaders_window_on_collector_time_and_filter_their_family() -> No
     for target, (event_name, schema) in families.items():
         minute, sweep = loaders[f"load_{target}"], loaders[f"sweep_{target}"]
         assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", target)
-        assert (sweep.schedule, sweep.target) == (facts.SWEEP_SCHEDULE, target)
+        assert sweep.schedule.startswith("EVERY 1 HOUR OFFSET ")
+        assert sweep.target == target
         assert "INTERVAL 30 MINUTE" in minute.window
         assert "INTERVAL 3 DAY" in sweep.window
         for loader in (minute, sweep):
@@ -167,7 +168,7 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     for refresher in refreshers:
         assert "REFRESH EVERY 1 YEAR" in refresher
         assert " EMPTY\nAS" in refresher
-        assert facts.REFRESH_RETRY_SETTINGS in refresher
+        assert "refresh_retries" in refresher
     # A rejected history offset must fail in the scratch database, so it survives.
     history = [s for s in refreshers if "_history\nREFRESH" in s]
     assert len(history) == len(facts.SNAPSHOTS)
@@ -178,7 +179,7 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in recent)
     sweeps = [s for s in refreshers if "introspection_verify.sweep_" in s]
     assert len(sweeps) == 4
-    assert all("REFRESH EVERY 1 YEAR OFFSET 9 MINUTE\n" in s for s in sweeps)
+    assert all(re.search(r"REFRESH EVERY 1 YEAR OFFSET \d+ MINUTE\n", s) for s in sweeps)
 
 
 def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> None:
@@ -215,6 +216,8 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
         for refresher in refreshers:
             # Each part replaces its table whole, so it never holds duplicates.
             assert "APPEND" not in refresher
+            # Creation must not fire the refresher: install refreshes them one at a time.
+            assert re.search(r"\nTO introspection\.\w+ EMPTY\nAS SELECT", refresher)
             assert (
                 "DEPENDS ON introspection.load_spans, introspection.load_logs,"
                 " introspection.load_hook_events, introspection.load_session_projects"

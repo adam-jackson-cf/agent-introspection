@@ -99,18 +99,30 @@ through one `<view>_snapshot` view:
   and from recent after it. Both tables overlap that boundary, so between rebuilds no
   row is missed or repeated.
 
-Refreshers are staggered so the heaviest queries never overlap; ClickHouse kills a
-query when total server memory passes its limit. Within each 10-minute period (UTC):
+Refreshers are staggered so heavy queries rarely overlap; ClickHouse kills a
+query when total server memory passes its limit. Every refresher is created `EMPTY`,
+so creating one runs nothing, and `facts install` then refreshes the minute loaders,
+the histories, then the recents one at a time (failing and naming the refresher if a
+refresh ends in an exception). Sweeps are not run at install; each waits for its slot.
+A failed refresh retries after a full 10 minutes (loaders and recents twice, histories
+three times), so a retry lands on the refresher's own minute class. Within each
+10-minute period (UTC):
 
-| Minute                   | Runs                                                                                                                                               |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `:x0`                    | the minute loaders only                                                                                                                            |
-| `:x1`-`:x4`, `:x6`-`:x8` | one `_recent` refresher each, in view order (usage_events, task_outcomes, tool_calls, user_signals, model_calls, model_call_attempts, task_labels) |
-| `:x5`                    | one `_history` refresher a day, 00:35 to 01:35                                                                                                     |
-| `:09`                    | the four hourly sweeps (all at minute 9 of the hour)                                                                                               |
+| Minute | Runs                                                                                      |
+| ------ | ----------------------------------------------------------------------------------------- |
+| `:x0`  | the minute loaders only                                                                   |
+| `:x1`  | `usage_events` recent                                                                     |
+| `:x2`  | `task_outcomes` recent                                                                    |
+| `:x3`  | `task_labels` recent (right after `task_outcomes`, which it waits for)                    |
+| `:x4`  | `tool_calls` recent                                                                       |
+| `:x5`  | one `_history` refresher a day, 00:35 to 01:35                                            |
+| `:x6`  | `user_signals` recent                                                                     |
+| `:x7`  | `model_calls` recent                                                                      |
+| `:x8`  | `model_call_attempts` recent                                                              |
+| `:x9`  | one hourly sweep each: `:09` spans, `:19` logs, `:29` hook events, `:39` session projects |
 
-A view that reads another snapshot (`task_labels` on `task_outcomes`) sits later in the
-order, because ClickHouse waits for a dependency only when its offset is earlier in the
+A view that reads another snapshot (`task_labels` on `task_outcomes`) must have a later
+offset, because ClickHouse waits for a dependency only when its offset is earlier in the
 same period. Loader and sweep queries share the backfill memory settings
 (`LOAD_SETTINGS`: 1.5 GiB ceiling, spilling to disk).
 

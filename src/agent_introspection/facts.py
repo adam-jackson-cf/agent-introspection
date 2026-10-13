@@ -10,8 +10,10 @@ from the snapshots.
 Refreshers are staggered across the hour so no two heavy queries overlap, because
 the server kills a query when total memory passes its limit. Minute map, in UTC:
 ``:x0`` minute loaders only; ``:x1``-``:x4`` and ``:x6``-``:x8`` one recent
-refresher each; ``:x5`` one history refresher (00:35-01:35); ``:09`` the hourly
-sweeps.
+refresher each; ``:x5`` one history refresher (00:35-01:35); ``:09``, ``:19``,
+``:29`` and ``:39`` one hourly sweep each. Every refresher is created ``EMPTY`` so
+creating it runs nothing; ``install`` then refreshes the minute loaders and snapshots
+one at a time, and a failed refresh retries a whole period later, on its own minute.
 """
 
 from __future__ import annotations
@@ -41,7 +43,6 @@ _DATABASE_REFERENCE = re.compile(rf"\b{DATABASE}(?=[.;])")
 _REFRESH_SCHEDULE = re.compile(
     r"REFRESH EVERY \d+ (?:MINUTE|HOUR|DAY)((?: OFFSET \d+ (?:MINUTE|HOUR))?)"
 )
-_REFRESH_TARGET = re.compile(r"(\bTO [\w.]+)\nAS\b")
 _QUERY_TIMEOUT_SECONDS = 600.0
 
 type SqlRunner = Callable[[str], str]
@@ -84,7 +85,13 @@ _RECORD_BACKFILL_WINDOW = (
 # re-reads three days of each source. The span sweep keys on end time, bounded only
 # by retention, so a span that ran for days is still loaded once it is exported.
 MINUTE_SCHEDULE = "EVERY 1 MINUTE"
-SWEEP_SCHEDULE = "EVERY 1 HOUR OFFSET 9 MINUTE"
+
+
+def sweep_schedule(minute: int) -> str:
+    """Return the hourly schedule of a sweep; each sweep owns one :x9 minute."""
+    return f"EVERY 1 HOUR OFFSET {minute} MINUTE"
+
+
 LOADERS = (
     Loader(
         name="load_spans",
@@ -100,7 +107,7 @@ LOADERS = (
         name="sweep_spans",
         target="spans",
         select_file="select_spans.sql",
-        schedule=SWEEP_SCHEDULE,
+        schedule=sweep_schedule(9),
         window=(
             "timestamp > now() - INTERVAL 90 DAY"
             " AND timestamp + toIntervalNanosecond(duration_nano) > now() - INTERVAL 3 DAY"
@@ -110,7 +117,7 @@ LOADERS = (
         name="sweep_logs",
         target="logs",
         select_file="select_logs.sql",
-        schedule=SWEEP_SCHEDULE,
+        schedule=sweep_schedule(19),
         window="timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 3 DAY)) * 1000000000",
     ),
     Loader(
@@ -128,7 +135,7 @@ LOADERS = (
         name="sweep_hook_events",
         target="hook_events",
         select_file="select_hook_events.sql",
-        schedule=SWEEP_SCHEDULE,
+        schedule=sweep_schedule(29),
         window=_RECORD_SWEEP_WINDOW,
     ),
     Loader(
@@ -142,7 +149,7 @@ LOADERS = (
         name="sweep_session_projects",
         target="session_projects",
         select_file="select_session_projects.sql",
-        schedule=SWEEP_SCHEDULE,
+        schedule=sweep_schedule(39),
         window=_RECORD_SWEEP_WINDOW,
     ),
     Loader(
@@ -214,23 +221,45 @@ LOAD_SETTINGS = f"{REFRESH_SETTINGS}, max_block_size = 8192, max_insert_threads 
 # history built yesterday still reaches the boundary, recent always starts before it.
 RECENT_PERIOD_MINUTES = 10
 # Minute map within each 10-minute period (see the module docstring): :x0 is left to the
-# minute loaders, :x5 to history, and the sweeps run at :09, so recents take the rest.
-RECENT_OFFSET_MINUTES = (1, 2, 3, 4, 6, 7, 8)
+# minute loaders, :x5 to history, and the sweeps run in the :x9 class, so recents take
+# the rest. task_labels follows task_outcomes by one minute, which it waits for.
+RECENT_OFFSET_MINUTES = {
+    "usage_events": 1,
+    "task_outcomes": 2,
+    "task_labels": 3,
+    "tool_calls": 4,
+    "user_signals": 6,
+    "model_calls": 7,
+    "model_call_attempts": 8,
+}
 # Each history refresher scans the most data, and the server kills a query when total
 # server RSS (not one query's memory) passes its limit. So history refreshers run one at
 # a time, 10 minutes apart from 00:35 UTC, always on a :x5 minute: the minute loaders own
-# :x0, the recent refreshers :x1-:x4 and :x6-:x8, and the hourly sweeps :09. Offsets are minute-only
+# :x0, the recent refreshers :x1-:x4 and :x6-:x8, and the hourly sweeps :x9. Offsets are minute-only
 # because `_REFRESH_SCHEDULE` rewrites a single-unit OFFSET for `facts verify`. A view
 # that DEPENDS ON another must come later in SNAPSHOTS, for recent and history alike:
 # ClickHouse waits only for a dependency whose offset is earlier in the same period.
 HISTORY_FIRST_OFFSET_MINUTES = 35
 HISTORY_OFFSET_STEP_MINUTES = 10
-# A failed refresh backs off 30 s to 5 min, instead of the default 100-200 ms that
-# re-enters the same memory burst.
-REFRESH_RETRY_SETTINGS = (
-    "refresh_retries = 5, refresh_retry_initial_backoff_ms = 30000, "
-    "refresh_retry_max_backoff_ms = 300000"
-)
+# A failed refresh waits one whole 10-minute period before each retry (the default
+# 100-200 ms re-enters the same memory burst), so a retry lands on the refresher's own
+# minute class and never on another refresher's slot. Loaders and recents rebuild on
+# the next period anyway, so they retry twice; a daily history gets three.
+REFRESH_RETRY_BACKOFF_MS = RECENT_PERIOD_MINUTES * 60_000
+
+
+def refresh_retry_settings(retries: int) -> str:
+    """Return the retry settings for ``retries`` retries a period apart."""
+    return (
+        f"refresh_retries = {retries}, "
+        f"refresh_retry_initial_backoff_ms = {REFRESH_RETRY_BACKOFF_MS}, "
+        f"refresh_retry_max_backoff_ms = {REFRESH_RETRY_BACKOFF_MS}"
+    )
+
+
+LOADER_RETRY_SETTINGS = refresh_retry_settings(2)
+RECENT_RETRY_SETTINGS = refresh_retry_settings(2)
+HISTORY_RETRY_SETTINGS = refresh_retry_settings(3)
 HISTORY_END_DAYS = 6
 BOUNDARY_DAYS = 7
 RECENT_START_DAYS = 8
@@ -281,7 +310,7 @@ SNAPSHOTS = (
     Snapshot("model_call_attempts", "(harness, ts)"),
     Snapshot("task_labels", "(harness, start_ts)", "start_ts", "004_labels.sql", "task_outcomes"),
 )
-assert len(RECENT_OFFSET_MINUTES) == len(SNAPSHOTS), "one recent minute slot per snapshot"
+assert set(RECENT_OFFSET_MINUTES) == {s.view for s in SNAPSHOTS}, "one recent minute per snapshot"
 
 
 def history_schedule(snapshot: Snapshot) -> str:
@@ -291,8 +320,8 @@ def history_schedule(snapshot: Snapshot) -> str:
 
 
 def recent_schedule(snapshot: Snapshot) -> str:
-    """Return the schedule of a snapshot's recent refresher, one minute slot per position."""
-    offset = RECENT_OFFSET_MINUTES[SNAPSHOTS.index(snapshot)]
+    """Return the schedule of a snapshot's recent refresher, at its own minute."""
+    offset = RECENT_OFFSET_MINUTES[snapshot.view]
     return f"EVERY {RECENT_PERIOD_MINUTES} MINUTE OFFSET {offset} MINUTE"
 
 
@@ -357,12 +386,17 @@ def render_select(select_file: str, window: str) -> str:
 
 
 def loader_ddl(loader: Loader) -> str:
-    """Return the refreshable materialized view definition for one loader."""
+    """Return the refreshable materialized view definition for one loader.
+
+    ``EMPTY`` keeps creation from running the loader. ``install`` refreshes the minute
+    loaders itself, one at a time; a sweep waits for its own hourly slot, because the
+    minute loaders already cover the recent window and the sweep only catches late rows.
+    """
     return (
         f"CREATE MATERIALIZED VIEW {DATABASE}.{loader.name}\n"
         f"REFRESH {loader.schedule}\n"
-        f"SETTINGS {REFRESH_RETRY_SETTINGS}\n"
-        f"APPEND TO {DATABASE}.{loader.target}\n"
+        f"SETTINGS {LOADER_RETRY_SETTINGS}\n"
+        f"APPEND TO {DATABASE}.{loader.target} EMPTY\n"
         f"AS\n{render_select(loader.select_file, loader.window).rstrip()}\n"
         f"SETTINGS {LOAD_SETTINGS}"
     )
@@ -382,7 +416,9 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
     ``additional_table_filters`` bounds the spans and logs each part reads, leaving
     the view SQL unchanged. Refreshers run with two threads so dashboard queries keep
     the CPU, and with a memory ceiling below the server's that spills to disk
-    (``REFRESH_SETTINGS``). The pre-split single-table refresher and table are dropped too.
+    (``REFRESH_SETTINGS``). Refreshers are created ``EMPTY``: creation fires none, and
+    ``install`` refreshes them one at a time. The pre-split single-table refresher and
+    table are dropped too.
     """
     base = f"{DATABASE}.{snapshot.view}"
     column = snapshot.time_column
@@ -398,8 +434,8 @@ def snapshot_statements(snapshot: Snapshot) -> list[str]:
         return (
             f"CREATE MATERIALIZED VIEW {DATABASE}.{snapshot_refreshers(snapshot)[part]}\n"
             f"REFRESH {schedule} DEPENDS ON {', '.join(waits)}\n"
-            f"SETTINGS {REFRESH_RETRY_SETTINGS}\n"
-            f"TO {table}\nAS SELECT * FROM {base} WHERE {keep}\n"
+            f"SETTINGS {(HISTORY_RETRY_SETTINGS, RECENT_RETRY_SETTINGS)[part]}\n"
+            f"TO {table} EMPTY\nAS SELECT * FROM {base} WHERE {keep}\n"
             f"SETTINGS {REFRESH_SETTINGS}, {filters}"
         )
 
@@ -991,7 +1027,7 @@ def verify_statements(enabled: Sequence[str] | None = None) -> list[str]:
     """Return the install statements rewritten to build a scratch copy of the store.
 
     Every reference to the facts database points at ``VERIFY_DATABASE`` instead, and
-    each refreshable view is created ``EMPTY`` on a yearly schedule, so ClickHouse
+    each refreshable view (already ``EMPTY``) gets a yearly schedule, so ClickHouse
     checks every statement (including each view's columns against its target table)
     without loading a row or touching the live store.
     """
@@ -1000,8 +1036,7 @@ def verify_statements(enabled: Sequence[str] | None = None) -> list[str]:
         statement = _DATABASE_REFERENCE.sub(VERIFY_DATABASE, statement)
         if not _REFRESH_SCHEDULE.search(statement):
             return statement
-        yearly = _REFRESH_SCHEDULE.sub(r"REFRESH EVERY 1 YEAR\1", statement)
-        return _REFRESH_TARGET.sub(r"\1 EMPTY\nAS", yearly, count=1)
+        return _REFRESH_SCHEDULE.sub(r"REFRESH EVERY 1 YEAR\1", statement)
 
     return [
         f"DROP DATABASE IF EXISTS {VERIFY_DATABASE} SYNC",
@@ -1048,16 +1083,41 @@ def compare_statement(snapshot: Snapshot) -> str:
     )
 
 
+def refresh_view(run: SqlRunner, name: str) -> None:
+    """Refresh one refreshable view now and wait; raise if the refresh ended in an exception."""
+    target = f"{DATABASE}.{name}"
+    try:
+        run(f"SYSTEM REFRESH VIEW {target}")
+        run(f"SYSTEM WAIT VIEW {target}")
+    except FactsError as exc:
+        raise FactsError(f"refresh of {name} failed: {exc}") from exc
+    output = run(
+        "SELECT exception FROM system.view_refreshes "
+        f"WHERE database = '{DATABASE}' AND view = '{name}' FORMAT JSONEachRow"
+    )
+    for line in output.splitlines():
+        exception = json.loads(line).get("exception") if line.strip() else ""
+        if exception:
+            raise FactsError(f"refresh of {name} failed: {exception}")
+
+
+def refresh_snapshots(run: SqlRunner) -> None:
+    """Refresh every history, then every recent refresher, one at a time in SNAPSHOTS order.
+
+    Each part is refreshed after the snapshot it reads, which SNAPSHOTS order guarantees.
+    """
+    for part in (0, 1):
+        for snapshot in SNAPSHOTS:
+            refresh_view(run, snapshot_refreshers(snapshot)[part])
+
+
 def compare(run: SqlRunner) -> dict[str, Any]:
     """Rebuild every snapshot now, then check each matches a full read of its view.
 
     Proves the history/recent split loses and repeats nothing. It rereads every view
     in full, so it runs on demand (``facts verify --compare``), not on a schedule.
     """
-    for snapshot in SNAPSHOTS:
-        for name in snapshot_refreshers(snapshot):
-            run(f"SYSTEM REFRESH VIEW {DATABASE}.{name}")
-            run(f"SYSTEM WAIT VIEW {DATABASE}.{name}")
+    refresh_snapshots(run)
     snapshots: dict[str, dict[str, Any]] = {}
     for snapshot in SNAPSHOTS:
         output = run(compare_statement(snapshot))
@@ -1082,11 +1142,21 @@ def install(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, A
     unknown keys are rejected before any statement runs. The whole store is first
     built in a scratch database (``verify``), so SQL ClickHouse rejects never leaves
     the live store half installed.
+
+    Every refreshable view is created ``EMPTY`` so creation fires none of them (an
+    18-refresher burst once exhausted retries and left history empty). Install then
+    refreshes the minute loaders, the histories, then the recents, one at a time, and
+    fails naming the refresher whose refresh ended in an exception. Sweeps are not
+    run now: the minute loaders cover the recent window and a sweep runs in its slot.
     """
     verify(run, enabled)
     statements = install_statements(enabled)
     for statement in statements:
         run(statement)
+    for loader in LOADERS:
+        if loader.schedule == MINUTE_SCHEDULE:
+            refresh_view(run, loader.name)
+    refresh_snapshots(run)
     registry = load_registry()
     harnesses = enabled_harnesses(registry, enabled)
     return {
