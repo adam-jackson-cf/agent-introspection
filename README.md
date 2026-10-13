@@ -1,6 +1,6 @@
 # Agent Introspection
 
-**One local view of model usage and agent process across omp, Codex, and Claude Code,
+**One local view of model usage and agent process across Claude Code, Codex, and omp,
 with approval-gated proposals to fix recurring problems.**
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square)
@@ -9,106 +9,173 @@ with approval-gated proposals to fix recurring problems.**
 ![Primary CLI](https://img.shields.io/badge/cli-agent--introspection-orange.svg?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-local%20self--hosted%20SigNoz-purple.svg?style=flat-square)
 
-> **Local, and one machine by default.** Agent Introspection runs on a person's own
-> desktop against a self-hosted SigNoz on that same machine, and refuses any ClickHouse
-> or collector address in its `[signoz]` and `[dashboard]` settings that is not local.
-> It never reconfigures an existing SigNoz; installing a new one is opt-in, through a
-> guided script. Additional machines that run harnesses are an add-on: one set to
-> `[machine] role = "additional"` sends its telemetry and hook records to the host's
-> collector, and `harness configure` and `doctor` follow that role (see the onboarding
-> skill's
-> [additional machines workflow](.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
-> [SigNoz Connection](docs/references/signoz-connection.md) has the exact limits.
+Agent Introspection runs on your own desktop. It reads the telemetry your coding agents
+send to a SigNoz on the same machine, and shows it in a local dashboard.
 
-## Quick Install
+## Set it up
 
-Prerequisites:
+### The easy way: let your coding agent do it
 
-- macOS or Linux (the scheduled sync is a launchd agent or a systemd user timer)
-- Python 3.12 or newer and `uv`
-- A self-hosted SigNoz on this machine with ClickHouse 24.10 or later, or Docker with
-  Compose 2.24.4 or later to install one
-- Local access to its ClickHouse: `docker exec` into its container, or its HTTP
-  interface at a local address
-- Bun, for the dashboard companion
+Clone the repository, open it in Claude Code or Codex, and ask:
 
-1. **Find SigNoz.** `signoz detect` only reads: it lists SigNoz and ClickHouse
-   containers and which SigNoz ports are open on this machine.
+> Use the introspection-onboarding skill to set up Agent Introspection on this machine.
 
-   ```bash
-   uv sync
-   uv run agent-introspection signoz detect
-   ```
+The [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md) skill
+runs the steps below in order. It shows a dry run before changing any file, backs up
+what it changes, and asks before anything you have to decide, such as installing
+SigNoz or turning on prompt export.
 
-   With a SigNoz present, connect to it as it is. With none, and only if you want one,
-   the guided install sets one up. It refuses when it finds any SigNoz, and prints the
-   `[signoz]` settings to use:
+### Before you start
 
-   ```bash
-   bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run  # then without --dry-run
-   ```
+| You need                                                 | How to get it                                                                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| macOS or Linux                                           | The scheduled sync is a launchd agent (macOS) or a systemd user timer (Linux) |
+| Python 3.12+ and [`uv`](https://docs.astral.sh/uv/)      | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                            |
+| [Bun](https://bun.sh), for the dashboard                 | `curl -fsSL https://bun.sh/install \| bash`                                   |
+| Docker with Compose 2.24.4+                              | Docker Desktop or OrbStack (macOS), Docker Engine (Linux)                     |
+| A self-hosted SigNoz on this machine (ClickHouse 24.10+) | Use the one you have, or install one in step 2                                |
+| `~/.local/bin` on your `PATH`                            | Where `uv tool install` puts the `agent-introspection` command                |
 
-2. **Configure and check the connection.**
+### The manual way
 
-   ```bash
-   mkdir -p ~/.config/agent-introspection
-   cp config.example.toml ~/.config/agent-introspection/config.toml  # set [signoz], [harnesses]; [dashboard] in docker mode
-   uv run agent-introspection facts preflight
-   uv tool install --force --reinstall .   # the standalone copy the scheduled sync and hooks run
-   ```
+Each step says what you should see. `agent-introspection doctor` checks everything at
+any point and gives the fix for each problem, so run it whenever something looks wrong.
 
-   `facts preflight` is read-only: it checks the config, the connection, the ClickHouse
-   version, the SigNoz columns the projections read, grants, and recent producer data.
-   It always prints a JSON report, with configuration and connection errors as failing
-   checks, and exits 30 when any check fails.
-
-3. **Build the facts store and configure each harness.**
-
-   ```bash
-   agent-introspection facts install                          # tables, loaders, views, snapshots, registry
-   agent-introspection facts backfill --days 90               # re-project everything SigNoz retains
-   agent-introspection harness list                           # known harnesses, and which are enabled
-   agent-introspection harness configure claude-code --dry-run  # preview, then run without --dry-run
-   ```
-
-   `harness configure` (`claude-code`, `codex`, or `omp`) writes only the export
-   settings its profile manages, backing up each changed file; `--prompt-export` also
-   turns on prompt export, which keeps prompt text in SigNoz (for Claude Code it also
-   sets `OTEL_LOG_ASSISTANT_RESPONSES=0`, so assistant responses stay redacted). Its
-   `next_steps` name the
-   activity hooks to install. Then set `[hooks] otlp_logs_endpoint` in the config to
-   the local collector's OTLP/HTTP logs URL.
-
-4. **Schedule and diagnose.**
-
-   ```bash
-   agent-introspection facts schedule install   # a launchd agent on macOS, a systemd user timer on Linux
-   agent-introspection doctor                   # read-only; each problem comes with its fix
-   ```
-
-   On Linux, `loginctl enable-linger "$USER"` keeps the timer running after you log
-   out. `doctor` checks SigNoz, the collector, each enabled harness, the spool, the
-   schedule, prompt labels, and the dashboard's ClickHouse URL, and can be run at any
-   step.
-
-The `introspection-onboarding` skill runs these steps in order, with backups and
-validation.
-
-## Quick Start
-
-Load the first data and open the dashboard:
+**1. Get the code and install the CLI.**
 
 ```bash
-agent-introspection facts sync                # hook events, session attribution, labels, findings, evaluations
-agent-introspection facts status              # loader state and per-harness freshness
-bun install --cwd dashboard --frozen-lockfile
-bun run --cwd dashboard build
-bun run --cwd dashboard start                 # http://127.0.0.1:4173
+git clone https://github.com/adam-jackson-cf/agent-introspection.git
+cd agent-introspection
+uv sync
+uv tool install --force --reinstall .
+agent-introspection --help
 ```
 
-The facts store materializes the harnesses' SigNoz telemetry into the `introspection`
-ClickHouse database, and the React companion serves it on loopback. Its Pipeline view
-shows loader freshness, harness parity, and project attribution.
+You should see the command list. `uv tool install` puts a standalone copy in
+`~/.local/bin`; the scheduled sync and the activity hooks run that copy, so reinstall it
+after every update.
+
+**2. Find SigNoz, or install one.**
+
+```bash
+agent-introspection signoz detect
+```
+
+It only reads, and lists any SigNoz and ClickHouse containers and which SigNoz ports are
+open. If you already have a SigNoz, keep it as it is and go to step 3. If you have none
+and want one, the guided install sets one up on loopback and prints the settings for
+step 3:
+
+```bash
+bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run
+bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh
+```
+
+It refuses to run when it finds any existing SigNoz, so it can never change yours.
+
+**3. Write the config and check the connection.**
+
+```bash
+mkdir -p ~/.config/agent-introspection
+cp config.example.toml ~/.config/agent-introspection/config.toml
+```
+
+Edit the copy. It needs two things: how to reach ClickHouse, and which harnesses you
+use.
+
+| Your SigNoz                                                 | `[signoz]`                                                                                                              | `[dashboard]`                                                           |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Installed by the guided script                              | Paste what it printed (`clickhouse_url`, `clickhouse_user`, `otlp_endpoint`)                                            | Not needed                                                              |
+| Existing, ClickHouse HTTP published on loopback (port 8123) | `clickhouse_url = "http://127.0.0.1:8123"`, `clickhouse_user = "default"`                                               | Not needed                                                              |
+| Existing, ClickHouse not published                          | `clickhouse_container` = the name `signoz detect` shows (`signoz-clickhouse` or `signoz-telemetrystore-clickhouse-0-0`) | `clickhouse_url` of an HTTP address the dashboard can reach (see below) |
+
+The dashboard always reads ClickHouse over HTTP. If yours is not published, add the
+opt-in [ClickHouse HTTP override](.agents/skills/introspection-onboarding/scripts/signoz/docker-compose.clickhouse-http.yaml)
+to your SigNoz Compose project, which publishes it on `127.0.0.1:8123` only.
+
+Then list your harnesses, for example `enabled = ["claude-code", "codex"]` under
+`[harnesses]`, and check:
+
+```bash
+agent-introspection facts preflight
+```
+
+You should see `"passed": true`. It only reads, always prints a JSON report, and names
+each failing check.
+
+**4. Build the facts store.**
+
+```bash
+agent-introspection facts install
+agent-introspection facts backfill --days 90
+```
+
+`facts install` creates the `introspection` database inside SigNoz's ClickHouse;
+`backfill` loads the history SigNoz still holds. Both print a JSON summary.
+
+**5. Connect your harnesses.**
+
+Uncomment `[hooks]` in the config so activity records reach the collector:
+
+```toml
+[hooks]
+otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
+```
+
+Then, for each harness you use, preview and write its export settings:
+
+```bash
+agent-introspection harness configure claude-code --dry-run   # then without --dry-run
+agent-introspection harness configure codex --dry-run         # then without --dry-run
+```
+
+Each run changes only the settings its profile manages, backs up every file it changes,
+and lists any `next_steps`. Claude Code also needs its activity hooks:
+
+```bash
+python3 .agents/skills/introspection-onboarding/scripts/adapters/claude-code/install_activity.py --dry-run  # then without
+```
+
+Codex needs no hooks. For omp, follow the
+[harness configuration workflow](.agents/skills/introspection-onboarding/references/harness-configuration-workflow.md).
+Restart running agent sessions so they pick up the settings. Prompt export (needed for
+the Intent view's labels) is opt-in: add `--prompt-export` to `harness configure` once
+you have decided SigNoz may keep prompt text.
+
+**6. Schedule, check, and open the dashboard.**
+
+```bash
+agent-introspection facts schedule install
+agent-introspection doctor
+bun install --cwd dashboard --frozen-lockfile
+bun run --cwd dashboard build
+bun run --cwd dashboard start
+```
+
+The schedule syncs every minute (on Linux, `loginctl enable-linger "$USER"` keeps it
+running after you log out). `doctor` should show `"passed": true`; any `warn` or `fail`
+comes with its fix. Open <http://127.0.0.1:4173>: the Pipeline view shows each
+harness's freshness. Use an agent for a few minutes and its sessions appear.
+
+### If something fails
+
+- Run `agent-introspection doctor` and follow the `fix` on each `fail` or `warn`.
+- [CLI reference](docs/references/cli-reference.md): every command, its output, and its
+  exit codes.
+- [SigNoz connection](docs/references/signoz-connection.md): connection modes, ClickHouse
+  grants, and the two SigNoz layouts.
+
+### Other harnesses and machines
+
+- **A producer this tool does not know yet**, such as opencode:
+  `agent-introspection producers discover` finds it, and
+  [Producer Onboarding](docs/references/producer-onboarding.md) explains how to assess
+  it before enabling it.
+- **More than one machine**: one host runs SigNoz; other machines that run agents send
+  to it. See the
+  [additional machines workflow](.agents/skills/introspection-onboarding/references/additional-machines-workflow.md).
+- **Local only**: the host refuses any ClickHouse or collector address that is not on
+  this machine, and never reconfigures an existing SigNoz.
 
 ## What Agent Introspection Does
 
