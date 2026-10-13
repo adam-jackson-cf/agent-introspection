@@ -1,24 +1,16 @@
-import { HARNESSES, type Harness } from "./contracts";
+import { HARNESSES, HARNESS_LABEL, type Harness } from "./harnesses.generated";
 import { EFFORT_TOKENS, HARNESS_TOKENS, PART_TOKENS } from "./tokens";
 
+export { HARNESS_LABEL };
+
 /**
- * Harness identity colors: categorical `cat-1`…`cat-5` in docs/ux/DESIGN.md, read from
- * the token mirror. Color follows the harness everywhere; it never follows rank.
+ * Harness identity colors: the categorical harness slots in docs/ux/DESIGN.md, read from
+ * the token mirror, one per harness in registry order. Color follows the harness
+ * everywhere; it never follows rank.
  */
-export const HARNESS_COLOR: Record<Harness, string> = {
-  "oh-my-pi": HARNESS_TOKENS[0],
-  "codex-app-server": HARNESS_TOKENS[1],
-  codex_cli_rs: HARNESS_TOKENS[2],
-  codex_exec: HARNESS_TOKENS[3],
-  "claude-code": HARNESS_TOKENS[4],
-};
-export const HARNESS_LABEL: Record<Harness, string> = {
-  "oh-my-pi": "omp",
-  "codex-app-server": "Codex app-server",
-  codex_cli_rs: "Codex CLI",
-  codex_exec: "Codex exec",
-  "claude-code": "Claude Code",
-};
+export const HARNESS_COLOR = Object.fromEntries(
+  HARNESSES.map((harness, index) => [harness, HARNESS_TOKENS[index]]),
+) as Record<Harness, string>;
 /**
  * Categorical slots for non-harness series, in fixed order: `cat-6`…`cat-8`
  * (PART_TOKENS), so a series never shares a colour with a harness.

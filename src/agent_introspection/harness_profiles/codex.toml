@@ -1,0 +1,81 @@
+# Codex (app-server, CLI, and exec): the settings that switch on its telemetry, and
+# the producer capabilities it offers (docs/references/producer-capabilities.md).
+# Routes are registry [[route]] ids; a capability's status is its weakest part.
+#
+# Codex reads `[otel]` from each Codex home (`$CODEX_HOME` when set, else `~/.codex`),
+# so `$CODEX_HOME` (even before Codex creates it) and an existing `~/.codex` are both
+# configured. Each exporter is an inline table keyed by its
+# kind; an `otlp-http` exporter posts to its endpoint as given, so the endpoint names
+# the signal path, and protocol `binary` is protobuf. Codex also accepts
+# `otlp-grpc = { endpoint = ... }`. A local gRPC exporter already reaches the
+# collector, so `doctor` passes it and `harness configure` leaves it unless `--force`;
+# a missing or other exporter is written as OTLP/HTTP so every harness uses the same
+# `{otlp_endpoint}`. Codex ignores `[otel]` in a project's `.codex/config.toml`. Each
+# surface reports its own `service.name`.
+schema = "agent-introspection.harness-profile/1"
+key = "codex"
+title = "Codex"
+status = "registered"
+registry_keys = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+service_names = ["codex-app-server", "codex_cli_rs", "codex_exec"]
+binary = "codex"
+version_args = ["--version"]
+verified_versions = ["0.156.1"]
+session_store = "codex"
+hook_adapter = ""
+sources = ["https://developers.openai.com/codex/config-reference"]
+
+[[config_file]]
+id = "config"
+paths = ["$CODEX_HOME/config.toml", "~/.codex/config.toml"]
+format = "toml"
+table = "otel"
+roots = "each"
+
+[[setting]]
+file = "config"
+key = "exporter"
+value = { otlp-http = { endpoint = "{otlp_endpoint}/v1/logs", protocol = "binary" } }
+group = "export"
+purpose = "Sends the event logs (`codex.sse_event`, `codex.tool_result`, `codex.tool_decision`, `codex.sandbox_outcome`, `codex.agent_communication`) to the collector."
+
+[[setting]]
+file = "config"
+key = "trace_exporter"
+value = { otlp-http = { endpoint = "{otlp_endpoint}/v1/traces", protocol = "binary" } }
+group = "export"
+purpose = "Sends the spans (`session_task.turn`, `run_sampling_request`, `turn/interrupt`, `turn/steer`) to the collector."
+
+[[setting]]
+file = "config"
+key = "metrics_exporter"
+value = { otlp-http = { endpoint = "{otlp_endpoint}/v1/metrics", protocol = "binary" } }
+group = "export"
+purpose = "Sends metrics to the collector instead of the default Statsig exporter."
+
+[[setting]]
+file = "config"
+key = "log_user_prompt"
+value = true
+group = "prompt_export"
+purpose = "Exports prompt text on `codex.user_prompt` events, for prompt labels; off by default."
+
+[capabilities]
+export = { status = "native", evidence = "Spans and logs under `service.name` codex-app-server, codex_cli_rs, or codex_exec, one per surface, once `[otel]` names the exporters." }
+session_identity = { status = "native", route = "codex.usage", evidence = "`conversation.id` on usage, tool, and turn rows; it equals the rollout `session_meta` id." }
+task_boundary = { status = "native", route = "codex.turn", evidence = "One `session_task.turn` span per turn; `codex-auto-review` turns are the approval reviewer and are excluded." }
+model_usage = { status = "native", route = "codex.usage", lacks = ["usage.cache_creation"], evidence = "`input_token_count`, `cached_token_count`, and `output_token_count` on `response.completed`; `cache_write_token_count` has been 0 on every event since 2026-08-24, so Cache creation is not emitted." }
+reasoning_usage = { status = "native", route = "codex.usage", evidence = "`reasoning_token_count` on `response.completed`." }
+model_identity = { status = "native", route = "codex.turn", lacks = ["provider.model_conformance"], evidence = "The model and `codex.turn.reasoning_effort` on turns, `model_reasoning_effort` on usage; only the requested model is reported, so Model conformance is not emitted." }
+model_outcome = { status = "native", route = "codex.response_completed", lacks = ["provider.throughput"], evidence = "`error.message` and `ttft_ms` on `response.completed`, `run_sampling_request` durations, and `try_run_sampling_request` attempts; a completed response has no per-call duration, so Output throughput is not emitted." }
+tool_calls = { status = "native", route = "codex.tool_result", evidence = "One `codex.tool_result` log per call with the tool, `success`, and the exit code." }
+tool_arguments = { status = "native", route = "codex.tool_result", evidence = "The projection derives `x.arguments_hash` and the command shape from the arguments, which are not stored." }
+tool_failure = { status = "native", route = "codex.tool_result", evidence = "The projection takes `x.failure_signature`, the first error-like output line, from the output, which is not stored." }
+user_friction = { status = "native", route = "codex.interrupt", evidence = "`turn/interrupt` and `turn/steer` spans carry the `turn.id`; follow-ups come from the turn spans." }
+approvals = { status = "native", route = "codex.tool_decision", evidence = "`codex.tool_decision` logs with `decision` and `source`, and `codex.sandbox_outcome` logs." }
+delegation = { status = "native", route = "codex.agent_spawn", evidence = "`codex.agent_communication` spawn sends from the turn's thread." }
+prompt_text = { status = "native", route = "codex.user_prompt", evidence = "`codex.user_prompt` logs carry the text with `log_user_prompt = true`." }
+session_store = { status = "native", evidence = "Rollout files in each Codex root's `sessions/` (store `codex`): `session_meta` with the id and cwd." }
+
+[capability_overrides.codex_exec]
+user_friction = { status = "not_applicable", evidence = "Headless one-shot runs: no user can interrupt, steer, or follow up." }

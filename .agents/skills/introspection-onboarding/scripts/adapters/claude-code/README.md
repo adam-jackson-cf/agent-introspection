@@ -22,6 +22,8 @@ python3 install_activity.py             # install (backup: settings.json.bak-<UT
 python3 install_activity.py --remove    # remove only the activity entries
 ```
 
-`--settings PATH` and `--runtime-dir DIR` select another settings file or shim
-location. Entries are recognised by their `activity-shim.sh … claude-code` command,
+The settings file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set,
+else `~/.claude/settings.json`: the file Claude Code reads and `agent-introspection
+harness configure claude-code` writes. `--settings PATH` and `--runtime-dir DIR` select
+another settings file or shim location. Entries are recognised by their `activity-shim.sh … claude-code` command,
 so reinstalling replaces them and other hooks (for example Orca's) are untouched.

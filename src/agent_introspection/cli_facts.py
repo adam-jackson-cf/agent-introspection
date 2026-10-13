@@ -37,10 +37,12 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
 def facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "schedule":
         return _schedule_command(args)
+    if args.facts_command == "preflight":
+        # Preflight always prints its report: setup errors become failing checks.
+        return preflight.report(lambda: app_config(args), facts.runner)
     config = app_config(args)
     run = facts.runner(config)
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
-        "preflight": lambda: preflight.preflight(run, config),
         "verify": lambda: (
             facts.compare(run) if args.compare else facts.verify(run, config.harnesses_enabled)
         ),
@@ -50,7 +52,7 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
         "sessions": lambda: _sessions(config, rescan=args.rescan),
         "findings": lambda: _findings(args, run),
         "sync": lambda: _sync(args, run),
-        "classify": lambda: _labels(run, days=args.days, limit=args.limit),
+        "classify": lambda: _labels(run, config, days=args.days, limit=args.limit),
         "status": lambda: facts.status(run),
     }
     return handlers[args.facts_command]()
@@ -80,10 +82,13 @@ def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
         connection.close()
 
 
-def _labels(run: facts.SqlRunner, *, days: int = 2, limit: int = 60) -> dict[str, Any]:
+def _labels(
+    run: facts.SqlRunner, config: AppConfig, *, days: int = 2, limit: int = 60
+) -> dict[str, Any]:
     """Label exported prompts with Jev; Jev being unavailable never fails the sync."""
+    command = config.labels_openrouter_key_command
     try:
-        return classify.run(run, days=days, limit=limit)
+        return classify.run(run, days=days, limit=limit, key=lambda: classify.api_key(command))
     except classify.JevUnavailableError as exc:
         diagnostic(f"prompt labels skipped: {exc}")
         return {"status": "skipped", "reason": str(exc)}
@@ -107,9 +112,10 @@ def _load_spooled(run: facts.SqlRunner) -> None:
 
 def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
     """Ship the spool, load it, label prompts, promote findings, evaluate proposals."""
-    shipped = spool.sync(app_config(args))
+    config = app_config(args)
+    shipped = spool.sync(config)
     _load_spooled(run)
-    labels = _labels(run)
+    labels = _labels(run, config)
     connection = open_store(args)
     try:
         refreshed = findings.refresh(run, connection)

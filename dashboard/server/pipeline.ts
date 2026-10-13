@@ -9,6 +9,7 @@ import type {
   SignalRoute,
 } from "../src/contracts";
 import { HARNESSES } from "../src/contracts";
+import { HARNESS_SERVICES_SQL } from "../src/harnesses.generated";
 import { enabledHarnesses, isHidden } from "../src/harness-scope";
 import {
   batch,
@@ -68,8 +69,6 @@ const NAME_COLUMN: Record<Source, string> = {
 const CODEX_SPAN_NAMES =
   "'session_task.turn', 'session_task.run', 'run_sampling_request', 'try_run_sampling_request', 'turn/start', 'turn/interrupt', 'turn/steer'";
 const CODEX_LOADED = `(name IN (${CODEX_SPAN_NAMES}) OR (name = 'handle_responses' AND mapContains(attributes_number, 'gen_ai.usage.input_tokens')))`;
-const SERVICES =
-  "'codex-app-server', 'codex_cli_rs', 'codex_exec', 'oh-my-pi', 'claude-code'";
 const FORBIDDEN_KEYS =
   "['prompt', 'user_prompt', 'arguments', 'output', 'content', 'user.email', 'user.account_id', 'user.account_uuid', 'user.id', 'organization.id', 'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent', 'omp.gen_ai.tool.call.intent']";
 /** Raw-text keys the activity hooks must never store (docs/references/hook-events.md). */
@@ -429,7 +428,7 @@ const FRESHNESS_CTES = `WITH
         SELECT 'spans' AS source, serviceName AS harness, max(timestamp) AS latest
         FROM signoz_traces.distributed_signoz_index_v3
         WHERE timestamp > now() - INTERVAL 1 DAY AND timestamp < now() - INTERVAL 1 MINUTE
-            AND serviceName IN (${SERVICES})
+            AND serviceName IN (${HARNESS_SERVICES_SQL})
             AND (serviceName NOT LIKE 'codex%' OR ${CODEX_LOADED})
         GROUP BY harness
         UNION ALL
@@ -437,7 +436,7 @@ const FRESHNESS_CTES = `WITH
         FROM signoz_logs.distributed_logs_v2
         WHERE timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 1 DAY)) * 1000000000
             AND observed_timestamp < toUInt64(toUnixTimestamp(now() - INTERVAL 1 MINUTE)) * 1000000000
-            AND resource.\`service.name\`::String IN (${SERVICES})
+            AND resource.\`service.name\`::String IN (${HARNESS_SERVICES_SQL})
         GROUP BY 2
         UNION ALL
         SELECT 'hooks', 'agent-introspection', fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC')

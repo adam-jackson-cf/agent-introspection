@@ -36,6 +36,38 @@ tasks whose session no store holds (runs that keep no session file), and unattri
 sessions by reason. A new harness is supported by adding its store to
 `session_stores.toml`.
 
+## Store formats
+
+A store's `format` is `jsonl` (the default) or `sqlite`:
+
+- A **jsonl** store keeps one JSON Lines file per session under a directory root. The
+  scan reads the first `max_lines` lines of each new file for the record that
+  `match` selects, takes `session_id`, `cwd`, `started_at`, and optionally `remote` by
+  dotted path, and remembers each processed file. A file whose record is not written
+  yet is retried on the next scan.
+- A **sqlite** store keeps many sessions in one database file; each root is a database
+  path (glob patterns expand). Its `query` is one `SELECT` returning the text columns
+  `session_id`, `cwd`, and `started_at` (ISO 8601 UTC), and optionally `remote`. The
+  scan opens the database read-only, leaving the harness's files alone, runs the query on
+  every scan because the database keeps growing, and
+  remembers the processed session IDs per database in `session-scan.json`. A row
+  without a session ID or working directory is retried on the next scan.
+- A database that cannot be read (locked for more than 2 seconds, corrupt, or without
+  the queried table) is skipped and retried on the next scan. The result of
+  `facts sessions`, `spool sync`, and `facts sync` lists it under `unreadable`, with
+  the store, the database (home as `~`), and SQLite's error; the key appears only when
+  a database was unreadable. `--rescan` forgets the remembered files and session IDs.
+
+`[sessions.roots]` adds roots by store name; for a sqlite store they are database
+files.
+
+A candidate producer, one that is not a harness yet, declares its store inline in its
+harness profile as `[session_store_spec]`, in the same shape as a `[[store]]` entry and
+checked by the same parser (`sessions.parse_store`). The opencode profile declares its
+SQLite database this way. The attribution scan reads only `session_stores.toml`, so a
+candidate's sessions are not attributed; when the producer becomes a harness, its
+entry moves there. See [Producer Onboarding](producer-onboarding.md).
+
 ## Activity hooks
 
 Hooks close signals the producers' telemetry lacks (tool argument identity, targets,
@@ -47,7 +79,9 @@ spooled locally, shipped over OTLP to SigNoz, and loaded by `load_hook_events` i
 
 Jev labels each prompt's task type, correction kind, and sentiment from the prompt text
 the producers export to SigNoz; only the labels are kept in
-`introspection.prompt_labels`. See [Hook Events](hook-events.md#prompt-export).
+`introspection.prompt_labels`. The OpenRouter key comes from `OPENROUTER_API_KEY` or
+`[labels] openrouter_key_command`, with omp's stored credential only as a fallback.
+See [Hook Events](hook-events.md#prompt-export).
 
 ## Related Docs
 

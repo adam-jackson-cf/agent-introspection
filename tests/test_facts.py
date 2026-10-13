@@ -987,12 +987,30 @@ def test_projection_redacts_credentials_before_normalizing_diagnostics(template:
     assert select.index("[REDACTED]") < select.index("'/(?:Users|home)/[^/ ]+|/root($|[/ ])',\n")
 
 
-def test_opencode_is_a_registered_producer_stray_and_not_a_harness() -> None:
-    registry = facts.load_registry()
+def test_registry_harnesses_reads_the_harness_table_and_refuses_an_empty_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert facts.registry_harnesses() == tuple(facts.load_registry().harnesses)
 
+    monkeypatch.setattr(facts, "_sql", lambda _name: "[harnesses]\n")
+    facts.registry_harnesses.cache_clear()
+    try:
+        with pytest.raises(facts.RegistryError, match=r"needs \[harnesses\]"):
+            facts.registry_harnesses()
+    finally:
+        facts.registry_harnesses.cache_clear()
+
+
+def test_opencode_is_a_known_producer_and_not_a_harness() -> None:
+    registry = facts.load_registry()
+    producers = tomllib.loads(facts._sql(facts.REGISTRY_FILE))["producers"]
+
+    assert "opencode" in producers
     assert "opencode" not in registry.harnesses
-    assert any(row["harness"] == "opencode" for row in registry.strays)
-    assert all(row["harness"] != "opencode" for row in registry.routes)
+    # Routes and strays match rows of the harnesses' facts, which never hold opencode.
+    assert all(row["harness"] != "opencode" for row in [*registry.routes, *registry.strays])
+    stray = {"id": "x", "harness": "opencode", "source": "spans", "match": "1", "reason": "r"}
+    assert facts._parse_strays([stray], {}, producers)[0]["harness"] == "opencode"
     with pytest.raises(facts.RegistryError, match="unknown harness"):
         facts._parse_strays(
             [{"id": "x", "harness": "gemini", "source": "spans", "match": "1", "reason": "r"}],

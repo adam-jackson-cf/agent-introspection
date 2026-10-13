@@ -54,9 +54,9 @@ freshness and sanitization) therefore selects a family by `service.name`,
 ## Delivery
 
 - A hook process writes its record atomically, then sends at most one batch of 50.
-  `agent-introspection spool sync` (the Mac's `facts sync`, a systemd timer elsewhere)
-  drains the rest within a 20-second budget under a non-blocking lock on
-  `hook-inbox/.drain.lock`.
+  `agent-introspection spool sync` (inside the SigNoz host's scheduled `facts sync`,
+  from a systemd user timer on other machines) drains the rest within a 20-second
+  budget under a non-blocking lock on `hook-inbox/.drain.lock`.
 - The endpoint is `[hooks] otlp_logs_endpoint`, the full logs URL on the collector's
   OTLP/HTTP port (never the gRPC port). Without it, an `OTEL_EXPORTER_OTLP_*`
   environment is used only when its protocol is unset or `http/*`. With no endpoint
@@ -177,8 +177,8 @@ See the [adapter READMEs](../../.agents/skills/introspection-onboarding/scripts/
 for the commands. Failures are logged by exception type only to
 `~/.local/share/agent-introspection/hooks.log`. Delivery also needs
 `[hooks] otlp_logs_endpoint` in `~/.config/agent-introspection/config.toml` and, on a
-machine without `facts sync`, the `spool sync` timer (see the onboarding setup
-workflow).
+machine without `facts sync`, the `spool sync` timer (see the onboarding skill's
+[additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
 
 ## Prompt export
 
@@ -187,7 +187,7 @@ export to SigNoz, labelled in the app rather than in a hook:
 
 | Harness              | Export setting                                                                                                                                                          | Event               |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| Claude Code          | `OTEL_LOG_USER_PROMPTS=1` in the `env` of `~/.claude/settings.json`                                                                                                     | `user_prompt`       |
+| Claude Code          | `OTEL_LOG_USER_PROMPTS=1`, with `OTEL_LOG_ASSISTANT_RESPONSES=0`, in the `env` of `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`                    | `user_prompt`       |
 | Codex (all surfaces) | `log_user_prompt = true` under `[otel]` in each `<codex-root>/config.toml`                                                                                              | `codex.user_prompt` |
 | omp                  | The activity extension sends it on `before_agent_start` to omp's own OTLP endpoint (`OTEL_EXPORTER_OTLP_*`, loaded from `~/.omp/.env`), because omp has no prompt event | `omp.user_prompt`   |
 
@@ -199,3 +199,13 @@ attribute, so prompt text is stored only in SigNoz's own tables, for their 90-da
 retention, where the SigNoz UI and anything else reading that instance can see it.
 Prompts exported before the settings were switched on are a `REDACTED` placeholder
 and cannot be labelled.
+
+Claude Code's `OTEL_LOG_USER_PROMPTS` also exports the text of every assistant
+response on `assistant_response` events while `OTEL_LOG_ASSISTANT_RESPONSES` is unset,
+so `harness configure claude-code --prompt-export` sets that to `0` and `doctor` warns
+when `OTEL_LOG_USER_PROMPTS=1` is set without it. While `OTEL_LOG_USER_PROMPTS` is not
+`1`, `doctor` reports prompt export `off`, whatever `OTEL_LOG_ASSISTANT_RESPONSES`
+holds. Beside `OTEL_LOG_USER_PROMPTS=1`, `doctor` reports a value set by hand, such as
+`1` to export responses on purpose, as `info` rather than as unset. Under Claude Code's detailed beta tracing
+(`ENABLE_BETA_TRACING_DETAILED`, which the profile does not set), the same switch would
+also export system prompt and model output text on spans.

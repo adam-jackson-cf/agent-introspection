@@ -1,0 +1,109 @@
+# Claude Code: the settings that switch on its telemetry, and the producer
+# capabilities it offers (docs/references/producer-capabilities.md). Routes are
+# registry [[route]] ids; a capability's status is its weakest part.
+schema = "agent-introspection.harness-profile/1"
+key = "claude-code"
+title = "Claude Code"
+status = "registered"
+registry_keys = ["claude-code"]
+service_names = ["claude-code"]
+binary = "claude"
+version_args = ["--version"]
+verified_versions = ["2.1.285"]
+session_store = "claude-code"
+hook_adapter = "claude-code"
+sources = ["https://code.claude.com/docs/en/monitoring-usage"]
+
+[[config_file]]
+id = "settings"
+paths = ["$CLAUDE_CONFIG_DIR/settings.json", "~/.claude/settings.json"]
+format = "json"
+table = "env"
+roots = "first"
+
+[[setting]]
+file = "settings"
+key = "CLAUDE_CODE_ENABLE_TELEMETRY"
+value = "1"
+group = "export"
+purpose = "Turns on OpenTelemetry export at all."
+
+[[setting]]
+file = "settings"
+key = "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"
+value = "1"
+group = "export"
+purpose = "Turns on the beta traces: the `claude_code.interaction`, `claude_code.llm_request`, and tool spans that the task and model-call routes read."
+
+[[setting]]
+file = "settings"
+key = "OTEL_METRICS_EXPORTER"
+value = "otlp"
+group = "export"
+purpose = "Sends metrics over OTLP."
+
+[[setting]]
+file = "settings"
+key = "OTEL_LOGS_EXPORTER"
+value = "otlp"
+group = "export"
+purpose = "Sends the event logs (`api_request`, `tool_result`, `tool_decision`, `user_prompt`) over OTLP."
+
+[[setting]]
+file = "settings"
+key = "OTEL_TRACES_EXPORTER"
+value = "otlp"
+group = "export"
+purpose = "Sends the beta traces over OTLP."
+
+[[setting]]
+file = "settings"
+key = "OTEL_EXPORTER_OTLP_ENDPOINT"
+value = "{otlp_endpoint}"
+group = "export"
+purpose = "The local collector."
+
+[[setting]]
+file = "settings"
+key = "OTEL_EXPORTER_OTLP_PROTOCOL"
+value = "{otlp_protocol}"
+group = "export"
+purpose = "Claude Code has no default protocol; the collector endpoint is OTLP/HTTP."
+
+[[setting]]
+file = "settings"
+key = "OTEL_SERVICE_NAME"
+value = "{service_name}"
+group = "export"
+purpose = "Names the service explicitly, so Claude Code started from another harness's shell does not inherit that harness's `OTEL_SERVICE_NAME` (the cause of the `omp.claude_mislabel_*` strays)."
+
+[[setting]]
+file = "settings"
+key = "OTEL_LOG_USER_PROMPTS"
+value = "1"
+group = "prompt_export"
+purpose = "Exports prompt text on `user_prompt` events, for prompt labels; off by default."
+
+[[setting]]
+file = "settings"
+key = "OTEL_LOG_ASSISTANT_RESPONSES"
+value = "0"
+group = "prompt_export"
+purpose = "Keeps assistant response text on `assistant_response` events redacted while prompts are exported: unset, it follows `OTEL_LOG_USER_PROMPTS`."
+
+[capabilities]
+export = { status = "native", evidence = "Spans and logs under `service.name` claude-code once `CLAUDE_CODE_ENABLE_TELEMETRY` and the OTLP exporters are set." }
+session_identity = { status = "native", route = "claude.usage", evidence = "`session.id` on `api_request`, `tool_result`, and the interaction spans; it equals the transcript `sessionId`." }
+task_boundary = { status = "native", route = "claude.interaction", evidence = "One `claude_code.interaction` span per prompt; interactions without LLM requests are slash commands." }
+model_usage = { status = "native", route = "claude.usage", evidence = "`input_tokens`, `cache_read_tokens`, `cache_creation_tokens`, and `output_tokens` on each `api_request` log." }
+reasoning_usage = { status = "hook", route = "hook.turn_stop", evidence = "Telemetry has no thinking tokens; the `Stop` hook sums them per turn from the transcript." }
+model_identity = { status = "native", route = "claude.llm_request", lacks = ["provider.model_conformance"], evidence = "`model` and `effort` on LLM request spans (effort set on nearly every request from 2026-09-28); only the requested model is reported, so Model conformance is not emitted." }
+model_outcome = { status = "native", route = "claude.llm_request", lacks = ["provider.stream_disconnects"], evidence = "Span status, `success`, `ttft_ms`, and `attempt` on LLM request spans, plus `api_error` and `api_retries_exhausted` logs; stream state is not recorded, so Stream disconnects is not emitted." }
+tool_calls = { status = "native", route = "claude.tool_result", evidence = "One `tool_result` log per call with the tool name, `success`, and `error_type`, in the interaction's trace." }
+tool_arguments = { status = "hook", route = "hook.tool_call", evidence = "Telemetry carries no arguments; the `PreToolUse` hook hashes `tool_input` and derives the command shape without storing it." }
+tool_failure = { status = "hook", route = "hook.tool_failure", evidence = "`tool_result` has only an `error_type` class; the `PostToolUseFailure` hook supplies the diagnostic line." }
+user_friction = { status = "hook", route = "hook.prompt_submitted", evidence = "Follow-ups come from the interaction spans; interrupts and steers are inferred from the `UserPromptSubmit` and `Stop` hooks." }
+approvals = { status = "native", route = "claude.tool_decision", lacks = ["guard.sandbox"], evidence = "`tool_decision` logs with `decision` and `source`; Claude Code emits no sandbox outcome and no hook sees one, so Sandbox outcomes is not emitted." }
+delegation = { status = "hook", route = "hook.subagent_start", evidence = "The `SubagentStart` hook, with the parent prompt ID." }
+prompt_text = { status = "native", route = "claude.user_prompt", evidence = "`user_prompt` logs carry the text with `OTEL_LOG_USER_PROMPTS=1`." }
+session_store = { status = "native", evidence = "Transcripts in `~/.claude/projects/*/*.jsonl` (store `claude-code`): the first entry with `sessionId` and `cwd`." }

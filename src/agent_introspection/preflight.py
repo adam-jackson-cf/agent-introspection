@@ -2,7 +2,8 @@
 
 ``facts preflight`` runs these before ``facts install`` against an existing or local
 SigNoz. Nothing is created or written: grants are read with ``SHOW GRANTS``, source
-tables through ``system.columns`` and ``WHERE 0`` probes.
+tables through ``system.columns`` and ``WHERE 0`` probes. A configuration that does
+not load, or a connection that cannot be set up, is reported as a failing check.
 """
 
 from __future__ import annotations
@@ -13,21 +14,19 @@ from collections.abc import Callable
 from typing import Any, Final
 from urllib.parse import urlsplit
 
-from agent_introspection.config import AppConfig
-from agent_introspection.facts import DATABASE, FactsError, SqlRunner, sql_string
+from agent_introspection.config import OTLP_HTTP_PORT, AppConfig, ConfigurationError
+from agent_introspection.facts import (
+    DATABASE,
+    FactsError,
+    SqlRunner,
+    registry_harnesses,
+    sql_string,
+)
 
 # Refreshable materialized views are production ready (no experimental setting) from
 # ClickHouse 24.10; APPEND arrived in 24.9 and DEPENDS ON with the feature in 23.12.
 # `facts install` sets no experimental flag, so 24.10 is the minimum.
 MINIMUM_VERSION: Final = (24, 10)
-
-PRODUCER_SERVICES: Final = (
-    "codex-app-server",
-    "codex_cli_rs",
-    "codex_exec",
-    "oh-my-pi",
-    "claude-code",
-)
 
 # The SigNoz columns facts_sql/select_spans.sql and select_logs.sql read.
 SPAN_TABLE: Final = ("signoz_traces", "distributed_signoz_index_v3")
@@ -226,7 +225,8 @@ def _view_refreshes(run: SqlRunner) -> Check:
 
 
 def _producer_data(run: SqlRunner) -> Check:
-    services = ", ".join(map(sql_string, PRODUCER_SERVICES))
+    # The services the curated projections load: the registry's `[harnesses]` keys.
+    services = ", ".join(map(sql_string, registry_harnesses()))
     rows = run(
         "SELECT source, service, count() AS rows FROM ("
         "SELECT 'spans' AS source, serviceName AS service "
@@ -249,11 +249,11 @@ def _producer_data(run: SqlRunner) -> Check:
 
 
 def _otlp(config: AppConfig) -> Check:
-    endpoint = config.signoz.otlp_endpoint
+    endpoint = config.collector_endpoint
     detail = (
         f"producers should export to {endpoint}"
         if endpoint is not None
-        else "no signoz.otlp_endpoint; producers use the local default localhost:4317/4318"
+        else f"no signoz.otlp_endpoint; producers use the default http://127.0.0.1:{OTLP_HTTP_PORT}"
     )
     return _check("otlp_endpoint", "info", detail, endpoint=endpoint)
 
@@ -265,22 +265,63 @@ def _guarded(name: str, check: Callable[[], Check], *, status: str = "fail") -> 
         return _check(name, status, str(exc))
 
 
-def preflight(run: SqlRunner, config: AppConfig) -> dict[str, Any]:
-    """Run every read-only check; ``passed`` is false when any check fails."""
+def _setup_failure(name: str, exc: ConfigurationError) -> Check:
+    # Configuration errors name settings and variables, never a password or its output.
+    return _check(name, "fail", f"{type(exc).__name__}: {exc}")
+
+
+def _server_checks(run: SqlRunner) -> list[Check]:
+    try:
+        version = _guarded("clickhouse_version", lambda: _version(run))
+    except ConfigurationError as exc:
+        # The Docker runner refuses a non-local Docker context on its first statement.
+        return [_setup_failure("connection", exc)]
+    if version["status"] != "pass" and "version" not in version:
+        return [version]
+    return [
+        version,
+        _guarded(".".join(SPAN_TABLE), lambda: _source(run, SPAN_TABLE, SPAN_COLUMNS)),
+        _guarded(".".join(LOG_TABLE), lambda: _source(run, LOG_TABLE, LOG_COLUMNS)),
+        _guarded("facts_database_grants", lambda: _grants(run)),
+        _guarded("view_refreshes_readable", lambda: _view_refreshes(run)),
+        _guarded("producer_data", lambda: _producer_data(run), status="info"),
+    ]
+
+
+def _report(config: AppConfig, server_checks: list[Check]) -> dict[str, Any]:
     checks = [_transport(config)] if config.signoz.mode == "http" else []
-    version = _guarded("clickhouse_version", lambda: _version(run))
-    checks.append(version)
-    if version["status"] == "pass" or "version" in version:
-        checks += [
-            _guarded(".".join(SPAN_TABLE), lambda: _source(run, SPAN_TABLE, SPAN_COLUMNS)),
-            _guarded(".".join(LOG_TABLE), lambda: _source(run, LOG_TABLE, LOG_COLUMNS)),
-            _guarded("facts_database_grants", lambda: _grants(run)),
-            _guarded("view_refreshes_readable", lambda: _view_refreshes(run)),
-            _guarded("producer_data", lambda: _producer_data(run), status="info"),
-        ]
-    checks.append(_otlp(config))
+    checks += [*server_checks, _otlp(config)]
     return {
         "mode": config.signoz.mode,
         "passed": all(check["status"] != "fail" for check in checks),
         "checks": checks,
     }
+
+
+def preflight(run: SqlRunner, config: AppConfig) -> dict[str, Any]:
+    """Run every read-only check; ``passed`` is false when any check fails."""
+    return _report(config, _server_checks(run))
+
+
+def report(
+    load: Callable[[], AppConfig], connect: Callable[[AppConfig], SqlRunner]
+) -> dict[str, Any]:
+    """Load the configuration, connect, and run every check; never raise a setup error.
+
+    A configuration that does not load fails a ``configuration`` check (``mode`` is
+    then None). A runner that cannot be built, such as a missing ClickHouse password,
+    fails a ``connection`` check, as does a Docker context that is not local.
+    """
+    try:
+        config = load()
+    except ConfigurationError as exc:
+        return {
+            "mode": None,
+            "passed": False,
+            "checks": [_setup_failure("configuration", exc)],
+        }
+    try:
+        run = connect(config)
+    except ConfigurationError as exc:
+        return _report(config, [_setup_failure("connection", exc)])
+    return preflight(run, config)

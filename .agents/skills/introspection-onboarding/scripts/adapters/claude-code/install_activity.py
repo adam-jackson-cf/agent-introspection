@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Install or remove the Claude Code activity hooks in ``~/.claude/settings.json``.
+"""Install or remove the Claude Code activity hooks in Claude Code's user settings.
 
+The settings file is ``$CLAUDE_CONFIG_DIR/settings.json`` when that variable is set,
+else ``~/.claude/settings.json``: the file Claude Code reads, and the one
+``agent-introspection harness configure claude-code`` writes and ``doctor`` checks.
 The six activity events run the managed ``activity-shim.sh``, which hands the hook
 envelope to a detached ``agent-introspection hook claude-code <event>`` and exits 0
 with no output. Every other hook (including third-party ones) is kept as it is.
 A changed settings file is first copied to ``settings.json.bak-<UTC timestamp>``.
 
-Usage: install-activity.py [--remove] [--dry-run] [--settings PATH] [--runtime-dir DIR]
+Usage: install_activity.py [--remove] [--dry-run] [--settings PATH] [--runtime-dir DIR]
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -146,11 +150,19 @@ def install_shim(runtime_dir: Path) -> Path:
     return target
 
 
+def default_settings(environ: Mapping[str, str]) -> Path:
+    """Return Claude Code's user settings file: under ``$CLAUDE_CONFIG_DIR`` when it is set."""
+    config_dir = environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        return Path(config_dir) / "settings.json"
+    return Path.home() / ".claude/settings.json"
+
+
 def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--remove", action="store_true", help="remove the activity hooks")
     parser.add_argument("--dry-run", action="store_true", help="print the diff, change nothing")
-    parser.add_argument("--settings", type=Path, default=Path.home() / ".claude/settings.json")
+    parser.add_argument("--settings", type=Path, default=default_settings(os.environ))
     parser.add_argument("--runtime-dir", type=Path, default=Path.home() / MANAGED_RUNTIME)
     return parser.parse_args(argv)
 

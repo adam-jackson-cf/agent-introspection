@@ -26,9 +26,10 @@ omp exports no prompt event, so on `before_agent_start` the extension posts one
 else `OTEL_EXPORTER_OTLP_ENDPOINT` + `/v1/logs`, with `OTEL_EXPORTER_OTLP_*HEADERS`.
 omp loads these from `~/.omp/.env`. With no endpoint it sends nothing. It also sends
 nothing until the user opts in to prompt export by setting
-`AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` (the onboarding workflow
-does this only in its user-confirmed prompt-export step). `facts sync`
-labels the prompt with Jev; the facts store never keeps its text.
+`AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env`
+(`agent-introspection harness configure omp --prompt-export`, which the onboarding
+skill runs only after the user confirms). `facts sync` labels the prompt with Jev; the
+facts store never keeps its text.
 
 omp loads it as a linked plugin: `package.json` declares `activity.ts` under
 `omp.extensions`, and `omp plugin link` records it in omp's plugin directory

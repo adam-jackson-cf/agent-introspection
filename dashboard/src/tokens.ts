@@ -4,13 +4,19 @@
  */
 const color = (token: string) => `var(--color-${token})`;
 
-/** Harness identity, categorical `cat-1`…`cat-5`, in DESIGN.md order. */
+/**
+ * Harness identity, categorical `cat-1`…`cat-5` then `cat-9`…`cat-11`, in DESIGN.md
+ * order: one slot per registered harness, with spare slots for candidate harnesses.
+ */
 export const HARNESS_TOKENS = [
   color("cat-1"),
   color("cat-2"),
   color("cat-3"),
   color("cat-4"),
   color("cat-5"),
+  color("cat-9"),
+  color("cat-10"),
+  color("cat-11"),
 ] as const;
 
 /** Parts of a total (non-harness series), categorical `cat-6`…`cat-8`. */

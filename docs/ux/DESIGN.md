@@ -33,6 +33,9 @@ colors:
   cat-6: "#9ce9f0"
   cat-7: "#e8d7a5"
   cat-8: "#dbade0"
+  cat-9: "#008300"
+  cat-10: "#9085e9"
+  cat-11: "#e66767"
   seq-effort-1: "#9065d0"
   seq-effort-2: "#45a9f5"
   seq-effort-3: "#3fded6"
@@ -282,6 +285,15 @@ components:
   chart-series-cat-8:
     backgroundColor: "{colors.cat-8}"
     height: 2px
+  chart-series-cat-9:
+    backgroundColor: "{colors.cat-9}"
+    height: 2px
+  chart-series-cat-10:
+    backgroundColor: "{colors.cat-10}"
+    height: 2px
+  chart-series-cat-11:
+    backgroundColor: "{colors.cat-11}"
+    height: 2px
   chart-series-seq-effort-1:
     backgroundColor: "{colors.seq-effort-1}"
     height: 2px
@@ -337,19 +349,26 @@ Status colours always appear with their word and are never decorative. Each pass
   break (an active harness should have rows but the route has none), stray (unexplained). Each state keeps its
   mark: ✓, ○, ○, ·, ≈, !, ✕. The parity and recombination checks (`Pipeline.tsx:315-347`) use healthy and
   possible break from this scale.
-- **Route alignment** (`dashboard/src/contracts.ts:30-48`): aligned, differs, not emitted, shown as pills in
+- **Route alignment** (`dashboard/src/contracts.ts:45-53`): aligned, differs, not emitted, shown as pills in
   the panel info note.
 
 ### Charts
 
-- **Harness identity, categorical `cat-1`…`cat-5`**: omp, Codex app-server, Codex CLI, Codex exec, Claude Code,
-  defined as `HARNESS_COLOR` in `dashboard/src/format.ts:8-14` and passed to charts as `Series.color`. Colour
+- **Harness identity, categorical `cat-1`…`cat-5`, then `cat-9`…`cat-11`**: one slot per harness in registry
+  order (`HARNESSES` in `dashboard/src/harnesses.generated.ts`): omp, Codex app-server, Codex CLI, Codex exec,
+  Claude Code. `cat-9` (green), `cat-10` (violet) and `cat-11` (red) are spare slots for candidate harnesses,
+  taken in that order. The eight slots follow the validated categorical order, so neighbouring slots stay apart
+  in normal vision and under protanopia and deuteranopia (worst neighbouring pair OKLab ΔE 19.3 and 8.4 on
+  `surface`). Slots that are not neighbours can sit close, such as `cat-11` beside `cat-2` and the stray
+  (unexplained) status, so a harness series always keeps its legend entry or chip label. `HARNESS_COLOR` in
+  `dashboard/src/format.ts:11-13` assigns the slots by index and is passed to charts as `Series.color`. Colour
   follows the harness, never its rank.
 - **Parts of a total, categorical `cat-6`…`cat-8`**: series that aren't harnesses, such as uncached, cached
   and output tokens (`dashboard/src/views/Cache.tsx:57-61`), interrupt and steer
   (`dashboard/src/views/Friction.tsx:129-132`), and single-line trends (`dashboard/src/views/Interventions.tsx:219-223`).
-  They are pale so they never read as a harness. Today these series reuse the harness colours through `SERIES`
-  (`dashboard/src/format.ts:23`) and literals.
+  They are pale so they never read as a harness. These series take `cat-6`…`cat-8` through `SERIES`
+  (`dashboard/src/format.ts:18`, built from `PART_TOKENS`), and a test (`dashboard/src/components.test.ts`) keeps
+  them off the harness slots.
 - **Reasoning effort, ordinal `seq-effort-1`…`seq-effort-4`**: low, medium, high, xhigh, a multi-hue ramp from
   violet through sky blue and aqua to pale lime, rising in lightness (`EFFORT_COLOR`, `dashboard/src/format.ts`).
   Neighbouring steps differ in hue as well as lightness so they read apart in a stack (minimum OKLab ΔE 0.157,

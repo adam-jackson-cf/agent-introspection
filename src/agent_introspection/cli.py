@@ -9,14 +9,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, NoReturn
 
-from agent_introspection import facts
-from agent_introspection.cli_common import diagnostic
+from agent_introspection import facts, hooks
+from agent_introspection.cli_common import Handler, diagnostic
 from agent_introspection.cli_facts import (
     add_facts_parser,
     add_spool_parser,
     facts_command,
     spool_command,
 )
+from agent_introspection.cli_onboarding import ONBOARDING_HANDLERS, add_onboarding_parsers
 from agent_introspection.cli_proposals import (
     PROPOSAL_HANDLERS,
     add_candidates_parser,
@@ -50,19 +51,25 @@ def _parser() -> argparse.ArgumentParser:
     add_spool_parser(commands)
     add_candidates_parser(commands)
     add_proposal_parser(commands)
+    add_onboarding_parsers(commands)
     hook = commands.add_parser("hook", help="normalize one activity-hook envelope from stdin")
-    hook.add_argument("producer", help="claude-code, codex, or omp")
+    hook.add_argument("producer", help=" or ".join(hooks.PRODUCERS))
     hook.add_argument("event", help="the native hook event name")
     return parser
 
 
 def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
-    if args.command == "facts":
-        return facts_command(args)
-    if args.command == "spool":
-        return spool_command(args)
-    if args.command == "candidates":
-        return candidates_export(args)
+    # Each command group's handler, looked up when called; the proposal subcommands
+    # dispatch on their own name.
+    commands: dict[str, Handler] = {
+        "facts": facts_command,
+        "spool": spool_command,
+        "candidates": candidates_export,
+        **ONBOARDING_HANDLERS,
+    }
+    handler = commands.get(args.command)
+    if handler is not None:
+        return handler(args)
     return PROPOSAL_HANDLERS[args.proposal_command](args)
 
 
@@ -78,8 +85,6 @@ def _fail(code: int, exc: BaseException, log: bool = False) -> NoReturn:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "hook":
-        from agent_introspection import hooks
-
         # Hooks never fail the harness: failures go to the hook log, never stdout.
         return hooks.main(
             args.producer, args.event, Path(args.config) if args.config is not None else None
@@ -100,8 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         _fail(EXIT_INTERNAL, exc, log)
     _emit(result, log)
-    # A failed preflight or snapshot comparison still prints every result, then exits
-    # non-zero.
-    checked = getattr(args, "facts_command", None) in ("preflight", "verify")
+    # A failed preflight, snapshot comparison, or doctor check still prints every result,
+    # then exits non-zero.
+    checked = args.command == "doctor" or getattr(args, "facts_command", None) in (
+        "preflight",
+        "verify",
+    )
     failed = checked and not result["passed"]
     return EXIT_FACTS if failed else 0

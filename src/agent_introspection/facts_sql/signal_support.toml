@@ -29,6 +29,14 @@
 # harness is active is a valid observation, not a possible break. The Pipeline coverage grid applies every route of a signal to every
 # harness, so a predicate must name the producer-specific event or span, not
 # just "has data".
+#
+# Capabilities: each [[capability]] is one kind of producer data the signals consume
+# (capabilities.py). Every harness-scoped signal lists the capabilities its
+# definition needs in `requires`; a harness profile (harness_profiles/) records
+# which capabilities a producer has, so a producer that is not yet a harness can be
+# projected onto the signals before it is added. `hints` are case-insensitive
+# regular expressions over span names, event names, and attribute keys that suggest
+# the capability in an unknown producer's telemetry (`producers profile`).
 
 [harnesses]
 oh-my-pi = "omp"
@@ -48,6 +56,160 @@ provider = "Provider"
 recurrence = "Recurring failures"
 intent = "Requests and corrections"
 interventions = "Findings and fixes"
+
+# ---------------------------------------------------------------------------
+# Capabilities
+# ---------------------------------------------------------------------------
+
+[[capability]]
+id = "export"
+title = "Telemetry export"
+need = "OTLP export to the local collector with a stable `service.name`."
+check = "After a short session, SigNoz holds spans or logs under one `service.name` that no other producer reports."
+[capability.hints]
+span_names = []
+event_names = []
+attribute_keys = ['^service\.name$', '^service\.version$', '^telemetry\.sdk\.']
+
+[[capability]]
+id = "session_identity"
+title = "Session identity"
+need = "A session key, stable across the session's usage, task, and tool rows."
+check = "The same value is on the usage, task, and tool rows of one session, and equals the session ID in the producer's session store."
+[capability.hints]
+span_names = []
+event_names = []
+attribute_keys = ['(^|\.)session[._]?id$', '(^|\.)conversation[._]?id$', '(^|\.)thread[._]?id$']
+
+[[capability]]
+id = "task_boundary"
+title = "Task boundary"
+need = "One span or event per user turn or run, with start and end."
+check = "One per submitted prompt, with a duration, carrying the session key; subagent runs are told apart from the user's turns."
+[capability.hints]
+span_names = ['turn', 'interaction', '^invoke_agent$', 'session_?task', 'agent[._]?run', 'prompt\.(loop|run)$']
+event_names = ['turn', 'interaction', 'agent_(start|end)']
+attribute_keys = ['(^|\.)turn[._]?id$', '(^|\.)prompt[._]?id$', 'interaction']
+
+[[capability]]
+id = "model_usage"
+title = "Model usage"
+need = "Per-call input, cached-input, and output tokens (cache creation if present)."
+check = "Per-call token sums over a session match the producer's own accounting, and cached input is reported apart from input."
+[capability.hints]
+span_names = ['^chat\b', 'llm', 'completion', 'sampling', 'generate']
+event_names = ['api_request', 'response\.completed', 'sse_event', 'usage']
+attribute_keys = ['^gen_ai\.usage\.', 'token', 'cache_?(read|creation|write)', 'cached']
+
+[[capability]]
+id = "reasoning_usage"
+title = "Reasoning usage"
+need = "Reasoning or thinking tokens."
+check = "A per-call or per-turn reasoning token count that is part of the output tokens, and 0 rather than absent when a model does not reason."
+[capability.hints]
+span_names = []
+event_names = []
+attribute_keys = ['reasoning.*token', 'thinking.*token', 'token.*reasoning']
+
+[[capability]]
+id = "model_identity"
+title = "Model and effort"
+need = "The served model and the requested reasoning effort."
+check = "Model and effort values on the model-call or task rows; the served model is reported apart from the requested one."
+[capability.hints]
+span_names = []
+event_names = []
+attribute_keys = ['^gen_ai\.(request|response)\.model$', '(^|[._])model([._]?id)?$', 'effort']
+
+[[capability]]
+id = "model_outcome"
+title = "Model call outcome"
+need = "Per-call status or error, latency, time to first token, retries."
+check = "Failed calls carry an error status or message, a user cancellation is told apart from a failure, calls have a duration and time to first token, and a retry is told apart from a first attempt."
+[capability.hints]
+span_names = ['^chat\b', 'llm', 'sampling']
+event_names = ['api_error', 'retr', 'response\.completed']
+attribute_keys = ['ttft', 'time_to_first', 'finish_reason', 'stop_reason', '(^|\.)attempt', 'retr', '^error\.', '(^|\.)status', '(^|\.)success$']
+
+[[capability]]
+id = "tool_calls"
+title = "Tool calls"
+need = "One row per tool call: name, call ID, outcome, joinable to its task."
+check = "One row per call with the tool name and a success, failure, or abort outcome, joinable to its task by trace, or by session and time."
+[capability.hints]
+span_names = ['tool']
+event_names = ['tool']
+attribute_keys = ['tool[._]?name$', 'tool[._]?call[._]?id$', 'tool_use_id', '^gen_ai\.tool\.']
+
+[[capability]]
+id = "tool_arguments"
+title = "Tool argument identity"
+need = "Argument identity (hashable arguments or command) without storing text."
+check = "Each call's arguments or command reach the producer's telemetry or a hook, so an argument hash and command shape can be derived; the text itself is never stored."
+[capability.hints]
+span_names = []
+event_names = ['tool_call', 'pre_?tool', 'tool\.execute\.before']
+attribute_keys = ['argument', '(^|[._])args?$', 'tool[._]?input', '(^|[._])command$']
+
+[[capability]]
+id = "tool_failure"
+title = "Tool failure diagnostic"
+need = "A diagnostic line for a failed call."
+check = "A failed call's error text reaches the telemetry or a hook, so one normalized diagnostic line can be taken from it."
+[capability.hints]
+span_names = []
+event_names = ['tool_failure', 'tool_?use_?failure', 'tool_result']
+attribute_keys = ['^error\.(message|type)$', 'failure', 'exit_code', 'status_message', 'stderr', '(^|[._])error$']
+
+[[capability]]
+id = "user_friction"
+title = "User friction"
+need = "Interrupts, steers, follow-ups."
+check = "An interrupted task is told apart from an errored one, input sent while a task runs is visible, and the next task of a session can be found; a headless surface has no user, so it is not applicable there."
+[capability.hints]
+span_names = ['interrupt', 'steer', 'abort', 'cancel']
+event_names = ['interrupt', 'steer', 'abort', 'cancel', 'prompt_submit']
+attribute_keys = ['interrupt', 'abort', 'cancel', 'steer']
+
+[[capability]]
+id = "approvals"
+title = "Approvals and sandbox"
+need = "Approval or permission decisions, and sandbox outcomes."
+check = "Each decision records approve or reject and who decided (configuration or user); each sandboxed command records its outcome."
+[capability.hints]
+span_names = ['permission', 'approv']
+event_names = ['decision', 'approv', 'permission', 'sandbox']
+attribute_keys = ['decision', 'approv', 'permission', 'sandbox']
+
+[[capability]]
+id = "delegation"
+title = "Delegation"
+need = "Subagent spawns."
+check = "One record per subagent start, joinable to the task that started it."
+[capability.hints]
+span_names = ['^invoke_agent .', 'subagent', 'spawn', 'delegat']
+event_names = ['subagent', 'spawn', 'agent_communication', 'delegat']
+attribute_keys = ['parent[._]?(session|thread|conversation)', 'subagent', 'sender_thread']
+
+[[capability]]
+id = "prompt_text"
+title = "Prompt text"
+need = "A prompt event carrying text, for prompt labels."
+check = "One event per submitted prompt with its text (not a redaction placeholder) once prompt export is on, joinable to the task it starts."
+[capability.hints]
+span_names = []
+event_names = ['user_prompt', 'prompt']
+attribute_keys = ['(^|[._])prompt$', 'prompt[._](text|length)', 'user_prompt']
+
+[[capability]]
+id = "session_store"
+title = "Session store"
+need = "A local store mapping session ID to working directory."
+check = "On disk, not in telemetry: a file or database record holding the session ID and the absolute working directory, whose ID equals the telemetry session key (becomes a `session_stores.toml` entry)."
+[capability.hints]
+span_names = []
+event_names = []
+attribute_keys = []
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -295,16 +457,10 @@ description = "Activity hook `steer` (omp `input` while the agent is running)."
 
 # Producers that export to the same SigNoz but are not harnesses: the loaders do not
 # read them, no signal is defined for them, and they are never ranked or compared.
-# A stray may name one in place of a harness.
+# `producers discover` reports them as known producers. A stray may name one in place
+# of a harness.
 [producers]
 opencode = "opencode"
-
-[[stray]]
-id = "opencode.not_a_harness"
-harness = "opencode"
-source = "spans"
-match = "harness = 'opencode'"
-reason = "opencode exports spans to this SigNoz (service.name opencode, the largest span producer by volume). It is a known producer, not a harness: no loader reads it, so none of its rows reach the facts, and no signal is measured for it."
 
 [[stray]]
 id = "omp.claude_mislabel_logs"
@@ -347,6 +503,7 @@ title = "Fact freshness"
 question = "How far behind SigNoz is each harness's fact data?"
 unit = "seconds"
 formula = "Per harness and source: max(ts) in SigNoz minus max(ts) in introspection over the last day. Rows for idle harnesses report their last activity."
+requires = ["export"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -359,6 +516,7 @@ title = "Source parity"
 question = "Does usage_events equal a direct recount of the raw SigNoz source for the window?"
 unit = "tokens"
 formula = "Per harness: Σ input, cached, output tokens and operations from usage_events versus the same fields summed directly from signoz_logs / signoz_traces with the producer's usage route."
+requires = ["export", "model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -371,6 +529,7 @@ title = "Project attribution"
 question = "Which share of each harness's tasks has a Git project?"
 unit = "%"
 formula = "Per harness: 100 × tasks whose session has a Git project / tasks. `facts sync` reads each session's working directory from the harness's own session store (session_stores.toml) and resolves its Git root on this machine. Sessions without a project (non-Git or missing workspace) and tasks whose session no store holds are shown alongside."
+requires = ["session_identity", "task_boundary", "session_store"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned", note = "`session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`." }
 oh-my-pi = { route = "omp.run", alignment = "aligned", note = "The `session` record (id, cwd) of `~/.omp/agent/sessions/*/*.jsonl`. Runs that keep no session file have no project." }
@@ -414,6 +573,7 @@ title = "Input tokens"
 question = "How many input tokens were processed?"
 unit = "tokens"
 formula = "Σ input_tokens. Input includes cache reads for every producer."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned", note = "`input_token_count`, including cached input." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.input_tokens`, including cache read and cache creation." }
@@ -426,6 +586,7 @@ title = "Cached input"
 question = "How many input tokens were served from cache?"
 unit = "tokens"
 formula = "Σ cached_input (cache reads only; cache creation is not reuse)."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned", note = "`cached_token_count`; a missing string value counts as 0." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.cache_read.input_tokens`, 0 when absent." }
@@ -438,6 +599,7 @@ title = "Uncached input"
 question = "How much input had to be processed without cache?"
 unit = "tokens"
 formula = "Σ input_tokens − Σ cached_input."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Includes cache-creation input." }
@@ -450,6 +612,7 @@ title = "Cache creation"
 question = "How much input was written to cache?"
 unit = "tokens"
 formula = "Σ cache_creation_input. Part of input and uncached input, never of cached input."
+requires = ["model_usage"]
 [signal.support]
 codex = { alignment = "not emitted", note = "Codex reports `cache_write_token_count`, but it has been 0 on every event since 2026-08-24, and no hook sees cache writes." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.cache_creation.input_tokens`; non-zero only on Anthropic chats." }
@@ -462,6 +625,7 @@ title = "Output tokens"
 question = "How many tokens were generated?"
 unit = "tokens"
 formula = "Σ output_tokens (includes reasoning output)."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned", note = "`output_token_count`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.output_tokens`." }
@@ -474,6 +638,7 @@ title = "Input cache utilization"
 question = "What share of input was served from cache?"
 unit = "%"
 formula = "100 × Σ cached_input / Σ input_tokens, aggregated before division (token-weighted; no input gives no value, not 0)."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -486,6 +651,7 @@ title = "Completed operations"
 question = "How many producer-native usage records were accepted?"
 unit = "operations"
 formula = "count() of accepted usage records. A producer-native boundary, not a shared request ID."
+requires = ["model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "differs", note = "One per token-bearing `response.completed` event." }
 oh-my-pi = { route = "omp.chat", alignment = "differs", note = "One per token-bearing chat span, including subagents and advisors." }
@@ -498,6 +664,7 @@ title = "Usage-active sessions"
 question = "How many sessions consumed tokens?"
 unit = "sessions"
 formula = "uniqExact(harness, session_id) over usage records. Harness-scoped identity."
+requires = ["session_identity", "model_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned", note = "`conversation.id`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.conversation.id`." }
@@ -514,6 +681,7 @@ title = "Reasoning tokens"
 question = "How many output tokens were spent reasoning?"
 unit = "tokens"
 formula = "Σ reasoning_tokens over usage records (a subset of output)."
+requires = ["reasoning_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned", note = "`reasoning_token_count`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.usage.reasoning.output_tokens`, 0 when absent." }
@@ -526,6 +694,7 @@ title = "Reasoning share of output"
 question = "What share of output tokens was reasoning?"
 unit = "%"
 formula = "100 × Σ reasoning_tokens / Σ output_tokens over producers that emit reasoning, aggregated before division. The KPI and the spend table use the same usage rows (Claude Code: tasks); the outcomes table divides by the output of task-attributed rows that report reasoning, so it can differ."
+requires = ["model_usage", "reasoning_usage"]
 [signal.support]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -538,6 +707,7 @@ title = "Requested effort"
 question = "Which reasoning effort was requested?"
 unit = "level"
 formula = "Producer-requested effort; `unset` means the provider default, not no reasoning. Tasks with more than one effort are `mixed`."
+requires = ["model_identity"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned", note = "Task: `codex.turn.reasoning_effort`. Usage: `model_reasoning_effort`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`pi.gen_ai.request.reasoning.effort` on the chats directly under the root run." }
@@ -550,6 +720,7 @@ title = "Tasks"
 question = "How many user-initiated tasks ran?"
 unit = "tasks"
 formula = "count() of task_outcomes rows."
+requires = ["task_boundary"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "differs", note = "A turn. `codex-auto-review` turns are excluded; subagent threads appear as separate tasks." }
 oh-my-pi = { route = "omp.run", alignment = "differs", note = "A root agent run, including its subagents and advisors." }
@@ -562,6 +733,7 @@ title = "Heavy-effort task share"
 question = "What share of tasks requested high or xhigh effort?"
 unit = "%"
 formula = "100 × countIf(effort IN ('high', 'xhigh')) / count() over tasks; `mixed` is not heavy."
+requires = ["task_boundary", "model_identity"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned" }
 oh-my-pi = { route = "omp.run", alignment = "aligned" }
@@ -574,6 +746,7 @@ title = "Task duration"
 question = "How long do tasks take?"
 unit = "seconds"
 formula = "P50 / P90 of the task span duration in seconds."
+requires = ["task_boundary"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned" }
 oh-my-pi = { route = "omp.run", alignment = "aligned" }
@@ -586,6 +759,7 @@ title = "Model steps per task"
 question = "How many model round-trips does a task take?"
 unit = "steps"
 formula = "Average model_steps per task."
+requires = ["task_boundary", "model_outcome"]
 [signal.support]
 codex = { route = "codex.sampling", alignment = "differs", note = "`run_sampling_request` spans whose `turn_id` is the task." }
 oh-my-pi = { route = "omp.chat", alignment = "differs", note = "Every chat span in the run's trace, including subagents and advisors." }
@@ -598,6 +772,7 @@ title = "Reasoning tokens per task"
 question = "How much reasoning does a task consume?"
 unit = "tokens"
 formula = "Σ task reasoning_tokens / tasks; task totals are below usage totals by design (calls outside a task)."
+requires = ["task_boundary", "reasoning_usage"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "differs", note = "`codex.turn.token_usage.reasoning_output_tokens`; Codex CLI TUI turns often omit token usage." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Summed over every chat in the run's trace." }
@@ -610,6 +785,7 @@ title = "Delegations per task"
 question = "How many subagent runs does a task start?"
 unit = "runs"
 formula = "Σ delegations / tasks, per harness and effort (Effort page outcomes table)."
+requires = ["task_boundary", "delegation"]
 [signal.support]
 codex = { route = "codex.agent_spawn", alignment = "differs", note = "Subagent spawns (`codex.agent_communication`) sent from the turn's thread during the turn; the subagent threads still also appear as separate tasks." }
 oh-my-pi = { route = "omp.subagent", alignment = "aligned", note = "`invoke_agent <agent>` spans in the trace, advisors excluded." }
@@ -626,6 +802,7 @@ title = "Tool calls"
 question = "How many tool calls ran?"
 unit = "calls"
 formula = "count() of tool_calls rows."
+requires = ["tool_calls"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
@@ -638,6 +815,7 @@ title = "Tool failure rate"
 question = "What share of tool calls with an explicit outcome failed?"
 unit = "%"
 formula = "100 × failed calls / calls with an explicit outcome (succeeded, failed, or aborted). Unknown outcomes stay out of the denominator."
+requires = ["tool_calls"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`success=false` or a non-zero `x.exit_code`; Codex reports success=true for non-zero exits, so the exit code wins." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "`pi.gen_ai.tool.status` error; aborted calls count in the denominator only. Status `blocked` (a jev-guard policy refusal) is the separate outcome `policy_blocked`: it is not a tool failure and stays out of the denominator." }
@@ -650,6 +828,7 @@ title = "Failure signature"
 question = "Which normalized failures repeat?"
 unit = "signature"
 formula = "Failed calls grouped by tool and the hash of the full normalized failure line (home → ~, digit and hex runs → N); the stored text is the first 80 characters, so failures sharing a prefix stay distinct."
+requires = ["tool_calls", "tool_failure"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: first error-like output line." }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error text from the `tool_failure` hook; from the deploy date. The first error-like line of the span status message before." }
@@ -662,6 +841,7 @@ title = "Tasks affected by failures"
 question = "What share of tool-using tasks hit a failed call?"
 unit = "%"
 formula = "100 × tasks with ≥1 failed call / tasks with ≥1 attributed tool call."
+requires = ["task_boundary", "tool_calls"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Call → task by session and the turn span that contains the call time; calls outside a user turn are unattributed." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned", note = "Call → root run of the same trace." }
@@ -674,6 +854,7 @@ title = "Repeated attempts"
 question = "Which operations run with identical arguments more than once in a task?"
 unit = "tasks"
 formula = "Tasks where the same tool and argument hash appears ≥2 times, excluding waiting and status-polling tools (wait, write_stdin, wait_agent, wait_threads, collaborationwait_agent, sleep, get_goal, get_usage_limits) whose identical calls are expected. Rate denominator: tasks with ≥1 such comparable call (hashed arguments, not waiting or polling)."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.arguments_hash` over the raw arguments." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Hash of the canonical tool arguments from the `tool_call` hook, joined by tool call ID. From the activity hooks' install date; earlier rows have no value." }
@@ -686,6 +867,7 @@ title = "Tool loops"
 question = "Which tasks repeat the same operation back-to-back?"
 unit = "tasks"
 formula = "Tasks with a run of ≥3 consecutive calls sharing tool and argument hash, excluding waiting and status-polling tools."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "Ordered by call time within the task." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Argument hash from the `tool_call` hook. From the activity hooks' install date; earlier rows have no value." }
@@ -702,6 +884,7 @@ title = "Interrupted tasks"
 question = "How often did the user stop a task?"
 unit = "%"
 formula = "100 × Σ interrupted / tasks with an interrupt signal."
+requires = ["task_boundary", "user_friction"]
 [signal.support]
 codex = { route = "codex.interrupt", alignment = "aligned", note = "The turn's `turn.id` appears on a `turn/interrupt` span." }
 codex_exec = { alignment = "not applicable", note = "Headless: no user can interrupt." }
@@ -715,6 +898,7 @@ title = "Steered tasks"
 question = "How often did the user redirect a running task?"
 unit = "%"
 formula = "100 × Σ steered / tasks with a steer signal."
+requires = ["task_boundary", "user_friction"]
 [signal.support]
 codex = { route = "codex.steer", alignment = "aligned", note = "The turn's `turn.id` appears on a `turn/steer` span." }
 codex_exec = { alignment = "not applicable", note = "Headless: no user can steer." }
@@ -728,6 +912,7 @@ title = "Errored tasks"
 question = "How often did a task end on an error?"
 unit = "%"
 formula = "100 × Σ errored / tasks with an error signal."
+requires = ["task_boundary", "model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "differs", note = "Inferred: the last response stream of the turn failed (`error.message` on `response.completed`); turn spans carry no terminal status." }
 oh-my-pi = { route = "omp.run", alignment = "aligned", note = "The run has an error chat stop reason." }
@@ -740,6 +925,7 @@ title = "Quick follow-up"
 question = "How often did the next task in the same session start within 10 minutes?"
 unit = "%"
 formula = "100 × Σ quick_follow_up / tasks with a follow-up signal. A proxy: a follow-up can be the next planned step."
+requires = ["session_identity", "task_boundary", "user_friction"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "aligned" }
 codex_exec = { alignment = "not applicable", note = "Headless one-shot runs: nobody can follow up." }
@@ -753,6 +939,7 @@ title = "Clean completion"
 question = "How often did a task finish with no observed friction?"
 unit = "%"
 formula = "100 × Σ clean_completion / tasks with a value. Clean = no interrupt, no error, no quick follow-up among the components the producer observes (row field `friction_observed`)."
+requires = ["session_identity", "task_boundary", "user_friction"]
 [signal.support]
 codex = { route = "codex.turn", alignment = "differs", note = "Observes interrupt, follow-up, and the inferred error (last response stream failed)." }
 codex_exec = { alignment = "not applicable", note = "Headless: follow-up is unobservable, so clean completion is NULL." }
@@ -766,6 +953,7 @@ title = "Recovery after failure"
 question = "After a failed tool call, does the same operation later succeed in the task?"
 unit = "%"
 formula = "Inferred. 100 × failed operations with a later success of the same operation in the same task / failed operations in attributed tasks. Tasks are those that started in the window, as in the other Friction measures."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Operation = tool + command head + subcommand." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "differs", note = "Operation = tool + command head + subcommand from the `tool_call` hook; tool name only before the hooks." }
@@ -782,6 +970,7 @@ title = "Tool approval decisions"
 question = "How are tool calls approved, and by whom?"
 unit = "decisions"
 formula = "count() of tool decisions by decision and source."
+requires = ["approvals"]
 [signal.support]
 codex = { route = "codex.tool_decision", alignment = "aligned", note = "`decision`, `source` (config or user)." }
 oh-my-pi = { route = "hook.approval", alignment = "differs", note = "`tool_approval_resolved` hook (approved or rejected, source user); omp's default mode approves without asking, so decisions are rare." }
@@ -794,6 +983,7 @@ title = "Rejected tool calls"
 question = "How often was a tool call rejected?"
 unit = "%"
 formula = "100 × decisions that are not an approval (`approved`, `approved_with_amendment`, `accept`) / all decisions."
+requires = ["approvals"]
 [signal.support]
 codex = { route = "codex.tool_decision", alignment = "aligned", note = "Sources are Config, User, and AutomatedReviewer (the approval reviewer model)." }
 oh-my-pi = { route = "hook.approval", alignment = "differs", note = "`tool_approval_resolved` with approved = false." }
@@ -806,6 +996,7 @@ title = "Sandbox outcomes"
 question = "How often do sandboxed commands get denied?"
 unit = "outcomes"
 formula = "count() of sandbox outcomes by outcome."
+requires = ["approvals"]
 [signal.support]
 codex = { route = "codex.sandbox_outcome", alignment = "aligned" }
 oh-my-pi = { alignment = "not emitted", note = "omp has no sandbox, so there is no outcome to observe." }
@@ -818,6 +1009,7 @@ title = "Quality-gate bypass"
 question = "How often did a command bypass a quality gate?"
 unit = "calls"
 formula = "Tool calls whose command contains --no-verify, HUSKY=0, SKIP=, or --no-gpg-sign."
+requires = ["tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.gate_bypass`, matched over the whole argument text before it is discarded, so commands nested in JavaScript `exec` code are covered." }
 oh-my-pi = { route = "hook.tool_call", alignment = "aligned", note = "`gate_bypass` matched over the arguments by the `tool_call` hook. From the activity hooks' install date; earlier rows have no value." }
@@ -830,6 +1022,7 @@ title = "Command churn"
 question = "Where do agents try ≥3 distinct commands against the same file in one task?"
 unit = "tasks"
 formula = "Task × target pairs with ≥3 distinct command head + subcommand values. The head is taken after splitting the command on `&&`, `||`, `;`, `|`, and newlines and unwrapping runners such as `uv run`, `npx`, and `python -m`; hook rows stored before the command shape was added keep the first-token head."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Targets are `apply_patch` files, `path` arguments, and path-like command arguments (inferred from tokens with a slash or a known file extension)." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Targets from the `tool_call` hook (edit paths, `path` arguments, path-like command arguments). From the activity hooks' install date; earlier rows have no value." }
@@ -842,6 +1035,7 @@ title = "Verification runs"
 question = "Which verification commands run, and do they pass?"
 unit = "runs"
 formula = "Shell calls whose command contains a verification step, counted once per kind: unit test, integration or end-to-end test, smoke test, lint or format, type check, remote CI. A chained command counts toward every kind it contains and its one outcome applies to all of them; a failed chain fails every kind in it. Full local gate runs (CI or check-all scripts, `pre-commit`, `make check`) are a context flag, not a kind. Rows from before the command shape was stored are left out, not counted as no verification."
+requires = ["tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`x.verification_kinds` classified from the command in the projection. Outcome is the exit code when it parsed (about half of calls), else the success flag; recomputed for the rows SigNoz still retains." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "`verification_kinds` classified by the `tool_call` hook; the outcome is the `execute_tool` span status. From the deploy date; earlier rows have no value." }
@@ -854,6 +1048,7 @@ title = "Failures caught in the task"
 question = "After a verification fails, does the same kind pass later in the task?"
 unit = "%"
 formula = "100 × (task, kind) pairs where a verification of that kind fails and a later run of the same kind succeeds in the same task / (task, kind) pairs with a failed run. Time to catch is from the first failure to the first later success."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Kinds and outcomes as for verification runs; calls outside a user turn are unattributed." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Kinds from the `tool_call` hook, outcome from the `execute_tool` span; call → root run of the same trace. From the deploy date." }
@@ -870,6 +1065,7 @@ title = "Model calls"
 question = "How many model calls reached a terminal state?"
 unit = "calls"
 formula = "count() of producer-native model call records."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "differs", note = "One per response stream (`response.completed`), including failed streams; not a logical request." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Chat spans." }
@@ -882,6 +1078,7 @@ title = "Call error rate"
 question = "What share of model calls failed?"
 unit = "%"
 formula = "100 × failed calls / calls not cancelled by the user. A user cancellation is not a provider failure."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "differs", note = "Stream level: a non-empty `error.message` on `response.completed`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Span error status; `error.type = aborted` is a user cancellation and is excluded." }
@@ -894,6 +1091,7 @@ title = "Stream disconnects"
 question = "How often does a response stream break before completion?"
 unit = "calls"
 formula = "Completed-response records whose error says the stream disconnected before completion."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "aligned", note = "`error.message` starting 'stream disconnected before completion'." }
 oh-my-pi = { alignment = "not emitted", note = "Chat spans record errors but not stream state; guessing from error text would not be the same signal." }
@@ -906,6 +1104,7 @@ title = "Model call latency"
 question = "How long does a model call take?"
 unit = "seconds"
 formula = "P50 / P95 of the model call duration."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.sampling", alignment = "differs", note = "`run_sampling_request` span, which includes retries, response processing, and in-flight tool draining." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "Chat span duration." }
@@ -918,6 +1117,7 @@ title = "Time to first token"
 question = "How long until the first token arrives?"
 unit = "seconds"
 formula = "P50 / P95 of time to first token."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "aligned", note = "`ttft_ms` on `response.completed`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.response.time_to_first_chunk` (seconds)." }
@@ -930,6 +1130,7 @@ title = "Output throughput"
 question = "Is generation speed degraded independently of response size?"
 unit = "tokens/s"
 formula = "P50 of output tokens / (duration − time to first token) for calls with both timings and positive generation time."
+requires = ["model_usage", "model_outcome"]
 [signal.support]
 codex = { alignment = "not emitted", note = "Completed responses carry time to first token but no per-call duration; a per-turn rate would be a different signal." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
@@ -942,6 +1143,7 @@ title = "Retries"
 question = "How much extra traffic do retries create?"
 unit = "attempts"
 formula = "Attempts beyond the first per logical call."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.try_sampling", alignment = "differs", note = "`try_run_sampling_request` spans beyond one per `run_sampling_request`." }
 oh-my-pi = { route = "hook.retry", alignment = "differs", note = "`auto_retry_start` hook events: one per retry of a failed chat. From the activity hooks' install date; earlier rows have no value." }
@@ -954,6 +1156,7 @@ title = "Unknown outcomes"
 question = "How many model calls lack an explicit outcome?"
 unit = "calls"
 formula = "Calls with no success flag, error, or finish reason."
+requires = ["model_outcome"]
 [signal.support]
 codex = { route = "codex.response_completed", alignment = "differs", note = "Every response stream has an outcome (error message or completion), so Codex has no unknown calls." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "No `gen_ai.response.finish_reasons`." }
@@ -966,6 +1169,7 @@ title = "Model conformance"
 question = "Did the provider serve the requested model?"
 unit = "calls"
 formula = "Calls whose response model is set and differs from the requested model."
+requires = ["model_identity"]
 [signal.support]
 codex = { alignment = "not emitted", note = "Codex reports only the requested model: neither its telemetry, its hooks, nor its transcript name the served model." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.request.model` vs `gen_ai.response.model`." }
@@ -982,6 +1186,7 @@ title = "Recurring targets"
 question = "Which files recur across tasks?"
 unit = "tasks"
 formula = "Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a project or path under a temporary directory) are excluded."
+requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Targets from the `tool_call` hook, home as ~. From the activity hooks' install date; earlier rows have no value." }
@@ -994,6 +1199,7 @@ title = "Recurring failure signatures"
 question = "Which failure signatures recur across tasks and days?"
 unit = "tasks"
 formula = "Failure clusters (tool family × failure class: the signature with quoted values and paths generalized) seen in ≥2 tasks, with occurrences, tasks, and days."
+requires = ["task_boundary", "tool_calls", "tool_failure"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
@@ -1006,6 +1212,7 @@ title = "Actionable repeats"
 question = "Which repeated failures cross the evidence threshold for intervention?"
 unit = "signatures"
 formula = "Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a project or path under a temporary directory) are excluded."
+requires = ["task_boundary", "tool_calls", "tool_failure"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
@@ -1018,6 +1225,7 @@ title = "Project concentration"
 question = "Is a repeated failure localized to one project?"
 unit = "%"
 formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store. Evaluation workspaces (a project or path under a temporary directory) are excluded."
+requires = ["session_identity", "tool_calls", "tool_failure", "session_store"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
@@ -1034,6 +1242,7 @@ title = "Labelled tasks"
 question = "Which share of tasks has a Jev-labelled prompt?"
 unit = "%"
 formula = "100 × tasks whose starting prompt has a label in `prompt_labels` / tasks in sessions with at least one exported prompt (tasks from sessions before the prompt export began are counted apart). `facts sync` labels exported prompts with Jev every minute and retries a failed decision up to 3 times."
+requires = ["session_identity", "task_boundary", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned", note = "`codex.user_prompt` text (`log_user_prompt = true`). Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted." }
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start`. Labelled from the prompt export's start (2026-09-30); earlier prompts were exported redacted." }
@@ -1046,6 +1255,7 @@ title = "Task type"
 question = "What kind of work do users ask for?"
 unit = "tasks"
 formula = "Labelled tasks by Jev task type: bugfix, feature, refactor, investigate, review, ops, docs, continue. Labelled tasks with no type show as untyped, so shares of labelled tasks sum to 100%."
+requires = ["session_identity", "task_boundary", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "Prompt event sent by the omp activity extension." }
@@ -1058,6 +1268,7 @@ title = "Corrected by the next prompt"
 question = "How often does the user's next prompt correct the task's work?"
 unit = "%"
 formula = "100 × tasks whose next prompt in the session, within 10 minutes of the task's end, Jev reads as a correction (probability ≥ 0.5) with a named correction kind (not none) / tasks with a labelled next prompt or none. A direct friction signal where clean completion is a proxy."
+requires = ["session_identity", "task_boundary", "user_friction", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have no next prompt." }
@@ -1071,6 +1282,7 @@ title = "Correction kinds"
 question = "What went wrong when users corrected the agent?"
 unit = "tasks"
 formula = "Corrected tasks by Jev correction kind: ignored instruction, wrong approach, wrong scope, incomplete, incorrect result."
+requires = ["session_identity", "task_boundary", "user_friction", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have no next prompt." }
@@ -1084,6 +1296,7 @@ title = "Frustrated follow-ups"
 question = "How often is the user's next prompt frustrated?"
 unit = "%"
 formula = "100 × tasks whose next prompt within 10 minutes Jev scores as frustrated / tasks with a labelled next prompt."
+requires = ["session_identity", "task_boundary", "user_friction", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
 codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have no next prompt." }
@@ -1097,9 +1310,10 @@ title = "Effort payoff by task type"
 question = "For which kinds of work does heavier reasoning effort reduce corrections?"
 unit = "%"
 formula = "Per task type and effort: corrected-by-next-prompt rate and clean-completion rate over labelled tasks, headless Codex exec runs excluded from both; compare efforts within one task type, never across harnesses."
+requires = ["session_identity", "task_boundary", "model_identity", "user_friction", "prompt_text"]
 [signal.support]
 codex = { route = "codex.user_prompt", alignment = "aligned" }
-codex_exec = { route = "codex.user_prompt", alignment = "differs", note = "Task type only; corrections and clean completion are not applicable to headless runs." }
+codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have no next prompt, so neither rate applies; their labelled tasks still count in Tasks." }
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "Prompt event sent by the omp activity extension." }
 claude-code = { route = "claude.user_prompt", alignment = "aligned" }
 

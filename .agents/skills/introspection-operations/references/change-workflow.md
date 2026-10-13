@@ -20,8 +20,12 @@ The generated rule and matrix are in
 1. **Define** the change in `src/agent_introspection/facts_sql/`: the projections
    (`select_spans.sql`, `select_logs.sql`), the fact views (`003_views.sql`; NULL means
    no signal, never 0), and the registry (`signal_support.toml`: the signal with its
-   question, unit, formula, and a support entry per harness; `codex` covers the three
-   Codex surfaces).
+   question, unit, formula, `requires` (the capabilities its definition needs; every
+   harness-scoped signal declares it), and a support entry per harness; `codex` covers
+   the three Codex surfaces). When a cell or a requirement changes, keep each harness
+   profile in `src/agent_introspection/harness_profiles/` consistent with it:
+   `tests/test_profiles.py` fails when a cell a profile reaches (`aligned` or
+   `differs`) needs a capability the profile does not have `native` or `hook`.
 2. **Find a route for every harness**, in this order:
    1. native telemetry already in `introspection.spans` / `logs` (inspect key names and
       counts in SigNoz read-only; never print prompt or command text);
@@ -43,8 +47,9 @@ The generated rule and matrix are in
    come only from the registry. Wrap a panel of a signal some harness does not emit in
    a visibility check, so it renders only where every enabled harness reaches it.
 5. **Apply**:
-   - `uv run python scripts/render-measures.py` (regenerates the signal catalog and the
-     data-gaps doc; a test fails when they drift);
+   - `uv run python scripts/render-measures.py` (regenerates the signal catalog, the
+     data-gaps doc, the producer-capabilities doc, and
+     `dashboard/src/harnesses.generated.ts`; a test fails when they drift);
    - `bash scripts/run-ci-quality-gates.sh`;
    - `uv tool install --force --reinstall .` after any Python change;
    - `agent-introspection facts install`; `facts backfill --days 90` when a projection
@@ -58,23 +63,43 @@ The generated rule and matrix are in
 
 ## Add a harness
 
-Start from its harness profile (onboarding harness configuration workflow, "Unknown
-harness"). A harness is added in one change, after every signal has a route or the
-user has decided which signals to exclude (exclusion removes a signal for every
-harness). The places a harness is named:
+Start from the onboarding skill's producer onboarding workflow: an assessed profile
+(capabilities with evidence, binary, versions, session store, and settings) and the
+`harness impact` the user accepted. A harness is added in one change, after every
+signal has a route or a recorded reason, or the user has decided which signals to
+exclude (exclusion removes a signal for every harness).
 
-- `signal_support.toml`: `[harnesses]`, its routes, and a support cell per signal;
-- `select_spans.sql` / `select_logs.sql`: the service-name allowlists;
+The harness identity lists are generated from the registry's `[harnesses]` table;
+never edit them by hand. `uv run python scripts/render-measures.py` regenerates
+`dashboard/src/harnesses.generated.ts` (`HARNESSES`, `HARNESS_LABEL`, and the services
+list that `contracts.ts`, `format.ts`, and `pipeline.ts` import) and the docs. The
+projections' service lists (`{services}` in `select_spans.sql` and `select_logs.sql`)
+and the services `facts preflight` checks are filled from the same table when they run.
+
+What still needs work per producer:
+
+- `signal_support.toml`: the `[harnesses]` entry (moved out of `[producers]` if it was
+  there), its `[[route]]`s, and a support cell per harness-scoped signal, consistent
+  with the capabilities each signal `requires`;
+- `harness_profiles/<key>.toml`: `status = "registered"`, its `registry_keys`, and its
+  `[[config_file]]` and `[[setting]]` entries, so `harness configure` can write them;
 - `003_views.sql`: a branch per fact view (usage, tasks, tool calls, user signals,
   model calls);
-- `classify.py` (prompt source), `preflight.py` (service list);
-- `dashboard/src/contracts.ts` (`HARNESSES`), `dashboard/src/format.ts` (label),
-  `dashboard/server/pipeline.ts` (services, parity recount);
-- project attribution: an adapter under the onboarding skill's `scripts/adapters/` and
-  its producer name in `session-context-runtime.sh`; activity hooks in `hooks.py` when
-  the profile needs them.
+- `classify.py`: its prompt event;
+- `dashboard/server/pipeline.ts` (parity recount) and `dashboard/server/views.ts`
+  (per-harness branches);
+- project attribution: a `[[store]]` in `session_stores.toml` (JSON Lines or SQLite);
+- activity hooks, when the profile needs them: an adapter under the onboarding skill's
+  `scripts/adapters/`, its producer and events in `hooks.py` and
+  `docs/references/hook-events.md`, the profile's `hook_adapter`, its install step in
+  `harness_config.py`, and its check in `doctor_harness.py`;
+- a colour: `HARNESS_TOKENS` in `dashboard/src/tokens.ts` has slots for three more
+  harnesses; a harness beyond that needs a new slot (`dashboard/src/components.test.ts`
+  fails without one).
 
-Then apply and verify as in steps 5 and 6.
+Then apply and verify as in steps 5 and 6, configure the harness with the onboarding
+harness configuration workflow, and save its fingerprint
+(`agent-introspection producers fingerprint --save`).
 
 Never drop `introspection.spans`, `logs`, `session_projects`, `hook_events`, or
 `prompt_labels`: history older than SigNoz's retention and all synced hook and label

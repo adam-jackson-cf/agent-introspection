@@ -1,0 +1,51 @@
+# Opt-in collector processors that drop opencode's plumbing spans before SigNoz stores
+# them, and remove the SQL text opencode records on its database spans.
+#
+# Measured on this repository's host on 2026-10-13 (opencode 1.2.6, last 30 days): the
+# 29 span names these conditions match were 16.57M of opencode's 17.88M spans (93%).
+# `sql.execute` spans carry `db.query.text`, which can hold SQL text from opencode's
+# own database; no other opencode span carried it.
+#
+# Kept: every other opencode span, including Tool.execute, LLM.run, SessionPrompt.*,
+# Permission.ask, SessionProcessor.completeToolCall, settleToolCall, updateToolCall,
+# and failToolCall, so the capability hints in signal_support.toml still find their
+# evidence (readToolCall and ensureToolCall also match the tool_calls hint, which
+# Tool.execute still meets). Children of dropped spans (such as AISDK.hook and
+# Config.entries) are kept and point at a parent the trace no longer has. Spans of
+# every other service pass unchanged.
+#
+# This changes SigNoz, so applying it is the user's call; Agent Introspection never
+# applies it. To apply:
+#
+# 1. Add the two processors below to the collector config's `processors:`.
+#    - Foundry install: in casting.yaml, under
+#      spec.ingester.spec.config.data."ingester.yaml" (Foundry merges that fragment
+#      onto the generated pours/deployment/ingester/ingester.yaml, which `forge`
+#      rewrites, so do not edit the generated file).
+#    - deploy/docker install (deprecated): otel-collector-config.yaml.
+# 2. Put them first in service.pipelines.traces.processors, so dropped spans also make
+#    no span metrics. A list is replaced whole, so restate the existing processors:
+#    - Foundry v0.3.0: [transform/opencode-db-text, filter/opencode-plumbing,
+#      signozspanmetrics/delta, signozspanmapper, signozllmpricing, batch]
+#    - deploy/docker: [transform/opencode-db-text, filter/opencode-plumbing,
+#      signozspanmetrics/delta, batch]
+# 3. Recreate the collector: for Foundry, `foundryctl forge -f casting.yaml`, then
+#    `docker compose -f pours/deployment/compose.yaml up -d --force-recreate`; for
+#    deploy/docker, `docker compose up -d --force-recreate otel-collector`.
+#
+# To revert: remove both processors from the traces pipeline and from `processors:`,
+# then recreate the collector the same way. Spans already dropped are not recovered.
+processors:
+  transform/opencode-db-text:
+    error_mode: ignore
+    trace_statements:
+      - 'delete_key(span.attributes, "db.query.text") where resource.attributes["service.name"] == "opencode"'
+  filter/opencode-plumbing:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] == "opencode" and name == "sql.execute"'
+        - 'resource.attributes["service.name"] == "opencode" and IsMatch(name, "^Session[.](getPart|updatePart)$")'
+        - 'resource.attributes["service.name"] == "opencode" and IsMatch(name, "^SessionProcessor[.](readToolCall|ensureToolCall)$")'
+        - 'resource.attributes["service.name"] == "opencode" and IsMatch(name, "^(Config[.]get|Env[.]all|Plugin[.](trigger|add|load))$")'
+        - 'resource.attributes["service.name"] == "opencode" and IsMatch(name, "^(State|FileSystem|Auth)[.]")'

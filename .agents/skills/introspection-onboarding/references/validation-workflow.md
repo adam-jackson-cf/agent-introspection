@@ -1,30 +1,90 @@
 # Validation workflow
 
-Prove a harness's capture works: first check configuration without running anything,
-then, only when the user wants a live check, run one short session.
+Prove a harness's capture works: first check configuration with
+`agent-introspection doctor`, which runs nothing in a harness, then, only when the user
+wants a live check, run one short session.
 
-## Configuration check (no harness, hook, or query runs)
+## Configuration check
 
-- Each changed file parses (JSON, TOML) and has a backup; print no values.
-- Every introspection hook points at a managed path under
-  `~/.local/lib/agent-introspection/activity-hooks-v1/`, and the managed copies
-  match the repo's `scripts/`.
-- The settings in the harness configuration workflow's table are present for each
-  harness in use, in every Codex root, and `omp plugin list` shows
-  `agent-introspection-activity` while `~/.omp/agent/config.yml` does not list it.
-- `agent-introspection` resolves for the shim, `[hooks] otlp_logs_endpoint` is set to
-  the collector's OTLP/HTTP logs URL (not the gRPC port), and on the host machine an
-  OpenRouter key is present for `facts sync` (presence only).
+`agent-introspection doctor` is read-only: it writes nothing, never runs the prompt
+labels' key command, and checks secrets for presence only. It prints one JSON object
+(`passed`, `summary`, and `checks`, each with `name`, `status`, `detail`, `fix`, and,
+for a per-harness check, `harness`) and exits 30 when any check fails; the report
+still prints.
+
+| Status | Meaning                                                                                                 |
+| ------ | ------------------------------------------------------------------------------------------------------- |
+| `pass` | As expected.                                                                                            |
+| `warn` | Works, but at risk or only partly (for example, a hooks endpoint the scheduled sync cannot see).        |
+| `fail` | A step is missing or wrong: follow `fix`, then rerun `doctor`.                                          |
+| `off`  | An optional feature is not in use (prompt export, prompt labels); turn it on only if the user wants it. |
+| `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).      |
+
+The checks run in this order: `config`, `signoz` (every `facts preflight` check
+folded into one), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
+enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
+`activity_hooks`, `activity_shim`, `session_store`, and `telemetry` (rows over 24
+hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
+`prompt_labels`, and `dashboard`. Points to know:
+
+- An exporter that reaches the local collector by another route (OTLP/gRPC on 4317,
+  or OTLP/HTTP on 4318 or the configured port) satisfies the export settings, as it
+  does for `harness configure`; `127.0.0.1` and `localhost` both name this machine.
+- On an additional machine (`[machine] role = "additional"`), the checks that belong
+  to the host are `info` and `host_collector` and `spool_sync` take their place; the
+  [additional machines workflow](additional-machines-workflow.md) lists them.
+- Config files checked: the ones `harness configure` writes. A set `CLAUDE_CONFIG_DIR`
+  or `CODEX_HOME` names the file even when it does not exist yet, and `config_files`
+  then fails as missing. Codex homes: every configured home that is set or exists,
+  plus the parent of each `[sessions.roots] codex` root that holds a `config.toml`.
+- `prompt_export` reads a file's first prompt-export setting as its switch (Claude
+  Code's `OTEL_LOG_USER_PROMPTS`, Codex's `log_user_prompt`). While the switch is not
+  on, the check is `off`, whatever the file's other settings hold. It warns when the
+  switch is on and another setting is unset, such as `OTEL_LOG_USER_PROMPTS=1` without
+  `OTEL_LOG_ASSISTANT_RESPONSES=0`, which also exports assistant response text, and
+  when some Codex homes export prompts and others do not: its detail names the homes
+  that do, and its fix has a `--root` for each home that differs. A value set by hand
+  beside a switch that is on, such as `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant
+  responses exported on purpose), is `info`: its detail names the value, and its fix
+  says what `--prompt-export` would write over it. Leave it if the user chose it.
+- A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
+  scheduled sync: set `[hooks] otlp_logs_endpoint` and
+  `[labels] openrouter_key_command` in the config instead.
+- The dashboard needs ClickHouse's HTTP interface at a local address: a port published
+  on loopback (for example with the opt-in
+  `scripts/signoz/docker-compose.clickhouse-http.yaml`) or a container name the runtime
+  resolves.
+- When ClickHouse is unreachable, `schedule` is `info` (this is not the SigNoz host),
+  and `telemetry` and `drift` report that they were not checked.
+
+Options:
+
+- `doctor --live` adds `collector_live`: it sends one empty OTLP/HTTP logs request,
+  which stores nothing, to the hooks endpoint (or `<otlp_endpoint>/v1/logs` when none
+  is set), proving the collector accepts records from this machine.
+- `doctor --drift` adds `drift`: each enabled harness's telemetry against its saved
+  fingerprint (see the producer onboarding workflow's
+  [Watch](producer-onboarding-workflow.md#watch) step), and `drift_unnamed` when rows
+  arrive with an empty `service.name`.
+
+Beyond `doctor`, check by hand:
+
+- Each changed file has a backup (`harness configure` and `install_activity.py` print
+  their backup paths).
+- The managed copies under `~/.local/lib/agent-introspection/activity-hooks-v1/` match
+  the repo's `scripts/` (`diff -u`).
+- `~/.omp/agent/config.yml` does not list the omp activity extension.
 
 ## Live check
 
 1. In each harness, start a fresh session, submit a harmless prompt, run one command
    that fails (for example reading a missing file), and let the turn finish. For Codex
    exec, run one `codex exec` prompt.
-2. After the next minute (the host's `facts sync`, or the other machine's
+2. After the next minute (the host's `facts sync`, or an additional machine's
    `spool sync` timer; run either now), check:
    - the spool backlog (`*.json` in `~/.local/share/agent-introspection/hook-inbox/`)
-     drains to 0 and `hook-inbox/rejected/` stays empty;
+     drains to 0 and `hook-inbox/rejected/` stays empty
+     (`agent-introspection spool status` counts both);
    - a probe record (the session's first hook event) is in
      `introspection.hook_events FINAL` with this machine's `host`;
    - `introspection.session_projects FINAL` has the session with `status = 'attributed'`
@@ -42,5 +102,5 @@ then, only when the user wants a live check, run one short session.
 
 ## Done when
 
-- Each harness passes both checks, or each gap is explained (a signal no route can
-  reach goes to the `introspection-operations` change workflow).
+- `doctor` passes and each harness passes the live check, or each gap is explained (a
+  signal no route can reach goes to the `introspection-operations` change workflow).

@@ -32,11 +32,18 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from importlib.resources import files
 from typing import Any, cast
 
 from agent_introspection import command_shape
-from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig, is_local_host
+from agent_introspection.config import (
+    AppConfig,
+    ConfigurationError,
+    SigNozConfig,
+    is_local_host,
+    require_host,
+)
 
 DATABASE = "introspection"
 # `facts verify` builds a disposable copy of the store in a database of its own per run
@@ -385,7 +392,12 @@ class RegistryError(ValueError):
 
 @dataclass(frozen=True)
 class Registry:
-    """Rows for the five registry tables, in file order, and the harness labels."""
+    """Rows for the five registry tables, in file order, and the harness labels.
+
+    ``requires`` maps each harness-scoped signal to the producer capabilities its
+    definition needs (``capabilities.py``). ``producers`` holds the ``[producers]``
+    table: services known to send telemetry that are not harnesses (opencode).
+    """
 
     signals: list[Row]
     routes: list[Row]
@@ -393,6 +405,8 @@ class Registry:
     strays: list[Row]
     excluded: list[Row]
     harnesses: dict[str, str] = field(default_factory=dict)
+    requires: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    producers: dict[str, str] = field(default_factory=dict)
 
 
 def _sql(name: str) -> str:
@@ -404,14 +418,31 @@ def _command_shape_fragment() -> str:
     return command_shape.fill(_sql("command_shape.sql"), command_shape.sql_parts())
 
 
+@cache
+def registry_harnesses() -> tuple[str, ...]:
+    """Return the registry's ``[harnesses]`` keys, the producer service names, in file order.
+
+    Reads only that table, so a check that needs only the names (``preflight``) does
+    not depend on the rest of the registry validating. Never called at import, so a
+    broken registry cannot stop a command that does not read it, such as ``hook``.
+    Cached: every backfill window renders a projection, and the registry never
+    changes while the process runs.
+    """
+    harnesses = cast(dict[str, str], tomllib.loads(_sql(REGISTRY_FILE)).get("harnesses", {}))
+    if not harnesses:
+        raise RegistryError("registry needs [harnesses]")
+    return tuple(harnesses)
+
+
 def render_select(select_file: str, window: str) -> str:
-    """Return a curated projection restricted to one source-time predicate."""
+    """Return a curated projection of the registry's services in one source-time window."""
     select = _sql(select_file)
     if "{" + "command_shape}" in select:
         select = command_shape.fill(
             select, {"command_shape": _command_shape_fragment().rstrip("\n")}
         )
-    return command_shape.fill(select, {"window": window})
+    services = ", ".join(map(sql_string, registry_harnesses()))
+    return command_shape.fill(select, {"services": services, "window": window})
 
 
 def loader_ddl(loader: Loader) -> str:
@@ -682,7 +713,21 @@ def parse_registry(document: dict[str, Any]) -> Registry:
         strays=_parse_strays(document.get("stray", []), harnesses, document.get("producers", {})),
         excluded=excluded,
         harnesses=dict(harnesses),
+        requires=_requirements(document),
+        producers=dict(document.get("producers", {})),
     )
+
+
+def _requirements(document: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    """Validate the registry's capabilities and return each signal's required ones.
+
+    A document that declares no ``[[capability]]`` (a test fixture) requires none; the
+    repo registry declares every capability.
+    """
+    # Imported here: capabilities reads the Registry this module defines.
+    from agent_introspection import capabilities
+
+    return capabilities.requirements(document) if "capability" in document else {}
 
 
 def load_registry() -> Registry:
@@ -1049,7 +1094,11 @@ def http_runner(config: AppConfig) -> SqlRunner:
 
 
 def runner(config: AppConfig) -> SqlRunner:
-    """Return the SQL runner for the configured connection mode."""
+    """Return the SQL runner for the configured connection mode.
+
+    An additional machine has no ClickHouse, so every command that needs one stops here.
+    """
+    require_host(config, "this command needs SigNoz's ClickHouse")
     return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
 
 
