@@ -147,7 +147,7 @@ const params = (filters: Filters): Record<string, string> => ({
  * Shares one pending result per key for `ttlMs`, so concurrent and repeated loads
  * run a query once. A failed result is dropped at once, so the next load retries.
  */
-function ttlCache<T>(
+export function ttlCache<T>(
   ttlMs: number,
   maxEntries: number,
   now: () => number,

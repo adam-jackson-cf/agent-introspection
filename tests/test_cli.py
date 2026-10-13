@@ -1,5 +1,6 @@
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -305,6 +306,80 @@ def test_facts_install_creates_the_workflow_store(
     assert json.loads(capsys.readouterr().out) == {"installed": True}
     assert received == [("claude-code", "codex")]
     assert (tmp_path / "workflow.sqlite3").exists()
+
+
+def test_facts_install_still_creates_the_workflow_store_when_a_refresh_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
+
+    def install(_run: object, _enabled: object) -> dict[str, bool]:
+        raise facts.FactsError("refresh of load_spans failed: boom")
+
+    monkeypatch.setattr(facts, "install", install)
+
+    with pytest.raises(SystemExit):
+        main(["--config", str(config_file(tmp_path)), "facts", "install"])
+    assert (tmp_path / "workflow.sqlite3").exists()
+
+
+def test_facts_install_failure_survives_a_workflow_store_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
+
+    def install(_run: object, _enabled: object) -> dict[str, bool]:
+        raise facts.FactsError("refresh of load_spans failed: boom")
+
+    def broken_store(_args: object) -> object:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(facts, "install", install)
+    monkeypatch.setattr("agent_introspection.cli_facts.open_store", broken_store)
+
+    with pytest.raises(SystemExit) as failed:
+        main(["--config", str(config_file(tmp_path)), "facts", "install"])
+    assert failed.value.code == EXIT_FACTS
+    err = capsys.readouterr().err
+    assert "refresh of load_spans failed: boom" in err
+    assert "disk I/O error" in err
+
+
+def test_facts_install_still_fails_when_only_the_workflow_store_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
+    monkeypatch.setattr(facts, "install", lambda _run, _enabled: {"installed": True})
+
+    def broken_store(_args: object) -> object:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("agent_introspection.cli_facts.open_store", broken_store)
+    with pytest.raises(SystemExit) as failed:
+        main(["--config", str(config_file(tmp_path)), "facts", "install"])
+    assert failed.value.code == EXIT_DATABASE
+
+
+def test_facts_refresh_refreshes_one_named_refresher(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        return ""
+
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
+    config = str(config_file(tmp_path))
+
+    assert main(["--config", config, "facts", "refresh", "refresh_tool_calls_recent"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"refreshed": "refresh_tool_calls_recent"}
+    assert ran[0] == "SYSTEM REFRESH VIEW introspection.refresh_tool_calls_recent"
+
+    with pytest.raises(SystemExit) as unknown:
+        main(["--config", config, "facts", "refresh", "nope"])
+    assert unknown.value.code == EXIT_VALIDATION
+    assert len(ran) == 2
 
 
 def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(

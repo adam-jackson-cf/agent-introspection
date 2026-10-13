@@ -688,7 +688,8 @@ FROM (
         forbidden_keys + long_status + home_paths AS violations
     FROM (${SANITIZATION_TABLES})
 ) GROUP BY ROLLUP(source)
-ORDER BY indexOf(['spans', 'logs', 'hook_events', 'signoz_hook_logs'], source)`;
+ORDER BY indexOf(['spans', 'logs', 'hook_events', 'signoz_hook_logs'], source)
+SETTINGS max_threads = 2`;
 
 /** Coverage cells in these states are the ones nothing explains (the Coverage KPI). */
 const UNEXPLAINED: Record<string, true> = {

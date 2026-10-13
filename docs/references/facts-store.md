@@ -91,12 +91,45 @@ through one `<view>_snapshot` view:
 
 - `<view>_recent` holds the last 8 days, the days whose facts can still change (late
   logs up to 7 days, span and log sweeps over 3 days, prompt labels over 2 days). It is
-  rebuilt every 10 minutes after the minute loaders, reading one extra day of spans and
+  rebuilt every 10 minutes after the minute loaders, at its own minute (see the schedule
+  map below), reading one extra day of spans and
   logs so rows near its start are computed with their neighbours.
 - `<view>_history` holds the older days and is rebuilt once a day, between 00:35 and 01:35 UTC, one view at a time.
 - `<view>_snapshot` takes rows from history before the start of today minus 7 days (UTC)
   and from recent after it. Both tables overlap that boundary, so between rebuilds no
   row is missed or repeated.
+
+Refreshers are staggered so heavy queries rarely overlap; ClickHouse kills a
+query when total server memory passes its limit. Every refresher is created `EMPTY`,
+so creating one runs nothing, and `facts install` then refreshes the minute loaders,
+the histories, then the recents one at a time (each retried once on failure). Sweeps are not run at install; each waits for its slot.
+A failed scheduled refresh retries after a backoff counted from the end of the failed
+attempt: minute loaders after 30 to 60 seconds (three times), recents after 10 minutes
+(twice), sweeps after an hour (once), and histories after 70 minutes (three times),
+which clears the whole 00:35 to 01:35 block, so only histories are isolated from one
+another. The server does not retry the out-of-schedule refreshes `facts install` runs;
+install retries each failed one once itself, attempts every refresher, skips a
+snapshot whose upstream failed, and reports all failures together. `facts refresh
+<refresher>` fills one table without a full rebuild. Within each
+10-minute period (UTC):
+
+| Minute | Runs                                                                                      |
+| ------ | ----------------------------------------------------------------------------------------- |
+| `:x0`  | the minute loaders only                                                                   |
+| `:x1`  | `usage_events` recent                                                                     |
+| `:x2`  | `task_outcomes` recent                                                                    |
+| `:x3`  | `task_labels` recent (right after `task_outcomes`, which it waits for)                    |
+| `:x4`  | `tool_calls` recent                                                                       |
+| `:x5`  | one `_history` refresher a day, 00:35 to 01:35                                            |
+| `:x6`  | `user_signals` recent                                                                     |
+| `:x7`  | `model_calls` recent                                                                      |
+| `:x8`  | `model_call_attempts` recent                                                              |
+| `:x9`  | one hourly sweep each: `:09` spans, `:19` logs, `:29` hook events, `:39` session projects |
+
+A view that reads another snapshot (`task_labels` on `task_outcomes`) must have a later
+offset, because ClickHouse waits for a dependency only when its offset is earlier in the
+same period. Loader and sweep queries share the backfill memory settings
+(`LOAD_SETTINGS`: 1.5 GiB ceiling, spilling to disk).
 
 Each table is replaced whole on every rebuild, so neither holds duplicates or rows the
 facts no longer produce. The dashboard trails SigNoz by up to about 10 minutes, and
@@ -106,8 +139,8 @@ more than a week after it started, or hook events delivered more than a week lat
 `task_labels` reads the `task_outcomes` snapshot, so its view (`004_labels.sql`) is
 created after the other snapshots, and its rebuilds wait for those of `task_outcomes`.
 
-`facts install` first builds the whole store in a scratch `introspection_verify`
-database (also `facts verify`), so SQL that ClickHouse rejects fails before the live
+`facts install` first builds the whole store in a scratch `introspection_verify_<time>_<pid>`
+database of its own (also `facts verify`; scratch databases over an hour old are dropped), so SQL that ClickHouse rejects fails before the live
 loaders are dropped. `facts verify --compare` rebuilds every snapshot now and checks
 that each matches a full read of its view (row count and a hash of every column). It
 leaves out the newest 15 minutes and the oldest day, and rereads every view in full, so

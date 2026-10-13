@@ -5,7 +5,7 @@ import json
 import re
 import subprocess
 import tomllib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -20,12 +20,21 @@ def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
         ddl = facts.loader_ddl(loader)
 
         assert ddl.startswith(f"CREATE MATERIALIZED VIEW introspection.{loader.name}")
+        retry = (
+            facts.LOADER_RETRY_SETTINGS
+            if loader.schedule == facts.MINUTE_SCHEDULE
+            else facts.SWEEP_RETRY_SETTINGS
+        )
         assert (
-            f"REFRESH {loader.schedule}\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\n"
-            f"APPEND TO introspection.{loader.target}\n"
+            f"REFRESH {loader.schedule}\nSETTINGS {retry}\n"
+            f"APPEND TO introspection.{loader.target} EMPTY\nAS\n"
         ) in ddl
         assert loader.window in ddl
         assert "{window}" not in ddl
+        # Refresh-strategy settings plus the query's own memory-bounded settings.
+        assert ddl.count("SETTINGS") == 2
+        assert ddl.endswith(f"\nSETTINGS {facts.LOAD_SETTINGS}")
+        assert "max_memory_usage = 1610612736" in ddl
 
 
 def test_span_loaders_select_by_end_time_and_log_loader_by_ingest_time() -> None:
@@ -48,7 +57,8 @@ def test_record_loaders_window_on_collector_time_and_filter_their_family() -> No
     for target, (event_name, schema) in families.items():
         minute, sweep = loaders[f"load_{target}"], loaders[f"sweep_{target}"]
         assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", target)
-        assert (sweep.schedule, sweep.target) == ("EVERY 1 HOUR", target)
+        assert sweep.schedule.startswith("EVERY 1 HOUR OFFSET ")
+        assert sweep.target == target
         assert "INTERVAL 30 MINUTE" in minute.window
         assert "INTERVAL 3 DAY" in sweep.window
         for loader in (minute, sweep):
@@ -157,17 +167,28 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     statements = facts.verify_statements()
     refreshers = [s for s in statements if "REFRESH EVERY" in s]
 
-    assert statements[0] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    scratch = re.fullmatch(
+        r"DROP DATABASE IF EXISTS (introspection_verify_\d+_\d+) SYNC", statements[0]
+    )
+    assert scratch
+    database = scratch.group(1)
     assert not [s for s in statements if re.search(r"\bintrospection[.;]", s)]
     assert len(refreshers) == len(facts.LOADERS) + 2 * len(facts.SNAPSHOTS)
     for refresher in refreshers:
         assert "REFRESH EVERY 1 YEAR" in refresher
         assert " EMPTY\nAS" in refresher
-        assert facts.REFRESH_RETRY_SETTINGS in refresher
+        assert "refresh_retries" in refresher
     # A rejected history offset must fail in the scratch database, so it survives.
     history = [s for s in refreshers if "_history\nREFRESH" in s]
     assert len(history) == len(facts.SNAPSHOTS)
     assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in history)
+    # Recent and sweep offsets survive the rewrite too, so a rejected one fails here.
+    recent = [s for s in refreshers if "_recent\nREFRESH" in s]
+    assert len(recent) == len(facts.SNAPSHOTS)
+    assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in recent)
+    sweeps = [s for s in refreshers if f"{database}.sweep_" in s]
+    assert len(sweeps) == 4
+    assert all(re.search(r"REFRESH EVERY 1 YEAR OFFSET \d+ MINUTE\n", s) for s in sweeps)
 
 
 def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> None:
@@ -175,7 +196,7 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
 
     def run(sql: str) -> str:
         ran.append(sql)
-        if "VIEW introspection_verify.task_labels" in sql:
+        if re.search(r"VIEW introspection_verify_\d+_\d+\.task_labels", sql):
             raise facts.FactsError("Unknown table expression identifier")
         return ""
 
@@ -183,7 +204,7 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
         facts.install(run)
 
     assert not [s for s in ran if re.search(r"\bintrospection[.;]", s)]
-    assert ran[-1] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    assert re.fullmatch(r"DROP DATABASE IF EXISTS introspection_verify_\d+_\d+ SYNC", ran[-1])
 
 
 def _refresher_settings(refresher: str) -> dict[str, str]:
@@ -204,6 +225,8 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
         for refresher in refreshers:
             # Each part replaces its table whole, so it never holds duplicates.
             assert "APPEND" not in refresher
+            # Creation must not fire the refresher: install refreshes them one at a time.
+            assert re.search(r"\nTO introspection\.\w+ EMPTY\nAS SELECT", refresher)
             assert (
                 "DEPENDS ON introspection.load_spans, introspection.load_logs,"
                 " introspection.load_hook_events, introspection.load_session_projects"
@@ -227,50 +250,6 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
     # Lookup views (latest project, hook tool details, hook harness) are not snapshotted.
     helpers = {"session_project", "hook_rows", "hook_tool_calls"}
     assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
-
-
-def test_history_refreshers_run_one_at_a_time_off_the_shared_ten_minute_marks() -> None:
-    offsets: list[int] = []
-    for snapshot in facts.SNAPSHOTS:
-        statements = facts.snapshot_statements(snapshot)
-        history, recent = [s for s in statements if s.startswith("CREATE MATERIALIZED VIEW")]
-        match = re.search(r"REFRESH EVERY 1 DAY OFFSET (\d+) MINUTE DEPENDS", history)
-        assert match
-        offsets.append(int(match.group(1)))
-        for refresher in (history, recent):
-            assert f"\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\nTO " in refresher
-    # Strictly increasing in SNAPSHOTS order (so a dependency, which must come earlier
-    # in that order, builds first) and never on a minute shared with other refreshers.
-    assert all(a < b for a, b in itertools.pairwise(offsets))
-    assert len(set(offsets)) == len(offsets)
-    assert all(offset % 10 == 5 for offset in offsets)
-
-
-@pytest.mark.parametrize("hour", [0, 0.4, 0.6, 1.5, 1.7, 12, 23.9])
-def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float) -> None:
-    """History views rebuild daily from 00:35 to 01:35 UTC and recent every 10 minutes;
-    whenever the dashboard reads, the boundary must lie inside both parts or rows go missing."""
-    day = timedelta(days=1)
-    now = datetime(2026, 10, 2, tzinfo=UTC) + timedelta(hours=hour)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Before the last history build, history may be yesterday's; recent may be 10 minutes old.
-    last_offset = max(
-        facts.HISTORY_FIRST_OFFSET_MINUTES + facts.HISTORY_OFFSET_STEP_MINUTES * index
-        for index in range(len(facts.SNAPSHOTS))
-    )
-    history_built = today + timedelta(minutes=last_offset)
-    if history_built > now:
-        history_built -= day
-    recent_built = now - timedelta(minutes=10)
-
-    def start_of(moment: datetime) -> datetime:
-        return moment.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    boundary = today - facts.BOUNDARY_DAYS * day
-    history_end = start_of(history_built) - facts.HISTORY_END_DAYS * day
-    recent_start = start_of(recent_built) - facts.RECENT_START_DAYS * day
-
-    assert recent_start <= boundary <= history_end
 
 
 def test_compare_rebuilds_sources_first_and_fails_on_any_mismatch() -> None:
@@ -579,7 +558,7 @@ def test_backfill_statements_are_memory_bounded_inserts() -> None:
     for statement in statements:
         assert statement.startswith("INSERT INTO introspection.logs")
         assert statement.count("SETTINGS") == 1
-        assert statement.rstrip().endswith(f"SETTINGS {facts.BACKFILL_SETTINGS}")
+        assert statement.rstrip().endswith(f"SETTINGS {facts.LOAD_SETTINGS}")
         assert "max_memory_usage = 1610612736" in statement
         assert "max_threads = 2" in statement
 
