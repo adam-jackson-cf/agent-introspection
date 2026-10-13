@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import itertools
+import json
+import os
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -34,17 +36,34 @@ def _minute_class(schedule: str) -> int:
     return int(match.group(1)) % 10 if match else 0
 
 
-def test_retries_wait_one_period_so_they_stay_in_their_own_minute_class() -> None:
-    period = facts.RECENT_PERIOD_MINUTES * 60_000
-    for settings in (
-        facts.LOADER_RETRY_SETTINGS,
-        facts.RECENT_RETRY_SETTINGS,
-        facts.HISTORY_RETRY_SETTINGS,
-    ):
-        assert f"refresh_retry_initial_backoff_ms = {period}" in settings
-        assert f"refresh_retry_max_backoff_ms = {period}" in settings
-    assert facts.LOADER_RETRY_SETTINGS.startswith("refresh_retries = 2,")
+def _backoff_minutes(settings: str, key: str) -> float:
+    match = re.search(rf"{key} = (\d+)", settings)
+    assert match
+    return int(match.group(1)) / 60_000
+
+
+def test_retry_backoffs_clear_the_slots_each_refresher_class_could_land_on() -> None:
+    # Backoff counts from the failed attempt's end, so a history retry must clear the
+    # whole block of later histories (plus a 10-minute margin for the attempt itself).
+    block = (len(facts.SNAPSHOTS) - 1) * facts.HISTORY_OFFSET_STEP_MINUTES + 10
+    for key in ("initial", "max"):
+        history = _backoff_minutes(facts.HISTORY_RETRY_SETTINGS, f"refresh_retry_{key}_backoff_ms")
+        assert history >= block
+        assert history % 10 == 0
+        assert _backoff_minutes(facts.SWEEP_RETRY_SETTINGS, f"refresh_retry_{key}_backoff_ms") >= 60
+        assert _backoff_minutes(facts.LOADER_RETRY_SETTINGS, f"refresh_retry_{key}_backoff_ms") < 2
+    assert facts.LOADER_RETRY_SETTINGS.startswith("refresh_retries = 3,")
     assert facts.RECENT_RETRY_SETTINGS.startswith("refresh_retries = 2,")
+
+
+def test_each_loader_uses_the_retry_settings_of_its_class() -> None:
+    for loader in facts.LOADERS:
+        expected = (
+            facts.LOADER_RETRY_SETTINGS
+            if loader.schedule == facts.MINUTE_SCHEDULE
+            else facts.SWEEP_RETRY_SETTINGS
+        )
+        assert f"\nSETTINGS {expected}\nAPPEND TO " in facts.loader_ddl(loader)
 
 
 def test_sweeps_each_own_a_distinct_hour_offset_in_the_x9_class() -> None:
@@ -101,6 +120,10 @@ def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float
     assert recent_start <= boundary <= history_end
 
 
+def _no_sleep(_seconds: float) -> None:
+    return None
+
+
 def test_install_refreshes_loaders_then_histories_then_recents_one_at_a_time() -> None:
     ran: list[str] = []
 
@@ -108,11 +131,12 @@ def test_install_refreshes_loaders_then_histories_then_recents_one_at_a_time() -
         ran.append(sql)
         return ""
 
-    facts.install(run)
+    facts.install(run, sleep=_no_sleep)
 
-    live = ran[ran.index("DROP DATABASE IF EXISTS introspection_verify SYNC", 1) + 1 :]
-    created = max(i for i, s in enumerate(live) if s.startswith("CREATE MATERIALIZED VIEW"))
-    tail = [s for s in live[created + 1 :] if s.startswith("SYSTEM")]
+    created = max(i for i, s in enumerate(ran) if s.startswith("CREATE MATERIALIZED VIEW"))
+    live_start = max(i for i, s in enumerate(ran) if s.startswith("DROP DATABASE IF EXISTS"))
+    assert live_start < created
+    tail = [s for s in ran[created + 1 :] if s.startswith("SYSTEM")]
     names = [
         *(loader.name for loader in facts.LOADERS if loader.schedule == facts.MINUTE_SCHEDULE),
         *(facts.snapshot_refreshers(s)[0] for s in facts.SNAPSHOTS),
@@ -122,17 +146,159 @@ def test_install_refreshes_loaders_then_histories_then_recents_one_at_a_time() -
         f"SYSTEM {verb} VIEW introspection.{name}" for name in names for verb in ("REFRESH", "WAIT")
     ]
     # Sweeps are created EMPTY and left to their slot, never refreshed at install.
-    assert not [s for s in live if s.startswith("SYSTEM") and "sweep_" in s]
-    assert all(" EMPTY\nAS" in s for s in live if s.startswith("CREATE MATERIALIZED VIEW"))
+    assert not [s for s in ran[created + 1 :] if s.startswith("SYSTEM") and "sweep_" in s]
+    assert all(" EMPTY\nAS" in s for s in ran if s.startswith("CREATE MATERIALIZED VIEW"))
 
 
-def test_install_fails_naming_the_refresher_whose_refresh_ended_in_an_exception() -> None:
-    bad = "refresh_task_outcomes_history"
-
+def _failing_waits(failing: set[str], attempts: dict[str, int]) -> facts.SqlRunner:
     def run(sql: str) -> str:
-        if "system.view_refreshes" in sql and f"view = '{bad}'" in sql:
-            return '{"exception":"Code: 241. Memory limit exceeded"}\n'
+        if sql.startswith("SYSTEM WAIT VIEW introspection."):
+            name = sql.rsplit(".", 1)[1]
+            attempts[name] = attempts.get(name, 0) + 1
+            if name in failing:
+                raise facts.FactsError("REFRESH_FAILED: Code: 241. Memory limit exceeded")
         return ""
 
-    with pytest.raises(facts.FactsError, match=rf"refresh of {bad} failed: Code: 241"):
-        facts.install(run)
+    return run
+
+
+def test_install_attempts_every_refresher_and_reports_all_failures_after_one_retry() -> None:
+    bad = {"refresh_tool_calls_history", "refresh_model_calls_recent", "load_spans"}
+    attempts: dict[str, int] = {}
+    pauses: list[float] = []
+
+    with pytest.raises(facts.FactsError) as raised:
+        facts.install(_failing_waits(bad, attempts), sleep=pauses.append)
+
+    for name in bad:
+        assert f"refresh of {name} failed: REFRESH_FAILED" in str(raised.value)
+        assert attempts[name] == 2
+    assert pauses == [facts.REFRESH_RETRY_PAUSE_SECONDS] * len(bad)
+    # Everything else was still refreshed, once, after the failures.
+    assert attempts["refresh_model_call_attempts_recent"] == 1
+    assert attempts["refresh_task_labels_recent"] == 1
+
+
+def test_a_refresh_that_succeeds_on_retry_is_not_reported() -> None:
+    attempts: dict[str, int] = {}
+
+    def run(sql: str) -> str:
+        if sql.startswith("SYSTEM WAIT VIEW"):
+            name = sql.rsplit(".", 1)[1]
+            attempts[name] = attempts.get(name, 0) + 1
+            if name == "load_logs" and attempts[name] == 1:
+                raise facts.FactsError("memory burst")
+        return ""
+
+    facts.install(run, sleep=_no_sleep)
+    assert attempts["load_logs"] == 2
+
+
+def test_a_snapshot_part_is_skipped_when_the_part_it_reads_failed() -> None:
+    attempts: dict[str, int] = {}
+    run = _failing_waits({"refresh_task_outcomes_recent"}, attempts)
+
+    with pytest.raises(facts.FactsError) as raised:
+        facts.refresh_snapshots(run, _no_sleep)
+
+    message = str(raised.value)
+    assert "refresh of refresh_task_outcomes_recent failed" in message
+    assert (
+        "refresh of refresh_task_labels_recent skipped: refresh_task_outcomes_recent failed"
+        in message
+    )
+    assert "refresh_task_labels_recent" not in attempts
+    assert attempts["refresh_task_labels_history"] == 1
+    assert attempts["refresh_model_call_attempts_recent"] == 1
+
+
+def test_refresh_named_refreshes_one_known_view_and_rejects_others() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        return ""
+
+    assert facts.refresh_named(run, "refresh_tool_calls_recent", _no_sleep) == {
+        "refreshed": "refresh_tool_calls_recent"
+    }
+    assert ran == [
+        "SYSTEM REFRESH VIEW introspection.refresh_tool_calls_recent",
+        "SYSTEM WAIT VIEW introspection.refresh_tool_calls_recent",
+    ]
+    with pytest.raises(facts.FactsError, match="unknown refresher nope"):
+        facts.refresh_named(run, "nope", _no_sleep)
+    assert len(ran) == 2
+
+
+def test_refresh_view_keeps_waiting_through_runner_timeouts_within_its_budget() -> None:
+    waits = 0
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    def run(sql: str) -> str:
+        nonlocal waits, now
+        if sql.startswith("SYSTEM WAIT"):
+            waits += 1
+            now += 600
+            if waits < 3:
+                raise facts.StatementTimeoutError("ClickHouse statement timed out")
+        return ""
+
+    facts.refresh_view(run, "load_spans", budget=1800, clock=clock)
+    assert waits == 3
+
+
+def test_refresh_view_fails_once_the_budget_is_spent_still_running() -> None:
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    def run(sql: str) -> str:
+        nonlocal now
+        if sql.startswith("SYSTEM WAIT"):
+            now += 600
+            raise facts.StatementTimeoutError("ClickHouse statement timed out")
+        return ""
+
+    with pytest.raises(facts.FactsError, match="refresh of load_spans failed: still running"):
+        facts.refresh_view(run, "load_spans", budget=1800, clock=clock)
+
+
+def test_refresh_view_does_not_query_state_after_a_successful_wait() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        return ""
+
+    facts.refresh_view(run, "load_spans")
+    assert not [s for s in ran if "system.view_refreshes" in s]
+
+
+def test_verify_uses_a_scratch_database_per_run_and_drops_only_stale_ones() -> None:
+    now = 1_000_000.0
+    fresh = f"introspection_verify_{int(now) - 60}_1"
+    stale = f"introspection_verify_{int(now) - 7200}_2"
+    existing = ["introspection_verify", fresh, stale, "introspection"]
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if "system.databases" in sql:
+            return "".join(json.dumps({"name": name}) + "\n" for name in existing)
+        return ""
+
+    first = facts.verify(run, clock=lambda: now)
+    assert facts.verify(run, clock=lambda: now + 1)["database"] != first["database"]
+
+    dropped = {s.split()[4] for s in ran if s.startswith("DROP DATABASE") and "_verify" in s}
+    assert {"introspection_verify", stale} <= dropped
+    assert fresh not in dropped
+    assert "introspection" not in {s.split()[4] for s in ran if s.startswith("DROP DATABASE")}
+    # Each run builds and drops its own database, and the name embeds time and pid.
+    assert first["database"] == f"introspection_verify_{int(now)}_{os.getpid()}"
+    assert ran.count(f"DROP DATABASE IF EXISTS {first['database']} SYNC") == 2

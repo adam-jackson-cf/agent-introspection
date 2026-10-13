@@ -13,16 +13,18 @@ the server kills a query when total memory passes its limit. Minute map, in UTC:
 refresher each; ``:x5`` one history refresher (00:35-01:35); ``:09``, ``:19``,
 ``:29`` and ``:39`` one hourly sweep each. Every refresher is created ``EMPTY`` so
 creating it runs nothing; ``install`` then refreshes the minute loaders and snapshots
-one at a time, and a failed refresh retries a whole period later, on its own minute.
+one at a time, retrying a failed one once; scheduled retries back off per refresher class.
 """
 
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import os
 import re
 import subprocess
+import time
 import tomllib
 import urllib.error
 import urllib.parse
@@ -37,8 +39,11 @@ from agent_introspection import command_shape
 from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig, is_local_host
 
 DATABASE = "introspection"
-# `facts verify` builds a disposable copy of the store here before any install.
-VERIFY_DATABASE = f"{DATABASE}_verify"
+# `facts verify` builds a disposable copy of the store in a database of its own per run
+# (`<prefix>_<unix time>_<pid>`), so concurrent runs never drop each other's copy.
+VERIFY_PREFIX = f"{DATABASE}_verify"
+_VERIFY_STALE_SECONDS = 3600
+_VERIFY_NAME = re.compile(rf"^{VERIFY_PREFIX}_(\d+)_\d+$")
 _DATABASE_REFERENCE = re.compile(rf"\b{DATABASE}(?=[.;])")
 _REFRESH_SCHEDULE = re.compile(
     r"REFRESH EVERY \d+ (?:MINUTE|HOUR|DAY)((?: OFFSET \d+ (?:MINUTE|HOUR))?)"
@@ -50,6 +55,10 @@ type SqlRunner = Callable[[str], str]
 
 class FactsError(RuntimeError):
     """A ClickHouse statement for the facts store failed."""
+
+
+class StatementTimeoutError(FactsError):
+    """A statement outlived the runner timeout; ClickHouse may still be running it."""
 
 
 @dataclass(frozen=True)
@@ -241,25 +250,41 @@ RECENT_OFFSET_MINUTES = {
 # ClickHouse waits only for a dependency whose offset is earlier in the same period.
 HISTORY_FIRST_OFFSET_MINUTES = 35
 HISTORY_OFFSET_STEP_MINUTES = 10
-# A failed refresh waits one whole 10-minute period before each retry (the default
-# 100-200 ms re-enters the same memory burst), so a retry lands on the refresher's own
-# minute class and never on another refresher's slot. Loaders and recents rebuild on
-# the next period anyway, so they retry twice; a daily history gets three.
+# Retry backoff counts from the END of the failed attempt, not its start, and the
+# server does not retry a refresh started by `SYSTEM REFRESH VIEW` (install retries
+# those once itself). A retry therefore lands wherever the attempt ended plus the
+# backoff, so each refresher class picks a backoff that clears the slots it could hit:
+# - minute loaders retry within a minute or two; the next scheduled run is a minute away
+#   and the loaders are light, so a short backoff recovers quickly from a memory burst;
+# - recents rebuild every 10 minutes anyway, so they keep a 10-minute backoff;
+# - sweeps run hourly, so one retry after a full hour follows the sweep's own next slot
+#   instead of landing on a neighbouring sweep 10 minutes later;
+# - histories run one a day at :x5, ten minutes apart. Only they are isolated from one
+#   another: a 70-minute backoff clears the whole 00:35-01:35 block and stays in :x5.
 REFRESH_RETRY_BACKOFF_MS = RECENT_PERIOD_MINUTES * 60_000
+HISTORY_RETRY_BACKOFF_MS = 70 * 60_000
+SWEEP_RETRY_BACKOFF_MS = 60 * 60_000
+LOADER_RETRY_INITIAL_BACKOFF_MS = 30_000
+LOADER_RETRY_MAX_BACKOFF_MS = 60_000
 
 
-def refresh_retry_settings(retries: int) -> str:
-    """Return the retry settings for ``retries`` retries a period apart."""
+def refresh_retry_settings(
+    retries: int, initial_ms: int = REFRESH_RETRY_BACKOFF_MS, max_ms: int | None = None
+) -> str:
+    """Return the retry settings for ``retries`` retries, backing off from ``initial_ms``."""
     return (
         f"refresh_retries = {retries}, "
-        f"refresh_retry_initial_backoff_ms = {REFRESH_RETRY_BACKOFF_MS}, "
-        f"refresh_retry_max_backoff_ms = {REFRESH_RETRY_BACKOFF_MS}"
+        f"refresh_retry_initial_backoff_ms = {initial_ms}, "
+        f"refresh_retry_max_backoff_ms = {initial_ms if max_ms is None else max_ms}"
     )
 
 
-LOADER_RETRY_SETTINGS = refresh_retry_settings(2)
+LOADER_RETRY_SETTINGS = refresh_retry_settings(
+    3, LOADER_RETRY_INITIAL_BACKOFF_MS, LOADER_RETRY_MAX_BACKOFF_MS
+)
+SWEEP_RETRY_SETTINGS = refresh_retry_settings(1, SWEEP_RETRY_BACKOFF_MS)
 RECENT_RETRY_SETTINGS = refresh_retry_settings(2)
-HISTORY_RETRY_SETTINGS = refresh_retry_settings(3)
+HISTORY_RETRY_SETTINGS = refresh_retry_settings(3, HISTORY_RETRY_BACKOFF_MS)
 HISTORY_END_DAYS = 6
 BOUNDARY_DAYS = 7
 RECENT_START_DAYS = 8
@@ -392,10 +417,11 @@ def loader_ddl(loader: Loader) -> str:
     loaders itself, one at a time; a sweep waits for its own hourly slot, because the
     minute loaders already cover the recent window and the sweep only catches late rows.
     """
+    retry = LOADER_RETRY_SETTINGS if loader.schedule == MINUTE_SCHEDULE else SWEEP_RETRY_SETTINGS
     return (
         f"CREATE MATERIALIZED VIEW {DATABASE}.{loader.name}\n"
         f"REFRESH {loader.schedule}\n"
-        f"SETTINGS {LOADER_RETRY_SETTINGS}\n"
+        f"SETTINGS {retry}\n"
         f"APPEND TO {DATABASE}.{loader.target} EMPTY\n"
         f"AS\n{render_select(loader.select_file, loader.window).rstrip()}\n"
         f"SETTINGS {LOAD_SETTINGS}"
@@ -872,7 +898,7 @@ def docker_runner(config: AppConfig) -> SqlRunner:
                 timeout=_QUERY_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as exc:
-            raise FactsError("ClickHouse statement timed out") from exc
+            raise StatementTimeoutError("ClickHouse statement timed out") from exc
         if completed.returncode != 0:
             lines = completed.stderr.strip().splitlines()
             raise FactsError(
@@ -1008,7 +1034,7 @@ def http_runner(config: AppConfig) -> SqlRunner:
                 detail = exc.read().decode(errors="replace")
             raise FactsError(_exception_line(detail)) from None
         except TimeoutError as exc:
-            raise FactsError("ClickHouse statement timed out") from exc
+            raise StatementTimeoutError("ClickHouse statement timed out") from exc
         except urllib.error.URLError as exc:
             raise FactsError(f"ClickHouse HTTP request failed: {exc.reason}") from None
 
@@ -1023,40 +1049,77 @@ def runner(config: AppConfig) -> SqlRunner:
     return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
 
 
-def verify_statements(enabled: Sequence[str] | None = None) -> list[str]:
+def scratch_database_name(now: float | None = None) -> str:
+    """Return a scratch database name unique to this run: prefix, unix time and pid."""
+    return f"{VERIFY_PREFIX}_{int(time.time() if now is None else now)}_{os.getpid()}"
+
+
+def verify_statements(
+    enabled: Sequence[str] | None = None, database: str | None = None
+) -> list[str]:
     """Return the install statements rewritten to build a scratch copy of the store.
 
-    Every reference to the facts database points at ``VERIFY_DATABASE`` instead, and
-    each refreshable view (already ``EMPTY``) gets a yearly schedule, so ClickHouse
-    checks every statement (including each view's columns against its target table)
-    without loading a row or touching the live store.
+    Every reference to the facts database points at ``database`` (a fresh
+    ``scratch_database_name`` by default) instead, and each refreshable view (already
+    ``EMPTY``) gets a yearly schedule, so ClickHouse checks every statement (including
+    each view's columns against its target table) without loading a row or touching
+    the live store.
     """
+    database = database or scratch_database_name()
 
     def scratch(statement: str) -> str:
-        statement = _DATABASE_REFERENCE.sub(VERIFY_DATABASE, statement)
+        statement = _DATABASE_REFERENCE.sub(database, statement)
         if not _REFRESH_SCHEDULE.search(statement):
             return statement
         return _REFRESH_SCHEDULE.sub(r"REFRESH EVERY 1 YEAR\1", statement)
 
     return [
-        f"DROP DATABASE IF EXISTS {VERIFY_DATABASE} SYNC",
+        f"DROP DATABASE IF EXISTS {database} SYNC",
         *(scratch(statement) for statement in install_statements(enabled)),
     ]
 
 
-def verify(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, Any]:
-    """Build the whole store in a scratch database, then drop it.
+def drop_stale_scratch_databases(run: SqlRunner, now: float) -> list[str]:
+    """Drop scratch databases an interrupted run left behind; return their names.
+
+    A database goes when it is the legacy fixed-name copy or its embedded timestamp is
+    more than an hour old, so a verify running in parallel is never touched.
+    """
+    output = run(
+        f"SELECT name FROM system.databases WHERE name LIKE '{VERIFY_PREFIX}%' FORMAT JSONEachRow"
+    )
+    dropped = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        name = json.loads(line)["name"]
+        match = _VERIFY_NAME.match(name)
+        if name == VERIFY_PREFIX or (match and now - int(match.group(1)) > _VERIFY_STALE_SECONDS):
+            run(f"DROP DATABASE IF EXISTS {name} SYNC")
+            dropped.append(name)
+    return dropped
+
+
+def verify(
+    run: SqlRunner,
+    enabled: Sequence[str] | None = None,
+    clock: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """Build the whole store in a scratch database of its own, then drop it.
 
     Raises on the first statement ClickHouse rejects, so a broken projection, view,
     snapshot, or registry entry is caught before ``install`` drops the live loaders.
+    Scratch databases left by interrupted runs are dropped first.
     """
-    statements = verify_statements(enabled)
+    database = scratch_database_name(clock())
+    statements = verify_statements(enabled, database)
+    drop_stale_scratch_databases(run, clock())
     try:
         for statement in statements:
             run(statement)
     finally:
-        run(f"DROP DATABASE IF EXISTS {VERIFY_DATABASE} SYNC")
-    return {"database": VERIFY_DATABASE, "statements": len(statements), "passed": True}
+        run(f"DROP DATABASE IF EXISTS {database} SYNC")
+    return {"database": database, "statements": len(statements), "passed": True}
 
 
 def compare_statement(snapshot: Snapshot) -> str:
@@ -1083,32 +1146,111 @@ def compare_statement(snapshot: Snapshot) -> str:
     )
 
 
-def refresh_view(run: SqlRunner, name: str) -> None:
-    """Refresh one refreshable view now and wait; raise if the refresh ended in an exception."""
+REFRESH_WAIT_BUDGET_SECONDS = 30 * 60
+REFRESH_RETRY_PAUSE_SECONDS = 20
+
+
+def refresh_view(
+    run: SqlRunner,
+    name: str,
+    *,
+    budget: float = REFRESH_WAIT_BUDGET_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Refresh one refreshable view now and wait for it; raise if the refresh failed.
+
+    ``SYSTEM WAIT VIEW`` raises when the last attempt failed. A wait that outlives the
+    runner timeout means the refresh is still running, so it waits again until
+    ``budget`` seconds have passed since the refresh started.
+    """
     target = f"{DATABASE}.{name}"
+    deadline = clock() + budget
     try:
         run(f"SYSTEM REFRESH VIEW {target}")
-        run(f"SYSTEM WAIT VIEW {target}")
+        while True:
+            try:
+                run(f"SYSTEM WAIT VIEW {target}")
+                return
+            except StatementTimeoutError:
+                if clock() >= deadline:
+                    raise FactsError(f"still running after {budget:.0f} s") from None
     except FactsError as exc:
         raise FactsError(f"refresh of {name} failed: {exc}") from exc
-    output = run(
-        "SELECT exception FROM system.view_refreshes "
-        f"WHERE database = '{DATABASE}' AND view = '{name}' FORMAT JSONEachRow"
-    )
-    for line in output.splitlines():
-        exception = json.loads(line).get("exception") if line.strip() else ""
-        if exception:
-            raise FactsError(f"refresh of {name} failed: {exception}")
 
 
-def refresh_snapshots(run: SqlRunner) -> None:
-    """Refresh every history, then every recent refresher, one at a time in SNAPSHOTS order.
+def refresh_plan() -> list[tuple[str, str]]:
+    """Return every install-time refresh in order as (refresher, upstream refresher or '').
 
-    Each part is refreshed after the snapshot it reads, which SNAPSHOTS order guarantees.
+    Minute loaders first, then every history, then every recent refresher, each after
+    the snapshot it reads. A refresher whose upstream failed has nothing to build on.
     """
-    for part in (0, 1):
-        for snapshot in SNAPSHOTS:
-            refresh_view(run, snapshot_refreshers(snapshot)[part])
+    plan = [(loader.name, "") for loader in LOADERS if loader.schedule == MINUTE_SCHEDULE]
+    by_view = {snapshot.view: snapshot for snapshot in SNAPSHOTS}
+    for part, snapshot in itertools.product((0, 1), SNAPSHOTS):
+        upstream = by_view.get(snapshot.reads)
+        plan.append((
+            snapshot_refreshers(snapshot)[part],
+            snapshot_refreshers(upstream)[part] if upstream else "",
+        ))
+    return plan
+
+
+def refresh_known_names() -> list[str]:
+    """Return the names of every loader and snapshot refresher that can be refreshed."""
+    return [
+        *(loader.name for loader in LOADERS),
+        *(name for snapshot in SNAPSHOTS for name in snapshot_refreshers(snapshot)),
+    ]
+
+
+def refresh_with_retry(
+    run: SqlRunner, name: str, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """Refresh one view; on failure pause and try once more (the server will not retry)."""
+    try:
+        refresh_view(run, name)
+    except FactsError:
+        sleep(REFRESH_RETRY_PAUSE_SECONDS)
+        refresh_view(run, name)
+
+
+def refresh_all(
+    run: SqlRunner,
+    plan: Sequence[tuple[str, str]],
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Refresh every planned view, then raise one error naming all that failed.
+
+    A refresher whose upstream failed is skipped. One failure never leaves the later
+    snapshots empty until their next slot.
+    """
+    failures: dict[str, str] = {}
+    for name, upstream in plan:
+        if upstream in failures:
+            failures[name] = f"refresh of {name} skipped: {upstream} failed"
+            continue
+        try:
+            refresh_with_retry(run, name, sleep)
+        except FactsError as exc:
+            failures[name] = str(exc)
+    if failures:
+        raise FactsError("; ".join(failures.values()))
+
+
+def refresh_snapshots(run: SqlRunner, sleep: Callable[[float], None] = time.sleep) -> None:
+    """Refresh every history, then every recent refresher, one at a time in SNAPSHOTS order."""
+    refresh_all(run, [step for step in refresh_plan() if step[0].startswith("refresh_")], sleep)
+
+
+def refresh_named(
+    run: SqlRunner, name: str, sleep: Callable[[float], None] = time.sleep
+) -> dict[str, Any]:
+    """Refresh and wait for one named loader or snapshot refresher."""
+    known = refresh_known_names()
+    if name not in known:
+        raise FactsError(f"unknown refresher {name}; known: {', '.join(known)}")
+    refresh_with_retry(run, name, sleep)
+    return {"refreshed": name}
 
 
 def compare(run: SqlRunner) -> dict[str, Any]:
@@ -1135,7 +1277,11 @@ def compare(run: SqlRunner) -> dict[str, Any]:
     }
 
 
-def install(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, Any]:
+def install(
+    run: SqlRunner,
+    enabled: Sequence[str] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
     """Create the facts database, loaders, views, snapshots, and registry tables.
 
     ``enabled`` holds the configured harness keys (None: every registry harness);
@@ -1145,18 +1291,18 @@ def install(run: SqlRunner, enabled: Sequence[str] | None = None) -> dict[str, A
 
     Every refreshable view is created ``EMPTY`` so creation fires none of them (an
     18-refresher burst once exhausted retries and left history empty). Install then
-    refreshes the minute loaders, the histories, then the recents, one at a time, and
-    fails naming the refresher whose refresh ended in an exception. Sweeps are not
-    run now: the minute loaders cover the recent window and a sweep runs in its slot.
+    refreshes the minute loaders, the histories, then the recents, one at a time. The
+    server does not retry these out-of-schedule refreshes, so a failed one is retried
+    once here after a short pause. Every refresher is attempted; a snapshot whose
+    upstream failed is skipped, and one error names all failures at the end. Sweeps
+    are not run now: the minute loaders cover the recent window and a sweep runs in
+    its slot.
     """
     verify(run, enabled)
     statements = install_statements(enabled)
     for statement in statements:
         run(statement)
-    for loader in LOADERS:
-        if loader.schedule == MINUTE_SCHEDULE:
-            refresh_view(run, loader.name)
-    refresh_snapshots(run)
+    refresh_all(run, refresh_plan(), sleep)
     registry = load_registry()
     harnesses = enabled_harnesses(registry, enabled)
     return {

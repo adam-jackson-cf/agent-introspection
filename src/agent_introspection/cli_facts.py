@@ -45,6 +45,7 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
             facts.compare(run) if args.compare else facts.verify(run, config.harnesses_enabled)
         ),
         "install": lambda: _install(args, config, run),
+        "refresh": lambda: facts.refresh_named(run, args.refresher),
         "backfill": lambda: facts.backfill(run, days=args.days),
         "sessions": lambda: _sessions(config, rescan=args.rescan),
         "findings": lambda: _findings(args, run),
@@ -56,10 +57,12 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _install(args: argparse.Namespace, config: AppConfig, run: facts.SqlRunner) -> dict[str, Any]:
-    result = facts.install(run, config.harnesses_enabled)
-    # The dashboard reads the workflow store, so install creates and migrates it too.
-    open_store(args).close()
-    return result
+    try:
+        return facts.install(run, config.harnesses_enabled)
+    finally:
+        # The dashboard reads the workflow store, so install creates and migrates it
+        # too, even when a refresh failed after the ClickHouse store was created.
+        open_store(args).close()
 
 
 def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
@@ -126,6 +129,12 @@ def add_facts_parser(commands: Any) -> None:
         help="rebuild the live snapshots and check each matches a full read of its view",
     )
     facts_parser.add_parser("install")
+    refresh = facts_parser.add_parser(
+        "refresh", help="refresh and wait for one loader or snapshot refresher now"
+    )
+    refresh.add_argument(
+        "refresher", help="a name from `facts status`, e.g. refresh_tool_calls_recent"
+    )
     backfill = facts_parser.add_parser("backfill")
     backfill.add_argument("--days", type=int, default=90)
     facts_parser.add_parser("status")

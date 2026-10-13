@@ -20,8 +20,13 @@ def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
         ddl = facts.loader_ddl(loader)
 
         assert ddl.startswith(f"CREATE MATERIALIZED VIEW introspection.{loader.name}")
+        retry = (
+            facts.LOADER_RETRY_SETTINGS
+            if loader.schedule == facts.MINUTE_SCHEDULE
+            else facts.SWEEP_RETRY_SETTINGS
+        )
         assert (
-            f"REFRESH {loader.schedule}\nSETTINGS {facts.LOADER_RETRY_SETTINGS}\n"
+            f"REFRESH {loader.schedule}\nSETTINGS {retry}\n"
             f"APPEND TO introspection.{loader.target} EMPTY\nAS\n"
         ) in ddl
         assert loader.window in ddl
@@ -162,7 +167,11 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     statements = facts.verify_statements()
     refreshers = [s for s in statements if "REFRESH EVERY" in s]
 
-    assert statements[0] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    scratch = re.fullmatch(
+        r"DROP DATABASE IF EXISTS (introspection_verify_\d+_\d+) SYNC", statements[0]
+    )
+    assert scratch
+    database = scratch.group(1)
     assert not [s for s in statements if re.search(r"\bintrospection[.;]", s)]
     assert len(refreshers) == len(facts.LOADERS) + 2 * len(facts.SNAPSHOTS)
     for refresher in refreshers:
@@ -177,7 +186,7 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     recent = [s for s in refreshers if "_recent\nREFRESH" in s]
     assert len(recent) == len(facts.SNAPSHOTS)
     assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in recent)
-    sweeps = [s for s in refreshers if "introspection_verify.sweep_" in s]
+    sweeps = [s for s in refreshers if f"{database}.sweep_" in s]
     assert len(sweeps) == 4
     assert all(re.search(r"REFRESH EVERY 1 YEAR OFFSET \d+ MINUTE\n", s) for s in sweeps)
 
@@ -187,7 +196,7 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
 
     def run(sql: str) -> str:
         ran.append(sql)
-        if "VIEW introspection_verify.task_labels" in sql:
+        if re.search(r"VIEW introspection_verify_\d+_\d+\.task_labels", sql):
             raise facts.FactsError("Unknown table expression identifier")
         return ""
 
@@ -195,7 +204,7 @@ def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> N
         facts.install(run)
 
     assert not [s for s in ran if re.search(r"\bintrospection[.;]", s)]
-    assert ran[-1] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    assert re.fullmatch(r"DROP DATABASE IF EXISTS introspection_verify_\d+_\d+ SYNC", ran[-1])
 
 
 def _refresher_settings(refresher: str) -> dict[str, str]:
