@@ -528,7 +528,20 @@ def _restore_systemd_units(
 
 
 def _remove_systemd() -> dict[str, Any]:
-    _systemctl("disable", "--now", TIMER.name)
+    """Stop and delete the units; a timer that could not be stopped keeps its units.
+
+    Stopping a timer that is neither enabled nor active fails harmlessly. An enabled or
+    active one that cannot be stopped (for example, an unreachable user bus) is still
+    scheduled, so its units stay and the removal is refused, as for launchd.
+    """
+    before = _timer_state(TIMER)
+    stopped = _systemctl("disable", "--now", TIMER.name)
+    if stopped.returncode != 0 and (before.enabled or before.active):
+        detail = stopped.stderr.strip() or "systemctl disable failed"
+        raise RuntimeError(
+            f"could not stop the timer {TIMER.name}: {detail}; it is still scheduled, "
+            "its units unchanged"
+        )
     existed = SERVICE.exists() or TIMER.exists()
     SERVICE.unlink(missing_ok=True)
     TIMER.unlink(missing_ok=True)

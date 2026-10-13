@@ -682,6 +682,36 @@ def test_systemd_remove_and_status(monkeypatch: pytest.MonkeyPatch, home: Path) 
     assert schedule.schedule_status()["installed"] is False
 
 
+def test_systemd_remove_refuses_when_a_scheduled_timer_cannot_be_stopped(
+    monkeypatch: pytest.MonkeyPatch, home: Path
+) -> None:
+    schedule.SYSTEMD_UNITS.mkdir(parents=True)
+    schedule.SERVICE.write_text("service")
+    schedule.TIMER.write_text("timer")
+    systemd = Systemd(active=True, fail={"disable": "Failed to connect to bus"})
+    _on(monkeypatch, "linux", systemd)
+
+    with pytest.raises(RuntimeError, match=r"Failed to connect to bus.*still scheduled"):
+        schedule.schedule_remove()
+
+    assert schedule.SERVICE.read_text() == "service"
+    assert schedule.TIMER.read_text() == "timer"
+    assert ("daemon-reload",) not in systemd.calls
+
+
+def test_systemd_remove_ignores_a_failed_stop_of_a_timer_that_is_not_scheduled(
+    monkeypatch: pytest.MonkeyPatch, home: Path
+) -> None:
+    schedule.SYSTEMD_UNITS.mkdir(parents=True)
+    schedule.SERVICE.write_text("service")
+    schedule.TIMER.write_text("timer")
+    _on(monkeypatch, "linux", Systemd(active=False, fail={"disable": "Unit not loaded"}))
+
+    assert schedule.schedule_remove()["removed"] is True
+    assert not schedule.SERVICE.exists()
+    assert not schedule.TIMER.exists()
+
+
 def test_sync_log_lines_carry_a_utc_timestamp(tmp_path: Path) -> None:
     log = tmp_path / "sync.log"
     now = datetime(2026, 10, 12, 8, 30, 5, tzinfo=UTC)

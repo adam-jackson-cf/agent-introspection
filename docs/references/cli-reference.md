@@ -48,6 +48,9 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 - **Linux:** the systemd user units `agent-introspection-sync.service` and
   `agent-introspection-sync.timer` in `~/.config/systemd/user/` (`OnCalendar=minutely`,
   `Persistent=true`). `install` backs up units it replaces to the same backups folder.
+  When `systemctl --user disable --now` cannot stop an enabled or active timer (for
+  example, when the user bus is unreachable), `remove` stops with an error (exit 60)
+  that says the timer is still scheduled, and leaves both units in place.
   A user timer stops when the user logs out unless lingering is on:
   `loginctl enable-linger "$USER"`. `install` and `status` report `linger`; the command
   never turns it on. These names differ from the `agent-introspection-spool-sync` units
