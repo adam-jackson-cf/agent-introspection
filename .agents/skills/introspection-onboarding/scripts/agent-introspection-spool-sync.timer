@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Agent Introspection spool sync every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=agent-introspection-spool-sync.service
+
+[Install]
+WantedBy=timers.target

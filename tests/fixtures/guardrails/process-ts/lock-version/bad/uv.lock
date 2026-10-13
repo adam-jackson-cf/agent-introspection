@@ -1,0 +1,14 @@
+version = 1
+
+[[package]]
+name = "fixture-project"
+version = "0.1.0"
+source = { editable = "." }
+
+[package.dev-dependencies]
+dev = [{ name = "pytest" }]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.0" }]

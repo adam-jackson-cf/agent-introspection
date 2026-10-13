@@ -1,4 +1,6 @@
+import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -9,19 +11,34 @@ from agent_introspection.interventions import InterventionType
 from agent_introspection.proposals import (
     ProposalInput,
     ProposalState,
+    SuccessMetric,
     TransitionProposalRequest,
     create_proposal,
     transition_proposal,
 )
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
+
+SUCCESS_METRIC: dict[str, Any] = {
+    "metric": "cluster_task_rate",
+    "harnesses": ["codex_exec"],
+    "baseline_days": 14,
+    "evaluation_days": 14,
+    "max_ratio": 0.5,
+}
+
+SKILL_HANDOFF: dict[str, Any] = {
+    "skill_name": "release-checks",
+    "workflow_owner": None,
+    "ordered_steps": ["run the quality command"],
+}
 
 PASSED_VALIDATION = {"validation": {"status": "passed", "checks": ["quality command passed"]}}
 
 
 def proposal_database(
-    state: str = "actionable", path: Path | str = ":memory:"
+    open_workflow: OpenWorkflow, state: str = "actionable", path: Path | str = ":memory:"
 ) -> sqlite3.Connection:
-    connection = connect_workflow(path)
+    connection: sqlite3.Connection = open_workflow(path)
     connection.execute(
         """
         INSERT INTO findings (
@@ -70,12 +87,14 @@ def proposal_input() -> ProposalInput:
         rejected_alternatives=["new tool", "bespoke script"],
         validation_criteria=["quality command passes before mutation"],
         rollback_criteria=["restore prior tool configuration"],
-        predicted_success_metric="zero bypass observations in seven days",
+        predicted_success_metric=dict(SUCCESS_METRIC),
     )
 
 
-def test_only_actionable_findings_can_create_one_pending_proposal() -> None:
-    connection = proposal_database()
+def test_only_actionable_findings_can_create_one_pending_proposal(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
     proposal_id = create_proposal(connection, proposal_input())
     assert connection.execute(
         "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
@@ -87,11 +106,13 @@ def test_only_actionable_findings_can_create_one_pending_proposal() -> None:
         == "created"
     )
     with pytest.raises(ValueError, match="actionable"):
-        create_proposal(proposal_database("isolated"), proposal_input())
+        create_proposal(proposal_database(open_workflow, "isolated"), proposal_input())
 
 
-def test_approval_is_a_decision_and_application_requires_separate_explicit_request() -> None:
-    connection = proposal_database()
+def test_approval_is_a_decision_and_application_requires_separate_explicit_request(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -196,18 +217,65 @@ def audit_with(enforcing_tier: int | None) -> list[dict[str, str | bool | None]]
 def test_intervention_type_must_follow_the_available_enforcement_tier(
     enforcing_tier: int | None, accepted: str, rejected: str
 ) -> None:
-    value = proposal_input()
+    skill = accepted in (InterventionType.IMPROVE_SKILL, InterventionType.CREATE_SKILL)
     audit = audit_with(enforcing_tier)
-    replace(value, established_tool_audit=audit, intervention_type=accepted)
+    value = replace(
+        proposal_input(),
+        established_tool_audit=audit,
+        intervention_type=accepted,
+        create_skill_handoff=SKILL_HANDOFF if skill else None,
+    )
     with pytest.raises(ValueError, match="intervention_type"):
         replace(value, established_tool_audit=audit, intervention_type=rejected)
 
 
-def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", [InterventionType.CREATE_SKILL, InterventionType.IMPROVE_SKILL])
+@pytest.mark.parametrize(
+    "handoff",
+    [None, {}, {"skill_name": "", "workflow_owner": None, "ordered_steps": ["a"]}],
+)
+def test_skill_interventions_require_a_well_formed_handoff(
+    kind: InterventionType, handoff: dict[str, Any] | None
+) -> None:
+    with pytest.raises(ValueError, match="create_skill_handoff"):
+        replace(
+            proposal_input(),
+            established_tool_audit=audit_with(None),
+            intervention_type=kind,
+            create_skill_handoff=handoff,
+        )
+
+
+def test_non_skill_interventions_reject_a_handoff() -> None:
+    with pytest.raises(ValueError, match="create_skill_handoff"):
+        replace(proposal_input(), create_skill_handoff=SKILL_HANDOFF)
+
+
+@pytest.mark.parametrize(
+    ("field", "mismatched"),
+    [
+        ("occurrence_count", lambda: replace(proposal_input(), occurrence_count=99)),
+        ("task_count", lambda: replace(proposal_input(), task_count=99)),
+        ("day_count", lambda: replace(proposal_input(), day_count=99)),
+    ],
+)
+def test_proposal_counts_must_match_the_finding(
+    field: str, mismatched: Callable[[], ProposalInput], open_workflow: OpenWorkflow
+) -> None:
+    connection = proposal_database(open_workflow)
+    with pytest.raises(ValueError, match=field):
+        create_proposal(connection, mismatched())
+    assert connection.execute("SELECT COUNT(*) FROM proposals").fetchone() == (0,)
+    assert connection.execute("SELECT COUNT(*) FROM proposal_events").fetchone() == (0,)
+
+
+def test_concurrent_decisions_cannot_overwrite_each_other(
+    tmp_path: Path, open_workflow: OpenWorkflow
+) -> None:
     path = tmp_path / "workflow.sqlite3"
-    first = proposal_database(path=path)
+    first = proposal_database(open_workflow, path=path)
     proposal_id = create_proposal(first, proposal_input())
-    second = connect_workflow(path, busy_timeout_ms=0)
+    second = open_workflow(path, busy_timeout_ms=0)
     competing: list[BaseException | None] = []
 
     def decide_elsewhere(statement: str) -> None:
@@ -252,3 +320,57 @@ def test_concurrent_decisions_cannot_overwrite_each_other(tmp_path: Path) -> Non
     assert first.execute(
         "SELECT state, entity_version FROM proposals WHERE id = ?", (proposal_id,)
     ).fetchone() == ("rejected", 2)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"metric": "fewer failures"}, "metric must be one of"),
+        ({"harnesses": []}, "harnesses"),
+        ({"harnesses": ["codex_exec", "codex_exec"]}, "harnesses"),
+        ({"baseline_days": 6}, "baseline_days"),
+        ({"evaluation_days": 7.5}, "evaluation_days"),
+        ({"evaluation_days": True}, "evaluation_days"),
+        ({"max_ratio": 0}, "max_ratio"),
+        ({"max_ratio": 1.2}, "max_ratio"),
+        ({"extra": 1}, "exactly"),
+    ],
+)
+def test_success_metric_must_be_a_structured_task_rate(
+    change: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(proposal_input(), predicted_success_metric=SUCCESS_METRIC | change)
+
+
+def test_free_text_success_metric_is_rejected_but_readable_as_legacy() -> None:
+    not_an_object: Any = "zero bypasses in seven days"
+    with pytest.raises(ValueError, match="must be an object"):
+        replace(proposal_input(), predicted_success_metric=not_an_object)
+    assert SuccessMetric.from_payload({"predicted_success_metric": "zero bypasses"}) is None
+    metric = SuccessMetric.from_payload({
+        "predicted_success_metric": SUCCESS_METRIC | {"max_ratio": 1}
+    })
+    assert metric is not None
+    assert metric.max_ratio == pytest.approx(1.0)
+    assert metric.harnesses == ("codex_exec",)
+
+
+def test_success_metric_must_match_the_finding_kind_and_harnesses(
+    open_workflow: OpenWorkflow,
+) -> None:
+    connection = proposal_database(open_workflow)
+    connection.execute(
+        "UPDATE findings SET subject = ?",
+        (json.dumps({"project": "example", "correction_kind": "ignored", "harnesses": ["omp"]}),),
+    )
+    connection.commit()
+    with pytest.raises(ValueError, match="must be correction_task_rate"):
+        create_proposal(connection, proposal_input())
+    correction = SUCCESS_METRIC | {"metric": "correction_task_rate"}
+    with pytest.raises(ValueError, match="not in the finding"):
+        create_proposal(connection, replace(proposal_input(), predicted_success_metric=correction))
+    create_proposal(
+        connection,
+        replace(proposal_input(), predicted_success_metric=correction | {"harnesses": ["omp"]}),
+    )

@@ -1,0 +1,322 @@
+id: ux-page
+version: 3
+kind: checklist
+purpose: >
+  Grades one Agent Introspection dashboard page against docs/ux/principles.md and docs/ux/DESIGN.md. Every
+  criterion is three fixed pass/fail checks, so two scorers on the same page get the same score. It ranks UX
+  fixes; it never judges the domain logic behind the numbers.
+method: >
+  Run the probe (scripts/ux-probe, see its usage line) against the running dashboard at 2560 × 1330 with the
+  live "Last 7 days" range. It answers every `auto` check from the rendered page and the page's source file and
+  writes <page>.checks.json. A scorer answers each `inspect` check yes or no with evidence (capture file and
+  position, or source file:line), using only the check's wording. The probe's `score` command then turns the
+  answers into criterion scores and scores.json for score_rubric.py. Never score a criterion by hand.
+scoring_rule: >
+  A criterion's score is the highest level L such that its checks at levels 1..L all pass (0 when level 1
+  fails). A check marked `views_only` passes on the Session drill-down, which has no filter bar or KPI band by
+  design.
+scale: { min: 0, max: 3 }
+definitions:
+  first_viewport: the top 1330 px of the page at 2560 px wide.
+  kpi: an `article.panel` whose body is `.kpi` (a figure with its detail line).
+  panel: an `article.panel` that is not a KPI.
+  state_words: # DESIGN.md status scale, in order
+    - healthy
+    - no events
+    - idle
+    - not applicable
+    - stray (explained)
+    - possible break
+    - stray (unexplained)
+    - not in use
+    - not in use, rows present
+  # Regexes below are used verbatim by scripts/ux-probe (case-insensitive for period_phrase).
+  period_phrase: '\b(current|last day|last 24 hours|last \d+ days|up to \d+ days|selected range|all time)\b'
+  computation_pattern: 'Math\.(max|min|round|floor|ceil)\(|\.reduce\(|num\([^()]*\)\s*[-+*/]\s|\s[-+*/]\s*num\('
+  computation_scope: matches are counted in the page's view file(s) under dashboard/src/views/.
+  colour_literal_pattern: '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\('
+criteria:
+  - id: zoomed_out_first
+    weight: 0.20
+    question: (P0) Does the page open on its answer, with depth one deliberate step away?
+    checks:
+      - {
+          id: Z1,
+          level: 1,
+          method: auto,
+          test: "The first section (L1 band) ends inside the first viewport.",
+        }
+      - {
+          id: Z2,
+          level: 2,
+          method: auto,
+          test: "No <details> is open on load, and the page is at most 3990 px tall (3 viewports).",
+        }
+      - {
+          id: Z3,
+          level: 3,
+          method: auto,
+          test: "The page is at most 2660 px tall (2 viewports), and the second section's heading starts inside the first viewport.",
+        }
+  - id: number_clarity
+    weight: 0.15
+    question: (P1) Can every figure answer what, units, period, as-of and source?
+    checks:
+      - {
+          id: N1,
+          level: 1,
+          method: auto,
+          views_only: true,
+          test: "Every KPI has a non-empty detail line.",
+        }
+      - {
+          id: N2,
+          level: 2,
+          method: auto,
+          views_only: true,
+          test: "Every KPI detail line contains a period_phrase.",
+        }
+      - {
+          id: N3,
+          level: 3,
+          method: auto,
+          test: 'Every panel subtitle contains a period_phrase, and the page header shows "Data as of" (views) or the queried time (Session).',
+        }
+  - id: cognitive_load
+    weight: 0.15
+    question: (P2) Is the load low, with one primary visual per zone and nothing said twice?
+    checks:
+      - {
+          id: L1,
+          level: 1,
+          method: auto,
+          views_only: true,
+          test: "The first section holds at most 5 panels and no chart.",
+        }
+      - {
+          id: L2,
+          level: 2,
+          method: auto,
+          test: "No section shows two contributor chip rows with identical text.",
+        }
+      - {
+          id: L3,
+          level: 3,
+          method: auto,
+          test: "No link (same text and same href) appears twice on the page, and no panel subtitle or KPI detail line appears twice verbatim.",
+        }
+  - id: consistency
+    weight: 0.10
+    question: (P3) Does the page use the shared components, tokens and state words?
+    checks:
+      - {
+          id: C1,
+          level: 1,
+          method: auto,
+          test: "The page's view file(s) contain no colour_literal_pattern match.",
+        }
+      - {
+          id: C2,
+          level: 2,
+          method: auto,
+          test: "No element in main has a native title attribute, and every table in main sits in the shared .table-wrap.",
+        }
+      - {
+          id: C3,
+          level: 3,
+          method: auto,
+          test: "Every state chip's word is one of the state_words.",
+        }
+  - id: logic_in_source
+    weight: 0.05
+    question: (P4) Does the page only format results from the data source?
+    checks:
+      - {
+          id: S1,
+          level: 1,
+          method: auto,
+          test: "At most 3 computation_pattern matches in the page's view file(s).",
+        }
+      - {
+          id: S2,
+          level: 2,
+          method: auto,
+          test: "At most 1 computation_pattern match.",
+        }
+      - {
+          id: S3,
+          level: 3,
+          method: auto,
+          test: "No computation_pattern match.",
+        }
+  - id: layout_fit
+    weight: 0.10
+    question: (P6) Does the page fit the 2560 × 1440 reference screen?
+    checks:
+      - {
+          id: F1,
+          level: 1,
+          method: auto,
+          test: "No horizontal scroll, and the content starts within 40 px of the sidebar.",
+        }
+      - {
+          id: F2,
+          level: 2,
+          method: auto,
+          test: "In every grid row the panels share one height and their spans fill the grid's columns.",
+        }
+      - {
+          id: F3,
+          level: 3,
+          method: auto,
+          test: "No panel has more than 160 px of empty space below its last content.",
+        }
+  - id: terminology
+    weight: 0.10
+    question: Does every expert term have an instant definition from the single source?
+    checks:
+      - {
+          id: T1,
+          level: 1,
+          method: auto,
+          test: "Every KPI and panel with signals has an i marker.",
+        }
+      - {
+          id: T2,
+          level: 2,
+          method: auto,
+          test: "Every i popover holds registry content (not empty).",
+        }
+      - {
+          id: T3,
+          level: 3,
+          method: auto,
+          test: "Every i popover on a panel shows at least one registry formula.",
+        }
+  - id: page_structure
+    weight: 0.05
+    question: Does the page follow the shared structure, built from the shared layout?
+    checks:
+      - {
+          id: P1,
+          level: 1,
+          method: auto,
+          test: "The header has a title and its question line; view pages also have the filter bar.",
+        }
+      - {
+          id: P2,
+          level: 2,
+          method: auto,
+          views_only: true,
+          test: 'The first section is titled "At a glance".',
+        }
+      - {
+          id: P3,
+          level: 3,
+          method: auto,
+          test: "Every panel sits inside a shared section.",
+        }
+  - id: navigation
+    weight: 0.07
+    question: Does the page link to related pages at the point of need, with descriptive link text?
+    checks:
+      - {
+          id: V1,
+          level: 1,
+          method: auto,
+          views_only: true,
+          test: "Exactly one sidebar item is marked as the current page.",
+        }
+      - {
+          id: V2,
+          level: 2,
+          method: auto,
+          test: "At least one point-of-need link (.view-link) in the page body.",
+        }
+      - {
+          id: V3,
+          level: 3,
+          method: auto,
+          views_only: true,
+          test: "Every KPI holds a link to where its figure is explained or broken down.",
+        }
+  - id: analysis_support
+    weight: 0.10
+    question: (A8) Can a reader go from the page's question to a conclusion on this page?
+    checks:
+      - {
+          id: A1,
+          level: 1,
+          method: auto,
+          test: "The header states the page question, and the first section holds at least one figure or table.",
+        }
+      - { id: A2, level: 2, method: auto, test: "Every panel has a subtitle." }
+      - {
+          id: A3,
+          level: 3,
+          method: inspect,
+          test: "Every panel that shows a rate or share names its denominator (in its subtitle, column header or detail line), and every caveat that changes how a figure is read sits in the same panel as that figure. Answer no if any panel fails; list the failing panels.",
+        }
+  - id: readability
+    weight: 0.10
+    question: (DESIGN.md Typography) Is every piece of text readable at the reference screen?
+    checks:
+      - {
+          id: R1,
+          level: 1,
+          method: auto,
+          test: "At most 10 visible text elements below 12 px.",
+        }
+      - {
+          id: R2,
+          level: 2,
+          method: auto,
+          test: "No visible text below 12 px and no axe color-contrast violation.",
+        }
+      - {
+          id: R3,
+          level: 3,
+          method: auto,
+          test: "No tracked capitals (uppercase with letter-spacing over 0.5 px), and every numeric table cell uses tabular figures.",
+        }
+  - id: data_viz
+    weight: 0.10
+    question: (DESIGN.md Charts, A1, A2) Do charts use the palettes by role, at readable proportions?
+    checks:
+      - {
+          id: D1,
+          level: 1,
+          method: auto,
+          test: 'Every chart has a "View as table" alternative in its panel (passes when the page has no chart).',
+        }
+      - {
+          id: D2,
+          level: 2,
+          method: auto,
+          test: "Every chart is 280–360 px high and is keyed by a legend or a contributor chip row.",
+        }
+      - {
+          id: D3,
+          level: 3,
+          method: inspect,
+          test: "Every chart colours series by role (harness cat-1…5, other parts cat-6…8, effort seq-effort, neutral other), names its unit in its subtitle or axis, and draws days without data as gaps, not zero. Answer no if any chart fails; list them.",
+        }
+gates:
+  - {
+      criterion: zoomed_out_first,
+      at_most: 0,
+      cap: Rework,
+      reason: "Fails the overriding principle: the page doesn't open on its answer.",
+    }
+  - {
+      criterion: number_clarity,
+      at_most: 0,
+      cap: Needs work,
+      reason: "Numbers the reader can't interpret undermine every decision on the page.",
+    }
+band_order: [Exemplary, Good, Needs work, Rework]
+bands:
+  - { min: 85, label: Exemplary }
+  - { min: 65, label: Good }
+  - { min: 40, label: Needs work }
+  - { min: 0, label: Rework }

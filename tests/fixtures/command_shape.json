@@ -1,0 +1,555 @@
+[
+  {
+    "command": "",
+    "head": "",
+    "sub": "",
+    "segments": 0,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "git commit -m wip",
+    "head": "git",
+    "sub": "commit",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "FOO=1 BAR=x /usr/local/bin/uv run pytest",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "FOO=1 bar",
+    "head": "bar",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "env FOO=1 exec git status",
+    "head": "git",
+    "sub": "status",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "./scripts/run.sh --fast",
+    "head": "run.sh",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "echo word",
+    "head": "echo",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "cd x && git push",
+    "head": "git",
+    "sub": "push",
+    "segments": 2,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "cd x && cd y",
+    "head": "cd",
+    "sub": "",
+    "segments": 2,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "export A=1; set -e; make check",
+    "head": "make",
+    "sub": "check",
+    "segments": 3,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "uv run pytest -q || true",
+    "head": "pytest",
+    "sub": "",
+    "segments": 2,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "uv run pytest -m integration",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "integration_e2e"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pytest tests/integration/test_a.py",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "integration_e2e"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pytest --smoke",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "smoke"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "uvx ruff check .",
+    "head": "ruff",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npx --yes vitest run",
+    "head": "vitest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "bunx playwright test",
+    "head": "playwright",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "integration_e2e"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pnpm exec eslint src",
+    "head": "eslint",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pnpm dlx tsc --noEmit",
+    "head": "tsc",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "typecheck"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm exec jest",
+    "head": "jest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "yarn dlx mypy src",
+    "head": "mypy",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "typecheck"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "poetry run pytest",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pipx run black .",
+    "head": "black",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "timeout 30 cargo test",
+    "head": "cargo",
+    "sub": "test",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "time nohup sudo caffeinate bun test",
+    "head": "caffeinate",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "nohup sudo caffeinate bun test",
+    "head": "bun",
+    "sub": "test",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "python3 -m pytest -q",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "python -m unittest discover",
+    "head": "unittest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "python3 scripts/check.py --fast",
+    "head": "python3",
+    "sub": "check.py",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "uv run python scripts/gate.py",
+    "head": "python",
+    "sub": "gate.py",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "bash scripts/lint.sh",
+    "head": "lint.sh",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "bash -e scripts/ci.sh",
+    "head": "ci.sh",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "bash -c \"cd app && npm run test:unit\"",
+    "head": "npm",
+    "sub": "test:unit",
+    "segments": 2,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "bash -lc pytest -q",
+    "head": "pytest",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm run test:unit",
+    "head": "npm",
+    "sub": "test:unit",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm test",
+    "head": "npm",
+    "sub": "test",
+    "segments": 1,
+    "verification_kinds": [
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "pnpm run test:e2e",
+    "head": "pnpm",
+    "sub": "test:e2e",
+    "segments": 1,
+    "verification_kinds": [
+      "integration_e2e"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "yarn smoke",
+    "head": "yarn",
+    "sub": "smoke",
+    "segments": 1,
+    "verification_kinds": [
+      "smoke"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "bun run lint:fix",
+    "head": "bun",
+    "sub": "lint:fix",
+    "segments": 1,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm run typecheck && npm run lint",
+    "head": "npm",
+    "sub": "typecheck",
+    "segments": 2,
+    "verification_kinds": [
+      "lint_format",
+      "typecheck"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm run ci",
+    "head": "npm",
+    "sub": "ci",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "npm ci",
+    "head": "npm",
+    "sub": "ci",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "pnpm run check",
+    "head": "pnpm",
+    "sub": "check",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "just verify",
+    "head": "just",
+    "sub": "verify",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "make all",
+    "head": "make",
+    "sub": "all",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "pre-commit run --all-files",
+    "head": "pre-commit",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "lefthook run pre-commit",
+    "head": "lefthook",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "./scripts/run-gates.sh",
+    "head": "run-gates.sh",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 1
+  },
+  {
+    "command": "cargo clippy -- -D warnings && cargo fmt --check && cargo check",
+    "head": "cargo",
+    "sub": "clippy",
+    "segments": 3,
+    "verification_kinds": [
+      "lint_format",
+      "typecheck"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "go vet ./... && go test ./...",
+    "head": "go",
+    "sub": "vet",
+    "segments": 2,
+    "verification_kinds": [
+      "lint_format",
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "biome check .",
+    "head": "biome",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "gh run watch",
+    "head": "gh",
+    "sub": "run",
+    "segments": 1,
+    "verification_kinds": [
+      "ci_remote"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "gh pr checks 12",
+    "head": "gh",
+    "sub": "pr",
+    "segments": 1,
+    "verification_kinds": [
+      "ci_remote"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "gh pr view 12",
+    "head": "gh",
+    "sub": "pr",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "act -j test",
+    "head": "act",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [
+      "ci_remote"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "git status | head -5",
+    "head": "git",
+    "sub": "status",
+    "segments": 2,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "echo 'a && b'",
+    "head": "echo",
+    "sub": "",
+    "segments": 2,
+    "verification_kinds": [],
+    "gate_run": 0
+  },
+  {
+    "command": "shellcheck x.sh\nprettier --check .",
+    "head": "shellcheck",
+    "sub": "",
+    "segments": 2,
+    "verification_kinds": [
+      "lint_format"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "npm run test:unit && npm run test:e2e && npm run test:smoke",
+    "head": "npm",
+    "sub": "test:unit",
+    "segments": 3,
+    "verification_kinds": [
+      "integration_e2e",
+      "smoke",
+      "unit_test"
+    ],
+    "gate_run": 0
+  },
+  {
+    "command": "sudo",
+    "head": "sudo",
+    "sub": "",
+    "segments": 1,
+    "verification_kinds": [],
+    "gate_run": 0
+  }
+]

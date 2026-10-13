@@ -1,58 +1,60 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
   Section,
   SessionLink,
-  useView,
+  useSelectedHarnesses,
+  useVisible,
 } from "../components";
 import {
   fmtCount,
   fmtPct,
-  groupSum,
   HARNESS_COLOR,
   HARNESS_LABEL,
+  maybe,
   num,
-  pivotDaily,
-  ratio,
   SERIES,
-  sumRows,
 } from "../format";
 
-const TOKEN_FIELDS = [
-  "input",
-  "cached",
-  "creation",
-  "output",
-  "operations",
-  "sessions",
-];
-
-const utilization = (row: Row) => ratio(num(row.cached), num(row.input));
+/** Pure reshape: one wide row per day, values copied from the server rows. */
+function wideByDay(
+  rows: Row[],
+  pick: (row: Row) => string | null,
+  value: (row: Row) => number | null,
+): Row[] {
+  const days = new Map<string, Row>();
+  for (const row of rows) {
+    const series = pick(row);
+    if (series === null) continue;
+    const day = String(row.day);
+    days.set(day, { ...days.get(day), day, [series]: value(row) });
+  }
+  return [...days.values()];
+}
 
 export default function Cache({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
+  const selected = useSelectedHarnesses();
+  const creationShown = useVisible("usage.cache_creation");
   const kpi = data.kpi ?? [];
-  const all = sumRows(kpi, TOKEN_FIELDS);
+  const all = kpi.find((row) => row.harness === "") ?? {};
+  const byHarness = kpi.filter((row) => row.harness !== "");
   const daily = data.daily ?? [];
-  const partition = [...groupSum(daily, "day", ["input", "cached", "output"])]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, sums]) => ({
-      day,
-      uncached: sums.input! - sums.cached!,
-      cached: sums.cached!,
-      output: sums.output!,
+  const partition = daily
+    .filter((row) => row.harness === "")
+    .map((row) => ({
+      day: row.day,
+      uncached: num(row.uncached),
+      cached: num(row.cached),
+      output: num(row.output),
     }));
-  const harnesses = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  );
-  const utilizationDaily = pivotDaily(
+  const harnesses = selected;
+  const utilizationDaily = wideByDay(
     daily,
-    (row) => String(row.harness),
-    ["input", "cached"],
-    (sums) => ratio(sums.cached!, sums.input!),
+    (row) => (row.harness === "" ? null : String(row.harness)),
+    (row) => maybe(row.cache_rate),
   );
   const partitionSeries = [
     { key: "uncached", label: "Uncached input", color: SERIES[1]! },
@@ -69,32 +71,41 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Input tokens"
-          value={fmtCount(all.input!)}
-          detail={`${fmtCount(all.operations!)} completed operations`}
+          source="kpi"
+          value={fmtCount(num(all.input))}
+          detail={`${fmtCount(num(all.operations))} completed operations`}
           signals={["usage.input_tokens", "usage.operations"]}
         />
         <Kpi
           title="Input cache utilization"
-          value={fmtPct(ratio(all.cached!, all.input!))}
-          detail={`${fmtCount(all.cached!)} cached of ${fmtCount(all.input!)}`}
+          source="kpi"
+          value={fmtPct(maybe(all.cache_rate))}
+          detail={`${fmtCount(num(all.cached))} cached of ${fmtCount(num(all.input))}`}
           signals={["usage.cache_utilization", "usage.cached_input"]}
         />
         <Kpi
           title="Uncached input"
-          value={fmtCount(all.input! - all.cached!)}
-          detail={`incl. ${fmtCount(all.creation!)} written to cache`}
+          source="kpi"
+          value={fmtCount(num(all.uncached))}
+          detail={
+            creationShown
+              ? `incl. ${fmtCount(num(all.creation))} written to cache`
+              : `${fmtPct(maybe(all.uncached_rate))} of input`
+          }
           signals={["usage.uncached_input", "usage.cache_creation"]}
         />
         <Kpi
           title="Output tokens"
-          value={fmtCount(all.output!)}
-          detail={`${fmtCount(all.sessions!)} usage-active sessions`}
+          source="kpi"
+          value={fmtCount(num(all.output))}
+          detail={`${fmtCount(num(all.sessions))} usage-active sessions`}
           signals={["usage.output_tokens", "usage.active_sessions"]}
         />
       </Section>
       <Section title="Daily trend">
         <Panel
           title="Daily token consumption"
+          source="daily"
           subtitle="Mutually exclusive parts; stack height is total processed tokens"
           signals={[
             "usage.uncached_input",
@@ -123,6 +134,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Daily input cache utilization"
+          source="daily"
           subtitle="Cached share of input per day, token-weighted within each harness"
           signals={["usage.cache_utilization"]}
           span={5}
@@ -132,6 +144,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
             series={harnessSeries}
             kind="line"
             max={100}
+            fixed
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
@@ -150,6 +163,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="Breakdowns">
         <Panel
           title="By harness"
+          source="kpi"
           subtitle="Each harness's own totals; All above is their sum"
           signals={[
             "usage.input_tokens",
@@ -183,20 +197,24 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(utilization(row)),
+                render: (row) => fmtPct(maybe(row.cache_rate)),
               },
               {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.input) - num(row.cached)),
+                render: (row) => fmtCount(num(row.uncached)),
               },
-              {
-                key: "creation",
-                label: "Cache writes",
-                numeric: true,
-                render: (row) => fmtCount(num(row.creation)),
-              },
+              ...(creationShown
+                ? [
+                    {
+                      key: "creation",
+                      label: "Cache writes",
+                      numeric: true,
+                      render: (row: Row) => fmtCount(num(row.creation)),
+                    },
+                  ]
+                : []),
               {
                 key: "output",
                 label: "Output",
@@ -211,11 +229,12 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
               },
               { key: "sessions", label: "Sessions", numeric: true },
             ]}
-            rows={kpi}
+            rows={byHarness}
           />
         </Panel>
         <Panel
           title="By model"
+          source="models"
           subtitle="Harness and model, largest input first"
           signals={["usage.input_tokens", "usage.cache_utilization"]}
           span={12}
@@ -240,13 +259,13 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(utilization(row)),
+                render: (row) => fmtPct(maybe(row.cache_rate)),
               },
               {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.input) - num(row.cached)),
+                render: (row) => fmtCount(num(row.uncached)),
               },
               {
                 key: "output",
@@ -262,6 +281,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
       <Section title="Where uncached input goes">
         <Panel
           title="Sessions with the most uncached input"
+          source="sessions"
           subtitle="Top 20 sessions; open one for its tasks and calls"
           signals={["usage.uncached_input", "usage.active_sessions"]}
           span={12}
@@ -285,13 +305,13 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.input) - num(row.cached)),
+                render: (row) => fmtCount(num(row.uncached)),
               },
               {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(utilization(row)),
+                render: (row) => fmtPct(maybe(row.cache_rate)),
               },
               {
                 key: "output",

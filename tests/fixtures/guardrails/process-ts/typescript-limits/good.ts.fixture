@@ -1,0 +1,12 @@
+import { readFileSync } from "node:fs";
+import React from "react";
+
+export function total(rows: number[][]): number {
+  let sum = 0;
+  for (const row of rows) {
+    for (const value of row) {
+      sum += value;
+    }
+  }
+  return sum + readFileSync.length + React.version.length;
+}

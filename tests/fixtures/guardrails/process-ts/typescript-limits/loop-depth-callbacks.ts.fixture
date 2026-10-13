@@ -1,0 +1,2 @@
+export const total = (cube: number[][][]): number =>
+  cube.map((plane) => plane.map((row) => row.map((value) => value + 1).length).length).length;

@@ -1,0 +1,2776 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "mode": "whole-repo",
+    "paths": []
+  },
+  "rules": [
+    {
+      "id": "FANOUT.general",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-fanout.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-fanout.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-fanout.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-fanout.py",
+          "--root-package",
+          "agent_introspection",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/FANOUT.general/passing/repo/src/pkg/wide.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/FANOUT.general/violating/repo/src/pkg/wide.py",
+        "diagnostic": "FANOUT.general",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "FANOUT.large-module",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-fanout.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-fanout.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-fanout.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-fanout.py",
+          "--root-package",
+          "agent_introspection",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/FANOUT.large-module/passing/repo/src/pkg/large.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/FANOUT.large-module/violating/repo/src/pkg/large.py",
+        "diagnostic": "FANOUT.large-module",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "MYPY.SETTING.exclude",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "exclude = [\"^tests/fixtures/\"]"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-config",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.exclude/passing/tests/fixtures/bad.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.exclude/violating/tests/other/bad.py",
+        "diagnostic": "[assignment]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.SETTING.mypy_path",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "mypy_path = \"src\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.mypy_path/passing/tests/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.mypy_path/violating/tests/canary_module.py",
+        "diagnostic": "import-not-found",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.SETTING.python_version",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "python_version = \"3.12\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.python_version/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.python_version/violating/canary_module.py",
+        "diagnostic": "distutils",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.SETTING.show_error_codes",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "show_error_codes = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.show_error_codes/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.SETTING.show_error_codes/violating/canary_module.py",
+        "diagnostic": "[return-value]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.follow_imports",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "follow_imports = \"skip\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.follow_imports/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.follow_imports/violating/canary_module.py",
+        "diagnostic": "cannot subclass",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.module-overrides",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "module = [\"pytest\", \"_pytest.*\"]"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.module-overrides/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.module-overrides/violating/canary_module.py",
+        "diagnostic": "[untyped-decorator]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.package-coverage",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/lib/python_tool_scope.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "files = [\"src\", \"scripts\", \"tests\"]"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/check-python-mypy.py",
+          "--drift-only",
+          "--config",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.package-coverage/passing/pyproject.toml",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.package-coverage/violating/pyproject.toml",
+        "diagnostic": "not covered by [tool.mypy]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.strict",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "strict = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.strict/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.strict/violating/canary_module.py",
+        "diagnostic": "[no-untyped-def]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "MYPY.warn_unused_ignores",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-mypy.py",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-mypy.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-mypy.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "warn_unused_ignores = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "mypy-file",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/MYPY.warn_unused_ignores/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/MYPY.warn_unused_ignores/violating/canary_module.py",
+        "diagnostic": "[unused-ignore]",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "PARITY.dependency-inventory",
+      "status": "not_applicable",
+      "reason": "No optional analyzer dependencies exist: pyproject.toml declares dependencies = [] and no optional-dependencies; the only dependency group is dev, installed by 'uv sync --locked --dev' in the runner.",
+      "user_approval": "approved",
+      "evidence_path": "pyproject.toml",
+      "evidence_marker": "dependencies = []"
+    },
+    {
+      "id": "PARITY.install-guidance",
+      "status": "not_applicable",
+      "reason": "No bespoke installer exists; documented installs are the tool-native commands (uv sync, uv tool install, bun install --frozen-lockfile) that the runner and skills use verbatim.",
+      "user_approval": "approved",
+      "evidence_path": "README.md",
+      "evidence_marker": "uv tool install --force --reinstall ."
+    },
+    {
+      "id": "PARITY.lock-version",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-lock-parity.py",
+        "uv.lock",
+        "dashboard/bun.lock"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-lock-parity.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-lock-parity.py",
+      "canary": {
+        "command": [
+          "sh",
+          "-c",
+          "python3 scripts/check-lock-parity.py \"$1\" \"$(dirname \"$1\")/dashboard/package.json\"",
+          "_",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/lock-version/good/pyproject.toml",
+        "violating": "tests/fixtures/guardrails/process-ts/lock-version/bad/pyproject.toml",
+        "diagnostic": "PARITY.lock-version",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "PRETTIER.version",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "prettier@3.6.2",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "prettier@3.6.2",
+      "configuration": {
+        "path": "scripts/run-ci-quality-gates.sh",
+        "contains": [
+          "prettier@3.6.2",
+          "git ls-files"
+        ]
+      },
+      "canary": {
+        "command": [
+          "bunx",
+          "--bun",
+          "prettier@3.6.2",
+          "--check",
+          "--parser",
+          "markdown",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/prettier-markdown/good.md.fixture",
+        "violating": "tests/fixtures/guardrails/process-ts/prettier-markdown/bad.md.fixture",
+        "diagnostic": "Code style issues",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "PYQ100",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ100/passing/repo/src/pkg/mod.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ100/violating/repo/tools/loose.py",
+        "diagnostic": "PYQ100",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ101",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ101/passing/repo/scripts/render-measures.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ101/violating/repo/scripts/unapproved_tool.py",
+        "diagnostic": "PYQ101",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ102",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ102/passing/repo/tests/unit/case_ok.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ102/violating/repo/tests/flat_case.py",
+        "diagnostic": "PYQ102",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ103",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ103/passing/repo/src/pkg/services/mod.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ103/violating/repo/src/pkg/helpers/mod.py",
+        "diagnostic": "PYQ103",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ104",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ104/passing/repo/src/pkg/domain.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ104/violating/repo/src/pkg/misc.py",
+        "diagnostic": "PYQ104",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ105",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ105/passing/repo/src/good_pkg/mod.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ105/violating/repo/src/BadPkg/mod.py",
+        "diagnostic": "PYQ105",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ106",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ106/passing/repo/.agents/skills/good-skill/scripts/tool.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ106/violating/repo/.agents/skills/Bad_Skill/scripts/tool.py",
+        "diagnostic": "PYQ106",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ107",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ107/passing/repo/src/pkg/good_module.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ107/violating/repo/src/pkg/BadModule.py",
+        "diagnostic": "PYQ107",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ200",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ200/passing/repo/src/pkg/big.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ200/violating/repo/src/pkg/big.py",
+        "diagnostic": "PYQ200",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ202",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ202/passing/repo/src/pkg/widget.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ202/violating/repo/src/pkg/widget.py",
+        "diagnostic": "PYQ202",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ203",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ203/passing/repo/src/pkg/holder.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ203/violating/repo/src/pkg/holder.py",
+        "diagnostic": "PYQ203",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ210",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ210/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ210/violating/repo/src/pkg/scan.py",
+        "diagnostic": "PYQ210",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ211",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ211/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ211/violating/repo/src/pkg/scan.py",
+        "diagnostic": "PYQ211",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ220",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ220/passing/repo/src/agent_introspection/drafting.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ220/violating/repo/src/pkg/runner.py",
+        "diagnostic": "PYQ220",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ221",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ221/passing/repo/src/pkg/loader.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ221/violating/repo/src/pkg/loader.py",
+        "diagnostic": "PYQ221",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ230",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ230/passing/repo/src/agent_introspection/contracts.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ230/violating/repo/src/agent_introspection/contracts.py",
+        "diagnostic": "PYQ230",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ231",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ231/passing/repo/src/agent_introspection/contracts.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ231/violating/repo/src/agent_introspection/contracts.py",
+        "diagnostic": "PYQ231",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYQ299",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-quality.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-quality.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-quality.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-quality.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ299/passing/repo/src/pkg/decodable.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ299/violating/repo/src/pkg/undecodable.py",
+        "diagnostic": "PYQ299",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYS000",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-scalability.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-scalability.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-scalability.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-scalability.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYS000/passing/repo/src/pkg/parsed.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYS000/violating/repo/src/pkg/broken.py",
+        "diagnostic": "PYS000",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYS250",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-scalability.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-scalability.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-scalability.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-scalability.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYS250/passing/repo/src/pkg/loops.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYS250/violating/repo/src/pkg/loops.py",
+        "diagnostic": "PYS250",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYS251",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-scalability.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-scalability.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-scalability.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-scalability.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYS251/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYS251/violating/repo/src/pkg/scan.py",
+        "diagnostic": "PYS251",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYS252",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-scalability.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-scalability.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-scalability.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-scalability.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYS252/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYS252/violating/repo/src/pkg/scan.py",
+        "diagnostic": "PYS252",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "PYS253",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-python-scalability.py",
+        "scripts/lib/python_quality_scope.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-scalability.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-scalability.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-python-scalability.py",
+          "--fixture",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-bespoke/PYS253/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/guardrails/python-bespoke/PYS253/violating/repo/src/pkg/scan.py",
+        "diagnostic": "PYS253",
+        "timeout_seconds": 30
+      }
+    },
+    {
+      "id": "RUFF.FORMAT.docstring-code-format",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff format --check --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff format --check --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "docstring-code-format = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-format",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.docstring-code-format/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.docstring-code-format/violating/canary_module.py",
+        "diagnostic": "would be reformatted",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.FORMAT.indent-style",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff format --check --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff format --check --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "indent-style = \"space\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-format",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.indent-style/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.indent-style/violating/canary_module.py",
+        "diagnostic": "would be reformatted",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.FORMAT.line-ending",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff format --check --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff format --check --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "line-ending = \"auto\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-format",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.line-ending/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.line-ending/violating/canary_module.py",
+        "diagnostic": "would be reformatted",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.FORMAT.quote-style",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff format --check --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff format --check --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "quote-style = \"double\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-format",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.quote-style/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.FORMAT.quote-style/violating/canary_module.py",
+        "diagnostic": "would be reformatted",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.IGNORES",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/check-python-suppressions.py",
+        "scripts/lib/python_tool_scope.py",
+        "scripts/python-suppression-baseline.json",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-python-suppressions.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-python-suppressions.py",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "ignore = [\"D100\", \"D101\", \"D102\", \"D103\", \"D104\", \"D105\", \"D107\"]"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/check-python-suppressions.py",
+          "--check-file",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.IGNORES/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.IGNORES/violating/canary_module.py",
+        "diagnostic": "new suppression comment",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ISORT.combine-as-imports",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "combine-as-imports = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.combine-as-imports/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.combine-as-imports/violating/canary_module.py",
+        "diagnostic": "unsorted-imports",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ISORT.force-single-line",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "force-single-line = false"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.force-single-line/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.force-single-line/violating/canary_module.py",
+        "diagnostic": "unsorted-imports",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ISORT.known-first-party",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "known-first-party = []"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.known-first-party/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.known-first-party/violating/canary_module.py",
+        "diagnostic": "unsorted-imports",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ISORT.split-on-trailing-comma",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "split-on-trailing-comma = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.split-on-trailing-comma/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ISORT.split-on-trailing-comma/violating/canary_module.py",
+        "diagnostic": "unsorted-imports",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-args",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-args = 5"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-args/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-args/violating/canary_module.py",
+        "diagnostic": "too-many-arguments",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-branches",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-branches = 12"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-branches/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-branches/violating/canary_module.py",
+        "diagnostic": "too-many-branches",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-locals",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-locals = 15"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-locals/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-locals/violating/canary_module.py",
+        "diagnostic": "too-many-locals",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-positional-args",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-positional-args = 5"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-positional-args/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-positional-args/violating/canary_module.py",
+        "diagnostic": "too-many-positional-arguments",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-public-methods",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-public-methods = 20"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-public-methods/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-public-methods/violating/canary_module.py",
+        "diagnostic": "too-many-public-methods",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-returns",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-returns = 6"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-returns/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-returns/violating/canary_module.py",
+        "diagnostic": "too-many-return-statements",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.LIMIT.max-statements",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-statements = 50"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-statements/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.LIMIT.max-statements/violating/canary_module.py",
+        "diagnostic": "too-many-statements",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.PYDOCSTYLE.convention",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "convention = \"numpy\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.PYDOCSTYLE.convention/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.PYDOCSTYLE.convention/violating/canary_module.py",
+        "diagnostic": "missing-dashed-underline-after-section",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ROOT.exclude",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"tests/fixtures/\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.exclude/passing/tests/fixtures/excluded.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.exclude/violating/.agents/skills/canary/scripts/adapter.py",
+        "diagnostic": "unused-import",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ROOT.fix",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "fix = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.fix/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.fix/violating/canary_module.py",
+        "diagnostic": "unused-import",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ROOT.output-format",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "output-format = \"full\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.output-format/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.output-format/violating/canary_module.py",
+        "diagnostic": "1 | import os",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ROOT.preview",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "preview = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.preview/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.preview/violating/canary_module.py",
+        "diagnostic": "too-many-positional-arguments",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.ROOT.respect-gitignore",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "respect-gitignore = true"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.respect-gitignore/passing/ignored/bad.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.ROOT.respect-gitignore/violating/visible/bad.py",
+        "diagnostic": "unused-import",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.A",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"A\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.A/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.A/violating/canary_module.py",
+        "diagnostic": "builtin-argument-shadowing",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.B",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"B\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.B/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.B/violating/canary_module.py",
+        "diagnostic": "get-attr-with-constant",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.C4",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"C4\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.C4/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.C4/violating/canary_module.py",
+        "diagnostic": "unnecessary-collection-call",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.C901",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"C901\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.C901/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.C901/violating/canary_module.py",
+        "diagnostic": "complex-structure",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.D",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"D\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.D/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.D/violating/canary_module.py",
+        "diagnostic": "missing-trailing-period",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.E",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"E\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.E/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.E/violating/canary_module.py",
+        "diagnostic": "none-comparison",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.F",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"F\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.F/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.F/violating/canary_module.py",
+        "diagnostic": "unused-import",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.I",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"I\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.I/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.I/violating/canary_module.py",
+        "diagnostic": "unsorted-imports",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.N",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"N\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.N/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.N/violating/canary_module.py",
+        "diagnostic": "invalid-function-name",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PGH",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PGH\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PGH/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PGH/violating/canary_module.py",
+        "diagnostic": "blanket-type-ignore",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0904",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0904\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0904/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0904/violating/canary_module.py",
+        "diagnostic": "too-many-public-methods",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0911",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0911\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0911/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0911/violating/canary_module.py",
+        "diagnostic": "too-many-return-statements",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0912",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0912\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0912/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0912/violating/canary_module.py",
+        "diagnostic": "too-many-branches",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0913",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0913\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0913/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0913/violating/canary_module.py",
+        "diagnostic": "too-many-arguments",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0914",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0914\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0914/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0914/violating/canary_module.py",
+        "diagnostic": "too-many-locals",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0915",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0915\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0915/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0915/violating/canary_module.py",
+        "diagnostic": "too-many-statements",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PLR0917",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PLR0917\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0917/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PLR0917/violating/canary_module.py",
+        "diagnostic": "too-many-positional-arguments",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.PT",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"PT\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PT/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.PT/violating/canary_module.py",
+        "diagnostic": "pytest-parametrize-names-wrong-type",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.SIM",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"SIM\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.SIM/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.SIM/violating/canary_module.py",
+        "diagnostic": "in-dict-keys",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.UP",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"UP\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.UP/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.UP/violating/canary_module.py",
+        "diagnostic": "deprecated-import",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SELECT.W",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "\"W\","
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.W/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SELECT.W/violating/canary_module.py",
+        "diagnostic": "trailing-whitespace",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SETTING.line-length",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "line-length = 100"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.line-length/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.line-length/violating/canary_module.py",
+        "diagnostic": "line-too-long",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SETTING.mccabe.max-complexity",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "max-complexity = 10"
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.mccabe.max-complexity/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.mccabe.max-complexity/violating/canary_module.py",
+        "diagnostic": "complex-structure",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUFF.SETTING.target-version",
+      "status": "implemented",
+      "implementation_paths": [
+        "pyproject.toml",
+        "scripts/guardrails-tool-canary.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "ruff check --no-fix --force-exclude",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "ruff check --no-fix --force-exclude",
+      "configuration": {
+        "path": "pyproject.toml",
+        "contains": [
+          "target-version = \"py312\""
+        ]
+      },
+      "canary": {
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/guardrails-tool-canary.py",
+          "ruff-check",
+          "--config",
+          "pyproject.toml",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.target-version/passing/canary_module.py",
+        "violating": "tests/fixtures/guardrails/python-tool/RUFF.SETTING.target-version/violating/canary_module.py",
+        "diagnostic": "non-pep695-type-alias",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "RUNNER.local-ci-parity",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-quality-gate-parity.sh",
+        "scripts/run-ci-quality-gates.sh",
+        ".pre-commit-config.yaml",
+        ".github/workflows/ci-quality-gates.yml"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "bash scripts/check-quality-gate-parity.sh",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "bash scripts/check-quality-gate-parity.sh",
+      "canary": {
+        "command": [
+          "bash",
+          "-c",
+          "cd \"$(dirname \"$1\")\" && bash \"$OLDPWD/scripts/check-quality-gate-parity.sh\"",
+          "_",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/runner-parity/good/.pre-commit-config.yaml",
+        "violating": "tests/fixtures/guardrails/process-ts/runner-parity/bad/.pre-commit-config.yaml",
+        "diagnostic": "no active run invokes scripts/run-ci-quality-gates.sh",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "SEAM.evidence",
+      "status": "not_applicable",
+      "reason": "No workflow orchestration with registry/manifest/artifact/report seams: workflow.py is a local SQLite findings/proposals store, not an orchestrator.",
+      "user_approval": "approved",
+      "evidence_path": "src/agent_introspection/workflow.py",
+      "evidence_marker": "Local SQLite workflow store"
+    },
+    {
+      "id": "SECURITY.dependency-audit",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-dependency-audit.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-dependency-audit.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-dependency-audit.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-dependency-audit.py",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/dependency-audit/clean-requirements.txt",
+        "violating": "tests/fixtures/guardrails/process-ts/dependency-audit/vulnerable-requirements.txt",
+        "diagnostic": "SECURITY.dependency-audit",
+        "timeout_seconds": 110
+      }
+    },
+    {
+      "id": "SKILL.metadata",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-skill-metadata.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-skill-metadata.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-skill-metadata.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-skill-metadata.py",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/skill-metadata/good/introspection-good/SKILL.md",
+        "violating": "tests/fixtures/guardrails/process-ts/skill-metadata/bad/wrong-directory/SKILL.md",
+        "diagnostic": "SKILL.metadata",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "TEST.coverage-minimum",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-coverage-slice.py",
+        "scripts/coverage-slice.json"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-coverage-slice.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-coverage-slice.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-coverage-slice.py",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/coverage-minimum/good.json",
+        "violating": "tests/fixtures/guardrails/process-ts/coverage-minimum/bad.json",
+        "diagnostic": "TEST.coverage-minimum",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "TEST.failure-propagation",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-runner-failure-propagation.py",
+        "scripts/run-ci-quality-gates.sh"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-runner-failure-propagation.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-runner-failure-propagation.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-runner-failure-propagation.py",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/failure-propagation/good/scripts/run-ci-quality-gates.sh",
+        "violating": "tests/fixtures/guardrails/process-ts/failure-propagation/bad/scripts/run-ci-quality-gates.sh",
+        "diagnostic": "TEST.failure-propagation",
+        "timeout_seconds": 100
+      }
+    },
+    {
+      "id": "TEST.subprocess-timeouts",
+      "status": "implemented",
+      "implementation_paths": [
+        "scripts/check-test-subprocess-timeouts.py"
+      ],
+      "local_runner": "scripts/run-ci-quality-gates.sh",
+      "local_marker": "scripts/check-test-subprocess-timeouts.py",
+      "ci_runner": "scripts/run-ci-quality-gates.sh",
+      "ci_marker": "scripts/check-test-subprocess-timeouts.py",
+      "canary": {
+        "command": [
+          "python3",
+          "scripts/check-test-subprocess-timeouts.py",
+          "{fixture}"
+        ],
+        "passing": "tests/fixtures/guardrails/process-ts/subprocess-timeouts/good.py.fixture",
+        "violating": "tests/fixtures/guardrails/process-ts/subprocess-timeouts/bad.py.fixture",
+        "diagnostic": "TEST.subprocess-timeouts",
+        "timeout_seconds": 60
+      }
+    },
+    {
+      "id": "TEST.tiers",
+      "status": "not_applicable",
+      "reason": "Single hermetic tier: all 224 tests mock ClickHouse/docker/HTTP seams and run in ~4s; no slow or real-seam tests exist to reserve for a release path.",
+      "user_approval": "approved",
+      "evidence_path": "pyproject.toml",
+      "evidence_marker": "testpaths = [\"tests\"]"
+    }
+  ]
+}

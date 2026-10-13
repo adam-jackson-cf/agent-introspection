@@ -1,6 +1,7 @@
 .DS_Store
 .enaible/
 .tmp/
+docs/ux/reviews/captures/
 .mypy_cache/
 .pytest_cache/
 pytest-of-*/
@@ -14,4 +15,5 @@ __pycache__/
 build/
 dist/
 dashboard/node_modules/
+scripts/ux-probe/node_modules/
 .clawpatch/

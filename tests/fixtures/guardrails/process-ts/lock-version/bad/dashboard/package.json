@@ -1,0 +1,7 @@
+{
+  "name": "fixture-dashboard",
+  "version": "1.1.0",
+  "dependencies": {
+    "react": "19.1.1"
+  }
+}

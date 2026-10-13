@@ -1,11 +1,14 @@
 import json
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from agent_introspection import cli
+from agent_introspection import cli, facts, schedule
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
+from agent_introspection.findings import CORRECTION_DETECTOR_ID
 from agent_introspection.proposals import (
     ProposalState,
     TransitionProposalRequest,
@@ -13,7 +16,8 @@ from agent_introspection.proposals import (
     transition_proposal,
 )
 from agent_introspection.review import create_review_session
-from agent_introspection.workflow import connect_workflow
+from tests.conftest import OpenWorkflow
+from tests.test_drafting import facts_runner, insert_finding
 from tests.test_proposals import proposal_database, proposal_input
 
 
@@ -58,7 +62,7 @@ def test_facts_failures_exit_with_the_facts_code(
     def failing(_statement: str) -> str:
         raise FactsError("Code: 81. DB::Exception: Database introspection does not exist")
 
-    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: failing)
+    monkeypatch.setattr(facts, "runner", lambda _config: failing)
 
     with pytest.raises(SystemExit) as raised:
         main(["--config", str(config_file(tmp_path)), "facts", "status"])
@@ -78,10 +82,10 @@ def test_candidates_export_reports_no_candidates_without_actionable_findings(
 
 
 def test_proposal_create_persists_nothing_when_a_proposal_insert_fails(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     envelope = create_review_session(
         connection, candidates=[{"id": "finding-1"}], reserved_model_budget=100
     )
@@ -136,10 +140,13 @@ def test_proposal_create_persists_nothing_when_a_proposal_insert_fails(
     ],
 )
 def test_mark_applied_rejects_unsuccessful_validation_before_any_transition(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path, evidence: dict[str, object]
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    evidence: dict[str, object],
+    open_workflow: OpenWorkflow,
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -168,16 +175,16 @@ def test_mark_applied_rejects_unsuccessful_validation_before_any_transition(
     )
     assert main([*arguments, "--actor", "user", "--input-json", str(source)]) == 0
     assert json.loads(capsys.readouterr().out) == {"proposal_id": proposal_id, "status": "applied"}
-    assert connect_workflow(tmp_path / "workflow.sqlite3").execute(
+    assert open_workflow(tmp_path / "workflow.sqlite3").execute(
         "SELECT state FROM proposals WHERE id = ?", (proposal_id,)
     ).fetchone() == ("applied",)
 
 
 def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     proposal_id = create_proposal(connection, proposal_input())
     transition_proposal(
         connection,
@@ -203,19 +210,17 @@ def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
     )
 
     with pytest.raises(SystemExit) as raised:
-        main(
-            [
-                "--config",
-                str(config),
-                "proposal",
-                "mark-applied",
-                proposal_id,
-                "--actor",
-                "user",
-                "--input-json",
-                str(source),
-            ]
-        )
+        main([
+            "--config",
+            str(config),
+            "proposal",
+            "mark-applied",
+            proposal_id,
+            "--actor",
+            "user",
+            "--input-json",
+            str(source),
+        ])
 
     assert raised.value.code == EXIT_DATABASE
     assert "event store unavailable" in capsys.readouterr().err
@@ -229,10 +234,10 @@ def test_mark_applied_leaves_an_approved_proposal_approved_when_applied_fails(
 
 
 def test_proposal_create_rejects_a_proposal_for_an_unreviewed_finding(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     config = config_file(tmp_path)
-    connection = proposal_database(path=tmp_path / "workflow.sqlite3")
+    connection = proposal_database(open_workflow, path=tmp_path / "workflow.sqlite3")
     envelope = create_review_session(
         connection, candidates=[{"id": "reviewed"}], reserved_model_budget=100
     )
@@ -270,9 +275,12 @@ def test_schedule_install_passes_the_selected_configuration(
 ) -> None:
     config = config_file(tmp_path)
     received: list[Path | None] = []
-    monkeypatch.setattr(
-        cli.projects, "schedule_install", lambda selected: received.append(selected) or {}
-    )
+
+    def schedule_install(selected: Path | None = None) -> dict[str, Any]:
+        received.append(selected)
+        return {}
+
+    monkeypatch.setattr(schedule, "schedule_install", schedule_install)
 
     assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
     assert received == [config.resolve()]
@@ -281,9 +289,99 @@ def test_schedule_install_passes_the_selected_configuration(
 def test_facts_install_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(cli.facts, "docker_runner", lambda _config: lambda _sql: "")
-    monkeypatch.setattr(cli.facts, "install", lambda _run: {"installed": True})
+    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
+    received: list[object] = []
 
-    assert main(["--config", str(config_file(tmp_path)), "facts", "install"]) == 0
+    def install(_run: object, enabled: object) -> dict[str, bool]:
+        received.append(enabled)
+        return {"installed": True}
+
+    monkeypatch.setattr(facts, "install", install)
+
+    config = config_file(tmp_path)
+    config.write_text(config.read_text() + '[harnesses]\nenabled = ["claude-code", "codex"]\n')
+
+    assert main(["--config", str(config), "facts", "install"]) == 0
     assert json.loads(capsys.readouterr().out) == {"installed": True}
+    assert received == [("claude-code", "codex")]
     assert (tmp_path / "workflow.sqlite3").exists()
+
+
+def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    open_workflow: OpenWorkflow,
+) -> None:
+    config = str(config_file(tmp_path))
+    connection = open_workflow(tmp_path / "workflow.sqlite3")
+    insert_finding(connection, "a-low", impact=3, last_seen_ns=9)
+    insert_finding(connection, "b-high", impact=8, last_seen_ns=2)
+    insert_finding(
+        connection, "c-correction", impact=6, last_seen_ns=9, detector_id=CORRECTION_DETECTOR_ID
+    )
+    _, run = facts_runner()
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
+
+    assert main(["--config", config, "candidates", "export", "--reserved-model-budget", "10"]) == 0
+
+    review = json.loads(capsys.readouterr().out)["review"]
+    assert review["ordered_candidate_ids"] == ["b-high"]
+    candidate = review["payload"]["candidates"][0]
+    assert candidate["finding"]["subject"]["impact"] == 8
+    assert candidate["project_root"] == "~/Projects/example"
+    assert "signatures" in candidate["evidence"]
+
+
+def test_proposal_draft_dry_run_and_evaluate_commands(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    open_workflow: OpenWorkflow,
+) -> None:
+    config = str(config_file(tmp_path))
+    connection = open_workflow(tmp_path / "workflow.sqlite3")
+    insert_finding(connection, "a-cluster", impact=3, last_seen_ns=9)
+    _, run = facts_runner()
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
+
+    argv = ["--config", config, "proposal", "draft", "--reserved-model-budget", "100", "--dry-run"]
+    assert main(argv) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "dry_run"
+    assert result["command_line"].startswith("codex exec --model gpt-5.5")
+    assert connection.execute("SELECT COUNT(*) FROM review_sessions").fetchone() == (0,)
+
+    assert main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00Z"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"evaluated": [], "skipped": []}
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00"])
+    assert raised.value.code == EXIT_VALIDATION
+
+
+def test_a_logged_sync_writes_its_summary_and_errors_to_the_timestamped_log(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "sync.log"
+    monkeypatch.setattr(schedule, "LOG", log)
+    outcomes: list[Any] = [{"synced": 3}, FactsError("clickhouse is down")]
+
+    def fake(_args: object) -> Any:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(cli, "facts_command", fake)
+
+    assert main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"]) == 0
+    with pytest.raises(SystemExit):
+        main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"])
+
+    stamped = [line.split(" ", 1) for line in log.read_text().splitlines()]
+    assert [rest for _, rest in stamped] == ['{"synced":3}', "FactsError: clickhouse is down"]
+    assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp) for stamp, _ in stamped)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

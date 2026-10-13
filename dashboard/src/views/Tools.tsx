@@ -1,11 +1,15 @@
 import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Row } from "../contracts";
+import { type Row } from "../contracts";
 import {
   HarnessName,
   Kpi,
   Panel,
+  RateValue,
+  rateSeriesColumns,
   Section,
   SessionLink,
+  ViewLink,
+  useSelectedHarnesses,
   useView,
 } from "../components";
 import {
@@ -13,80 +17,84 @@ import {
   fmtPct,
   HARNESS_COLOR,
   HARNESS_LABEL,
+  maybe,
   num,
-  pivotDaily,
-  ratio,
-  sumRows,
+  orDash,
 } from "../format";
 
+/** The server's All row: the rollup row, harness = ''. */
+const allRow = (rows: Row[] | undefined): Row =>
+  (rows ?? []).find((row) => row.harness === "") ?? {};
+
+/** Long daily rows to one row per day, a column per harness; values are copied. */
+function reshapeDaily(rows: Row[], valueKey: string, nKey?: string): Row[] {
+  const days = new Map<string, Row>();
+  for (const row of rows) {
+    const day = String(row.day);
+    const out = days.get(day) ?? { day };
+    const harness = String(row.harness);
+    out[harness] = maybe(row[valueKey]);
+    if (nKey) out[`${harness}_n`] = num(row[nKey]);
+    days.set(day, out);
+  }
+  return [...days.values()].sort((a, b) =>
+    String(a.day).localeCompare(String(b.day)),
+  );
+}
+
 export default function Tools({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
-  const kpi = sumRows(data.kpi ?? [], [
-    "calls",
-    "explicit",
-    "failed",
-    "unknown",
-    "tasks",
-    "failed_tasks",
-    "unattributed",
-  ]);
-  const repeats = sumRows(data.repeat_summary ?? [], [
-    "repeat_tasks",
-    "tasks",
-    "repeated_attempts",
-  ]);
+  const selected = useSelectedHarnesses();
+  const { minRateN } = useView();
+  const kpi = allRow(data.kpi);
+  const repeats = allRow(data.repeat_summary);
   const daily = data.daily ?? [];
-  const series = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
+  const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const rateDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["failed", "explicit"],
-    (sums) => ratio(sums.failed!, sums.explicit!),
-  );
-  const callsDaily = pivotDaily(
-    daily,
-    (row) => String(row.harness),
-    ["calls"],
-    (sums) => sums.calls!,
-  );
+  const rateDaily = reshapeDaily(daily, "failure_rate", "explicit");
+  const callsDaily = reshapeDaily(daily, "calls");
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Tool calls"
-          value={fmtCount(kpi.calls!)}
-          detail={`${fmtCount(kpi.unknown!)} without an explicit outcome`}
+          source="kpi"
+          value={fmtCount(num(kpi.calls))}
+          detail={`${fmtCount(num(kpi.unknown))} without an explicit outcome`}
           signals={["tools.calls"]}
         />
         <Kpi
           title="Tool failure rate"
-          value={fmtPct(ratio(kpi.failed!, kpi.explicit!))}
-          detail={`${fmtCount(kpi.failed!)} failed of ${fmtCount(kpi.explicit!)} with an outcome`}
+          source="kpi"
+          value={fmtPct(maybe(kpi.failure_rate))}
+          detail={`${fmtCount(num(kpi.failed))} failed of ${fmtCount(num(kpi.explicit))} with an outcome`}
+          n={num(kpi.explicit)}
           signals={["tools.failure_rate"]}
         />
         <Kpi
           title="Tasks affected by failures"
-          value={fmtPct(ratio(kpi.failed_tasks!, kpi.tasks!))}
-          detail={`${fmtCount(kpi.failed_tasks!)} of ${fmtCount(kpi.tasks!)} tool-using tasks`}
+          source="kpi"
+          value={fmtPct(maybe(kpi.tasks_affected_rate))}
+          detail={`${fmtCount(num(kpi.failed_tasks))} of ${fmtCount(num(kpi.tasks))} tasks with an attributed tool call`}
+          n={num(kpi.tasks)}
           signals={["tools.tasks_affected"]}
         />
         <Kpi
           title="Tasks with repeated attempts"
-          value={fmtPct(ratio(repeats.repeat_tasks!, repeats.tasks!))}
-          detail={`${fmtCount(repeats.repeat_tasks!)} tasks · ${fmtCount(repeats.repeated_attempts!)} identical calls`}
+          source="repeat_summary"
+          value={fmtPct(maybe(repeats.repeat_rate))}
+          detail={`${fmtCount(num(repeats.repeat_tasks))} of ${fmtCount(num(repeats.tasks))} tasks with comparable calls (not waiting or polling) · ${fmtCount(num(repeats.repeated_attempts))} identical calls`}
+          n={num(repeats.tasks)}
           signals={["tools.repeats"]}
         />
       </Section>
       <Section title="Daily trend">
         <Panel
           title="Daily tool failure rate"
-          subtitle="Failed / calls with an explicit outcome, per harness"
+          source="daily"
+          subtitle="Failed / calls with an explicit outcome, per harness; a hollow marker has fewer outcomes than the minimum sample, and its n is in the readout"
           signals={["tools.failure_rate"]}
           span={7}
         >
@@ -94,22 +102,20 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             rows={rateDaily}
             series={series}
             kind="line"
+            markers={{ minN: minRateN }}
             format={(value) => fmtPct(value, 0)}
           />
           <TableView
             columns={[
               { key: "day", label: "Day" },
-              ...series.map((entry) => ({
-                key: entry.key,
-                label: `${entry.label} %`,
-                numeric: true,
-              })),
+              ...rateSeriesColumns(series),
             ]}
             rows={rateDaily}
           />
         </Panel>
         <Panel
           title="Daily tool calls"
+          source="daily"
           subtitle="Stacked by harness"
           signals={["tools.calls"]}
           span={5}
@@ -136,6 +142,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
       <Section title="Which tools and failures repeat?">
         <Panel
           title="Failures by tool"
+          source="by_tool"
           subtitle="Most failures first; failed tasks count distinct tasks"
           signals={["tools.failure_rate", "tools.tasks_affected"]}
         >
@@ -153,8 +160,12 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 key: "rate",
                 label: "Rate",
                 numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.failed), num(row.explicit))),
+                render: (row) => (
+                  <RateValue
+                    pct={maybe(row.failure_rate)}
+                    n={num(row.explicit)}
+                  />
+                ),
               },
               { key: "failed_tasks", label: "Failed tasks", numeric: true },
             ]}
@@ -163,7 +174,8 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         </Panel>
         <Panel
           title="Failure signatures"
-          subtitle="Normalized first error line (digits → N, home → ~)"
+          source="signatures"
+          subtitle="Normalized error line, first 80 characters shown (digits → N, home → ~); grouped by a hash of the full line"
           signals={["tools.failure_signature"]}
         >
           <DataTable
@@ -190,13 +202,17 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
             ]}
             rows={data.signatures ?? []}
           />
+          <ViewLink view="friction">Open Friction</ViewLink>
+          <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
       </Section>
-      <Section title="Repeats and loops">
+      <Section title="Repeated calls">
         <Panel
-          title="Repeated attempts"
-          subtitle="Same tool and identical arguments ≥ 2 times in one task"
-          signals={["tools.repeats"]}
+          title="Repeated calls"
+          source="repeated_calls"
+          subtitle="Same tool and identical arguments ≥ 2 times in one task; longest run counts consecutive repeats. Failed calls first; the session link is one of the task's sessions"
+          signals={["tools.repeats", "tools.loops"]}
+          span={12}
         >
           <DataTable
             columns={[
@@ -206,50 +222,28 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => <HarnessName value={row.harness} />,
               },
               {
-                key: "session_id",
+                key: "project",
+                label: "Project",
+                render: (row) => orDash(row.project),
+              },
+              {
+                key: "example_session",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row.harness}
+                    session={row.example_session}
+                  />
                 ),
               },
               { key: "tool", label: "Tool" },
               {
                 key: "command",
                 label: "Command",
-                render: (row) => String(row.command) || "—",
+                render: (row) => orDash(row.command),
               },
               { key: "attempts", label: "Attempts", numeric: true },
-              { key: "failed", label: "Failed", numeric: true },
-            ]}
-            rows={data.repeats ?? []}
-          />
-        </Panel>
-        <Panel
-          title="Tool loops"
-          subtitle="≥ 3 consecutive identical calls in one task"
-          signals={["tools.loops"]}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              {
-                key: "session_id",
-                label: "Session",
-                render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
-                ),
-              },
-              { key: "tool", label: "Tool" },
-              {
-                key: "command",
-                label: "Command",
-                render: (row) => String(row.command) || "—",
-              },
-              { key: "length", label: "Run", numeric: true },
+              { key: "longest_run", label: "Longest run", numeric: true },
               { key: "failed", label: "Failed", numeric: true },
               {
                 key: "started",
@@ -257,9 +251,10 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => String(row.started).slice(0, 16),
               },
             ]}
-            rows={data.loops ?? []}
-            empty="No runs of three or more identical consecutive calls."
+            rows={data.repeated_calls ?? []}
           />
+          <ViewLink view="friction">Open Friction</ViewLink>
+          <ViewLink view="recurrence">Open Recurring failures</ViewLink>
         </Panel>
       </Section>
     </>

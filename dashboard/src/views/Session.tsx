@@ -1,23 +1,34 @@
 import { DataTable } from "../charts";
 import type { SessionResponse } from "../contracts";
-import { HarnessName, Section } from "../components";
+import { HarnessName, Section, ViewLink } from "../components";
 import { fmtCount, fmtSeconds, maybe, num } from "../format";
 
 const flag = (value: unknown) =>
   value === null || value === undefined ? "—" : num(value) === 1 ? "yes" : "no";
 
+/** Head counts come from the uncapped server count query. */
+const headCounts = (data: SessionResponse["data"]) => {
+  const head = data.head_counts?.[0];
+  return {
+    taskTotal: num(head?.tasks),
+    callTotal: num(head?.calls),
+    signalTotal: num(head?.signals),
+    failed: num(head?.failed),
+  };
+};
+
 export default function Session({ response }: { response: SessionResponse }) {
   const { data } = response;
   const tasks = data.tasks ?? [];
   const calls = data.calls ?? [];
-  const failed = calls.filter((row) => row.outcome === "failed").length;
+  const { taskTotal, callTotal, signalTotal, failed } = headCounts(data);
   return (
     <>
       <div className="session-head">
         <HarnessName value={response.harness} />
         <code>{response.session}</code>
         <span>
-          {tasks.length} tasks · {calls.length} tool calls · {failed} failed
+          {taskTotal} tasks · {callTotal} tool calls · {failed} failed
         </span>
       </div>
       <Section title="Tasks">
@@ -32,6 +43,11 @@ export default function Session({ response }: { response: SessionResponse }) {
                 },
                 { key: "model", label: "Model" },
                 { key: "effort", label: "Effort" },
+                {
+                  key: "task_type",
+                  label: "Task type",
+                  render: (row) => String(row.task_type ?? "") || "—",
+                },
                 {
                   key: "duration_seconds",
                   label: "Duration",
@@ -69,6 +85,14 @@ export default function Session({ response }: { response: SessionResponse }) {
                   key: "clean_completion",
                   label: "Clean",
                   render: (row) => flag(row.clean_completion),
+                },
+                {
+                  key: "corrected_next",
+                  label: "Corrected next",
+                  render: (row) =>
+                    num(row.corrected_next) === 1 && row.correction_kind
+                      ? `yes (${String(row.correction_kind).replaceAll("_", " ")})`
+                      : flag(row.corrected_next),
                 },
                 { key: "observed", label: "Friction observed" },
               ]}
@@ -112,6 +136,7 @@ export default function Session({ response }: { response: SessionResponse }) {
                 },
               ]}
               rows={data.usage ?? []}
+              empty="No model usage in this session."
             />
           </div>
         </article>
@@ -134,6 +159,7 @@ export default function Session({ response }: { response: SessionResponse }) {
                 },
               ]}
               rows={data.model_calls ?? []}
+              empty="No model calls in this session."
             />
           </div>
         </article>
@@ -153,9 +179,7 @@ export default function Session({ response }: { response: SessionResponse }) {
                 {
                   key: "command_head",
                   label: "Command",
-                  render: (row) =>
-                    `${String(row.command_head)} ${String(row.command_sub)}`.trim() ||
-                    "—",
+                  render: (row) => String(row.command),
                 },
                 { key: "exit_code", label: "Exit", numeric: true },
                 {
@@ -170,7 +194,10 @@ export default function Session({ response }: { response: SessionResponse }) {
                 },
               ]}
               rows={calls}
+              total={callTotal}
+              empty="No tool calls in this session."
             />
+            <ViewLink view="tools">Open Tool failures</ViewLink>
           </div>
         </article>
       </Section>
@@ -190,6 +217,7 @@ export default function Session({ response }: { response: SessionResponse }) {
                 { key: "tool", label: "Tool" },
               ]}
               rows={data.signals ?? []}
+              total={signalTotal}
               empty="No interrupts, steers, approvals, or sandbox outcomes in this session."
             />
           </div>

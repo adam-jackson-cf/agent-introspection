@@ -1,16 +1,16 @@
-import { HARNESSES, type Harness, type Row } from "./contracts";
+import { HARNESSES, type Harness } from "./contracts";
+import { EFFORT_TOKENS, HARNESS_TOKENS, PART_TOKENS } from "./tokens";
 
 /**
- * Harness identity colors: the dark-mode categorical slots 1–5 of the dataviz
- * reference palette, validated on the panel surface #13161c (all checks pass).
- * Color follows the harness everywhere; it never follows rank.
+ * Harness identity colors: categorical `cat-1`…`cat-5` in docs/ux/DESIGN.md, read from
+ * the token mirror. Color follows the harness everywhere; it never follows rank.
  */
 export const HARNESS_COLOR: Record<Harness, string> = {
-  "oh-my-pi": "#3987e5",
-  "codex-app-server": "#d95926",
-  codex_cli_rs: "#199e70",
-  codex_exec: "#c98500",
-  "claude-code": "#d55181",
+  "oh-my-pi": HARNESS_TOKENS[0],
+  "codex-app-server": HARNESS_TOKENS[1],
+  codex_cli_rs: HARNESS_TOKENS[2],
+  codex_exec: HARNESS_TOKENS[3],
+  "claude-code": HARNESS_TOKENS[4],
 };
 export const HARNESS_LABEL: Record<Harness, string> = {
   "oh-my-pi": "omp",
@@ -19,13 +19,16 @@ export const HARNESS_LABEL: Record<Harness, string> = {
   codex_exec: "Codex exec",
   "claude-code": "Claude Code",
 };
-/** Categorical slots for non-harness series, in fixed order. */
-export const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"];
+/**
+ * Categorical slots for non-harness series, in fixed order: `cat-6`…`cat-8`
+ * (PART_TOKENS), so a series never shares a colour with a harness.
+ */
+export const SERIES = [...PART_TOKENS];
 
 /**
- * Effort is ordinal: one blue ramp low → xhigh (validated as an ordinal ramp on
- * #13161c). The data holds low, medium, high, xhigh, unset, and mixed; unset
- * (provider default) and mixed sit apart from the ramp.
+ * Effort is ordinal: one blue ramp low → xhigh (`seq-effort-*` in DESIGN.md).
+ * The data holds low, medium, high, xhigh, unset, and mixed; unset (provider
+ * default) and mixed sit apart from the ramp.
  */
 export const EFFORT_ORDER = [
   "low",
@@ -35,17 +38,28 @@ export const EFFORT_ORDER = [
   "mixed",
   "unset",
 ];
-export const EFFORT_COLOR: Record<string, string> = {
-  low: "#184f95",
-  medium: "#2a78d6",
-  high: "#6da7ec",
-  xhigh: "#b7d3f6",
-  mixed: "#9085e9",
-  unset: "#6b7280",
-};
+export const EFFORT_COLOR: Record<string, string> = { ...EFFORT_TOKENS };
 export const effortRank = (effort: string) => {
   const index = EFFORT_ORDER.indexOf(effort);
   return index === -1 ? EFFORT_ORDER.length : index;
+};
+
+/** Verification kinds in display order, as stored in `tool_calls.verification_kinds`. */
+export const VERIFICATION_KINDS = [
+  "unit_test",
+  "integration_e2e",
+  "smoke",
+  "lint_format",
+  "typecheck",
+  "ci_remote",
+] as const;
+export const VERIFICATION_LABEL: Record<string, string> = {
+  unit_test: "Unit tests",
+  integration_e2e: "Integration and end-to-end",
+  smoke: "Smoke tests",
+  lint_format: "Lint and format",
+  typecheck: "Type check",
+  ci_remote: "Remote CI",
 };
 
 export const isHarness = (value: unknown): value is Harness =>
@@ -82,63 +96,11 @@ export const fmtSeconds = (value: number | null) => {
   return `${value.toFixed(value >= 10 ? 0 : 1)} s`;
 };
 
-/** Token-weighted ratio: aggregate before division; no denominator gives null. */
-export const ratio = (numerator: number, denominator: number) =>
-  denominator > 0 ? (100 * numerator) / denominator : null;
-
-/** Sums numeric fields across per-harness rows: All is the union of each. */
-export function sumRows(rows: Row[], keys: string[]): Record<string, number> {
-  const totals: Record<string, number> = Object.fromEntries(
-    keys.map((key) => [key, 0]),
-  );
-  for (const row of rows)
-    for (const key of keys) totals[key] = totals[key]! + num(row[key]);
-  return totals;
-}
-
-/** Groups rows by a key and sums numeric fields within each group. */
-export function groupSum(
-  rows: Row[],
-  by: string,
-  keys: string[],
-): Map<string, Record<string, number>> {
-  const groups = new Map<string, Row[]>();
-  for (const row of rows) {
-    const key = String(row[by]);
-    groups.set(key, [...(groups.get(key) ?? []), row]);
-  }
-  return new Map(
-    [...groups].map(([key, members]) => [key, sumRows(members, keys)]),
-  );
-}
+/** A text cell, "—" when the value is empty. */
+export const orDash = (value: unknown): string => String(value ?? "") || "—";
 
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";
 
-/**
- * Pivots long daily rows into one row per day with a column per series. The
- * value function receives the summed numeric fields of that day and series.
- */
-export function pivotDaily(
-  rows: Row[],
-  seriesOf: (row: Row) => string,
-  fields: string[],
-  value: (sums: Record<string, number>) => number | null,
-): Row[] {
-  const days = new Map<string, Map<string, Row[]>>();
-  for (const row of rows) {
-    const day = String(row.day);
-    const bySeries = days.get(day) ?? new Map<string, Row[]>();
-    const series = seriesOf(row);
-    bySeries.set(series, [...(bySeries.get(series) ?? []), row]);
-    days.set(day, bySeries);
-  }
-  return [...days.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, bySeries]) => {
-      const out: Row = { day };
-      for (const [series, members] of bySeries)
-        out[series] = value(sumRows(members, fields));
-      return out;
-    });
-}
+/** Registry prose without its inline-code backticks, for reading rather than copying. */
+export const plain = (text: string): string => text.replaceAll("`", "");

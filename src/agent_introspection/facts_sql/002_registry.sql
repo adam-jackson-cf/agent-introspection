@@ -57,3 +57,28 @@ CREATE OR REPLACE TABLE introspection.signal_strays
 )
 ENGINE = MergeTree
 ORDER BY stray;
+
+-- Signals left off the dashboard because no harness produces them.
+CREATE OR REPLACE TABLE introspection.signal_exclusions
+(
+    signal String,
+    view LowCardinality(String),
+    title String,
+    missing String,
+    reason String
+)
+ENGINE = MergeTree
+ORDER BY signal;
+
+-- One row per registry harness: whether this machine uses it (config [harnesses]
+-- enabled). Harness parity, the dashboard's selector, and the findings detectors
+-- cover the enabled harnesses only; a signal some enabled harness does not emit is
+-- hidden on this machine.
+CREATE OR REPLACE TABLE introspection.harnesses
+(
+    harness LowCardinality(String),
+    label String,
+    enabled UInt8
+)
+ENGINE = MergeTree
+ORDER BY harness;

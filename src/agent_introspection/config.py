@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
+from urllib.parse import urlsplit
 
 DEFAULT_DATABASE_PATH: Final[Path] = Path(
     "~/.local/share/agent-introspection/introspection.sqlite3"
@@ -28,10 +31,32 @@ class DatabaseConfig:
 
 @dataclass(frozen=True, slots=True)
 class SigNozConfig:
-    """The SigNoz ClickHouse container that holds the facts store."""
+    """How to reach the SigNoz ClickHouse that holds the facts store.
+
+    Agent Introspection runs only against a SigNoz installed on this machine. The
+    docker mode (the default) runs ``clickhouse-client`` inside its ClickHouse
+    container, through ``docker_context`` when set, else the current Docker context.
+    The HTTP mode, selected by ``clickhouse_url``, talks to its ClickHouse over the HTTP
+    interface at a local address (loopback, localhost, or a local container name such
+    as OrbStack's *.orb.local). A password is read from the environment variable named
+    by ``clickhouse_password_env``, or printed by ``clickhouse_password_command`` (an
+    argv list such as a Keychain lookup, which also works for the launchd job), and is
+    never stored here. ``otlp_endpoint`` records the collector producers export to, for
+    docs and checks.
+    """
 
     clickhouse_container: str = "signoz-clickhouse"
-    docker_context: str = "orbstack"
+    docker_context: str | None = None
+    clickhouse_url: str | None = None
+    clickhouse_user: str = "default"
+    clickhouse_password_env: str | None = None
+    clickhouse_password_command: tuple[str, ...] | None = None
+    otlp_endpoint: str | None = None
+
+    @property
+    def mode(self) -> Literal["docker", "http"]:
+        """``http`` when a ClickHouse URL is configured, else ``docker``."""
+        return "http" if self.clickhouse_url is not None else "docker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,24 +65,43 @@ class AppConfig:
 
     database: DatabaseConfig = DatabaseConfig()
     signoz: SigNozConfig = SigNozConfig()
+    dashboard_clickhouse_url: str | None = None
+    # Registry harness keys this machine uses (`codex` names the three Codex surfaces);
+    # None means every registry harness. `facts install` validates the keys.
+    harnesses_enabled: tuple[str, ...] | None = None
+    # Extra session-store roots per store name (`[sessions.roots]`), for example an
+    # Orca per-account Codex home; `~`, `$VAR`, and globs expand at scan time.
+    session_roots: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # OTLP/HTTP logs URL every record is sent to (`[hooks] otlp_logs_endpoint`); any
+    # reachable host. None falls back to the OTEL_* environment, else spool only.
+    hooks_otlp_logs_endpoint: str | None = None
 
 
-_ROOT_KEYS = frozenset({"database", "signoz"})
+_ROOT_KEYS = frozenset({"database", "signoz", "dashboard", "harnesses", "sessions", "hooks"})
+_HOOKS_KEYS = frozenset({"otlp_logs_endpoint"})
+_SESSIONS_KEYS = frozenset({"roots"})
+_HARNESSES_KEYS = frozenset({"enabled"})
+_DASHBOARD_KEYS = frozenset({"clickhouse_url"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
-_SIGNOZ_KEYS = frozenset({"clickhouse_container", "docker_context"})
+_DOCKER_KEYS = frozenset({"clickhouse_container", "docker_context"})
+_HTTP_KEYS = frozenset({
+    "clickhouse_url",
+    "clickhouse_user",
+    "clickhouse_password_env",
+    "clickhouse_password_command",
+})
+_SIGNOZ_KEYS = _DOCKER_KEYS | _HTTP_KEYS | {"otlp_endpoint"}
 # Keys the retired scan pipeline read. They are still rejected, so stale settings
 # never look active, but the error names them as safe to delete.
 _RETIRED_KEYS = {
     "configuration": frozenset({"scheduler", "lifecycle", "legacy_project_attribution"}),
-    "signoz": frozenset(
-        {
-            "health_url",
-            "otlp_http_endpoint",
-            "compose_directory",
-            "collector_container",
-            "docker_host",
-        }
-    ),
+    "signoz": frozenset({
+        "health_url",
+        "otlp_http_endpoint",
+        "compose_directory",
+        "collector_container",
+        "docker_host",
+    }),
 }
 
 
@@ -78,6 +122,122 @@ def _non_empty_string(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{field} must be a non-empty string")
     return value
+
+
+def _http_url(value: object, *, field: str) -> str:
+    url = _non_empty_string(value, field=field).rstrip("/")
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigurationError(f"{field} must be an http:// or https:// URL")
+    if parts.username is not None or parts.password is not None:
+        raise ConfigurationError(f"{field} must not embed credentials; use clickhouse_user")
+    if not is_local_host(parts.hostname):
+        raise ConfigurationError(
+            f"{field} must point at this machine (loopback, localhost, or a local "
+            "container name such as OrbStack's *.orb.local): "
+            "Agent Introspection runs only against a local SigNoz"
+        )
+    return url
+
+
+def _otlp_url(value: object, *, field: str) -> str:
+    """Validate an OTLP/HTTP logs URL: http(s), a host, no credentials; any host is allowed."""
+    url = _non_empty_string(value, field=field).strip()
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigurationError(f"{field} must be an http:// or https:// URL")
+    if parts.username is not None or parts.password is not None:
+        raise ConfigurationError(f"{field} must not embed credentials")
+    return url
+
+
+def is_local_host(host: str) -> bool:
+    """Return whether ``host`` names this machine.
+
+    Loopback addresses and ``localhost`` always do; ``*.orb.local`` is OrbStack's
+    container DNS, which resolves only on this Mac. Other container runtimes publish
+    ClickHouse on a loopback port instead.
+    """
+    host = host.lower().rstrip(".")
+    if host == "localhost" or host.endswith((".localhost", ".orb.local")):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _signoz(signoz: dict[str, Any]) -> SigNozConfig:
+    """Validate the [signoz] table: docker keys and HTTP keys are mutually exclusive."""
+    keys = set(signoz)
+    if keys & _DOCKER_KEYS and keys & _HTTP_KEYS:
+        raise ConfigurationError(
+            "signoz: configure exactly one connection mode, docker "
+            "(clickhouse_container, docker_context) or http (clickhouse_url, ...)"
+        )
+    if keys & _HTTP_KEYS and "clickhouse_url" not in keys:
+        raise ConfigurationError(
+            "signoz: clickhouse_user and clickhouse_password_env need clickhouse_url"
+        )
+    defaults = SigNozConfig()
+    text = {
+        key: _non_empty_string(signoz[key], field=f"signoz.{key}")
+        for key in ("clickhouse_container", "docker_context", "clickhouse_user")
+        if key in signoz
+    }
+    password_env = signoz.get("clickhouse_password_env")
+    if password_env is not None and (
+        not isinstance(password_env, str) or not password_env.isidentifier()
+    ):
+        raise ConfigurationError(
+            "signoz.clickhouse_password_env must name an environment variable, not hold a secret"
+        )
+    command = signoz.get("clickhouse_password_command")
+    if command is not None and (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(part, str) and part for part in command)
+    ):
+        raise ConfigurationError(
+            "signoz.clickhouse_password_command must be a non-empty list of arguments"
+        )
+    if command is not None and password_env is not None:
+        raise ConfigurationError(
+            "signoz: set clickhouse_password_env or clickhouse_password_command, not both"
+        )
+    return SigNozConfig(
+        clickhouse_container=text.get("clickhouse_container", defaults.clickhouse_container),
+        docker_context=text.get("docker_context"),
+        clickhouse_url=(
+            _http_url(signoz["clickhouse_url"], field="signoz.clickhouse_url")
+            if "clickhouse_url" in signoz
+            else None
+        ),
+        clickhouse_user=text.get("clickhouse_user", defaults.clickhouse_user),
+        clickhouse_password_env=password_env,
+        clickhouse_password_command=tuple(command) if command is not None else None,
+        otlp_endpoint=(
+            _http_url(signoz["otlp_endpoint"], field="signoz.otlp_endpoint")
+            if "otlp_endpoint" in signoz
+            else None
+        ),
+    )
+
+
+def _enabled_harnesses(harnesses: dict[str, Any]) -> tuple[str, ...] | None:
+    """Validate [harnesses] enabled: a non-empty list of distinct harness keys."""
+    if "enabled" not in harnesses:
+        return None
+    value = harnesses["enabled"]
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(key, str) and key.strip() for key in value)
+    ):
+        raise ConfigurationError("harnesses.enabled must be a non-empty list of harness keys")
+    if len(set(value)) != len(value):
+        raise ConfigurationError("harnesses.enabled lists a harness more than once")
+    return tuple(value)
 
 
 def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
@@ -103,8 +263,16 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     _reject_unknown(set(data), _ROOT_KEYS, location="configuration")
     database = _table(data, "database")
     signoz = _table(data, "signoz")
+    dashboard = _table(data, "dashboard")
+    harnesses = _table(data, "harnesses")
+    sessions = _table(data, "sessions")
+    _reject_unknown(set(sessions), _SESSIONS_KEYS, location="sessions")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
+    _reject_unknown(set(dashboard), _DASHBOARD_KEYS, location="dashboard")
+    _reject_unknown(set(harnesses), _HARNESSES_KEYS, location="harnesses")
+    hooks = _table(data, "hooks")
+    _reject_unknown(set(hooks), _HOOKS_KEYS, location="hooks")
     defaults = AppConfig()
     return AppConfig(
         database=DatabaseConfig(
@@ -119,21 +287,65 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
                 else defaults.database.busy_timeout_ms
             ),
         ),
-        signoz=SigNozConfig(
-            clickhouse_container=(
-                _non_empty_string(
-                    signoz["clickhouse_container"], field="signoz.clickhouse_container"
-                )
-                if "clickhouse_container" in signoz
-                else defaults.signoz.clickhouse_container
-            ),
-            docker_context=(
-                _non_empty_string(signoz["docker_context"], field="signoz.docker_context")
-                if "docker_context" in signoz
-                else defaults.signoz.docker_context
-            ),
+        signoz=_signoz(signoz),
+        dashboard_clickhouse_url=(
+            _http_url(dashboard["clickhouse_url"], field="dashboard.clickhouse_url")
+            if "clickhouse_url" in dashboard
+            else None
+        ),
+        harnesses_enabled=_enabled_harnesses(harnesses),
+        session_roots=_session_roots(sessions),
+        hooks_otlp_logs_endpoint=(
+            _otlp_url(hooks["otlp_logs_endpoint"], field="hooks.otlp_logs_endpoint")
+            if "otlp_logs_endpoint" in hooks
+            else None
         ),
     )
+
+
+def _session_roots(sessions: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    roots = sessions.get("roots", {})
+    if not isinstance(roots, dict) or not all(
+        isinstance(name, str)
+        and isinstance(paths, list)
+        and all(isinstance(path, str) and path for path in paths)
+        for name, paths in roots.items()
+    ):
+        raise ConfigurationError("sessions.roots must map a store name to a list of paths")
+    return {name: tuple(paths) for name, paths in roots.items()}
+
+
+_OTLP_LOGS_ENDPOINT = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
+_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
+_OTLP_LOGS_PROTOCOL = "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"
+_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
+
+
+def resolve_otlp_logs_endpoint(
+    configured: str | None, environ: Mapping[str, str] | None = None
+) -> str | None:
+    """Return the OTLP/HTTP logs URL records are sent to, or None when none applies.
+
+    ``[hooks] otlp_logs_endpoint`` wins. Otherwise the standard OpenTelemetry variables
+    apply, but only when the exporter protocol is unset or ``http/*``: records are sent
+    as OTLP/HTTP JSON, so a gRPC endpoint (a port that speaks another protocol) is never
+    used. An invalid environment value is ignored, never an error.
+    """
+    if configured is not None:
+        return configured
+    env = os.environ if environ is None else environ
+    protocol = env.get(_OTLP_LOGS_PROTOCOL) or env.get(_OTLP_PROTOCOL) or ""
+    if protocol and not protocol.startswith("http/"):
+        return None
+    candidate = env.get(_OTLP_LOGS_ENDPOINT)
+    if not candidate and env.get(_OTLP_ENDPOINT):
+        candidate = f"{env[_OTLP_ENDPOINT].rstrip('/')}/v1/logs"
+    if not candidate:
+        return None
+    try:
+        return _otlp_url(candidate, field=_OTLP_LOGS_ENDPOINT)
+    except ConfigurationError:
+        return None
 
 
 def load_config(path: Path | None = None) -> AppConfig:

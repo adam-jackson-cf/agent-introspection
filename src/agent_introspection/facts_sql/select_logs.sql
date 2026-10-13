@@ -3,7 +3,8 @@
 -- Raw prompt, tool argument, and tool output text is never stored. For Codex
 -- tool results, normalized `x.*` fields are derived from that text instead:
 -- command head/subcommand, gate-bypass flag, home-redacted targets, argument
--- hash, exit code, and a digit-normalized failure signature. The command comes
+-- hash, exit code, a digit-normalized failure signature, and the verification kinds
+-- (see command_shape.sql). The command comes
 -- from the `cmd` argument, or for the JavaScript `exec` tool from the first
 -- nested `cmd` it passes to `exec_command`. Targets are patch file headers,
 -- `path` arguments, and path-like command arguments.
@@ -17,12 +18,7 @@ WITH
         t -> t != '' AND NOT match(t, '^[A-Za-z_][A-Za-z0-9_]*='),
         splitByRegexp('\\s+', cmd)
     ) AS cmd_tokens,
-    if(empty(cmd_tokens), '', arrayElement(splitByChar('/', cmd_tokens[1]), -1)) AS command_head,
-    if(
-        length(cmd_tokens) > 1 AND match(cmd_tokens[2], '^[a-z][a-z0-9:_.-]*$'),
-        cmd_tokens[2],
-        ''
-    ) AS command_sub,
+{command_shape}
     arrayFilter(
         t -> NOT startsWith(t, '-')
             AND match(t, '^[~.]{0,2}/?[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*/?$')
@@ -36,7 +32,8 @@ WITH
     arraySlice(
         arrayDistinct(
             arrayMap(
-                p -> substring(replaceRegexpOne(trimBoth(p), '^/Users/[^/]+', '~'), 1, 300),
+                -- Every /Users/<name>, /home/<name> and /root becomes ~: one argument can hold several paths.
+                p -> substring(replaceRegexpAll(trimBoth(p), '/(?:Users|home)/[^/\\s;:,]+|/root($|[/\\s;:,])', '~\\1'), 1, 300),
                 arrayConcat(
                     -- Patches arrive with real or JSON-escaped newlines; stop at either.
                     extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),
@@ -61,14 +58,31 @@ WITH
     ) AS output_lines,
     -- Only a diagnostic line may become a signature; with none, the signature is
     -- empty rather than an arbitrary output line that could carry raw content.
-    arrayFirst(
-        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+    -- The most specific diagnostic line wins: the final exception line of a stack
+    -- trace (`ModuleNotFoundError: ...`), else the first diagnostic line that is not
+    -- a generic header or frame (`Traceback ...`, `Script failed`, `at ...`), else
+    -- the first diagnostic line.
+    arrayLast(
+        l -> match(l, '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(\\s*\\[[A-Z_]+\\])?(:|$)'),
         output_lines
+    ) AS exception_line,
+    arrayFirst(
+        l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)')
+            AND NOT match(l, '^\\s*(Traceback \\(most recent call last\\):|triggerUncaughtException\\(|at |File "|node:internal|throw |raise |Script (failed|error:?)\\s*$|error: script "[^"]*" exited|={3,}|- Status: failed)'),
+        output_lines
+    ) AS specific_line,
+    multiIf(
+        exception_line != '', exception_line,
+        specific_line != '', specific_line,
+        arrayFirst(
+            l -> match(l, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+            output_lines
+        )
     ) AS error_line,
-    -- The signature is capped at 160 characters. When the keyword lies past the cap,
+    -- The signature is capped at 80 characters. When the keyword lies past the cap,
     -- keep the line from the keyword on, so the signature is always diagnostic.
     if(
-        match(substring(error_line, 1, 160), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
+        match(substringUTF8(error_line, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         error_line,
         extract(error_line, '(?i)((error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found).*)')
     ) AS error_window,
@@ -101,21 +115,63 @@ SELECT
                 map(
                     'x.command_head', command_head,
                     'x.command_sub', command_sub,
+                    'x.verification_kinds', toJSONString(verification_kinds),
                     'x.gate_bypass', toString(match(args, '(--no-verify|(^|[\\s"\\x27])HUSKY=0|(^|[\\s"\\x27])SKIP=|--no-gpg-sign)')),
-                    'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^/Users/[^/]+', '~'),
+                    'x.workdir', replaceRegexpOne(JSONExtractString(args, 'workdir'), '^(?:/(?:Users|home)/[^/]+|/root($|/))', '~\\1'),
                     'x.targets', toJSONString(targets),
                     'x.arguments_hash', toString(cityHash64(args)),
                     'x.failure_signature', if(
                         failed,
-                        substring(
+                        substringUTF8(
                             replaceRegexpAll(
-                                replaceRegexpAll(error_window, '/Users/[^/ ]+', '~'),
+                                replaceRegexpAll(
+                                    replaceRegexpAll(
+                                        replaceRegexpAll(
+                                            replaceRegexpAll(
+                                                replaceRegexpAll(
+                                                    replaceRegexpAll(
+                                                        replaceRegexpAll(
+                                                            replaceRegexpAll(
+                                                                replaceRegexpAll(
+                                                                    error_window,
+                                                                    '(?i)((?:token|password|passwd|secret|credential|auth|private[_-]?key|api[_-]?key|authorization)\\w*["'']?\\s*[=:]\\s*)(?:(?:Bearer|Basic)\\s+)?(?:"[^"]*"|''[^'']*''|[^\\s,;"'']+)',
+                                                                    '\\1[REDACTED]'
+                                                                ),
+                                                                '(?i)(\\bbearer\\s+)[A-Za-z0-9._~+/=-]{8,}',
+                                                                '\\1[REDACTED]'
+                                                            ),
+                                                            '(?i)(\\b(?:api key|access token|private key|secret|password|credential)\\s+)(?:[A-Za-z0-9._~+/=-]{16,}|[A-Za-z._~+/=-]*[0-9][A-Za-z0-9._~+/=-]*)',
+                                                            '\\1[REDACTED]'
+                                                        ),
+                                                        '\\b(?:sk-|ghp_|gho_|ghs_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]{4,}',
+                                                        '[REDACTED]'
+                                                    ),
+                                                    '\\b([A-Za-z0-9_-]{20,})\\b',
+                                                    '⟦\\1⟧'
+                                                ),
+                                                '⟦([A-Za-z_-]*)⟧',
+                                                '\\1'
+                                            ),
+                                            '⟦([0-9_-]*)⟧',
+                                            '\\1'
+                                        ),
+                                        '⟦[^⟧]*⟧',
+                                        '[REDACTED]'
+                                    ),
+                                    '/(?:Users|home)/[^/ ]+|/root($|[/ ])',
+                                    '~\\1'
+                                ),
                                 '[0-9a-f]{8,}|\\d+',
                                 'N'
-                            ),
+                            ) AS error_normalised,
                             1,
-                            160
+                            80
                         ),
+                        ''
+                    ),
+                    'x.failure_signature_hash', if(
+                        failed AND error_normalised != '',
+                        lower(substring(hex(SHA256(error_normalised)), 1, 16)),
                         ''
                     )
                 ),
@@ -130,7 +186,7 @@ SELECT
             if(
                 is_codex_tool_result,
                 mapUpdate(
-                    map('x.arguments_length', toFloat64(length(args)), 'x.output_length', toFloat64(length(out))),
+                    map('x.arguments_length', toFloat64(length(args)), 'x.output_length', toFloat64(length(out)), 'x.gate_run', toFloat64(gate_run), 'x.segments', toFloat64(segments)),
                     if(exit_code IS NULL, CAST(map(), 'Map(String, Float64)'), map('x.exit_code', toFloat64(toInt64(assumeNotNull(exit_code)))))
                 ),
                 CAST(map(), 'Map(String, Float64)')

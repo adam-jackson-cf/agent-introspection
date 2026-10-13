@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import itertools
+import json
 import re
 import subprocess
-from datetime import UTC, datetime
+import tomllib
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from agent_introspection import facts
-from agent_introspection.config import AppConfig
+from agent_introspection import facts, hooks
+from agent_introspection.config import AppConfig, ConfigurationError, SigNozConfig
 from agent_introspection.facts import FactsError
 
 
@@ -17,7 +20,10 @@ def test_every_loader_renders_its_window_into_an_append_refresh() -> None:
         ddl = facts.loader_ddl(loader)
 
         assert ddl.startswith(f"CREATE MATERIALIZED VIEW introspection.{loader.name}")
-        assert f"REFRESH {loader.schedule} APPEND TO introspection.{loader.target}" in ddl
+        assert (
+            f"REFRESH {loader.schedule}\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\n"
+            f"APPEND TO introspection.{loader.target}\n"
+        ) in ddl
         assert loader.window in ddl
         assert "{window}" not in ddl
 
@@ -29,6 +35,93 @@ def test_span_loaders_select_by_end_time_and_log_loader_by_ingest_time() -> None
     assert windows["load_logs"].startswith("observed_timestamp")
 
 
+def test_record_loaders_window_on_collector_time_and_filter_their_family() -> None:
+    loaders = {loader.name: loader for loader in facts.LOADERS}
+    families = {
+        "hook_events": ("agent_introspection.hook_event", "agent-introspection.hook-event/1"),
+        "session_projects": (
+            "agent_introspection.session_project",
+            "agent-introspection.session-project/1",
+        ),
+    }
+
+    for target, (event_name, schema) in families.items():
+        minute, sweep = loaders[f"load_{target}"], loaders[f"sweep_{target}"]
+        assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", target)
+        assert (sweep.schedule, sweep.target) == ("EVERY 1 HOUR", target)
+        assert "INTERVAL 30 MINUTE" in minute.window
+        assert "INTERVAL 3 DAY" in sweep.window
+        for loader in (minute, sweep):
+            assert loader.window.startswith("observed_timestamp")
+            assert "timestamp >" not in loader.window.replace("observed_timestamp", "")
+            ddl = facts.loader_ddl(loader)
+            assert "resources_string['service.name'] = 'agent-introspection'" in ddl
+            assert f"attributes_string['event.name'] = '{event_name}'" in ddl
+            assert f"JSONExtractString(body, 'schema') = '{schema}'" in ddl
+
+
+def test_no_select_reads_the_agent_introspection_service_without_a_family_filter() -> None:
+    for name in ("select_logs.sql", "select_spans.sql"):
+        assert "agent-introspection" not in facts._sql(name)
+    for name in ("select_hook_events.sql", "select_session_projects.sql"):
+        select = facts._sql(name)
+        assert select.count("'agent-introspection'") == 1
+        assert select.count("attributes_string['event.name']") == 1
+        assert select.count("JSONExtractString(body, 'schema')") == 1
+
+
+def test_hook_event_select_flattens_attrs_by_json_type() -> None:
+    # Numbers and flags go to attrs_number as Float64, text to attrs_string, and every
+    # other JSON value (lists, objects, null) to JSON text, as the hook record defines.
+    select = facts._sql("select_hook_events.sql")
+
+    assert "'Map(LowCardinality(String), String)'" in select
+    assert "'Map(LowCardinality(String), Float64)'" in select
+    assert select.count("IN ('Int64', 'UInt64', 'Double', 'Bool')") == 2
+    assert "NOT IN ('Int64', 'UInt64', 'Double', 'Bool')" in select
+    assert "toFloat64(JSONExtractBool(body, 'attrs', k))" in select
+    assert "JSONExtractRaw(body, 'attrs', k)" in select
+    assert "resources_string['host.name'] AS host" in select
+    # Added columns come last: backfills insert by position.
+    assert select.index("AS loaded_at") < select.index("AS host")
+
+
+def test_session_projects_select_keeps_the_newest_record_per_session() -> None:
+    select = facts._sql("select_session_projects.sql")
+
+    assert "GROUP BY session_id" in select
+    for column in ("project_id", "status", "remote", "host", "started_at"):
+        assert f"argMax(r_{column}, r_resolved_at) AS {column}" in select
+    assert select.index("AS loaded_at") < select.index("AS host") < select.index("AS resolved_at")
+    # ReplacingMergeTree(loaded_at) must keep the newest resolution across refreshes.
+    assert "toDateTime64(max(r_resolved_at), 3, 'UTC') AS loaded_at" in select
+    assert "now64" not in select
+
+
+def test_tables_add_the_cross_machine_columns_after_their_create() -> None:
+    statements = facts.split_statements(facts._sql("001_tables.sql"))
+
+    def index(fragment: str) -> int:
+        return next(i for i, s in enumerate(statements) if fragment in s)
+
+    for table, column in (
+        ("session_projects", "host"),
+        ("session_projects", "remote"),
+        ("session_projects", "resolved_at"),
+        ("hook_events", "host"),
+    ):
+        alter = index(f"ALTER TABLE introspection.{table} ADD COLUMN IF NOT EXISTS {column} ")
+        assert index(f"CREATE TABLE IF NOT EXISTS introspection.{table}\n") < alter
+
+
+def test_home_redaction_covers_users_home_and_root_everywhere() -> None:
+    for name in ("select_logs.sql", "select_spans.sql"):
+        select = facts._sql(name)
+        assert "/Users/[" not in select
+    assert facts._sql("select_logs.sql").count("/root(") == 3
+    assert facts._sql("select_spans.sql").count("/root(") == 2
+
+
 def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> None:
     statements = facts.install_statements()
 
@@ -36,7 +129,15 @@ def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> N
         return next(i for i, s in enumerate(statements) if fragment in s)
 
     assert "CREATE TABLE IF NOT EXISTS introspection.spans" in statements[0]
-    assert "CREATE OR REPLACE TABLE introspection.signal_support" in statements[1]
+    assert (
+        "CREATE OR REPLACE TABLE introspection.signal_support"
+        in statements[first("CREATE OR REPLACE TABLE introspection.signal_support")]
+    )
+    checks = [i for i, s in enumerate(statements) if s.endswith("FORMAT Null")]
+    assert checks
+    # The live registry is replaced only after every route predicate has validated.
+    assert max(checks) < first("CREATE OR REPLACE TABLE introspection.signal_support")
+    assert max(checks) < first("INSERT INTO introspection.harnesses")
     loaders = [s for s in statements if "APPEND TO" in s]
     assert len(loaders) == len(facts.LOADERS)
     views = first("CREATE OR REPLACE VIEW introspection.usage_events")
@@ -45,23 +146,154 @@ def test_install_orders_tables_loaders_views_snapshots_then_registry_rows() -> N
     assert first("DROP VIEW IF EXISTS introspection.refresh_") < first(
         "DROP VIEW IF EXISTS introspection.load_spans"
     )
-    assert statements[-1].startswith("INSERT INTO introspection.signal_strays")
+    # task_labels reads task_outcomes_snapshot, which a fresh database has only once created.
+    assert first("CREATE VIEW introspection.task_outcomes_snapshot") < first(
+        "CREATE OR REPLACE VIEW introspection.task_labels"
+    )
+    assert statements[-1].startswith("INSERT INTO introspection.signal_exclusions")
 
 
-def test_every_fact_view_has_a_snapshot_refreshed_after_both_minute_loaders() -> None:
+def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
+    statements = facts.verify_statements()
+    refreshers = [s for s in statements if "REFRESH EVERY" in s]
+
+    assert statements[0] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+    assert not [s for s in statements if re.search(r"\bintrospection[.;]", s)]
+    assert len(refreshers) == len(facts.LOADERS) + 2 * len(facts.SNAPSHOTS)
+    for refresher in refreshers:
+        assert "REFRESH EVERY 1 YEAR" in refresher
+        assert " EMPTY\nAS" in refresher
+        assert facts.REFRESH_RETRY_SETTINGS in refresher
+    # A rejected history offset must fail in the scratch database, so it survives.
+    history = [s for s in refreshers if "_history\nREFRESH" in s]
+    assert len(history) == len(facts.SNAPSHOTS)
+    assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in history)
+
+
+def test_install_stops_before_the_live_store_when_a_statement_is_rejected() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if "VIEW introspection_verify.task_labels" in sql:
+            raise facts.FactsError("Unknown table expression identifier")
+        return ""
+
+    with pytest.raises(facts.FactsError):
+        facts.install(run)
+
+    assert not [s for s in ran if re.search(r"\bintrospection[.;]", s)]
+    assert ran[-1] == f"DROP DATABASE IF EXISTS {facts.VERIFY_DATABASE} SYNC"
+
+
+def _refresher_settings(refresher: str) -> dict[str, str]:
+    """Return a snapshot refresher's own settings, without its table-filter map."""
+    clause = refresher.rsplit("SETTINGS ", 1)[1].split(", additional")[0]
+    return dict(part.split(" = ", 1) for part in clause.split(", "))
+
+
+def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_parts() -> None:
     for snapshot in facts.SNAPSHOTS:
-        create_table, refresher = facts.snapshot_statements(snapshot)[2:]
+        statements = facts.snapshot_statements(snapshot)
+        refreshers = [s for s in statements if s.startswith("CREATE MATERIALIZED VIEW")]
 
-        assert f"introspection.{snapshot.view}_snapshot" in create_table
-        assert "EMPTY AS SELECT" in create_table
-        assert "DEPENDS ON introspection.load_spans, introspection.load_logs" in refresher
-        assert "APPEND" not in refresher
-    views = facts._sql("003_views.sql")
+        assert any(
+            s.startswith(f"CREATE VIEW introspection.{snapshot.view}_snapshot") for s in statements
+        )
+        assert len(refreshers) == 2
+        for refresher in refreshers:
+            # Each part replaces its table whole, so it never holds duplicates.
+            assert "APPEND" not in refresher
+            assert (
+                "DEPENDS ON introspection.load_spans, introspection.load_logs,"
+                " introspection.load_hook_events, introspection.load_session_projects"
+            ) in refresher
+            # A refresher must spill before it reaches a memory ceiling below the server's.
+            settings = _refresher_settings(refresher)
+            ceiling = int(settings["max_memory_usage"])
+            assert ceiling <= 2 * 1024**3
+            assert int(settings["max_bytes_before_external_group_by"]) <= ceiling // 2
+            assert int(settings["max_bytes_before_external_sort"]) <= ceiling // 2
+            assert "grace_hash" in settings["join_algorithm"]
+    labels = next(s for s in facts.SNAPSHOTS if s.view == "task_labels")
+    waits = [s for s in facts.snapshot_statements(labels) if "DEPENDS ON" in s]
+    assert "introspection.refresh_task_outcomes_history" in waits[0]
+    assert "introspection.refresh_task_outcomes_recent" in waits[1]
+    views = "".join(facts._sql(name) for name in facts.VIEW_FILES)
     fact_views = {
         name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
     }
     # session_project is a small lookup joined at query time, not a fact view.
-    assert {s.view for s in facts.SNAPSHOTS} == fact_views - {"session_project"}
+    # Lookup views (latest project, hook tool details, hook harness) are not snapshotted.
+    helpers = {"session_project", "hook_rows", "hook_tool_calls"}
+    assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
+
+
+def test_history_refreshers_run_one_at_a_time_off_the_shared_ten_minute_marks() -> None:
+    offsets: list[int] = []
+    for snapshot in facts.SNAPSHOTS:
+        statements = facts.snapshot_statements(snapshot)
+        history, recent = [s for s in statements if s.startswith("CREATE MATERIALIZED VIEW")]
+        match = re.search(r"REFRESH EVERY 1 DAY OFFSET (\d+) MINUTE DEPENDS", history)
+        assert match
+        offsets.append(int(match.group(1)))
+        for refresher in (history, recent):
+            assert f"\nSETTINGS {facts.REFRESH_RETRY_SETTINGS}\nTO " in refresher
+    # Strictly increasing in SNAPSHOTS order (so a dependency, which must come earlier
+    # in that order, builds first) and never on a minute shared with other refreshers.
+    assert all(a < b for a, b in itertools.pairwise(offsets))
+    assert len(set(offsets)) == len(offsets)
+    assert all(offset % 10 == 5 for offset in offsets)
+
+
+@pytest.mark.parametrize("hour", [0, 0.4, 0.6, 1.5, 1.7, 12, 23.9])
+def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float) -> None:
+    """History views rebuild daily from 00:35 to 01:35 UTC and recent every 10 minutes;
+    whenever the dashboard reads, the boundary must lie inside both parts or rows go missing."""
+    day = timedelta(days=1)
+    now = datetime(2026, 10, 2, tzinfo=UTC) + timedelta(hours=hour)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Before the last history build, history may be yesterday's; recent may be 10 minutes old.
+    last_offset = max(
+        facts.HISTORY_FIRST_OFFSET_MINUTES + facts.HISTORY_OFFSET_STEP_MINUTES * index
+        for index in range(len(facts.SNAPSHOTS))
+    )
+    history_built = today + timedelta(minutes=last_offset)
+    if history_built > now:
+        history_built -= day
+    recent_built = now - timedelta(minutes=10)
+
+    def start_of(moment: datetime) -> datetime:
+        return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    boundary = today - facts.BOUNDARY_DAYS * day
+    history_end = start_of(history_built) - facts.HISTORY_END_DAYS * day
+    recent_start = start_of(recent_built) - facts.RECENT_START_DAYS * day
+
+    assert recent_start <= boundary <= history_end
+
+
+def test_compare_rebuilds_sources_first_and_fails_on_any_mismatch() -> None:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if "FORMAT JSONEachRow" not in sql:
+            return ""
+        held = "2" if "introspection.tool_calls_snapshot" in sql else "1"
+        return (
+            f'{{"side":"snapshot","rows":"5","hash":"{held}"}}\n'
+            '{"side":"view","rows":"5","hash":"1"}\n'
+        )
+
+    result = facts.compare(run)
+
+    assert result["passed"] is False
+    assert [v for v, r in result["snapshots"].items() if not r["match"]] == ["tool_calls"]
+    refreshed = [s for s in ran if s.startswith("SYSTEM REFRESH VIEW")]
+    assert refreshed.index("SYSTEM REFRESH VIEW introspection.refresh_task_outcomes_recent") < (
+        refreshed.index("SYSTEM REFRESH VIEW introspection.refresh_task_labels_recent")
+    )
 
 
 def _document(**support: dict[str, str]) -> dict[str, Any]:
@@ -86,6 +318,13 @@ def _document(**support: dict[str, str]) -> dict[str, Any]:
                 "match": "1",
                 "description": "d",
             },
+            {
+                "id": "claude.usage",
+                "harnesses": ["claude-code"],
+                "source": "hooks",
+                "match": "1",
+                "description": "d",
+            },
         ],
         "signal": [
             {
@@ -105,10 +344,10 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
     registry = facts.parse_registry(
         _document(
             codex={"route": "codex.usage", "alignment": "aligned"},
-            codex_exec={"alignment": "not emitted", "note": "headless"},
+            codex_exec={"alignment": "not applicable", "note": "headless"},
             **{
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "no field"},
+                "claude-code": {"route": "claude.usage", "alignment": "differs", "note": "n"},
             },
         )
     )
@@ -118,9 +357,9 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
     assert by_harness["codex_exec"] == {
         **by_harness["codex_exec"],
         "route": "",
-        "alignment": "not emitted",
+        "alignment": "not applicable",
     }
-    assert len(registry.routes) == 4
+    assert len(registry.routes) == 5
 
 
 @pytest.mark.parametrize(
@@ -131,7 +370,7 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "omp.chat", "alignment": "aligned"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"route": "claude.usage", "alignment": "aligned"},
             },
             "bad route",
         ),
@@ -139,7 +378,15 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             {
                 "codex": {"route": "codex.usage", "alignment": "differs"},
                 "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
-                "claude-code": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"route": "claude.usage", "alignment": "aligned"},
+            },
+            "needs a note",
+        ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"alignment": "not applicable"},
             },
             "needs a note",
         ),
@@ -151,6 +398,22 @@ def test_registry_expands_the_codex_group_and_lets_a_surface_override_it() -> No
             },
             "needs a note",
         ),
+        (
+            {
+                "codex": {"route": "codex.usage", "alignment": "aligned"},
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"route": "claude.usage", "alignment": "not emitted", "note": "n"},
+            },
+            "not emitted has no route",
+        ),
+        (
+            {
+                "codex": {"alignment": "not emitted", "note": "n"},
+                "oh-my-pi": {"alignment": "not emitted", "note": "n"},
+                "claude-code": {"alignment": "not applicable", "note": "n"},
+            },
+            "no harness emits it",
+        ),
     ],
 )
 def test_registry_rejects_incomplete_or_undisclosed_support(
@@ -160,21 +423,130 @@ def test_registry_rejects_incomplete_or_undisclosed_support(
         facts.parse_registry(_document(**support))
 
 
+def _visibility_registry() -> facts.Registry:
+    return facts.parse_registry(
+        _document(
+            codex={"alignment": "not emitted", "note": "no duration"},
+            codex_exec={"alignment": "not applicable", "note": "headless"},
+            **{
+                "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+                "claude-code": {"route": "claude.usage", "alignment": "differs", "note": "n"},
+            },
+        )
+    )
+
+
+def test_not_emitted_cells_hide_a_signal_only_where_that_harness_is_enabled() -> None:
+    registry = _visibility_registry()
+
+    every = facts.enabled_harnesses(registry, None)
+    assert facts.hidden_signals(registry, every) == [
+        {
+            "signal": "s",
+            "view": "cache",
+            "title": "t",
+            "missing": "codex-app-server, codex_cli_rs",
+            "note": "no duration",
+        }
+    ]
+    # Not applicable still reaches the signal, so Codex exec alone keeps it visible.
+    assert facts.hidden_signals(registry, ("claude-code", "oh-my-pi", "codex_exec")) == []
+    assert facts.hidden_signals(registry, ("claude-code", "codex_cli_rs"))[0]["missing"] == (
+        "codex_cli_rs"
+    )
+
+
+def test_enabled_harnesses_expand_codex_keep_registry_order_and_reject_unknown_keys() -> None:
+    registry = _visibility_registry()
+
+    assert facts.enabled_harnesses(registry, None) == tuple(registry.harnesses)
+    assert facts.enabled_harnesses(registry, ["claude-code", "codex"]) == (
+        "codex-app-server",
+        "codex_cli_rs",
+        "codex_exec",
+        "claude-code",
+    )
+    with pytest.raises(ConfigurationError, match="unknown harness gemini"):
+        facts.enabled_harnesses(registry, ["claude-code", "gemini"])
+
+
+def test_excluded_is_only_for_signals_no_harness_produces() -> None:
+    document = _document(
+        codex={"route": "codex.usage", "alignment": "aligned"},
+        **{
+            "oh-my-pi": {"route": "omp.chat", "alignment": "aligned"},
+            "claude-code": {"route": "claude.usage", "alignment": "aligned"},
+        },
+    )
+    document["excluded"] = [
+        {"id": "x", "view": "cache", "title": "x", "missing": ["oh-my-pi"], "reason": "r"}
+    ]
+
+    with pytest.raises(facts.RegistryError, match="no harness produces"):
+        facts.parse_registry(document)
+
+
+def test_repo_registry_lists_harness_specific_gaps_as_not_emitted_signals() -> None:
+    registry = facts.load_registry()
+    restored = {
+        "usage.cache_creation",
+        "guard.sandbox",
+        "provider.stream_disconnects",
+        "provider.throughput",
+        "provider.model_conformance",
+    }
+
+    assert [row["signal"] for row in registry.excluded] == ["intervene.rule_adherence"]
+    every = facts.enabled_harnesses(registry, None)
+    assert {row["signal"] for row in facts.hidden_signals(registry, every)} == restored
+    # A machine without Codex shows throughput; with only Codex it shows stream disconnects.
+    no_codex = facts.enabled_harnesses(registry, ["claude-code", "oh-my-pi"])
+    assert "provider.throughput" not in {
+        row["signal"] for row in facts.hidden_signals(registry, no_codex)
+    }
+    codex_only = facts.enabled_harnesses(registry, ["codex"])
+    assert "provider.stream_disconnects" not in {
+        row["signal"] for row in facts.hidden_signals(registry, codex_only)
+    }
+
+
+def test_install_loads_this_machines_harnesses_before_the_registry_rows() -> None:
+    statements = facts.install_statements(["claude-code", "codex"])
+
+    harnesses = next(s for s in statements if "INSERT INTO introspection.harnesses" in s)
+    assert '{"harness": "oh-my-pi", "label": "omp", "enabled": 0}' in harnesses
+    assert '{"harness": "codex_exec", "label": "Codex exec", "enabled": 1}' in harnesses
+    create = next(
+        i
+        for i, s in enumerate(statements)
+        if "CREATE OR REPLACE TABLE introspection.harnesses" in s
+    )
+    assert create < statements.index(harnesses)
+    with pytest.raises(ConfigurationError):
+        facts.install_statements(["claude"])
+    every = next(s for s in facts.install_statements() if "introspection.harnesses SELECT" in s)
+    assert '"enabled": 0' not in every
+
+
 def test_repo_registry_gives_every_harness_signal_a_record_for_every_harness() -> None:
     registry = facts.load_registry()
 
     harness_signals = [s["signal"] for s in registry.signals if s["scope"] == "harness"]
     assert len(registry.support) == 5 * len(harness_signals)
     views = {s["view"] for s in registry.signals}
-    assert views == set(facts.tomllib.loads(facts._sql(facts.REGISTRY_FILE))["views"])
+    assert views == set(tomllib.loads(facts._sql(facts.REGISTRY_FILE))["views"])
 
 
 def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
     registry = facts.Registry(
-        signals=[], routes=[], support=[], strays=[{"stray": "x", "match": "name = 'a\\b'"}]
+        signals=[],
+        routes=[],
+        support=[],
+        strays=[{"stray": "x", "match": "name = 'a\\b'"}],
+        excluded=[],
     )
 
-    (statement,) = facts.registry_statements(registry)
+    (statement,) = facts.registry_statements(registry, ())
 
     assert statement.startswith(
         "INSERT INTO introspection.signal_strays SELECT * FROM format(JSONEachRow, '"
@@ -182,21 +554,53 @@ def test_registry_rows_are_inserted_as_escaped_json_literals() -> None:
     assert "\\'a" in statement
 
 
-def test_backfill_splits_the_range_into_utc_days_ending_at_now() -> None:
+def test_backfill_windows_cover_the_range_exactly() -> None:
     start = datetime(2026, 9, 1, tzinfo=UTC)
     end = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
+
+    windows = facts.backfill_windows(start, end)
+
+    assert windows[0][0] == start
+    assert windows[-1][1] == end
+    assert all(a[1] == b[0] for a, b in itertools.pairwise(windows))
+    assert all(lo < hi and hi - lo <= facts.BACKFILL_WINDOW for lo, hi in windows)
+    assert len(windows) == 11  # 60h30m: ten full windows and one clipped
+
+
+def test_backfill_statements_are_memory_bounded_inserts() -> None:
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 1, 13, tzinfo=UTC)
 
     statements = facts.backfill_statements("logs", start, end)
 
     assert len(statements) == 3
-    assert all(s.startswith("INSERT INTO introspection.logs") for s in statements)
     assert "'2026-09-01 00:00:00'" in statements[0]
-    assert "'2026-09-03 12:30:00'" in statements[-1]
+    assert "'2026-09-01 13:00:00'" in statements[-1]
+    for statement in statements:
+        assert statement.startswith("INSERT INTO introspection.logs")
+        assert statement.count("SETTINGS") == 1
+        assert statement.rstrip().endswith(f"SETTINGS {facts.BACKFILL_SETTINGS}")
+        assert "max_memory_usage = 1610612736" in statement
+        assert "max_threads = 2" in statement
+
+
+def test_backfill_failure_names_the_target_and_window() -> None:
+    def run(sql: str) -> str:
+        if "INSERT INTO introspection.logs" in sql:
+            raise facts.FactsError("Code: 241")
+        return "0\n" if sql.startswith("SELECT count()") else ""
+
+    with pytest.raises(facts.FactsError, match=r"backfill of logs failed for window 2026-09-27"):
+        facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
 
 
 _ATTRIBUTE_FILTER = re.compile(
     r"mapFilter\(\s*\(\s*(?P<key>\w+)\s*,\s*\w+\s*\)\s*->\s*(?P<subject>\w+)\s+"
-    r"(?P<negated>NOT\s+)?IN\s*\((?P<keys>[^()]*)\)\s*,\s*attributes_string\s*\)"
+    r"(?P<negated>NOT\s+)?IN\s*\((?P<keys>[^()]*)\)"
+    r"(?:\s+AND\s+NOT\s+endsWith\(\s*(?P<suffix_subject>\w+)\s*,\s*'(?P<suffix>[^']+)'\s*\))?"
+    r"\s*,\s*(?P<source>attributes_string|mapApply\(.*?'\^(?P<old>[^']+)',\s*'(?P<new>[^']+)'\),"
+    r"\s*v\)\s*,\s*attributes_string\))\s*\)",
+    re.DOTALL,
 )
 
 
@@ -204,14 +608,26 @@ def _filter_attributes(select: str, attributes: dict[str, str]) -> dict[str, str
     """Apply the projection's ``mapFilter`` predicate to ``attributes``, as ClickHouse would.
 
     The predicate must be a lambda over the key testing membership in a tuple of string
-    literals; any other shape fails loudly rather than being approximated.
+    literals, optionally excluding a key suffix, over the attributes or a prefix-renaming
+    ``mapApply`` of them; any other shape fails loudly rather than being approximated.
     """
     (match,) = _ATTRIBUTE_FILTER.finditer(select)
     assert match["subject"] == match["key"], "predicate must test the attribute key"
+    assert match["suffix_subject"] in (None, match["key"]), "suffix must test the attribute key"
     listed = re.findall(r"'([^']*)'", match["keys"])
     assert re.fullmatch(r"[\s,]*", re.sub(r"'[^']*'", "", match["keys"])), "keys must be literals"
+    if match["old"] is not None:
+        old = match["old"].replace("\\\\", "\\").replace("\\.", ".")
+        attributes = {
+            (match["new"] + k[len(old) :] if k.startswith(old) else k): v
+            for k, v in attributes.items()
+        }
     keep_listed = match["negated"] is None
-    return {k: v for k, v in attributes.items() if (k in listed) == keep_listed}
+    return {
+        k: v
+        for k, v in attributes.items()
+        if (k in listed) == keep_listed and not (match["suffix"] and k.endswith(match["suffix"]))
+    }
 
 
 _HARMLESS = {"gen_ai.tool.name": "bash", "session.id": "s1", "model": "m", "event.name": "e"}
@@ -231,6 +647,7 @@ _HARMLESS = {"gen_ai.tool.name": "bash", "session.id": "s1", "model": "m", "even
                 "prompt",
                 "gen_ai.tool.description",
                 "pi.gen_ai.tool.call.intent",
+                "omp.gen_ai.tool.call.intent",
                 "user.email",
                 "user.id",
                 "organization.id",
@@ -258,10 +675,9 @@ def test_attribute_filter_evaluator_rejects_a_retaining_predicate() -> None:
 
 def test_span_projection_normalizes_status() -> None:
     select = facts.render_select("select_spans.sql", "1")
-    status = select.split("AS status_message")[0].rsplit("substring(", 1)[1]
-    assert "'~'" in status
-    assert "'N'" in status
-    assert "160" in status
+    normalising = select.split("AS status_normalised")[0]
+    assert "'~\\\\1'" in normalising
+    assert "'N'" in normalising
 
 
 def test_span_projection_keeps_only_the_codex_spans_the_facts_use() -> None:
@@ -284,12 +700,47 @@ def test_docker_runner_sends_sql_on_stdin_and_surfaces_the_last_error_line(
         return subprocess.CompletedProcess(argv, 1, "", "trace\nCode: 62. DB::Exception: bad")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(facts, "_require_local_docker_context", lambda context: None)
 
     with pytest.raises(FactsError, match="Code: 62"):
         facts.docker_runner(AppConfig())("SELECT 1")
 
     assert calls[0]["input"] == "SELECT 1"
     assert calls[0]["argv"][-2:] == ("clickhouse-client", "--multiquery")
+
+
+def _inspect(monkeypatch: pytest.MonkeyPatch, host: str) -> list[tuple[str, ...]]:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        payload = json.dumps([{"Endpoints": {"docker": {"Host": host}}}])
+        return subprocess.CompletedProcess(argv, 0, payload, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return calls
+
+
+@pytest.mark.parametrize("host", ["unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"])
+def test_docker_context_accepts_local_daemons(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+    calls = _inspect(monkeypatch, host)
+
+    facts._require_local_docker_context("desktop")
+
+    assert calls == [("docker", "context", "inspect", "desktop")]
+
+
+@pytest.mark.parametrize("host", ["ssh://me@build.example.com", "tcp://10.1.2.3:2376"])
+def test_docker_context_rejects_remote_daemons_before_any_statement(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    calls = _inspect(monkeypatch, host)
+    config = AppConfig(signoz=SigNozConfig(docker_context="remote"))
+
+    with pytest.raises(ConfigurationError, match="on this machine"):
+        facts.docker_runner(config)("SELECT 1")
+
+    assert calls == [("docker", "context", "inspect", "remote")]
 
 
 def test_backfill_reports_final_row_counts() -> None:
@@ -301,9 +752,14 @@ def test_backfill_reports_final_row_counts() -> None:
 
     result = facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
 
-    assert result["rows"] == {"spans": 7, "logs": 7}
+    assert result["rows"] == {"spans": 7, "logs": 7, "hook_events": 7, "session_projects": 7}
     assert result["start"] == "2026-09-27T00:00:00+00:00"
-    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4
+    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4 * 5
+    inserted = {sql.split("\n")[0] for sql in executed if sql.startswith("INSERT INTO")}
+    assert inserted == {
+        f"INSERT INTO introspection.{t}"
+        for t in ("spans", "logs", "hook_events", "session_projects")
+    }
 
 
 def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_arguments() -> None:
@@ -316,16 +772,7 @@ def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_a
     assert bypass.startswith("args,")
     targets = select.split("AS targets,")[0].rsplit("AS command_paths,", 1)[1]
     assert "command_paths" in targets
-    assert "'~'" in targets
-
-
-def test_snapshots_bound_span_and_log_reads_to_the_horizon() -> None:
-    for snapshot in facts.SNAPSHOTS:
-        refresher = facts.snapshot_statements(snapshot)[-1]
-
-        assert "additional_table_filters = {'introspection.spans': " in refresher
-        assert f"INTERVAL {facts.SNAPSHOT_DAYS + 1} DAY" in refresher
-        assert "'introspection.logs': " in refresher
+    assert "'~\\\\1'" in targets
 
 
 @pytest.mark.parametrize(
@@ -376,24 +823,200 @@ def test_span_sweep_keys_on_end_time_so_long_spans_are_loaded() -> None:
 
 
 @pytest.mark.parametrize(
-    ("select_file", "line", "window", "stored"),
+    ("select_file", "line", "window", "normalised"),
     [
-        ("select_spans.sql", "status_line", "status_window", "AS status_message"),
-        ("select_logs.sql", "error_line", "error_window", "'x.failure_signature'"),
+        ("select_spans.sql", "status_line", "status_window", "status_normalised"),
+        ("select_logs.sql", "error_line", "error_window", "error_normalised"),
     ],
 )
 def test_capped_text_starts_at_the_keyword_when_it_lies_past_the_cap(
-    select_file: str, line: str, window: str, stored: str
+    select_file: str, line: str, window: str, normalised: str
 ) -> None:
     select = facts.render_select(select_file, "1")
 
     chosen = select.split(f"AS {window}")[0].rsplit("if(", 1)[1]
-    assert f"match(substring({line}, 1, 160), '(?i)(error|fail" in chosen
+    assert f"match(substringUTF8({line}, 1, 80), '(?i)(error|fail" in chosen
     assert f"extract({line}, '(?i)((error|fail" in chosen
     assert ".*)')" in chosen
-    if stored.startswith("AS"):
-        capped = select.split(stored)[0].rsplit("substring(", 1)[1]
-    else:
-        capped = select.split(stored)[1].split("'x.")[0]
-    assert window in capped
-    assert f"({line}," not in capped
+    assert "160" not in select
+    assert f"{window}," in select.split(f"AS {window}")[1].split(f"AS {normalised}")[0]
+
+
+def test_span_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
+    select = facts.render_select("select_spans.sql", "1")
+
+    assert "'x.status_hash', lower(substring(hex(SHA256(status_normalised)), 1, 16))" in select
+    assert "status_normalised = ''" in select
+
+
+def test_log_projection_stores_a_hash_of_the_uncapped_normalized_line() -> None:
+    select = facts.render_select("select_logs.sql", "1")
+
+    signature = select.split("'x.failure_signature', if(")[1]
+    signature = signature.split("'x.failure_signature_hash'")[0]
+    assert re.search(r"AS error_normalised,\s+1,\s+80\s*\)", signature)
+    digest = select.split("'x.failure_signature_hash', if(")[1].split("\n                ),")[0]
+    assert "failed AND error_normalised != ''" in digest
+    assert "lower(substring(hex(SHA256(error_normalised)), 1, 16))" in digest
+
+
+def test_tool_calls_view_keeps_policy_blocked_calls_out_of_failures_and_signatures() -> None:
+    views = facts._sql("003_views.sql")
+    view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]
+
+    outcome = view.split("attrs_string['pi.gen_ai.tool.status'] = 'ok'")[1].split("'unknown'")[0]
+    assert outcome.index("= 'blocked', 'policy_blocked'") < outcome.index("has_error, 'failed'")
+    assert view.count("attrs_string['pi.gen_ai.tool.status'] != 'blocked'") == 2
+
+
+def test_tool_calls_view_unifies_old_and_new_signature_rows_for_every_source() -> None:
+    views = facts._sql("003_views.sql")
+    view = views.split("CREATE OR REPLACE VIEW introspection.tool_calls AS")[1].split("\n);")[0]
+
+    # Every source passes its stored text and hash through one shared derivation.
+    assert view.count("AS stored_signature") == 1
+    assert view.count("AS stored_hash") == 1
+    for stored in (
+        "attrs_string['x.failure_signature_hash']",
+        "attrs_string['x.status_hash']",
+        "hf.hf_signature_hash",
+    ):
+        assert stored in view
+    assert "substringUTF8(windowed_signature, 1, 80) AS failure_signature" in view
+    assert "length(stored_signature) < 160" in view
+    assert "* EXCEPT (stored_signature, stored_hash, windowed_signature)" in view
+
+
+def test_split_statements_ignores_semicolons_in_literals_identifiers_and_comments() -> None:
+    sql = (
+        "-- header; with a semicolon\n"
+        "CREATE TABLE t (a String) ENGINE = Memory;\n"
+        "SELECT 'a;b', 'it''s;', 'esc\\';', `x;y`, \"z;w\" /* c; */ FROM t;\n"
+        "-- trailing comment only;\n"
+    )
+
+    assert facts.split_statements(sql) == [
+        "-- header; with a semicolon\nCREATE TABLE t (a String) ENGINE = Memory",
+        "SELECT 'a;b', 'it''s;', 'esc\\';', `x;y`, \"z;w\" /* c; */ FROM t",
+    ]
+
+
+def test_split_statements_matches_the_statement_count_of_every_install_file() -> None:
+    for name in ("001_tables.sql", "002_registry.sql", *facts.VIEW_FILES):
+        text = facts._sql(name)
+        heads = re.findall(r"^(?:CREATE|DROP|INSERT|ALTER)\b", text, flags=re.MULTILINE)
+
+        assert len(facts.split_statements(text)) == len(heads)
+    for statement in facts.install_statements():
+        if not statement.startswith("--"):
+            assert facts.split_statements(statement) == [statement.strip()]
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def _http_config(password_env: str | None = "CH_PASSWORD") -> AppConfig:
+    from agent_introspection.config import parse_config
+
+    signoz: dict[str, str] = {"clickhouse_url": "http://localhost:8123", "clickhouse_user": "facts"}
+    if password_env is not None:
+        signoz["clickhouse_password_env"] = password_env
+    return parse_config({"signoz": signoz})
+
+
+def test_http_runner_sends_one_statement_per_request_with_basic_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import base64
+    import urllib.request
+
+    requests: list[Any] = []
+
+    def fake_urlopen(request: Any, timeout: float) -> _Response:
+        requests.append((request, timeout))
+        return _Response(b"1\n")
+
+    monkeypatch.setenv("CH_PASSWORD", "s3cret")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    assert facts.http_runner(_http_config())("SELECT 1;\nSELECT ';';") == "1\n1\n"
+    assert [request.data for request, _ in requests] == [b"SELECT 1", b"SELECT ';'"]
+    request, timeout = requests[0]
+    assert request.full_url == "http://localhost:8123/?wait_end_of_query=1"
+    expected = base64.b64encode(b"facts:s3cret").decode()
+    assert request.get_header("Authorization") == f"Basic {expected}"
+    assert timeout == pytest.approx(600.0)
+    assert facts.runner(_http_config()).__qualname__.startswith("http_runner")
+    assert facts.runner(AppConfig()).__qualname__.startswith("docker_runner")
+
+
+def test_http_runner_surfaces_the_exception_line_and_never_the_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import urllib.error
+    import urllib.request
+    from email.message import Message
+
+    from agent_introspection.config import ConfigurationError
+
+    body = io.BytesIO(b"Code: 497. DB::Exception: facts: Not enough privileges\ntrace")
+
+    def failing(request: Any, timeout: float) -> _Response:
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), body)
+
+    monkeypatch.setattr(urllib.request, "urlopen", failing)
+    monkeypatch.setenv("CH_PASSWORD", "s3cret")
+
+    with pytest.raises(FactsError, match="Code: 497") as raised:
+        facts.http_runner(_http_config())("SELECT 1")
+    assert "s3cret" not in str(raised.value)
+    assert body.closed
+
+    monkeypatch.delenv("CH_PASSWORD")
+    with pytest.raises(ConfigurationError, match="CH_PASSWORD") as missing:
+        facts.http_runner(_http_config())
+    assert "s3cret" not in str(missing.value)
+
+
+@pytest.mark.parametrize("template", ["select_logs.sql", "select_spans.sql"])
+def test_projection_redacts_credentials_before_normalizing_diagnostics(template: str) -> None:
+    select = facts.render_select(template, "1")
+
+    def sql_literal(text: str) -> str:
+        return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
+
+    # Every Python redaction, in order, appears verbatim in the SQL projection.
+    position = -1
+    for pattern, repl in hooks.REDACTIONS:
+        found = select.find(sql_literal(pattern), position + 1)
+        assert found > position, pattern
+        assert sql_literal(repl) in select[found:]
+        position = found
+    # Redaction wraps the window before home and digit normalization.
+    assert select.index("[REDACTED]") < select.index("'/(?:Users|home)/[^/ ]+|/root($|[/ ])',\n")
+
+
+def test_opencode_is_a_registered_producer_stray_and_not_a_harness() -> None:
+    registry = facts.load_registry()
+
+    assert "opencode" not in registry.harnesses
+    assert any(row["harness"] == "opencode" for row in registry.strays)
+    assert all(row["harness"] != "opencode" for row in registry.routes)
+    with pytest.raises(facts.RegistryError, match="unknown harness"):
+        facts._parse_strays(
+            [{"id": "x", "harness": "gemini", "source": "spans", "match": "1", "reason": "r"}],
+            {},
+            {},
+        )

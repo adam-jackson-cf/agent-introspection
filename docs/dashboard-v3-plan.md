@@ -32,13 +32,13 @@ production:
 
 ## Decisions
 
-| ID | Decision |
-| --- | --- |
-| D1 | Facts are materialized inside ClickHouse (database `introspection`), not in SQLite. |
-| D2 | Retire the SigNoz re-emission (outbox), read-back, and proof register. |
-| D3 | Revise the measures document to v3. Measures are per call where no logical request ID exists, and inferred values are allowed when labelled. |
-| D4 | Store only normalized forms of prompts, commands, and tool output. Raw text is never copied. |
-| D5 | Keep the React companion, rebuilt as question-led views. |
+| ID  | Decision                                                                                                                                     |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Facts are materialized inside ClickHouse (database `introspection`), not in SQLite.                                                          |
+| D2  | Retire the SigNoz re-emission (outbox), read-back, and proof register.                                                                       |
+| D3  | Revise the measures document to v3. Measures are per call where no logical request ID exists, and inferred values are allowed when labelled. |
+| D4  | Store only normalized forms of prompts, commands, and tool output. Raw text is never copied.                                                 |
+| D5  | Keep the React companion, rebuilt as question-led views.                                                                                     |
 
 ## Architecture
 
@@ -57,14 +57,14 @@ Producers: omp · Codex (app-server, CLI, exec) · Claude Code
                             └─> <view>_snapshot tables: last 91 days, rebuilt right after each minute load
                                   └─> Bun server: small aggregate queries over ClickHouse HTTP → React views
 signal_support.toml ─ facts install ─> introspection.signals · signal_routes · signal_support · signal_strays
-Harness session-context hooks ─> inbox JSON ─ facts sync-projects (launchd, every minute)
-  └─> introspection.session_projects ─> session_project (latest project per session, joined by session ID)
+Harness session stores (session_stores.toml) ─ facts sync, launchd every minute ─> introspection.session_projects
+  └─> session_project (attributed sessions' Git project, joined by session ID); activity hooks ─> hook-inbox ─ facts sync ─> introspection.hook_events
 SQLite workflow store (findings, proposals, review sessions): ~/.local/share/agent-introspection/introspection.sqlite3
 ```
 
 The source is [`facts.py`](../src/agent_introspection/facts.py) and
 [`facts_sql/`](../src/agent_introspection/facts_sql/). Operate it with
-`agent-introspection facts install | backfill --days N | status | sync-projects | schedule`.
+`agent-introspection facts install | backfill --days N | status | sessions | sync | schedule`.
 The human-readable catalog of every signal is [Dashboard Measure v3](dashboard-measure-v3.md).
 
 Serving (phase 2):
@@ -102,15 +102,15 @@ Window design:
 For Codex `codex.tool_result`, the loader derives the following fields and discards
 `arguments`, `output`, and `content`:
 
-| Field | Meaning |
-| --- | --- |
-| `x.command_head`, `x.command_sub` | First command token (env assignments skipped) and a lowercase subcommand, e.g. `git` `commit`. The command is the `cmd` argument, or for the JavaScript `exec` tool the first nested `cmd` it passes to `exec_command`. |
-| `x.gate_bypass` | `1` when the arguments contain `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign`. |
-| `x.targets` | Files from `apply_patch` headers, `path` arguments, and path-like command arguments (a slash or a known file extension; inferred), with the home directory shown as `~`; at most 20. |
-| `x.workdir` | Working directory, with the home directory shown as `~`. |
-| `x.exit_code` | Parsed from `Process exited with code N` / `Exit code: N`. Codex reports `success=true` for non-zero exits. |
-| `x.failure_signature` | For failed calls: the first error-like output line, with digits and hex runs replaced by `N`, capped at 160 characters. |
-| `x.arguments_hash`, `x.arguments_length`, `x.output_length` | For repeat detection and size. |
+| Field                                                       | Meaning                                                                                                                                                                                                                 |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `x.command_head`, `x.command_sub`                           | First command token (env assignments skipped) and a lowercase subcommand, e.g. `git` `commit`. The command is the `cmd` argument, or for the JavaScript `exec` tool the first nested `cmd` it passes to `exec_command`. |
+| `x.gate_bypass`                                             | `1` when the arguments contain `--no-verify`, `HUSKY=0`, `SKIP=`, or `--no-gpg-sign`.                                                                                                                                   |
+| `x.targets`                                                 | Files from `apply_patch` headers, `path` arguments, and path-like command arguments (a slash or a known file extension; inferred), with the home directory shown as `~`; at most 20.                                    |
+| `x.workdir`                                                 | Working directory, with the home directory shown as `~`.                                                                                                                                                                |
+| `x.exit_code`                                               | Parsed from `Process exited with code N` / `Exit code: N`. Codex reports `success=true` for non-zero exits.                                                                                                             |
+| `x.failure_signature`                                       | For failed calls: the first error-like output line, with digits and hex runs replaced by `N`, capped at 80 characters; `x.failure_signature_hash` holds a 16-hex SHA-256 of the uncapped normalised line.               |
+| `x.arguments_hash`, `x.arguments_length`, `x.output_length` | For repeat detection and size.                                                                                                                                                                                          |
 
 Prompt text (`prompt`, `user_prompt`) and identity keys (`user.email`, account,
 organization, and user IDs) are dropped from spans and logs; `prompt_length` is kept.
@@ -142,21 +142,21 @@ agent-observability's `audit.md` method:
 The inventory was taken on 2026-09-28 over 7 days. Legend: ✅ native field,
 ◐ partial or inferred (labelled), ✗ absent.
 
-| Capability | omp | Codex | Claude Code |
-| --- | --- | --- | --- |
-| Session identity | ✅ `gen_ai.conversation.id` | ✅ logs `conversation.id`; turns `thread.id` | ✅ `session.id` |
-| Tokens and cache | ✅ incl. reasoning and cache creation | ✅ incl. reasoning; cache writes always 0 | ✅ no reasoning |
-| Reasoning effort | ✅ | ✅ | ◐ `effort`, rarely set |
-| Model call latency | ✅ span duration, first chunk | ✅ `ttft_ms`, turn/sampling spans | ✅ `ttft_ms`, `duration_ms` |
-| Call errors | ✅ span status | ◐ `/responses` attempts only | ✅ HTTP `status_code`, `attempt` |
-| Logical request / retry identity | ✗ | ◐ `try_run_` vs `run_sampling_request` | ◐ `attempt` |
-| Tool outcome | ✅ ok/error/aborted | ✅ via `x.exit_code` + `success` | ✅ `success`, `error_type` |
-| Command shape | ◐ intent text | ✅ normalized `x.*` | ◐ `bash_argv0`, class |
-| Sandbox / approvals | ✗ | ✅ `tool_decision`, `sandbox_outcome` | ◐ `tool_decision` |
-| User interrupt / steer | ◐ aborted status | ✅ `turn/interrupt`, `turn/steer` | ✗ (prompts only) |
-| Task boundary | ✅ root `invoke_agent` | ✅ `session_task.turn` | ✅ `claude_code.interaction` with model calls |
-| Explicit task success | ✗ | ✗ | ✗ |
-| Project / cwd | ✗ | ◐ `cwd` on sampling spans | ✗ |
+| Capability                       | omp                                   | Codex                                        | Claude Code                                   |
+| -------------------------------- | ------------------------------------- | -------------------------------------------- | --------------------------------------------- |
+| Session identity                 | ✅ `gen_ai.conversation.id`           | ✅ logs `conversation.id`; turns `thread.id` | ✅ `session.id`                               |
+| Tokens and cache                 | ✅ incl. reasoning and cache creation | ✅ incl. reasoning; cache writes always 0    | ✅ no reasoning                               |
+| Reasoning effort                 | ✅                                    | ✅                                           | ◐ `effort`, rarely set                        |
+| Model call latency               | ✅ span duration, first chunk         | ✅ `ttft_ms`, turn/sampling spans            | ✅ `ttft_ms`, `duration_ms`                   |
+| Call errors                      | ✅ span status                        | ◐ `/responses` attempts only                 | ✅ HTTP `status_code`, `attempt`              |
+| Logical request / retry identity | ✗                                     | ◐ `try_run_` vs `run_sampling_request`       | ◐ `attempt`                                   |
+| Tool outcome                     | ✅ ok/error/aborted                   | ✅ via `x.exit_code` + `success`             | ✅ `success`, `error_type`                    |
+| Command shape                    | ◐ intent text                         | ✅ normalized `x.*`                          | ◐ `bash_argv0`, class                         |
+| Sandbox / approvals              | ✗                                     | ✅ `tool_decision`, `sandbox_outcome`        | ◐ `tool_decision`                             |
+| User interrupt / steer           | ◐ aborted status                      | ✅ `turn/interrupt`, `turn/steer`            | ✗ (prompts only)                              |
+| Task boundary                    | ✅ root `invoke_agent`                | ✅ `session_task.turn`                       | ✅ `claude_code.interaction` with model calls |
+| Explicit task success            | ✗                                     | ✗                                            | ✗                                             |
+| Project / cwd                    | ✗                                     | ◐ `cwd` on sampling spans                    | ✗                                             |
 
 Known boundaries:
 
@@ -184,7 +184,7 @@ Rules:
    - the route (exact source fields and boundary);
    - `aligned` or `differs`, with a one-line note of how it differs;
    - or `not emitted`.
-   A producer that doesn't emit a signal is shown as not emitted, never as zero.
+     A producer that doesn't emit a signal is shown as not emitted, never as zero.
 2. **Signal support registry.** The per-signal, per-producer records live in a
    repo-owned file. `facts install` loads it into `introspection.signal_support`
    (signal, harness, route, unit, alignment, note). Panels read it to render
@@ -205,12 +205,13 @@ Rules:
 5. **Coverage grid.** The Pipeline view compares the registry with the data for
    the selected window:
 
-   | Registry says | Data shows | Flag |
-   | --- | --- | --- |
-   | emitted | rows present | healthy |
-   | emitted | no rows | possible producer or loader break |
-   | not emitted | rows present | registry is stale, or the rows are mislabelled |
+   | Registry says | Data shows   | Flag                                           |
+   | ------------- | ------------ | ---------------------------------------------- |
+   | emitted       | rows present | healthy                                        |
+   | emitted       | no rows      | possible producer or loader break              |
+   | not emitted   | rows present | registry is stale, or the rows are mislabelled |
 
+   <!-- end of coverage grid table -->
    - Example of mislabelled rows: 58 Claude-style events tagged `oh-my-pi` on
      2026-09-13, which are not a live omp route.
    - The grid must distinguish a real route from stray rows, so the registry
@@ -238,30 +239,48 @@ trends → breakdowns by harness and model → exemplar tables → drill-down to
 session. Every panel has a harness selector (All or one harness) and an info
 note generated from the signal support registry.
 
-| # | View | Questions (v2 IDs) | Data |
-| --- | --- | --- | --- |
-| V1 | Pipeline | Is the loader fresh and complete? Freshness per harness, refresh status, rows, parity, and sanitization checks. Replaces P1–P12. | ✅ |
-| V2 | Cache efficiency | Token consumption, cache utilization, uncached input by harness/model/session (M2). | ✅ |
-| V3 | Reasoning effort | Does heavier effort earn its cost? | ✅ |
-| V4 | Tool failures | Failure rate, failure signatures, tasks affected, repeats and loops (M5, M7, M9). | ✅ |
-| V5 | Friction | Interrupts, steers, quick follow-ups, clean completion (M3, M4); recovery after failure (M6, inferred). | ◐ |
-| V6 | Guardrails | Sandbox denials, approvals, gate bypass, command churn (M8, M10, M11). | ◐ mainly Codex |
-| V7 | Provider | Latency/TTFT, call errors, streaming disconnects, token throughput, unknown outcomes, model conformance (R1–R8, per call). | ◐ |
-| V8 | Recurrence | Files and signatures recurring across tasks, actionable repeats on a 7-day Europe/London window, project concentration (M13, M14, M16). | ✅ / ◐ project |
-| V9 | Interventions | Rule adherence, practice recurrence, post-intervention comparison, tier audit (M12, M15, M17, M18). | Needs rule and intervention records |
+| #   | View                   | Questions (v2 IDs)                                                                                                                                                                                                | Data                            |
+| --- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| V1  | Pipeline               | Is the loader fresh and complete? Freshness per harness, refresh status, rows, parity, and sanitization checks. Replaces P1–P12.                                                                                  | ✅                              |
+| V2  | Cache efficiency       | Token consumption, cache utilization, uncached input by harness/model/session (M2).                                                                                                                               | ✅                              |
+| V3  | Reasoning effort       | Does heavier effort earn its cost?                                                                                                                                                                                | ✅                              |
+| V4  | Tool failures          | Failure rate, failure signatures, tasks affected, repeats and loops (M5, M7, M9).                                                                                                                                 | ✅                              |
+| V5  | Friction               | Interrupts, steers, quick follow-ups, clean completion (M3, M4); recovery after failure (M6, inferred).                                                                                                           | ◐                               |
+| V6  | Guardrails             | Sandbox denials, approvals, gate bypass, command churn (M8, M10, M11).                                                                                                                                            | ◐ mainly Codex                  |
+| V7  | Provider               | Latency/TTFT, call errors, streaming disconnects, token throughput, unknown outcomes, model conformance (R1–R8, per call).                                                                                        | ◐                               |
+| V8  | Recurrence             | Files and signatures recurring across tasks, actionable repeats on a 7-day Europe/London window, project concentration (M13, M14, M16).                                                                           | ✅ / ◐ project                  |
+| V9  | Intent and corrections | Task type, corrected by the next prompt, correction kinds, frustrated follow-ups, effort payoff by task type, repeated corrections by project (Jev prompt labels from the activity hooks).                        | ✅ from the hooks' install date |
+| V10 | Interventions          | Findings and proposals, post-intervention evaluation against each proposal's structured success metric, practice recurrence (repeated corrections), tier audit (M15, M17, M18). Rule adherence (M12) is excluded. | ✅                              |
 
 ## Phases
 
-| # | Phase | Exit condition | State |
-| --- | --- | --- | --- |
-| 0 | Archive the proof-gated work | Commit and tag `archive/proof-gated-dashboard` | Done 2026-09-28 |
-| 1 | ClickHouse facts: tables, loaders, views, backfill | Parity and invariants pass; loaders refresh every minute | Done 2026-09-28 |
-| 2 | Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register | Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old | Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s |
-| 3 | V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures | Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All | Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view |
-| 4 | V5 Friction, V6 Guardrails | Same | Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails |
-| 5 | V7 Provider | Same | Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1) |
-| 6 | V8 Recurrence, then V9 Interventions | Same | Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s) |
-| 7 | Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog | One pipeline and one set of docs | Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks moved to `docs/retired/`, then deleted on 2026-09-29 (kept at the archive tag); [Measure v3](dashboard-measure-v3.md) generated from the registry |
+- **Phase 0: Archive the proof-gated work**
+  - Exit condition: Commit and tag `archive/proof-gated-dashboard`
+  - State: Done 2026-09-28
+- **Phase 1: ClickHouse facts: tables, loaders, views, backfill**
+  - Exit condition: Parity and invariants pass; loaders refresh every minute
+  - State: Done 2026-09-28
+- **Phase 2: Signal support registry loaded by `facts install`, with a draft entry for every signal in V1–V9; `task_outcomes` records the friction components each row could observe. Serving: Bun queries `introspection` directly; harness selector and registry-driven info notes as shared components; V1 Pipeline view with the coverage grid; remove the Python-per-request path and the registry dependency on the proof register**
+  - Exit condition: Coverage grid has no unexplained cells; 90-day views < 1 s; data < 2 min old
+  - State: Done 2026-09-28: 0 unexplained cells over 90 days (201 healthy, 38 not emitted, 3 no events, 3 explained strays); Pipeline 90-day 0.36 s warm (first request after a server start ≈ 1.1 s), other views 0.13–0.22 s; fact lag 0–10 s
+- **Phase 3: V2 Cache efficiency, V3 Reasoning effort, V4 Tool failures**
+  - Exit condition: Views show real data for every harness that emits each signal; registry-driven info notes; per-harness values recombine to All
+  - State: Done 2026-09-28: all five harnesses show data; input, cached, output, sessions, reasoning, tasks, clean, tool calls, failures, and failed tasks reconcile exactly with direct view queries per harness and for All (90 days); 0.13–0.22 s per view
+- **Phase 4: V5 Friction, V6 Guardrails**
+  - Exit condition: Same
+  - State: Done 2026-09-28: interrupts, steers, errors, follow-up denominators, approval decisions, sandbox outcomes, and shell commands reconcile exactly per harness and for All (90 days); omp and Claude Code show not emitted for Codex-only guardrails
+- **Phase 5: V7 Provider**
+  - Exit condition: Same
+  - State: Done 2026-09-28: model calls, failures, cancellations, stream disconnects, and Codex sampling steps reconcile exactly per harness and for All (90 days); new fact view `model_calls` (invariant: recombination check `provider` in V1)
+- **Phase 6: V8 Recurrence, then V9 Interventions**
+  - Exit condition: Same
+  - State: Done 2026-09-28: recurring signatures, recurring files, signature failures, and baseline tasks reconcile exactly per harness and for All (90 days); V9 shows the 6 workflow findings, 0 proposals, 0 applied interventions, and records rule adherence and practice recurrence as unsupported; all nine views p50 0.06–0.54 s, p95 ≤ 0.65 s except the first Pipeline request after a server start (≈ 1.3 s)
+- **Phase 7: Retire the old pipeline: remove the launchd scan schedule, outbox, read-back, and `agent_introspection` ClickHouse store; delete the `pipeline_*` and proof-experiment code; archive the 6.3 GB ledger; write Measures v3 as the view catalog**
+  - Exit condition: One pipeline and one set of docs
+  - State: Done 2026-09-29: scan job removed; `agent_introspection` dropped (2.66 GiB); scan pipeline, outbox, detectors, SigNoz JSON dashboards, proof experiments, and their tests deleted; project capture kept and re-routed through `facts sync-projects`; ledger and both migration backups archived byte-identical to `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`; workflow tables moved to a 94 KB store; proof docs, Measure v2, and mocks moved to `docs/retired/`, then deleted on 2026-09-29 (kept at the archive tag); [Measure v3](dashboard-measure-v3.md) generated from the registry
+- **Phase 8: Closed loop and harness parity: activity hooks close native gaps; parity rule enforced by the registry; sharper failure signatures; failure-cluster and repeated-correction findings ranked by impact; evidence packs, Codex-drafted proposals with structured success metrics, and automatic evaluation; Jev prompt labels and the Intent view; skills rewritten; fresh cutover**
+  - Exit condition: Every harness-scoped signal reached by every harness it can exist for, or excluded; the loop runs discover → draft → decide → apply → evaluate
+  - State: See F25–F31 and the cutover record
 
 ## Findings log
 
@@ -286,9 +305,9 @@ view parity unchanged.
 **F3. Raw tool output was stored in omp span status messages (D4).** Evidence: 1,084
 `execute_tool` spans held `status_message` up to 51,390 characters, and 22,598 held
 `pi.gen_ai.tool.call.intent` text. Fix: the span loader keeps a normalized first error
-line (≤ 160 characters) and drops the intent key. Backfill, then `OPTIMIZE … FINAL`,
+line (≤ 80 characters now; 160 when this was written) and drops the intent key. Backfill, then `OPTIMIZE … FINAL`,
 purged the old versions. Validated: Pipeline sanitization shows 0 dropped keys, 0
-status > 160, 0 home paths in both tables.
+status > 160 characters, 0 home paths in both tables.
 
 **F4. omp does emit cache creation.** Evidence: `gen_ai.usage.cache_creation.input_tokens`
 is present on every omp chat span (71 non-zero, 164K tokens); input ≥ cache read +
@@ -457,17 +476,156 @@ worktree changed to refresh snapshots every 5 minutes; the other known session o
 repository said they were not its edits. Fix: replaced by the 90-day bound (F22) at the
 user's choice, keeping data under 2 minutes old.
 
+**F25. omp renamed its attributes, and the loader stopped reading them (2026-09-29).**
+Evidence: from 2026-09-29 14:48 UTC omp emits `omp.gen_ai.*` instead of `pi.gen_ai.*`
+(for example 4,904 `omp.gen_ai.request.reasoning.effort` and 8,119 `omp.gen_ai.tool.status`
+in the last 4 days, 0 `pi.` after the switch). Effort, interrupt and error flags, and tool
+status went `unset` or `unknown` for new omp rows. Fix: the span loader stores
+`omp.gen_ai.*` under the original `pi.gen_ai.*` names, so views are unchanged; the
+health workflow now checks for renames. Validated: the projection maps tool status and
+stop reasons for all omp spans of the last day.
+
+**F26. omp tool intent text leaked into the facts after the rename (D4).** Evidence: the
+drop list named `pi.gen_ai.tool.call.intent`; 7,602 spans since the rename carried
+`omp.gen_ai.tool.call.intent` text into `introspection.spans`. Fix: intent keys are
+dropped under any prefix, and the Pipeline sanitization check lists both names; the
+cutover re-projects and purges old row versions. Validated at cutover (see the record).
+
+**F27. SigNoz holds prompts only as a redacted placeholder.** Evidence: all 5,400
+`user_prompt` / `codex.user_prompt` events in 30 days carry `prompt` values matching
+`REDACTED`. Impact: task classification cannot read prompts from telemetry. Fix: the
+activity hooks pass each prompt to Jev at submission and keep only the labels
+(`prompt_label`); nothing is classified retroactively.
+
+**F28. First-line failure signatures were often generic.** Evidence: 8 of 74 recurrence
+findings were headers such as `Traceback (most recent call last):`, `ShellError`, or
+`triggerUncaughtException(`, merging unrelated failures. Fix: signatures take a stack
+trace's final exception line, else the first diagnostic line that is not a header or
+frame; Claude Code signatures come from `PostToolUseFailure` error text instead of
+`error_type`; findings group by tool family × failure class (quoted values and paths
+generalized), across harnesses. Validated: on 14 days of Codex failures,
+`Traceback`/`Script failed` headers resolve to lines such as `ModuleNotFoundError: No
+module named '…'`; the detector dry run gave 37 clusters, 16 actionable.
+
+**F29. Evaluation workloads became findings, and the export picked the oldest.**
+Evidence: 6 findings came from `/private/tmp/luna-eval-ws/N` workspaces, and
+`candidates export` ordered by `last_seen_ns` ascending. The loop had never run: 0
+review sessions and 0 proposals. Fix: evaluation workspaces are excluded, findings carry
+an impact score (affected tasks, unclean ones counted twice), export picks the highest
+impact and attaches a 14-day evidence pack, `proposal draft` runs the review in Codex,
+and `facts sync` evaluates applied proposals.
+
+**F30. Parity gaps: 39 not-emitted cells.** Evidence: the registry had 39 ✗ cells.
+Fix (the user's rule: a signal that a harness cannot produce is excluded, never shown as
+"not emitted"): activity hooks closed 20 (omp and Claude Code argument identity,
+targets, and gate bypass; Claude Code interrupts, steers, reasoning tokens, and
+delegations; omp steers, approvals, and retries); native routes closed 6 (Codex
+delegations from `codex.agent_communication` spawns, and Codex errored tasks inferred
+from the turn's last response stream); 2 are `not applicable` (headless Codex exec
+follow-up and clean completion); 11 belong to five excluded signals (sandbox outcomes,
+stream disconnects, output throughput, model conformance, and, from a `differs` cell
+that was always 0, cache creation). Rule adherence was replaced by per-proposal
+evaluation. `facts install` now rejects `not emitted`.
+
+**F31. `/models` polling looks like Codex activity.** Evidence: on 2026-09-29 Codex
+app-server logged 18,104 `codex.api_request` rows for `/models` against 12 prompts; real
+Codex tasks fell to 1–3 a day after 2026-09-25. No fact route reads `codex.api_request`,
+so signals are unaffected, but raw log volume no longer indicates use; the health
+workflow says to judge liveness from prompts and tasks.
+
+**F32. Cutover record (2026-09-30).** Steps, in the fresh cutover workflow's order:
+workflow store copied to `introspection.sqlite3.pre-2026-09-30`; CLI reinstalled;
+`facts install` (59 signals, 255 support cells, 6 snapshots; every route predicate,
+including the `hooks` source, validated in ClickHouse); `facts backfill --days 90`
+(417,164 spans and 335,166 logs re-projected from 2026-07-02); `OPTIMIZE … FINAL` on
+spans and logs; activity hooks installed for Claude Code (`~/.claude/settings.json`,
+6 events, backup kept), omp (extensions reinstalled under `adapters/omp/`, and
+`agent-introspection-activity.ts` registered in `~/.omp/agent/config.yml`, because
+omp's ambient discovery did not load it), and Codex (`UserPromptSubmit` in both the
+Orca account root and `~/.codex`, pending interactive trust). Validated: source parity
+exact for all five harnesses (7 days); every recombination check passes;
+sanitization 0 forbidden keys, 0 long status messages, 0 home paths in spans, logs,
+and hook events (the F26 intent text is gone); coverage grid 227 healthy, 7 not
+applicable, 6 no events, and 15 possible breaks, all Codex `hook.prompt_label` until
+the hook is trusted (that route was later replaced, F33); Claude Code and omp hook events land and join (`tool_call` →
+`tool_calls` by tool call ID; `prompt_label`, `tool_failure`, `turn_stop`); findings
+51 active (18 actionable failure clusters after generic classes were held at
+emerging), 81 retired findings dormant; `proposal draft --dry-run` exports the top
+cluster (omp `error: command not found: python`, impact 49) with a complete evidence
+pack. Two defects found and fixed during the cutover: the hook insert let ClickHouse
+infer the attrs objects as tuples (now a declared structure), and the `task_labels`
+snapshot recomputed `task_outcomes` (18 s per refresh; now reads the snapshot, under
+1 s). The dashboard read live views for "Last 90 days" because the window started a
+moment before the 90-day horizon; it now uses the snapshot's extra day, and 90-day
+views answer in 36–161 ms (Pipeline 1.4–2.2 s with its raw recount).
+
+**F33. Prompt labels moved from the hooks into the app (2026-09-30, the user's choice).**
+The producers now export prompt text to SigNoz: Claude Code `OTEL_LOG_USER_PROMPTS=1`,
+Codex `[otel] log_user_prompt = true` in both Codex roots, and an `omp.user_prompt`
+OTLP log from the omp activity extension (omp has no prompt-only option: its content
+capture keeps the first 16 messages of each chat cut to 240 characters, or the whole
+conversation). `facts sync` labels new prompts with Jev (retrying a failed decision up
+to three times) into `introspection.prompt_labels`; the Codex activity hook was
+removed from both roots, and the hooks keep only Claude Code's `prompt_submitted`.
+Consequence: prompt text is now stored in SigNoz's own tables for their 90-day
+retention (the facts store still drops it). The launchd job's PATH lacked
+`/opt/homebrew/bin`, so labelling was skipped for want of `omp token openrouter`; the
+job's PATH now includes omp's directory. Validated: one prompt each from omp, Codex
+exec, and a new Claude Code process reached SigNoz with text and was labelled
+(3 labels, $0.0001); `introspection.logs` holds no `prompt` key.
+
+**F34. Existing SigNoz installations.** The CLI reached ClickHouse only through
+`docker exec` into a local container. It now has an HTTP mode (`clickhouse_url`,
+`clickhouse_user`, and the password from `clickhouse_password_env` or
+`clickhouse_password_command`, the latter usable by the launchd job), a read-only
+`facts preflight` (ClickHouse ≥ 24.10, SigNoz table columns, grants, producer data),
+and dashboard basic auth. Validated: preflight passes against this Mac's SigNoz
+(ClickHouse 25.5.6.14).
+
+**F35. Local only, with no SigNoz installer (2026-09-30, the user's decision).** Agent
+Introspection runs on one machine against a self-hosted SigNoz already installed on
+it. The stack bootstrap workflow, `ops/signoz/docker-compose.override.yaml`, and
+`.infisical.json` were removed (the running SigNoz uses its own override under
+`~/.local/share/codex-observability/signoz/deploy/docker`, so nothing it depends on was
+removed). The config refuses any ClickHouse or OTLP address that is not loopback,
+`localhost`, or `*.orb.local`; SigNoz Cloud and multi-node ClickHouse are unsupported
+and called out in the README. The "fresh cutover" workflow is now the setup workflow:
+install, or reinstall after a breaking change, against the existing local SigNoz.
+
+**F36. Attribution from session stores, and enabled harnesses (2026-10-01, clean
+cutover).** Project attribution no longer uses hooks: `facts sync` reads each session's
+ID and working directory from the harness's own session store (`session_stores.toml`:
+Claude Code transcripts, Codex rollouts including `archived_sessions`, omp session
+files) and resolves the Git root locally; a session whose workspace is gone is matched
+to a repository on this machine by its recorded Git remote (Codex). The session-context
+runtime, adapters, Codex `notify` chain entry, Codex Desktop installer, and their
+inbox records were removed from the repository and this machine (archived under
+`~/.local/share/agent-introspection/backups/pre-cutover-20261001T105312Z`); the
+activity hooks moved to `~/.local/lib/agent-introspection/activity-hooks-v1` and the
+`hook-inbox`; the launchd job is `com.adamjackson.agent-introspection.sync`. Parity is
+judged over `[harnesses] enabled`: a signal an enabled harness cannot produce is hidden
+on this machine, and the five previously excluded signals are back for machines whose
+harnesses all produce them. Clean cut: the old attribution tables, hook events of the
+retired prompt routes, and the workflow store were replaced, not migrated. Validated:
+4,608 sessions resolved in about 5 s (3,682 attributed, 362 of them by remote); 30-day
+task attribution 99% Claude Code (was 86%), 97% Codex exec, 85% Codex CLI, 74% Codex
+app-server (pruned sessions), 30% omp (batch runs without session files); parity and
+recombination exact; sanitization 0 everywhere after fixing multi-path home redaction
+in hook targets; coverage grid 243 healthy, 7 not applicable, 5 no events; 42 findings
+(19 actionable) from the first sync.
+
 ## Operations
 
 - **Retention:** SigNoz keeps 90 days of raw traces and logs. The `introspection`
   tables have no TTL and hold history beyond that. Trace history before
   2026-09-10 had already expired under the earlier 15-day TTL and cannot be recovered.
-- **Project sync and findings:** `agent-introspection facts schedule install|status|remove`
-  manages the `com.adamjackson.agent-introspection.projects` LaunchAgent, which runs
-  `facts sync` (project sync, then findings promotion) every minute from the standalone
-  tool install at `~/.local/share/uv/tools/agent-introspection`. After changing the
-  Python package, run `uv tool install --force --reinstall .` from the repo.
-  `session_projects` is the only copy of synced hook history; never drop it.
+- **Sync and findings:** `agent-introspection facts schedule install|status|remove`
+  manages the `com.adamjackson.agent-introspection.sync` LaunchAgent, which runs
+  `facts sync` (hook events, session attribution, prompt labels, findings, evaluations)
+  every minute from the standalone tool install at `~/.local/share/uv/tools/agent-introspection`.
+  After changing the Python package, run `uv tool install --force --reinstall .` from the repo.
+  Never drop `hook_events` (the only copy of activity-hook history) or `session_projects`
+  (it keeps attribution for sessions the harnesses have since pruned).
 - **Rebuild:** `facts install` recreates loaders and views without touching data.
   `facts backfill --days 90` rebuilds or re-projects everything still in SigNoz,
   so a projection change applies to the full 90-day window.

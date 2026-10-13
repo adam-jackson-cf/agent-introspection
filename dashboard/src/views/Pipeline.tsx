@@ -1,411 +1,588 @@
-import { DailyChart, DataTable, TableView } from "../charts";
-import { HARNESSES, type Harness, type Row } from "../contracts";
-import { HarnessName, Kpi, Panel, Section, useView } from "../components";
+import { DailyChart, DataTable, TableView, type Column } from "../charts";
+import { VIEW_IDS, type Harness, type Row, type ViewId } from "../contracts";
+import {
+  HarnessName,
+  Kpi,
+  Panel,
+  Section,
+  ShowLink,
+  useView,
+  useSelectedHarnesses,
+  ViewLink,
+} from "../components";
+import { presetFor } from "../app-state";
+
+import { OTHER_TOKEN } from "../tokens";
 import {
   fmtCount,
   fmtPct,
   fmtSeconds,
   HARNESS_COLOR,
   HARNESS_LABEL,
+  maybe,
   num,
-  ratio,
 } from "../format";
+import { CoverageSummary, StateChip } from "./PipelineCoverage";
 
-const STATE_MARK: Record<string, { mark: string; tone: string }> = {
-  healthy: { mark: "✓", tone: "good" },
-  "no events": { mark: "○", tone: "neutral" },
-  idle: { mark: "○", tone: "neutral" },
-  "not emitted": { mark: "·", tone: "neutral" },
-  "stray (explained)": { mark: "≈", tone: "warning" },
-  "possible break": { mark: "!", tone: "serious" },
-  "stray (unexplained)": { mark: "✕", tone: "critical" },
-};
-const UNEXPLAINED = new Set(["possible break", "stray (unexplained)"]);
+/** Hook rows whose harness could not be resolved chart as their own series. */
+const UNRESOLVED_KEY = "unresolved";
+const UNRESOLVED_LABEL = "unresolved (Codex hook)";
 
-function StateChip({ state, title }: { state: string; title?: string }) {
-  const spec = STATE_MARK[state] ?? { mark: "?", tone: "neutral" };
-  return (
-    <span className={`state-chip ${spec.tone}`} title={title}>
-      <b aria-hidden="true">{spec.mark}</b>
-      {state}
-    </span>
-  );
-}
-
-function CoverageGrid({ rows }: { rows: Row[] }) {
-  const { filters } = useView();
-  const harnesses: readonly Harness[] =
-    filters.harness === "" ? HARNESSES : [filters.harness];
-  const signals = [...new Map(rows.map((row) => [row.signal, row])).values()];
-  const views = [...new Set(signals.map((row) => String(row.view)))];
-  const cell = (signal: unknown, harness: Harness) =>
-    rows.find((row) => row.signal === signal && row.harness === harness);
-  return (
-    <div className="table-wrap coverage">
-      <table>
-        <thead>
-          <tr>
-            <th>Signal</th>
-            {harnesses.map((harness) => (
-              <th key={harness}>
-                <HarnessName value={harness} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {views.map((view) => (
-          <tbody key={view}>
-            <tr className="group">
-              <th colSpan={harnesses.length + 1}>{view}</th>
-            </tr>
-            {signals
-              .filter((row) => row.view === view)
-              .map((row) => (
-                <tr key={String(row.signal)}>
-                  <th scope="row">{String(row.title)}</th>
-                  {harnesses.map((harness) => {
-                    const entry = cell(row.signal, harness);
-                    return (
-                      <td key={harness}>
-                        {entry && (
-                          <StateChip
-                            state={String(entry.state)}
-                            title={`${String(entry.route) || "no route"} · ${fmtCount(num(entry.own))} own rows · ${fmtCount(num(entry.foreign))} rows on other routes (${fmtCount(num(entry.unexplained))} unexplained)`}
-                          />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-          </tbody>
-        ))}
-      </table>
-    </div>
-  );
-}
-
-export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
-  const { filters } = useView();
-  const inScope = (row: Row) =>
-    filters.harness === "" || row.harness === filters.harness;
-  const loaders = data.loaders ?? [];
-  const failing = loaders.filter((row) => num(row.stale) === 1);
-  const freshness = (data.freshness ?? []).filter(inScope);
-  const missingFacts = freshness.filter((row) => num(row.facts_missing) === 1);
-  const maxLag = freshness.length
-    ? Math.max(...freshness.map((row) => num(row.lag_seconds)))
-    : null;
-  const parity = (data.parity ?? []).filter(inScope);
-  const parityOk = parity.filter((row) => num(row.ok) === 1).length;
-  const sanitization = data.sanitization ?? [];
-  const violations = sanitization.reduce(
-    (total, row) =>
-      total +
-      num(row.forbidden_keys) +
-      num(row.long_status) +
-      num(row.home_paths),
-    0,
-  );
-  const coverage = (data.coverage ?? []).filter(inScope);
-  const unexplained = coverage.filter((row) =>
-    UNEXPLAINED.has(String(row.state)),
-  );
-  const recombination = data.recombination ?? [];
+/** Long to wide for the chart: one entry per day, one value per series. */
+export function dailyByHarness(rows: Row[]) {
   const daily = new Map<string, Row>();
-  for (const row of (data.daily_rows ?? []).filter(inScope)) {
+  for (const row of rows) {
     const day = String(row.day);
     const entry = daily.get(day) ?? { day };
-    const key = String(row.harness);
-    entry[key] = num(entry[key]) + num(row.n);
+    entry[row.harness === "" ? UNRESOLVED_KEY : String(row.harness)] = row.n;
     daily.set(day, entry);
   }
-  const dailySeries = HARNESSES.filter(
-    (harness) => filters.harness === "" || harness === filters.harness,
-  ).map((harness) => ({
-    key: harness,
-    label: HARNESS_LABEL[harness],
-    color: HARNESS_COLOR[harness],
+  return daily;
+}
+
+function dailySeriesOf(selected: readonly Harness[], dailyRows: Row[]) {
+  const series = selected.map((harness) => ({
+    key: harness as string,
+    label: HARNESS_LABEL[harness] as string,
+    color: HARNESS_COLOR[harness] as string,
   }));
-  const window = parity[0]
-    ? `${String(parity[0].window_start).slice(0, 16)} → ${String(parity[0].window_end).slice(0, 16)} UTC`
-    : "";
+  if (dailyRows.some((row) => row.harness === ""))
+    series.push({
+      key: UNRESOLVED_KEY,
+      label: UNRESOLVED_LABEL,
+      color: OTHER_TOKEN,
+    });
+  return series;
+}
+
+type Data = Record<string, Row[]>;
+
+/** Which window each figure covers, in a few words (docs/ux/DESIGN.md: every KPI states its period). */
+const PERIOD = {
+  loaders: "current",
+  freshness: "last day",
+  parity: "up to 7 days",
+  sanitization: "all time",
+} as const;
+
+function CoverageKpi({ data }: { data: Data }) {
+  const { filters } = useView();
+  const summary = data.coverage_summary?.[0] ?? {};
+  const unrouted = data.unrouted_summary?.[0] ?? {};
+  const unroutedText = `${fmtCount(num(unrouted.rows))} unrouted rows, not used by any signal`;
+  return (
+    <Kpi
+      title="Coverage"
+      value={`${num(summary.unexplained)} unexplained`}
+      detail={`${num(summary.cells)} signal × harness cells · ${unroutedText} · ${presetFor(filters).toLowerCase()}`}
+      signals={["pipeline.coverage"]}
+      source={["coverage", "unrouted"]}
+      span={1}
+    >
+      <ViewLink view="pipeline/coverage">Open coverage grid</ViewLink>
+    </Kpi>
+  );
+}
+
+function GlanceBand({ data }: { data: Data }) {
+  const summaryOf = (key: string): Row => data[key]?.[0] ?? {};
+  const loaderSummary = summaryOf("loader_summary");
+  const freshnessSummary = summaryOf("freshness_summary");
+  const paritySummary = summaryOf("parity_summary");
+  const sanitizationAll =
+    (data.sanitization ?? []).find((row) => row.source === "") ?? {};
+  const missingFacts = num(freshnessSummary.missing_facts);
+  const maxLag =
+    freshnessSummary.max_lag_seconds == null
+      ? null
+      : num(freshnessSummary.max_lag_seconds);
+  const compared = num(paritySummary.harnesses);
+  return (
+    <Section title="At a glance" columns={5}>
+      <Kpi
+        title="Loaders and snapshots"
+        value={`${num(loaderSummary.ok)} / ${num(loaderSummary.total)}`}
+        detail={`${
+          num(loaderSummary.failing) === 0
+            ? "on schedule, no errors"
+            : `${num(loaderSummary.failing)} stale or failing`
+        } · ${PERIOD.loaders}`}
+        signals={["pipeline.loader_refresh"]}
+        source={["loaders", "loader_summary"]}
+        span={1}
+      >
+        <ShowLink target="loader-refresh">Show loader refresh</ShowLink>
+      </Kpi>
+      <Kpi
+        title="Max fact lag"
+        value={missingFacts ? "no facts" : fmtSeconds(maxLag)}
+        detail={`${
+          missingFacts
+            ? `${missingFacts} source(s) with SigNoz rows but no fact rows`
+            : "SigNoz latest row minus fact latest row"
+        } · ${PERIOD.freshness}`}
+        signals={["pipeline.freshness"]}
+        source={["freshness", "freshness_summary"]}
+        span={1}
+      />
+      <CoverageKpi data={data} />
+      <Kpi
+        title="Source parity"
+        value={
+          compared === 0 ? "—" : `${num(paritySummary.matching)} / ${compared}`
+        }
+        detail={`${
+          compared === 0
+            ? "no harness with usage rows to compare against the raw source"
+            : "harnesses match the raw source"
+        } · ${PERIOD.parity}`}
+        signals={["pipeline.parity"]}
+        source={["parity", "parity_summary"]}
+        span={1}
+      >
+        <ShowLink target="source-parity">Show source parity</ShowLink>
+      </Kpi>
+      <Kpi
+        title="Sanitization"
+        value={`${fmtCount(num(sanitizationAll.violations))} violations`}
+        detail={`flagged stored rows · ${PERIOD.sanitization}`}
+        signals={["pipeline.sanitization"]}
+        source="sanitization"
+        span={1}
+      >
+        <ShowLink target="sanitization">Show sanitization</ShowLink>
+      </Kpi>
+    </Section>
+  );
+}
+
+/**
+ * A table whose rows are mostly fine: the server's one-line summary, only the
+ * exception rows, and the full table in a disclosure in place.
+ */
+function ExceptionTable(props: {
+  summary: string;
+  columns: Column[];
+  exceptions: Row[];
+  all: Row[];
+  empty: string;
+}) {
+  const { summary, columns, exceptions, all, empty } = props;
+  if (all.length === 0) return <p className="empty">{empty}</p>;
   return (
     <>
-      <Section title="At a glance">
-        <Kpi
-          title="Loaders and snapshots"
-          value={`${loaders.length - failing.length} / ${loaders.length}`}
-          detail={
-            failing.length === 0
-              ? "on schedule, no errors"
-              : `${failing.length} stale or failing`
-          }
-          signals={["pipeline.loader_refresh"]}
+      <p className="exception-summary">{summary}</p>
+      {exceptions.length > 0 && (
+        <DataTable columns={columns} rows={exceptions} />
+      )}
+      <details className="table-view">
+        <summary>Show all {all.length}</summary>
+        <DataTable columns={columns} rows={all} />
+      </details>
+    </>
+  );
+}
+
+const LOADER_COLUMNS: Column[] = [
+  { key: "view", label: "View" },
+  { key: "status", label: "Status" },
+  { key: "last_success", label: "Last success (UTC)" },
+  {
+    key: "age_seconds",
+    label: "Age",
+    numeric: true,
+    render: (row) => fmtSeconds(num(row.age_seconds)),
+  },
+  { key: "written_rows", label: "Rows written", numeric: true },
+  {
+    key: "exception",
+    label: "Error",
+    render: (row) => String(row.exception) || "—",
+  },
+];
+
+const FRESHNESS_COLUMNS: Column[] = [
+  {
+    key: "harness",
+    label: "Harness",
+    render: (row) => <HarnessName value={row.harness} />,
+  },
+  { key: "source", label: "Source" },
+  {
+    key: "source_latest",
+    label: "SigNoz latest",
+    render: (row) => String(row.source_latest).slice(0, 19),
+  },
+  {
+    key: "lag_seconds",
+    label: "Fact lag",
+    numeric: true,
+    render: (row) =>
+      num(row.facts_missing) === 1
+        ? "no facts"
+        : fmtSeconds(num(row.lag_seconds)),
+  },
+  {
+    key: "source_age_seconds",
+    label: "Last activity",
+    numeric: true,
+    render: (row) => `${fmtSeconds(num(row.source_age_seconds))} ago`,
+  },
+];
+
+/** Server summary figures as the one-line summaries above the exception rows. */
+const loaderSummaryText = (summary: Row) => {
+  const failing = num(summary.failing);
+  return `${num(summary.ok)} on schedule${failing > 0 ? `, ${failing} stale or failing` : ""}`;
+};
+
+const freshnessSummaryText = (summary: Row) => {
+  const sources = num(summary.sources);
+  const missing = num(summary.missing_facts);
+  return `${sources} sources, ${missing === 0 ? "all with facts" : `${sources - missing} with facts`}`;
+};
+
+const dash = (value: unknown, render: (n: number) => string) =>
+  value == null ? "—" : render(num(value));
+
+const delivery = (received: unknown, sent: unknown) =>
+  received == null || sent == null
+    ? "—"
+    : `${fmtCount(num(received))} / ${fmtCount(num(sent))}`;
+
+const SPOOL_COLUMNS: Column[] = [
+  { key: "host", label: "Host" },
+  { key: "state", label: "State" },
+  {
+    key: "pending",
+    label: "Pending",
+    numeric: true,
+    render: (row) => dash(row.pending, fmtCount),
+  },
+  {
+    key: "rejected",
+    label: "Rejected",
+    numeric: true,
+    render: (row) => dash(row.rejected, fmtCount),
+  },
+  {
+    key: "oldest_pending_seconds",
+    label: "Oldest pending",
+    numeric: true,
+    render: (row) => dash(row.oldest_pending_seconds, fmtSeconds),
+  },
+  {
+    key: "hooks_received",
+    label: "Hooks received / sent (24h)",
+    numeric: true,
+    render: (row) => delivery(row.hooks_received, row.hooks_sent),
+  },
+  {
+    key: "attribution_received",
+    label: "Attribution received / sent (24h)",
+    numeric: true,
+    render: (row) => delivery(row.attribution_received, row.attribution_sent),
+  },
+  {
+    key: "delivery_gap",
+    label: "Delivery",
+    render: (row) =>
+      num(row.delivery_gap) === 1 ? "records lost after send" : "ok",
+  },
+  {
+    key: "last_error_class",
+    label: "Last error",
+    render: (row) => String(row.last_error_class ?? "") || "—",
+  },
+  { key: "cli_version", label: "CLI version" },
+  {
+    key: "age_seconds",
+    label: "Reported",
+    numeric: true,
+    render: (row) => `${fmtSeconds(num(row.age_seconds))} ago`,
+  },
+];
+
+const spoolSummaryText = (summary: Row) => {
+  const unknown = num(summary.unknown);
+  return `${num(summary.reporting)} hosts reporting${unknown > 0 ? `, ${unknown} unknown` : ""}`;
+};
+
+function SpoolPanel({ data }: { data: Data }) {
+  return (
+    <Panel
+      id="spool-status"
+      title="Hook spool by host"
+      subtitle="Latest spool status per machine; a host silent for over 5 minutes is unknown, never a backlog of 0. Received vs sent compares records SigNoz holds with the host's own sent counter over 24h, ignoring the last 5 minutes; fewer received than sent means the collector accepted batches it lost"
+      signals={["pipeline.loader_refresh"]}
+      source="spool_status"
+    >
+      <ExceptionTable
+        summary={spoolSummaryText(data.spool_summary?.[0] ?? {})}
+        columns={SPOOL_COLUMNS}
+        exceptions={data.spool_exceptions ?? []}
+        all={data.spool_status ?? []}
+        empty="No host reported a spool status."
+      />
+    </Panel>
+  );
+}
+
+function FreshnessBand({ data }: { data: Data }) {
+  return (
+    <Section title="Is the loader fresh?">
+      <Panel
+        id="loader-refresh"
+        title="Loader and snapshot refresh"
+        subtitle="Refreshable materialized views in the introspection database"
+        signals={["pipeline.loader_refresh"]}
+        source={["loaders", "loader_summary"]}
+      >
+        <ExceptionTable
+          summary={loaderSummaryText(data.loader_summary?.[0] ?? {})}
+          columns={LOADER_COLUMNS}
+          exceptions={data.loader_exceptions ?? []}
+          all={data.loaders ?? []}
+          empty="No loader reported."
         />
-        <Kpi
-          title="Max fact lag"
-          value={missingFacts.length ? "no facts" : fmtSeconds(maxLag)}
-          detail={
-            missingFacts.length
-              ? `${missingFacts.length} source(s) with SigNoz rows but no fact rows`
-              : "SigNoz latest row minus fact latest row"
-          }
-          signals={["pipeline.freshness"]}
+      </Panel>
+      <SpoolPanel data={data} />
+      <Panel
+        title="Freshness by harness"
+        subtitle="Latest row in the last day: SigNoz versus facts"
+        signals={["pipeline.freshness"]}
+        source={["freshness", "freshness_summary"]}
+      >
+        <ExceptionTable
+          summary={freshnessSummaryText(data.freshness_summary?.[0] ?? {})}
+          columns={FRESHNESS_COLUMNS}
+          exceptions={data.freshness_exceptions ?? []}
+          all={data.freshness ?? []}
+          empty="No harness produced rows in the last day."
         />
-        <Kpi
-          title="Coverage"
-          value={`${unexplained.length} unexplained`}
-          detail={`${coverage.length} signal × harness cells`}
-          signals={["pipeline.coverage"]}
+      </Panel>
+    </Section>
+  );
+}
+
+function DailyPanel({ data }: { data: Data; signals: string[] }) {
+  const selected = useSelectedHarnesses();
+  const dailyRows = data.daily_rows ?? [];
+  const daily = dailyByHarness(dailyRows);
+  const dailySeries = dailySeriesOf(selected, dailyRows);
+  return (
+    <Panel
+      title="Fact rows per day"
+      subtitle="Curated spans, logs, and activity-hook events loaded per harness (UTC days) · rows per day"
+      signals={["pipeline.freshness"]}
+      source="daily_rows"
+      span={8}
+    >
+      <DailyChart
+        rows={[...daily.values()]}
+        series={dailySeries}
+        kind="stack"
+        format={(value) => fmtCount(value)}
+      />
+      <TableView
+        columns={[
+          { key: "day", label: "Day" },
+          ...dailySeries.map((entry) => ({
+            key: entry.key,
+            label: entry.label,
+            numeric: true,
+          })),
+        ]}
+        rows={[...daily.values()]}
+      />
+    </Panel>
+  );
+}
+
+function checksPanels(data: Data) {
+  const window = String(data.parity_summary?.[0]?.window_label ?? "");
+  return (
+    <>
+      <Panel
+        id="source-parity"
+        title="Source parity"
+        subtitle={`usage_events versus a direct SigNoz recount · ${window}`}
+        signals={["pipeline.parity"]}
+        source={["parity", "parity_summary"]}
+      >
+        <DataTable
+          columns={[
+            {
+              key: "harness",
+              label: "Harness",
+              render: (row) => <HarnessName value={row.harness} />,
+            },
+            { key: "raw_operations", label: "Raw ops", numeric: true },
+            { key: "fact_operations", label: "Fact ops", numeric: true },
+            {
+              key: "raw_input",
+              label: "Raw input",
+              numeric: true,
+              render: (row) => fmtCount(num(row.raw_input)),
+            },
+            {
+              key: "fact_input",
+              label: "Fact input",
+              numeric: true,
+              render: (row) => fmtCount(num(row.fact_input)),
+            },
+            {
+              key: "ok",
+              label: "Match",
+              render: (row) => (
+                <StateChip
+                  state={num(row.ok) === 1 ? "healthy" : "possible break"}
+                />
+              ),
+            },
+          ]}
+          rows={data.parity ?? []}
         />
-        <Kpi
-          title="Sanitization"
-          value={`${fmtCount(violations)} violations`}
-          detail={`${parityOk} / ${parity.length} harnesses match the raw source`}
-          signals={["pipeline.sanitization", "pipeline.parity"]}
+      </Panel>
+      <Panel
+        title="All = Σ harnesses"
+        subtitle="Direct All aggregate versus the sum of per-harness aggregates"
+        signals={["pipeline.recombination"]}
+        source="recombination"
+      >
+        <DataTable
+          columns={[
+            { key: "check", label: "Fact" },
+            { key: "measure", label: "Measure" },
+            { key: "all", label: "All", numeric: true },
+            { key: "sum_of_harnesses", label: "Σ harnesses", numeric: true },
+            {
+              key: "ok",
+              label: "Match",
+              render: (row) => (
+                <StateChip state={row.ok ? "healthy" : "possible break"} />
+              ),
+            },
+          ]}
+          rows={data.recombination ?? []}
         />
-      </Section>
-      <Section title="Is the loader fresh?">
-        <Panel
-          title="Loader and snapshot refresh"
-          subtitle="Refreshable materialized views in the introspection database"
-          signals={["pipeline.loader_refresh"]}
-        >
-          <DataTable
-            columns={[
-              { key: "view", label: "View" },
-              { key: "status", label: "Status" },
-              { key: "last_success", label: "Last success (UTC)" },
-              {
-                key: "age_seconds",
-                label: "Age",
-                numeric: true,
-                render: (row) => fmtSeconds(num(row.age_seconds)),
-              },
-              { key: "written_rows", label: "Rows written", numeric: true },
-              {
-                key: "exception",
-                label: "Error",
-                render: (row) => String(row.exception) || "—",
-              },
-            ]}
-            rows={loaders}
-          />
-        </Panel>
-        <Panel
-          title="Freshness by harness"
-          subtitle="Latest row in the last day: SigNoz versus facts"
-          signals={["pipeline.freshness"]}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              { key: "source", label: "Source" },
-              {
-                key: "source_latest",
-                label: "SigNoz latest",
-                render: (row) => String(row.source_latest).slice(0, 19),
-              },
-              {
-                key: "lag_seconds",
-                label: "Fact lag",
-                numeric: true,
-                render: (row) =>
-                  num(row.facts_missing) === 1
-                    ? "no facts"
-                    : fmtSeconds(num(row.lag_seconds)),
-              },
-              {
-                key: "source_age_seconds",
-                label: "Last activity",
-                numeric: true,
-                render: (row) =>
-                  `${fmtSeconds(num(row.source_age_seconds))} ago`,
-              },
-            ]}
-            rows={freshness}
-            empty="No harness produced rows in the last day."
-          />
-        </Panel>
-        <Panel
-          title="Fact rows per day"
-          subtitle="Curated spans and logs loaded per harness (UTC days)"
-          signals={["pipeline.freshness"]}
-          span={12}
-        >
-          <DailyChart
-            rows={[...daily.values()]}
-            series={dailySeries}
-            kind="stack"
-            format={(value) => fmtCount(value)}
-          />
-          <TableView
-            columns={[
-              { key: "day", label: "Day" },
-              ...dailySeries.map((entry) => ({
-                key: entry.key,
-                label: entry.label,
-                numeric: true,
-              })),
-            ]}
-            rows={[...daily.values()]}
-          />
-        </Panel>
-      </Section>
-      <Section title="Is it complete and correct?">
-        <Panel
-          title="Coverage grid"
-          subtitle="Registry versus data for the selected window; hover a cell for its counts"
-          signals={["pipeline.coverage"]}
-          span={12}
-        >
-          <ul className="state-legend" aria-label="Coverage states">
-            {Object.keys(STATE_MARK).map((state) => (
-              <li key={state}>
-                <StateChip state={state} />
-              </li>
-            ))}
-          </ul>
-          <CoverageGrid rows={coverage} />
-        </Panel>
-        <Panel
-          title="Source parity"
-          subtitle={`usage_events versus a direct SigNoz recount · ${window}`}
-          signals={["pipeline.parity"]}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              { key: "raw_operations", label: "Raw ops", numeric: true },
-              { key: "fact_operations", label: "Fact ops", numeric: true },
-              {
-                key: "raw_input",
-                label: "Raw input",
-                numeric: true,
-                render: (row) => fmtCount(num(row.raw_input)),
-              },
-              {
-                key: "fact_input",
-                label: "Fact input",
-                numeric: true,
-                render: (row) => fmtCount(num(row.fact_input)),
-              },
-              {
-                key: "ok",
-                label: "Match",
-                render: (row) => (
-                  <StateChip
-                    state={num(row.ok) === 1 ? "healthy" : "possible break"}
-                  />
-                ),
-              },
-            ]}
-            rows={parity}
-          />
-        </Panel>
-        <Panel
-          title="All = Σ harnesses"
-          subtitle="Direct All aggregate versus the sum of per-harness aggregates"
-          signals={["pipeline.recombination"]}
-        >
-          <DataTable
-            columns={[
-              { key: "check", label: "Fact" },
-              { key: "measure", label: "Measure" },
-              { key: "all", label: "All", numeric: true },
-              { key: "sum_of_harnesses", label: "Σ harnesses", numeric: true },
-              {
-                key: "ok",
-                label: "Match",
-                render: (row) => (
-                  <StateChip state={row.ok ? "healthy" : "possible break"} />
-                ),
-              },
-            ]}
-            rows={recombination}
-          />
-        </Panel>
-        <Panel
-          title="Sanitization"
-          subtitle="Stored rows holding raw text, identity keys, or home paths"
-          signals={["pipeline.sanitization"]}
-        >
-          <DataTable
-            columns={[
-              { key: "source", label: "Table" },
-              { key: "rows", label: "Rows", numeric: true },
-              { key: "forbidden_keys", label: "Dropped keys", numeric: true },
-              { key: "long_status", label: "Status > 160", numeric: true },
-              { key: "home_paths", label: "Home paths", numeric: true },
-            ]}
-            rows={sanitization}
-          />
-        </Panel>
-        <Panel
-          title="Project attribution"
-          subtitle="Tasks whose session has a project from the session-context hooks"
-          signals={["pipeline.project_attribution"]}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              { key: "tasks", label: "Tasks", numeric: true },
-              { key: "attributed", label: "With project", numeric: true },
-              {
-                key: "share",
-                label: "Share",
-                numeric: true,
-                render: (row) =>
-                  fmtPct(ratio(num(row.attributed), num(row.tasks)), 0),
-              },
-            ]}
-            rows={(data.project_coverage ?? []).filter(inScope)}
-          />
-          <DataTable
-            columns={[
-              {
-                key: "last_load",
-                label: "Last sync (UTC)",
-                render: (row) => String(row.last_load).slice(0, 19),
-              },
-              {
-                key: "age_seconds",
-                label: "Age",
-                numeric: true,
-                render: (row) => fmtSeconds(num(row.age_seconds)),
-              },
-              { key: "inbox_backlog", label: "Inbox backlog", numeric: true },
-              { key: "events", label: "Hook events", numeric: true },
-            ]}
-            rows={data.project_sync ?? []}
-          />
-          <DataTable
-            columns={[
-              { key: "producer", label: "Hook" },
-              { key: "reason_code", label: "Rejected because" },
-              { key: "n", label: "Events", numeric: true },
-            ]}
-            rows={data.project_rejections ?? []}
-            empty="No hook rejections in the selected range."
-          />
-        </Panel>
+      </Panel>
+    </>
+  );
+}
+
+function attributionPanels(data: Data) {
+  return (
+    <>
+      <Panel
+        id="sanitization"
+        title="Sanitization"
+        subtitle="Stored rows holding raw text, identity keys, or home paths · all time"
+        signals={["pipeline.sanitization"]}
+        source="sanitization"
+      >
+        <DataTable
+          columns={[
+            { key: "source", label: "Table" },
+            { key: "rows", label: "Rows", numeric: true },
+            { key: "forbidden_keys", label: "Dropped keys", numeric: true },
+            { key: "long_status", label: "Text > 160", numeric: true },
+            { key: "home_paths", label: "Home paths", numeric: true },
+          ]}
+          rows={(data.sanitization ?? []).filter((row) => row.source !== "")}
+        />
+      </Panel>
+      <Panel
+        title="Project attribution"
+        subtitle="Tasks whose session has a Git project, resolved from the harness session stores · selected range"
+        signals={["pipeline.project_attribution"]}
+        source={["project_coverage", "project_sync", "project_rejections"]}
+      >
+        <DataTable
+          columns={[
+            {
+              key: "harness",
+              label: "Harness",
+              render: (row) => <HarnessName value={row.harness} />,
+            },
+            { key: "tasks", label: "Tasks", numeric: true },
+            { key: "attributed", label: "With project", numeric: true },
+            {
+              key: "no_session_record",
+              label: "No session record",
+              numeric: true,
+            },
+            {
+              key: "share",
+              label: "Share",
+              numeric: true,
+              render: (row) => fmtPct(maybe(row.share_rate), 0),
+            },
+          ]}
+          rows={data.project_coverage ?? []}
+        />
+        <DataTable
+          columns={[
+            {
+              key: "last_load",
+              label: "Last sync (UTC)",
+              render: (row) => String(row.last_load).slice(0, 19),
+            },
+            {
+              key: "age_seconds",
+              label: "Age",
+              numeric: true,
+              render: (row) => fmtSeconds(num(row.age_seconds)),
+            },
+            {
+              key: "inbox_backlog",
+              label: "Hook inbox backlog",
+              numeric: true,
+            },
+            { key: "events", label: "Sessions resolved", numeric: true },
+          ]}
+          rows={data.project_sync ?? []}
+          label="Project attribution: last sync"
+        />
+        <DataTable
+          columns={[
+            { key: "store", label: "Session store" },
+            { key: "reason", label: "No project because" },
+            { key: "n", label: "Sessions", numeric: true },
+          ]}
+          rows={data.project_rejections ?? []}
+          label="Project attribution: sessions without a project"
+          empty="Every session in the selected range has a project."
+        />
+        <ViewLink view="recurrence">Open Recurring failures</ViewLink>
+      </Panel>
+    </>
+  );
+}
+
+/** A registry signal's view as a link to its page, falling back to the key. */
+function SignalView({ view }: { view: string }) {
+  const { registry } = useView();
+  const known = (VIEW_IDS as readonly string[]).includes(view);
+  const title =
+    registry.signals.find((entry) => entry.view === view)?.view_title ?? view;
+  return known ? <ViewLink view={view as ViewId}>{title}</ViewLink> : title;
+}
+
+function RegistryLists({ data }: { data: Data }) {
+  return (
+    <details className="disclosure-band">
+      <summary>
+        Registry lists: stray and unrouted rows, excluded signals, signals
+        hidden on this machine
+      </summary>
+      <div className="grid">
         <Panel
           title="Stray and unrouted rows"
           subtitle="Registered strays, then rows no route claims (not used by any signal)"
           signals={["pipeline.coverage"]}
+          source="unrouted"
+          span={12}
         >
           <DataTable
             columns={[
@@ -417,14 +594,20 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               { key: "source", label: "Source" },
               { key: "reason", label: "Explanation" },
             ]}
-            rows={(data.strays ?? []).filter(inScope)}
+            rows={data.strays ?? []}
+            label="Stray and unrouted rows: registered strays"
           />
           <DataTable
             columns={[
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) =>
+                  row.harness === "" ? (
+                    UNRESOLVED_LABEL
+                  ) : (
+                    <HarnessName value={row.harness} />
+                  ),
               },
               { key: "source", label: "Source" },
               {
@@ -434,11 +617,75 @@ export default function Pipeline({ data }: { data: Record<string, Row[]> }) {
               },
               { key: "n", label: "Rows", numeric: true },
             ]}
-            rows={(data.unrouted ?? []).filter(inScope)}
+            rows={data.unrouted ?? []}
+            total={num(data.unrouted_summary?.[0]?.names)}
             empty="Every row is claimed by a route or a registered stray."
           />
         </Panel>
+        <Panel
+          title="Excluded signals"
+          subtitle="Signals left off the dashboard because no harness produces them, natively or through an activity hook"
+          signals={["pipeline.coverage"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              { key: "title", label: "Signal" },
+              {
+                key: "view",
+                label: "View",
+                render: (row) => <SignalView view={String(row.view)} />,
+              },
+              { key: "missing", label: "Missing for" },
+              { key: "reason", label: "Reason" },
+            ]}
+            rows={data.exclusions ?? []}
+            empty="No signal is excluded: some harness produces every signal."
+          />
+        </Panel>
+        <Panel
+          title="Signals hidden on this machine"
+          subtitle="An enabled harness does not emit them, so their panels are not shown here; a machine without that harness shows them"
+          signals={["pipeline.coverage"]}
+          span={12}
+        >
+          <DataTable
+            columns={[
+              { key: "title", label: "Signal" },
+              {
+                key: "view",
+                label: "View",
+                render: (row) => <SignalView view={String(row.view)} />,
+              },
+              { key: "missing", label: "Not emitted by" },
+              { key: "note", label: "Why" },
+            ]}
+            rows={data.hidden ?? []}
+            empty="No signal is hidden: every enabled harness reaches every signal."
+          />
+        </Panel>
+      </div>
+    </details>
+  );
+}
+
+export default function Pipeline({ data }: { data: Data }) {
+  return (
+    <>
+      <GlanceBand data={data} />
+      <FreshnessBand data={data} />
+      <Section title="Is it complete and correct?">
+        <DailyPanel data={data} signals={["pipeline.freshness"]} />
+        <CoverageSummary
+          data={data}
+          span={4}
+          linked
+          signals={["pipeline.coverage"]}
+        />
+        {checksPanels(data)}
+        {attributionPanels(data)}
       </Section>
+      <RegistryLists data={data} />
     </>
   );
 }
