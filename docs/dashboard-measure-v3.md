@@ -5,8 +5,8 @@ loaded by `agent-introspection facts install` into `introspection.signals`,
 `signal_routes`, `signal_support`, and `signal_strays`. The fact views are in
 [`003_views.sql`](../src/agent_introspection/facts_sql/003_views.sql). Sections 3
 and 4 are generated from the registry by `scripts/render-measures.py`; a test fails
-when they drift. The design and phase history are in the
-[Dashboard v3 Plan](dashboard-v3-plan.md). This document supersedes
+when they drift. The standing design decisions (D1 to D5) are in
+[Facts Store](references/facts-store.md#standing-decisions). This document supersedes
 Measure v2, kept in git at the tag `archive/proof-gated-dashboard`.
 
 This document records the producer routes and calculations behind every dashboard
@@ -32,7 +32,7 @@ a benchmark: harnesses are never ranked or compared against each other.
   observe (`friction_observed`), and the info note states them.
 - **NULL means no signal.** A missing field stays NULL and is excluded from
   denominators; it is never counted as zero.
-- **Privacy (D4).** Raw prompt, command, argument, output, and tool-intent text and
+- **Privacy ([D4](references/facts-store.md#standing-decisions)).** Raw prompt, command, argument, output, and tool-intent text and
   identity keys are never stored. Only normalized `x.*` fields, digit-normalized
   failure signatures, and home-redacted paths are kept.
 - **Time.** Trends bucket by Europe/London days; actionable repeats use a 7-day Europe/London window.

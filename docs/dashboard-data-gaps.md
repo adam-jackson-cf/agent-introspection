@@ -6,8 +6,8 @@ What the dashboard cannot show, or shows only partly, and why. The sections from
 `scripts/render-measures.py`, and a test fails when it drifts. The sections after it
 record gaps in the data itself. Definitions and routes are in
 [Dashboard Measure v3](dashboard-measure-v3.md); how hooks close native gaps is in
-[Hook Events](hook-events.md); the evidence for each finding is in the
-[Dashboard v3 Plan](dashboard-v3-plan.md#findings-log).
+[Hook Events](hook-events.md); the findings log of the retired Dashboard v3
+plan is in version-control history.
 
 **Visibility rule.** Parity is judged over the harnesses a machine uses (config
 `[harnesses] enabled`), not every known harness. A signal is shown when every enabled

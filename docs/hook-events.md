@@ -5,7 +5,7 @@ Where a harness hook exposes the missing field, an **activity hook** derives a
 normalized value from it and writes one JSON record to a local spool. The spool is
 delivered to SigNoz over OTLP from every machine and loaded into the facts store from
 there. This closes the gap without storing raw prompt, command, argument,
-or output text (decision D4). A signal that no hook or native field can supply for
+or output text (decision D4, in [Facts Store](references/facts-store.md#standing-decisions)). A signal that no hook or native field can supply for
 every harness is excluded from the dashboard (see
 [Dashboard Data Gaps](dashboard-data-gaps.md)).
 

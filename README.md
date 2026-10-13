@@ -135,7 +135,5 @@ onboarding ──> operations (health gate) ──> improvement loop
 - [docs/hook-events.md](docs/hook-events.md): the hook event record contract.
 - [docs/dashboard-data-gaps.md](docs/dashboard-data-gaps.md): what the dashboard cannot
   show, per harness and signal.
-- [docs/dashboard-v3-plan.md](docs/dashboard-v3-plan.md): the dashboard plan and findings
-  log.
 - [docs/decision-models-plan.md](docs/decision-models-plan.md): proposed Decision models
   page and jev-guard OpenTelemetry capture.

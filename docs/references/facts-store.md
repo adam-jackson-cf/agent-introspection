@@ -5,8 +5,8 @@ findings read, and how the signal registry controls what is shown.
 
 ## Purpose
 
-The dashboard reads ClickHouse-materialized facts; see the
-[Dashboard v3 Plan](../dashboard-v3-plan.md). Refreshable materialized views copy
+The dashboard reads ClickHouse-materialized facts, under the
+[standing decisions](#standing-decisions) below. Refreshable materialized views copy
 curated producer spans and logs from SigNoz into the durable `introspection` database
 every minute, with raw prompt, command, argument, and output text and identity keys
 removed.
@@ -128,6 +128,40 @@ harness). `facts install` rejects unknown keys and loads the list into
 a signal an enabled harness does not emit (`not emitted`) is hidden on this machine and
 listed in the Pipeline view. A signal no harness produces is listed under `[[excluded]]`.
 The findings detectors, evidence packs, and evaluations count only enabled harnesses.
+
+## Standing decisions
+
+Other docs cite these by ID (for example "decision D4").
+
+| ID  | Decision                                                                                                 |
+| --- | -------------------------------------------------------------------------------------------------------- |
+| D1  | Facts are materialized inside ClickHouse (database `introspection`), not in SQLite.                      |
+| D2  | There is no SigNoz re-emission (outbox), read-back, or proof register.                                   |
+| D3  | Measures are per call where no logical request ID exists, and inferred values are allowed when labelled. |
+| D4  | Store only normalized forms of prompts, commands, and tool output. Raw text is never copied.             |
+| D5  | The React companion is built as question-led views.                                                      |
+
+Under D4, prompt text and identity keys (`user.email`, account, organization, and user
+IDs) are dropped from spans and logs, and `prompt_length` is kept. omp tool intent text
+is dropped. Span status messages keep only the first error-like line, normalized like
+`x.failure_signature`, and span names show home directories as `~`. The kept `x.*`
+fields are listed in [Dashboard Measure v3](../dashboard-measure-v3.md).
+
+Codex spans are kept by allowlist (`session_task.*`, `*sampling_request`,
+`turn/start|interrupt|steer`, and `handle_responses` with usage); everything else Codex
+emits is plumbing and is not loaded.
+
+## Retention and backups
+
+- SigNoz keeps 90 days of raw traces and logs. The `introspection` tables have no TTL
+  and hold history beyond that. Trace history before 2026-09-10 had already expired
+  under an earlier 15-day TTL and cannot be recovered.
+- Never drop `hook_events` (the only copy of activity-hook history) or
+  `session_projects` (it keeps attribution for sessions the harnesses have since
+  pruned). `facts install` recreates loaders and views without touching data.
+- The `introspection` tables live in the SigNoz ClickHouse volume. Only history older
+  than 90 days is irreplaceable; back it up before any SigNoz upgrade or stack
+  recreation once the store holds more than 90 days.
 
 ## Steps
 
