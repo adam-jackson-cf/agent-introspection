@@ -3,7 +3,7 @@
 Configure the harnesses the user asks for, and only those, so every dashboard signal
 each can produce reaches the facts: telemetry export, project attribution, activity
 hooks, and prompt export. Contracts: `session_stores.toml` (project attribution) and
-`docs/hook-events.md` (activity-hook records and prompt export).
+`docs/references/hook-events.md` (activity-hook records and prompt export).
 
 ## Choose the harnesses
 

@@ -1,12 +1,12 @@
-# Dashboard Measure v3
+# Signal Catalog
 
-Source of truth: [`signal_support.toml`](../src/agent_introspection/facts_sql/signal_support.toml),
+Source of truth: [`signal_support.toml`](../../src/agent_introspection/facts_sql/signal_support.toml),
 loaded by `agent-introspection facts install` into `introspection.signals`,
 `signal_routes`, `signal_support`, and `signal_strays`. The fact views are in
-[`003_views.sql`](../src/agent_introspection/facts_sql/003_views.sql). Sections 3
+[`003_views.sql`](../../src/agent_introspection/facts_sql/003_views.sql). Sections 3
 and 4 are generated from the registry by `scripts/render-measures.py`; a test fails
 when they drift. The standing design decisions (D1 to D5) are in
-[Facts Store](references/facts-store.md#standing-decisions). This document supersedes
+[Facts Store](facts-store.md#standing-decisions). This document supersedes
 Measure v2, kept in git at the tag `archive/proof-gated-dashboard`.
 
 This document records the producer routes and calculations behind every dashboard
@@ -19,10 +19,10 @@ The dashboard surfaces **the same signal from every harness that has it**. It is
 a benchmark: harnesses are never ranked or compared against each other.
 
 - **One definition per signal.** Each signal has one question, unit, and formula.
-- **One route per producer.** Each harness reaches the signal by its own route and is
-  `aligned`, `differs` (the note says how), `not applicable`, or `not emitted` (the
-  note says why). A signal is shown only when every harness the machine enables
-  (`[harnesses] enabled`) reaches it; otherwise it is hidden there, never shown as zero.
+- **One route per producer.** Each harness reaches the signal by its own route, and a
+  signal is shown only where every enabled harness reaches it; the rule and the
+  per-signal cells are in the
+  [harness support matrix](data-gaps.md#harness-support-matrix).
 - **All is the union of each.** "All harnesses" aggregates the per-harness rows of the
   same signal. Counts are summed; ratios sum numerators and denominators before
   dividing (token-weighted, never an average of percentages). The Pipeline view checks
@@ -32,7 +32,7 @@ a benchmark: harnesses are never ranked or compared against each other.
   observe (`friction_observed`), and the info note states them.
 - **NULL means no signal.** A missing field stays NULL and is excluded from
   denominators; it is never counted as zero.
-- **Privacy ([D4](references/facts-store.md#standing-decisions)).** Raw prompt, command, argument, output, and tool-intent text and
+- **Privacy ([D4](facts-store.md#standing-decisions)).** Raw prompt, command, argument, output, and tool-intent text and
   identity keys are never stored. Only normalized `x.*` fields, digit-normalized
   failure signatures, and home-redacted paths are kept.
 - **Time.** Trends bucket by Europe/London days; actionable repeats use a 7-day Europe/London window.

@@ -5,9 +5,9 @@ Where a harness hook exposes the missing field, an **activity hook** derives a
 normalized value from it and writes one JSON record to a local spool. The spool is
 delivered to SigNoz over OTLP from every machine and loaded into the facts store from
 there. This closes the gap without storing raw prompt, command, argument,
-or output text (decision D4, in [Facts Store](references/facts-store.md#standing-decisions)). A signal that no hook or native field can supply for
+or output text (decision D4, in [Facts Store](facts-store.md#standing-decisions)). A signal that no hook or native field can supply for
 every harness is excluded from the dashboard (see
-[Dashboard Data Gaps](dashboard-data-gaps.md)).
+[Dashboard Data Gaps](data-gaps.md)).
 
 Prompt labels do not use hooks: see [Prompt export](#prompt-export).
 
@@ -172,7 +172,7 @@ than six hours counts as closed.
 The shim is `.agents/skills/introspection-onboarding/scripts/activity-shim.sh`;
 the installers copy it to
 `~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
-See the [adapter READMEs](../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
+See the [adapter READMEs](../../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
 for the commands. Failures are logged by exception type only to
 `~/.local/share/agent-introspection/hooks.log`. Delivery also needs
 `[hooks] otlp_logs_endpoint` in `~/.config/agent-introspection/config.toml` and, on a

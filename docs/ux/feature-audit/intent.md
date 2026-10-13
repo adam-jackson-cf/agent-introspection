@@ -144,7 +144,7 @@ No old row is removed. New since baseline: INTENT-F20 to F29, INTENT-S08 to S11,
 
 - `codex_exec` (INTENT-S10, S08, S11): `repeated`, `recent` and `effort_payoff` now filter `harness != 'codex_exec'` for corrections, and `effort_payoff` clean completion counts only non-headless tasks (`views.ts:417-420,427,435`). `effort_payoff` Tasks still counts headless typed tasks (task type applies to them).
 - Evaluation workspaces (INTENT-F16, F27, S11): `recent` excludes temp-directory projects like `repeated` (`views.ts:436`); its subtitle says so (`Intent.tsx`, Recent corrected tasks).
-- Labelled tasks vs task types (INTENT-F09, F10, S05, C04): `task_types` no longer drops `task_type = ''` (`views.ts:411-413`); `taskTypeMix` divides every share by all labelled tasks and labelled-but-untyped tasks appear as an "untyped" bar and table row, so shares sum to 100% and the denominator matches the Labelled-tasks KPI numerator (`Intent.tsx:53-63,153`). Registry formula and `docs/dashboard-measure-v3.md` updated.
+- Labelled tasks vs task types (INTENT-F09, F10, S05, C04): `task_types` no longer drops `task_type = ''` (`views.ts:411-413`); `taskTypeMix` divides every share by all labelled tasks and labelled-but-untyped tasks appear as an "untyped" bar and table row, so shares sum to 100% and the denominator matches the Labelled-tasks KPI numerator (`Intent.tsx:53-63,153`). Registry formula and `docs/references/signal-catalog.md` updated.
 
 ### Phase 2, 2026-10-02 (calculations moved to the source)
 

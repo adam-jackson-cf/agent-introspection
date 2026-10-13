@@ -121,7 +121,7 @@ No removed rows. New: TOOL-F14..F20, TOOL-S07..S14, TOOL-C10..C12.
 ### Fixed 2026-10-01
 
 - Example session of a failure signature is now the most recent occurrence, `argMax(session_id, (ts, session_id))`, so refreshes no longer change it (`views.ts:192-194`). Rows TOOL-S05, TOOL-S14.
-- KPI details name their denominators: "Tasks affected by failures" reads "N of M tasks with an attributed tool call"; "Tasks with repeated attempts" reads "N of M tasks with comparable calls (not waiting or polling)" (`Tools.tsx:74,80`). Rows TOOL-S03, TOOL-S04, TOOL-C04, TOOL-C05. Registry formula of `tools.repeats` and `dashboard-measure-v3.md` state the repeat denominator.
+- KPI details name their denominators: "Tasks affected by failures" reads "N of M tasks with an attributed tool call"; "Tasks with repeated attempts" reads "N of M tasks with comparable calls (not waiting or polling)" (`Tools.tsx:74,80`). Rows TOOL-S03, TOOL-S04, TOOL-C04, TOOL-C05. Registry formula of `tools.repeats` and `docs/references/signal-catalog.md` state the repeat denominator.
 
 ## Batch C changes (2026-10-12)
 

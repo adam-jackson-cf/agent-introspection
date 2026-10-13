@@ -14,7 +14,7 @@ runs `/bin/sh ~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.s
 
 The shim prints nothing, so `PreToolUse` never makes a permission decision. No
 prompt, argument, output, or error text is stored; see
-[`docs/hook-events.md`](../../../../../../docs/hook-events.md).
+[`docs/references/hook-events.md`](../../../../../../docs/references/hook-events.md).
 
 ```sh
 python3 install_activity.py --dry-run   # print the settings diff, change nothing

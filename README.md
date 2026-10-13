@@ -102,12 +102,11 @@ onboarding ──> operations (health gate) ──> improvement loop
 - **Signal and registry**: a dashboard measure, defined once in
   [`signal_support.toml`](src/agent_introspection/facts_sql/signal_support.toml) with the
   route that reaches it for each harness.
-- **Parity rule**: a signal is shown only when every harness this machine enables
-  (`[harnesses] enabled`) reaches it; a signal an enabled harness does not emit is
-  hidden here with a reason, never shown as zero.
+- **Parity rule**: a signal is shown only where every enabled harness reaches it; see the
+  [harness support matrix](docs/references/data-gaps.md#harness-support-matrix).
 - **Session stores and activity hooks**: project attribution reads only the session ID
   and working directory from each harness's own session files and resolves the Git
-  repository; activity hooks write records to a local inbox to close signals the
+  repository; activity hooks spool records delivered over OTLP to SigNoz to close signals the
   producers' own telemetry lacks.
 - **Prompt labels**: Jev classifications of each prompt's task type, correction kind,
   and sentiment. Only labels are stored.
@@ -128,12 +127,10 @@ onboarding ──> operations (health gate) ──> improvement loop
   telemetry becomes fact views, snapshots, and registry tables.
 - [docs/references/dashboard-companion.md](docs/references/dashboard-companion.md): server
   binding, environment variables, and how views aggregate harnesses.
-- [docs/references/hooks-and-attribution.md](docs/references/hooks-and-attribution.md):
-  project attribution from the harness session stores, activity hooks, and prompt labels.
-- [docs/references/proposal-lifecycle.md](docs/references/proposal-lifecycle.md):
-  candidate selection, drafting with Codex, success metrics, applying, and evaluation.
-- [docs/hook-events.md](docs/hook-events.md): the hook event record contract.
-- [docs/dashboard-data-gaps.md](docs/dashboard-data-gaps.md): what the dashboard cannot
+- [docs/references/project-attribution.md](docs/references/project-attribution.md):
+  project attribution from the harness session stores.
+- [docs/references/hook-events.md](docs/references/hook-events.md): the hook event record
+  contract and delivery.
+- [docs/references/data-gaps.md](docs/references/data-gaps.md): what the dashboard cannot
   show, per harness and signal.
-- [docs/decision-models-plan.md](docs/decision-models-plan.md): proposed Decision models
-  page and jev-guard OpenTelemetry capture.
+- [docs/README.md](docs/README.md): the index of every reference, UX, and planning doc.

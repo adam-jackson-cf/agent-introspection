@@ -165,7 +165,7 @@ No old row removed. New since baseline: EFF-F04, F24-F29, F31 (itemised chrome),
 
 ### Fixed 2026-10-01
 
-- Reasoning share: KPI and spend table both call `reasoningShare` over the same `usage` rows (`Effort.tsx:33-35,94,345`); a test pins KPI = token-weighted spend rows (EFF-S06, S07). The outcomes-table share (EFF-S08) keeps its task-attributed population and the panel subtitle now says so (`Effort.tsx:210`). Registry formula and `docs/dashboard-measure-v3.md` updated (`signal_support.toml:515`).
+- Reasoning share: KPI and spend table both call `reasoningShare` over the same `usage` rows (`Effort.tsx:33-35,94,345`); a test pins KPI = token-weighted spend rows (EFF-S06, S07). The outcomes-table share (EFF-S08) keeps its task-attributed population and the panel subtitle now says so (`Effort.tsx:210`). Registry formula and `docs/references/signal-catalog.md` updated (`signal_support.toml:515`).
 - Model × effort "Reasoning / step" (EFF-S24, C13) divides by the steps of the tasks that reported reasoning: new `model_effort.reasoning_steps = sumIf(model_steps, reasoning_tokens IS NOT NULL)` (`views.ts:170`), `reasoningPerStep` (`Effort.tsx:37-41`).
 - Model × effort rows (EFF-F19, C14) sort by harness, model, then `effortRank` (`byModelEffort`, `Effort.tsx:43-46,392`).
 - `task.delegations` (C2) is displayed: outcomes table (EFF-F17) column "Delegations / task" = `Σ delegations ÷ count(delegations)` per row, "—" without data; the signal is in the panel's signal list so its info note and contributors work (`Effort.tsx:219-221,260-270`; `views.ts:154` adds `delegations_den`).

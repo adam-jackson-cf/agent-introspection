@@ -2,19 +2,12 @@
 
 What the dashboard cannot show, or shows only partly, and why. The sections from
 "Harness support matrix" through "Excluded signals" are generated from
-[`signal_support.toml`](../src/agent_introspection/facts_sql/signal_support.toml) by
+[`signal_support.toml`](../../src/agent_introspection/facts_sql/signal_support.toml) by
 `scripts/render-measures.py`, and a test fails when it drifts. The sections after it
 record gaps in the data itself. Definitions and routes are in
-[Dashboard Measure v3](dashboard-measure-v3.md); how hooks close native gaps is in
+[Signal Catalog](signal-catalog.md); how hooks close native gaps is in
 [Hook Events](hook-events.md); the findings log of the retired Dashboard v3
 plan is in version-control history.
-
-**Visibility rule.** Parity is judged over the harnesses a machine uses (config
-`[harnesses] enabled`), not every known harness. A signal is shown when every enabled
-harness produces it, natively or through an activity hook, or cannot have it by
-construction; a signal an enabled harness does not emit is hidden on that machine and
-listed in the Pipeline view, never shown as zero. A signal no harness produces is
-excluded everywhere.
 
 Legend: ✓ the harness reaches the shared definition directly; ≈ it reaches it by a
 different route (see its note); — the signal cannot exist for that harness by
@@ -247,6 +240,8 @@ never shown.
 
 ## Gaps in coverage
 
+Last verified: 2026-10-01.
+
 These signals are emitted, but not for every row.
 
 | Gap                          | Harnesses             | Extent                                                                                                                                                             | Effect                                                                                                                                                                                                                            |
@@ -258,6 +253,8 @@ These signals are emitted, but not for every row.
 | Rare user events             | Codex CLI, Codex exec | No `turn/interrupt` in 90 days; exec is headless and cannot be interrupted or steered                                                                              | Interrupt and steer rates are 0 or "no events" there, which is a valid observation, not a break.                                                                                                                                  |
 
 ## Gaps from the activity hooks
+
+Last verified: 2026-10-12.
 
 | Gap                                                  | Harnesses               | Extent                                                                                                                                                                                                                               | Effect                                                                                                                                                  |
 | ---------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -271,6 +268,8 @@ These signals are emitted, but not for every row.
 
 ## Gaps in history
 
+Last verified: 2026-09-29.
+
 | Gap                                 | Extent                                                                                                                   | Recoverable                                                                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Before SigNoz's retained data       | Raw traces and logs start on 2026-08-24                                                                                  | No.                                                                                                   |
@@ -279,6 +278,8 @@ These signals are emitted, but not for every row.
 | Workflow findings before 2026-09-29 | The retired scan detectors produced 6 findings (2026-08-06); promotion from the facts began on 2026-09-29                | The retired ledger is archived at `/Volumes/UGreen-External/archive/agent-introspection-2026-09-28/`. |
 
 ## Gaps in the source telemetry
+
+Last verified: 2026-09-29.
 
 - **No explicit task success.** No producer says whether a task achieved its goal.
   Clean completion is a friction proxy, and rule adherence and practice recurrence are

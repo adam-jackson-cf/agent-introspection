@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-// Activity hooks for omp (see docs/hook-events.md). Each handler builds a small
+// Activity hooks for omp (see docs/references/hook-events.md). Each handler builds a small
 // JSON envelope and hands it to the detached activity shim, which runs
 // `agent-introspection hook omp <event>`. Handlers never block, throw, or change
 // the agent's behaviour; a failed spawn loses one record and is logged by event and
