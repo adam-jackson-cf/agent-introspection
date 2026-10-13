@@ -17,3 +17,4 @@ dist/
 dashboard/node_modules/
 scripts/ux-probe/node_modules/
 .clawpatch/
+.codegraph/daemon.pid
