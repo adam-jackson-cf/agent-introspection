@@ -76,7 +76,8 @@ freshness and sanitization) therefore selects a family by `service.name`,
   a heartbeat never counts a record observed after it, except for a microsecond race with
   a hook drain that the delivery check's 2-record floor absorbs;
   heartbeats from before this ordering can show a first-window gap for up to 24 hours)
-  and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging hosts that received fewer than they sent.
+  and the Pipeline view compares their 24-hour growth with the records SigNoz received per host, flagging a host when received falls short of sent by more than 2 records or 2%
+  (`GAP_FLOOR = 2`, `GAP_FRACTION = 0.02` in `dashboard/server/record-route.ts`).
 
 ### Lag
 

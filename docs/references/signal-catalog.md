@@ -43,9 +43,11 @@ Harnesses: omp (`oh-my-pi`), Codex app-server (`codex-app-server`), Codex CLI
 ## 2. Normalized fact rows
 
 Views whose window starts within the last 90 days read snapshot tables
-(`<view>_snapshot`) of these fact views, rebuilt over the last 91 days right after each
-minute load; earlier windows and session drill-downs read the live views, which cover
-all history.
+(`<view>_snapshot`) of these fact views. Each snapshot holds the last 91 days in a
+`_recent` table rebuilt every 10 minutes and a `_history` table rebuilt daily, so the
+dashboard trails SigNoz by up to about 10 minutes (see
+[Fact views and snapshots](facts-store.md#fact-views-and-snapshots)). Earlier windows
+and session drill-downs read the live views, which cover all history.
 
 ### 2.1 `usage_events`: one row per accepted model usage record
 
@@ -116,8 +118,8 @@ latency and retry counts from it instead of the raw tables.
 
 ### 2.6 `session_project`: one project per session
 
-The latest Git project the session-context hooks recorded for a session, from
-`introspection.session_projects`. Session IDs are producer-native UUIDs and join the
+The latest Git project the attribution scan recorded for a session (see
+[Project Attribution](project-attribution.md)), from `introspection.session_projects`. Session IDs are producer-native UUIDs and join the
 facts without the harness.
 
 <!-- BEGIN GENERATED FROM signal_support.toml -->

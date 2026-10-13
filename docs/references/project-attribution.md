@@ -16,7 +16,10 @@ each store (Claude Code `~/.claude/projects/`, Codex `<codex-root>/sessions/`, o
 `~/.omp/agent/sessions/`), and resolves the working directory to its Git repository on
 this machine (a linked worktree to its main repository). It spools one
 `agent-introspection.session-project/1` record per session: `attributed` with the
-project, or the reason it has none (`non_git_workspace`, `missing_workspace`). Nothing
+project, or the reason it has none (`non_git_workspace`, `missing_workspace`). When the
+workspace is gone but the store recorded the session's Git remote (for example Codex
+`payload.git.repository_url`), the session is attributed to the local checkout with that
+remote and `resolved_by` is `remote`; paths are never guessed. Nothing
 is installed in any harness, and message content is never read.
 
 `spool.py` ships the spooled records over OTLP to SigNoz, and the loader

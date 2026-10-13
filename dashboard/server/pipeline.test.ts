@@ -735,5 +735,6 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
       "forbidden_keys + long_status + home_paths AS violations",
     );
     expect(sent[0]).toContain("GROUP BY ROLLUP(source)");
+    expect(sent[0].trimEnd().endsWith("SETTINGS max_threads = 2")).toBe(true);
   });
 });
