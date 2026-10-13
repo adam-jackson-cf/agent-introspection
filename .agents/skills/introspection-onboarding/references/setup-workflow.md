@@ -6,6 +6,10 @@ identities. This single-machine path is the default. To also send records from o
 machines, finish here first, then follow the
 [additional machines workflow](additional-machines-workflow.md).
 
+[`docs/references/setup.md`](../../../../docs/references/setup.md) is the human-facing
+version of this path. When a step here changes a command, an order, or a success
+signal, update that guide in the same change.
+
 Run every command from the repository root. Until step 5 installs the CLI, run it as
 `uv run agent-introspection …` (an older installed copy may lack the newer commands).
 Before and after each step, `agent-introspection doctor` (read-only) shows what is

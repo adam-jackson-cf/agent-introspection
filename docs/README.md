@@ -14,6 +14,7 @@ Start at the root [README](../README.md) for install and first run.
 - [producer-onboarding](references/producer-onboarding.md): the onboarding lifecycle, known and candidate producers, harness profiles, projection and parity impact, fingerprints and drift, privacy rules (operators and contributors).
 - [project-attribution](references/project-attribution.md): how sessions are attributed to Git projects, including SQLite session stores (contributors and operators).
 - [proposal-lifecycle](references/proposal-lifecycle.md): findings to evaluated proposals (operators and improvement agents).
+- [setup](references/setup.md): the manual single-machine setup, from installing the CLI to a dashboard showing live sessions (new users).
 - [signal-catalog](references/signal-catalog.md): producer routes and calculations behind every dashboard signal (view builders).
 - [signoz-connection](references/signoz-connection.md): finding SigNoz, the opt-in guided install, the two SigNoz layouts, connection modes, and ClickHouse grants (operators).
 
