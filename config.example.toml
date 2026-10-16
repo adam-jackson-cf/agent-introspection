@@ -20,9 +20,10 @@ busy_timeout_ms = 5000
 # and the findings detectors cover only these; a signal some enabled harness cannot
 # produce is hidden here. Keys are the registry harnesses (oh-my-pi, codex-app-server,
 # codex_cli_rs, codex_exec, claude-code); `codex` names the three Codex surfaces.
-# Absent means every registry harness. `facts install` loads the list into ClickHouse.
+# Absent means Claude Code and Codex; add "oh-my-pi" to use omp. `facts install` loads
+# the list into ClickHouse.
 # [harnesses]
-# enabled = ["claude-code", "oh-my-pi", "codex"]
+# enabled = ["claude-code", "codex", "oh-my-pi"]
 
 # Where activity-hook and spool-status records are sent: an OTLP/HTTP logs URL (never
 # the gRPC port 4317). Absent means /v1/logs on the collector this machine's harnesses
@@ -31,11 +32,9 @@ busy_timeout_ms = 5000
 # [hooks]
 # otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
 
-# Prompt labels need an OpenRouter key. OPENROUTER_API_KEY works for interactive runs,
-# but the scheduled sync does not see it: give it a command that prints the key (an
-# argv list such as a Keychain lookup), so the key is never stored in this file. With
-# neither, labels use omp's stored credential (`omp token openrouter`) when omp is
-# installed.
+# Prompt labels are optional and need an OpenRouter key: a command that prints it (an
+# argv list such as a Keychain lookup), which the scheduled sync runs, so the key is
+# never stored in this file. Without it, prompts are not labelled.
 # [labels]
 # openrouter_key_command = ["security", "find-generic-password", "-s", "openrouter", "-w"]
 

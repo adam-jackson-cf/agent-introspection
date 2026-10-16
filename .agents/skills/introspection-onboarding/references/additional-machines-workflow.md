@@ -49,8 +49,7 @@ hook records ──────────────▶ spool ─▶ spool sy
    machine; a URL never carries credentials. With `role = "additional"`, every command that needs ClickHouse
    (`facts` but `facts schedule status` and `remove`, `producers`, `candidates export`,
    `proposal draft`, and `proposal evaluate`) refuses to run with a message saying so
-   (exit 10; `facts preflight` reports it as a failing `connection` check): run it on
-   the host. `[signoz]` and `[labels]` are not used here. Records sent
+   (exit 10): run it on the host. `[signoz]` and `[labels]` are not used here. Records sent
    before the host's `facts install` created the loaders wait for the 3-day sweep or a
    `facts backfill` on the host.
    Set `[harnesses] enabled` to the harnesses this machine runs, so `doctor` checks

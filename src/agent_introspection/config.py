@@ -23,6 +23,8 @@ OTLP_GRPC_PORT: Final = 4317
 # while SigNoz may publish its ports on 127.0.0.1 only.
 DEFAULT_OTLP_ENDPOINT: Final = f"http://127.0.0.1:{OTLP_HTTP_PORT}"
 DEFAULT_CLICKHOUSE_URL: Final = "http://127.0.0.1:8123"
+# The harnesses a machine uses when config [harnesses] enabled is absent; omp is opt-in.
+DEFAULT_HARNESSES: Final = ("claude-code", "codex")
 
 
 class ConfigurationError(ValueError):
@@ -94,8 +96,8 @@ class AppConfig:
     signoz: SigNozConfig = SigNozConfig()
     machine: MachineConfig = MachineConfig()
     # Registry harness keys this machine uses (`codex` names the three Codex surfaces);
-    # None means every registry harness. `facts install` validates the keys.
-    harnesses_enabled: tuple[str, ...] | None = None
+    # absent from the file means Claude Code and Codex. `facts install` validates them.
+    harnesses_enabled: tuple[str, ...] = DEFAULT_HARNESSES
     # OTLP/HTTP logs URL every record is sent to (`[hooks] otlp_logs_endpoint`); any
     # reachable host. None means the collector's own logs URL (`otlp_logs_endpoint`).
     hooks_otlp_logs_endpoint: str | None = None
@@ -338,10 +340,10 @@ def _signoz(signoz: dict[str, Any]) -> SigNozConfig:
     )
 
 
-def _enabled_harnesses(harnesses: dict[str, Any]) -> tuple[str, ...] | None:
+def _enabled_harnesses(harnesses: dict[str, Any]) -> tuple[str, ...]:
     """Validate [harnesses] enabled: a non-empty list of distinct harness keys."""
     if "enabled" not in harnesses:
-        return None
+        return DEFAULT_HARNESSES
     value = harnesses["enabled"]
     if (
         not isinstance(value, list)

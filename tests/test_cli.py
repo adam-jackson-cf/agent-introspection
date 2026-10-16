@@ -299,12 +299,6 @@ def test_an_additional_machine_refuses_every_command_that_needs_clickhouse(
         assert raised.value.code == EXIT_CONFIG, argv
         assert refusal in capsys.readouterr().err, argv
 
-    assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
-    checks = {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
-    assert checks["connection"]["status"] == "fail"
-    assert refusal in checks["connection"]["detail"]
-    assert checks["otlp_endpoint"]["endpoint"] == "http://signoz-host.example:4318"
-
 
 def test_schedule_install_passes_the_selected_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

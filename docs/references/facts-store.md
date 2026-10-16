@@ -148,8 +148,8 @@ validates it and loads it into `introspection.signal_*` tables; every panel's in
 is rendered from those tables.
 
 Parity is judged over the harnesses this machine uses: config `[harnesses] enabled`
-(registry harness keys, or `codex` for the three Codex surfaces; absent means every
-harness). `facts install` rejects unknown keys and loads the list into
+(registry harness keys, or `codex` for the three Codex surfaces; absent means Claude
+Code and Codex). `facts install` rejects unknown keys and loads the list into
 `introspection.harnesses`. The visibility rule is in the
 [harness support matrix](data-gaps.md#harness-support-matrix). A signal no harness produces is listed under `[[excluded]]`.
 The findings detectors, evidence packs, and evaluations count only enabled harnesses.

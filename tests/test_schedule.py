@@ -192,9 +192,9 @@ def test_scheduled_job_path_follows_the_password_and_key_sources(
         clickhouse_url="http://localhost:8123", clickhouse_password_command=("security", "-w")
     )
 
-    # Without a key command, omp's directory serves the stored-credential fallback.
-    assert schedule._job_path(AppConfig()) == ["/opt/omp/bin"]
-    assert schedule._job_path(AppConfig(signoz=command)) == ["/usr/bin", "/opt/omp/bin"]
+    # omp's directory is never added: labels read only the configured key command.
+    assert schedule._job_path(AppConfig()) == []
+    assert schedule._job_path(AppConfig(signoz=command)) == ["/usr/bin"]
     keyed = AppConfig(labels_openrouter_key_command=("pass", "show", "openrouter"))
     assert schedule._job_path(keyed) == ["/opt/pass/bin"]
 

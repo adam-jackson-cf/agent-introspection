@@ -20,8 +20,8 @@ still prints.
 | `off`  | An optional feature is not in use (prompt export, prompt labels); turn it on only if the user wants it. |
 | `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).      |
 
-The checks run in this order: `config`, `signoz` (every `facts preflight` check
-folded into one), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
+The checks run in this order: `config`, `signoz` (every preflight check folded into
+one, with each failing check's detail), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
 enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
 `activity_hooks`, `activity_shim`, and `telemetry` (rows over 24
 hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
@@ -47,8 +47,10 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
   beside a switch that is on, such as `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant
   responses exported on purpose), is `info`: its detail names the value, and its fix
   says what `--prompt-export` would write over it. Leave it if the user chose it.
-- `OPENROUTER_API_KEY` set only in the shell is invisible to the scheduled sync: set
-  `[labels] openrouter_key_command` in the config instead.
+- `prompt_labels` reads only `[labels] openrouter_key_command`: a key in the shell or
+  omp's stored credential is never used.
+- `disabled_harnesses` warns when a registry harness left out of `[harnesses] enabled`
+  sent rows this week: the dashboard and findings leave its data out.
 - The dashboard needs ClickHouse's HTTP interface at a local address: a port published
   on loopback (for example with the opt-in
   `scripts/signoz/docker-compose.clickhouse-http.yaml`) or a container name the runtime
@@ -68,8 +70,8 @@ Options:
 
 Beyond `doctor`, check by hand:
 
-- Each changed file has a backup (`harness configure` and `install_activity.py` print
-  their backup paths).
+- Each changed file has a backup (`harness configure` prints each backup path, for its
+  settings and its hooks).
 - The managed copies under `~/.local/lib/agent-introspection/activity-hooks-v1/` match
   the repo's `scripts/` (`diff -u`).
 - `~/.omp/agent/config.yml` does not list the omp activity extension.

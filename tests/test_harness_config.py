@@ -13,9 +13,8 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import doctor_harness, facts, harness_config, profiles
+from agent_introspection import doctor_harness, facts, harness_config, hook_install, profiles
 from agent_introspection.cli import main
-from tests.support.doctor_machine import installer
 
 _SENTINEL = "sk-sentinel-0123456789"
 _CLAUDE_EXPORT = {
@@ -102,12 +101,17 @@ def test_configure_claude_code_sets_only_managed_keys_with_a_backup(
     ]
     written = json.loads(settings.read_text())
     assert written["env"] == {"OPENROUTER_API_KEY": _SENTINEL, **_CLAUDE_EXPORT}
-    assert (written["theme"], written["hooks"]) == ("dark", json.loads(original)["hooks"])
+    assert written["theme"] == "dark"
+    # Another tool's hook stays first; this tool's activity hooks follow it.
+    assert written["hooks"]["Stop"][0] == json.loads(original)["hooks"]["Stop"][0]
+    assert hook_install.is_owned(written["hooks"]["Stop"][1])
     assert settings.read_text().startswith('{\n    "theme": "dark",')
     assert settings.stat().st_mode & 0o777 == 0o640
     assert Path(item["backup"]).read_text() == original
-    assert "install_activity.py" in result["next_steps"][0]
-    assert result["next_steps"][1].startswith("Restart running Claude Code sessions")
+    assert len(list(settings.parent.glob("settings.json.bak-*"))) == 1
+    assert result["next_steps"] == [
+        "Restart running Claude Code sessions: they read these settings at start."
+    ]
 
     again, _ = _harness(capsys, config, "configure", "claude-code")
 
@@ -117,7 +121,7 @@ def test_configure_claude_code_sets_only_managed_keys_with_a_backup(
     assert [path.name for path in settings.parent.glob("settings.json.bak-*")] == [
         Path(item["backup"]).name
     ]
-    assert len(again["next_steps"]) == 1
+    assert again["next_steps"] == []
 
 
 def test_prompt_export_is_written_only_when_opted_in(
@@ -494,7 +498,10 @@ def test_omp_dotenv_lines_are_updated_in_place(
         "OTEL_SERVICE_NAME=oh-my-pi\n"
         "AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1\n"
     )
-    assert "omp plugin link" in result["next_steps"][0]
+    assert result["hooks"]["plugin"] == {"plugin": "agent-introspection-activity", "action": "link"}
+    assert (home / doctor_harness.OMP_PLUGIN_LINK).resolve() == (
+        home / doctor_harness.MANAGED_RUNTIME / "omp"
+    )
 
 
 def test_every_harness_exports_to_the_configured_collector_over_one_transport(
@@ -635,9 +642,8 @@ def test_doctor_and_configure_resolve_a_profiles_config_paths_alike(
 
 
 @pytest.mark.parametrize("config_dir_set", [False, True])
-def test_the_hooks_installer_edits_the_settings_file_configure_writes(
+def test_the_hooks_go_in_the_settings_file_configure_writes(
     config_dir_set: bool,
-    capsys: pytest.CaptureFixture[str],
     home: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -649,9 +655,12 @@ def test_the_hooks_installer_edits_the_settings_file_configure_writes(
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
     [target] = harness_config.config_targets(profiles.resolve("claude-code").config_files[0])
 
-    assert installer().main(["--dry-run", "--runtime-dir", str(tmp_path / "runtime")]) == 0
+    result = harness_config.configure(
+        "claude-code", None, harness_config.ConfigureOptions(dry_run=True)
+    )
 
-    assert capsys.readouterr().out.startswith(f"--- {target}\n")
+    assert result["hooks"]["settings"]["path"] == str(target)
+    assert [item["path"] for item in result["files"]] == [str(target)]
 
 
 def _fake_binary(directory: Path, name: str, output: str) -> Path:

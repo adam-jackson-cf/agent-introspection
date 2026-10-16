@@ -111,7 +111,7 @@ become no-ops, which is safe.
 Fallback, only if the global provider proves unavailable: post OTLP/JSON to
 `OTEL_EXPORTER_OTLP_ENDPOINT + /v1/traces` from the same environment, as the
 activity adapter already does for logs
-(`.agents/skills/introspection-onboarding/scripts/adapters/omp/activity.ts`).
+(`src/agent_introspection/hook_runtime/omp/activity.ts`).
 
 **Parenting.** Spans join the omp trace through the active context at hook
 time:

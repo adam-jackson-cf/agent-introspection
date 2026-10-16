@@ -68,6 +68,7 @@ SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "src/agent_introspection/doctor_harness.py": frozenset({"_run_version"}),
     "src/agent_introspection/drafting.py": frozenset({"run_codex"}),
     "src/agent_introspection/facts.py": frozenset({"run", "_run_local_command"}),
+    "src/agent_introspection/hook_install.py": frozenset({"_run_omp"}),
     "src/agent_introspection/schedule.py": frozenset({"_launchctl", "_systemctl"}),
     "src/agent_introspection/signoz_detect.py": frozenset({"_run_docker"}),
 }

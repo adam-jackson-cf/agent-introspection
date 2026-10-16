@@ -2,11 +2,12 @@
 
 Each check reports ``pass``, ``warn``, ``fail``, ``off`` (an optional feature that is
 not in use), or ``info``, with a ``fix`` for anything that is not a pass; ``passed`` is
-false when any check fails. The checks run in order: the config; SigNoz (``facts
-preflight``, folded into one check); the collector's ports and the hooks endpoint; one
-block per enabled harness (``doctor_harness.py``); the record spool; the schedule;
-the prompt-label key; the dashboard's ClickHouse URL; and, with ``--drift``, each
-enabled producer's telemetry against its saved fingerprint.
+false when any check fails. The checks run in order: the config; SigNoz (every
+``preflight`` check, folded into one, with each failing check's detail); the
+collector's ports and the hooks endpoint; one block per enabled harness
+(``doctor_harness.py``) and any disabled harness that still sends rows; the record
+spool; the schedule; the prompt-label key; the dashboard's ClickHouse URL; and, with
+``--drift``, each enabled producer's telemetry against its saved fingerprint.
 
 An additional machine (``[machine] role = "additional"``) has no SigNoz: the checks
 that need the host's SigNoz, ClickHouse, or scheduled sync report ``info`` with the
@@ -50,7 +51,6 @@ HTTP_TIMEOUT_SECONDS: Final = 2
 # A valid OTLP/HTTP logs request with no records: the collector accepts and stores nothing.
 EMPTY_LOGS_REQUEST: Final = b'{"resourceLogs":[]}'
 DASHBOARD_URL_ENV: Final = "INTROSPECTION_CLICKHOUSE_URL"
-OPENROUTER_KEY_ENV: Final = "OPENROUTER_API_KEY"
 _UNREACHABLE: Final = "ClickHouse is unreachable (see the signoz check)"
 _NO_CLICKHOUSE: Final = "an additional machine has no ClickHouse; run doctor on the host"
 _ON_THE_HOST: Final = "run `agent-introspection doctor` on the host"
@@ -273,7 +273,7 @@ class _Doctor:
             return check(
                 "signoz",
                 "pass",
-                f"ClickHouse {version}; every facts preflight check passes",
+                f"ClickHouse {version}; every preflight check passes",
             )
         if self.run is None:
             return check(
@@ -283,11 +283,13 @@ class _Doctor:
                 self._unreachable_fix(),
                 failing=names,
             )
+        details = "; ".join(f"{item['name']}: {item['detail']}" for item in failing)
         return check(
             "signoz",
             "fail",
-            f"failing facts preflight checks: {', '.join(names)}",
-            "run `agent-introspection facts preflight` for each check's detail",
+            f"failing preflight checks: {details}",
+            "fix each failing check at its owner (ClickHouse version, grants, or SigNoz "
+            "columns); never weaken a check",
             failing=names,
         )
 
@@ -407,15 +409,40 @@ class _Doctor:
 
     # --- Harnesses -------------------------------------------------------------------
 
-    def _telemetry(self) -> doctor_harness.Telemetry:
+    def _telemetry(self, registry: facts.Registry) -> doctor_harness.Telemetry:
+        # Every registry harness is counted, so a disabled one that still sends is seen.
         if self.run is None:
             return doctor_harness.Telemetry(skipped=self.no_run)
         try:
             return doctor_harness.Telemetry(
-                counts=doctor_harness.telemetry_counts(self.run, self.enabled)
+                counts=doctor_harness.telemetry_counts(self.run, tuple(registry.harnesses))
             )
         except Exception as exc:
             return doctor_harness.Telemetry(error=type(exc).__name__)
+
+    def _disabled_check(
+        self, registry: facts.Registry, telemetry: doctor_harness.Telemetry
+    ) -> Check:
+        """Warn when a harness this machine does not enable still sent rows this week."""
+        if telemetry.skipped or telemetry.error:
+            return check("disabled_harnesses", "info", "not counted: see the telemetry checks")
+        sending = [
+            harness
+            for harness in registry.harnesses
+            if harness not in self.enabled
+            and telemetry.counts.get(harness, {}).get("last_seen", 0) > 0
+        ]
+        if not sending:
+            return check("disabled_harnesses", "pass", "no harness outside [harnesses] sends rows")
+        return check(
+            "disabled_harnesses",
+            "warn",
+            f"{', '.join(sending)} sent rows in the last {doctor_harness.LAST_SEEN_DAYS} days "
+            "but is not enabled, so the dashboard and findings leave it out",
+            "add it to [harnesses] enabled (preview with `agent-introspection harness impact "
+            "<key>`) and rerun `agent-introspection facts install`, or stop its export",
+            harnesses=sending,
+        )
 
     def harness_checks(self) -> list[Check]:
         registry = facts.load_registry()
@@ -428,17 +455,21 @@ class _Doctor:
             profile.key: profile
             for profile in (profiles.resolve(key, known) for key in self.enabled)
         }
+        telemetry = self._telemetry(registry)
         context = doctor_harness.HarnessContext(
             config=self.config,
             enabled=self.enabled,
-            telemetry=self._telemetry(),
+            telemetry=telemetry,
             probes=self.probes.harness,
             now=time.time(),
         )
         return [
-            item
-            for profile in chosen.values()
-            for item in doctor_harness.harness_checks(profile, context)
+            *(
+                item
+                for profile in chosen.values()
+                for item in doctor_harness.harness_checks(profile, context)
+            ),
+            self._disabled_check(registry, telemetry),
         ]
 
     # --- Spool and schedule ----------------------------------------------------------
@@ -566,28 +597,12 @@ class _Doctor:
             return check(
                 "prompt_labels", "pass", "[labels] openrouter_key_command is set (not run here)"
             )
-        command_fix = "set [labels] openrouter_key_command so the scheduled sync finds the key"
-        if self.environ.get(OPENROUTER_KEY_ENV):
-            return check(
-                "prompt_labels",
-                "info",
-                f"{OPENROUTER_KEY_ENV} is set in this shell; the scheduled sync does not see it",
-                command_fix,
-            )
-        if self.probes.harness.which("omp"):
-            return check(
-                "prompt_labels",
-                "info",
-                "no key configured: labels fall back to omp's stored OpenRouter credential "
-                "(not checked)",
-                command_fix,
-            )
         return check(
             "prompt_labels",
             "off",
             "no OpenRouter key: prompt labels are optional and off",
-            f"to label prompts, set {OPENROUTER_KEY_ENV} or [labels] openrouter_key_command "
-            "(a command that prints the key, such as a Keychain lookup)",
+            "to label prompts, set [labels] openrouter_key_command (a command that prints "
+            "the key, such as a Keychain lookup)",
         )
 
     def _dashboard_url(self) -> tuple[str, str]:

@@ -74,7 +74,8 @@ never edit them by hand. `uv run python scripts/render-measures.py` regenerates
 `dashboard/src/harnesses.generated.ts` (`HARNESSES`, `HARNESS_LABEL`, and the services
 list that `contracts.ts`, `format.ts`, and `pipeline.ts` import) and the docs. The
 projections' service lists (`{services}` in `select_spans.sql` and `select_logs.sql`)
-and the services `facts preflight` checks are filled from the same table when they run.
+and the services doctor's preflight checks read are filled from the same table when they
+run.
 
 What still needs work per producer:
 
@@ -88,10 +89,10 @@ What still needs work per producer:
 - `classify.py`: its prompt event;
 - `dashboard/server/pipeline.ts` (parity recount) and `dashboard/server/views.ts`
   (per-harness branches);
-- activity hooks, when the profile needs them: an adapter under the onboarding skill's
-  `scripts/adapters/`, its producer and events in `hooks.py` and
+- activity hooks, when the profile needs them: an adapter in the CLI package's
+  `hook_runtime/`, its producer and events in `hooks.py` and
   `docs/references/hook-events.md`, the profile's `hook_adapter`, its install step in
-  `harness_config.py`, and its check in `doctor_harness.py`;
+  `hook_install.py`, and its check in `doctor_harness.py`;
 - a colour: `HARNESS_TOKENS` in `dashboard/src/tokens.ts` has slots for three more
   harnesses; a harness beyond that needs a new slot (`dashboard/src/components.test.ts`
   fails without one).

@@ -2,7 +2,7 @@
 
 Opt-in files for the SigNoz on this machine. Agent Introspection never applies them on
 its own and never reconfigures an existing SigNoz: connect to the one you have instead
-(`agent-introspection signoz detect`, then `agent-introspection facts preflight`).
+(`agent-introspection signoz detect`, then `agent-introspection doctor`).
 
 | File                                  | Purpose                                                                           |
 | ------------------------------------- | --------------------------------------------------------------------------------- |

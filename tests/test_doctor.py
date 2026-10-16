@@ -165,9 +165,10 @@ def test_failing_preflight_checks_are_named(machine: Machine) -> None:
 
     signoz = one(result, "signoz")
     assert signoz["status"] == "fail"
-    assert signoz["detail"] == "failing facts preflight checks: facts_database_grants"
+    assert signoz["detail"].startswith("failing preflight checks: facts_database_grants: missing ")
+    assert "INSERT" in signoz["detail"]
     assert signoz["failing"] == ["facts_database_grants"]
-    assert "facts preflight" in signoz["fix"]
+    assert "never weaken a check" in signoz["fix"]
     assert one(result, "telemetry", "omp")["status"] == "pass"
 
 
@@ -216,10 +217,11 @@ def test_a_partly_enabled_profile_counts_only_its_enabled_surfaces(machine: Mach
     codex = one(result, "telemetry", "codex")
     assert codex["status"] == "pass"
     assert set(codex["services"]) == {"codex_exec"}
-    [telemetry] = [sql for sql in machine.executed if "rows_24h" in sql]
-    assert "'codex_exec'" in telemetry
-    assert "'codex-app-server'" not in telemetry
-    assert "'codex_cli_rs'" not in telemetry
+    # Every registry harness is counted, so the surfaces left out are seen sending.
+    disabled = one(result, "disabled_harnesses")
+    assert disabled["status"] == "warn"
+    assert disabled["harnesses"] == ["codex-app-server", "codex_cli_rs"]
+    assert "harness impact" in disabled["fix"]
 
 
 def test_without_a_hooks_endpoint_records_go_to_the_collectors_logs_url(
@@ -396,8 +398,9 @@ def test_the_schedule_on_the_signoz_host(
     ("command", "environ", "omp", "expected"),
     [
         (True, {}, None, "pass"),
-        (False, {"OPENROUTER_API_KEY": SECRET}, None, "info"),
-        (False, {}, "/bin/omp", "info"),
+        # Only the key command counts: a shell key or omp's stored credential does not.
+        (False, {"OPENROUTER_API_KEY": SECRET}, None, "off"),
+        (False, {}, "/bin/omp", "off"),
         (False, {}, None, "off"),
     ],
 )

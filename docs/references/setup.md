@@ -70,14 +70,15 @@ the guided script, or any SigNoz whose ClickHouse HTTP interface is on
 to your SigNoz Compose project (it publishes ClickHouse on `127.0.0.1:8123` only), or set
 `[signoz] clickhouse_url` to an address your container runtime resolves.
 
-Under `[harnesses]`, list the harnesses you use, for example
-`enabled = ["claude-code", "codex"]` (omp is `oh-my-pi`). Then check:
+Claude Code and Codex are the default harnesses; to use omp too, set
+`enabled = ["claude-code", "codex", "oh-my-pi"]` under `[harnesses]`. Then check:
 
 ```bash
-agent-introspection facts preflight
+agent-introspection doctor
 ```
 
-You should see `"passed": true`. It only reads and names each failing check.
+Its `signoz` check should pass. It only reads and names each failing check with its
+detail.
 
 ### 4. Build the facts store
 
@@ -99,18 +100,9 @@ agent-introspection harness configure claude-code --dry-run   # then without --d
 agent-introspection harness configure codex --dry-run         # then without --dry-run
 ```
 
-Each run changes only the settings its profile manages, backs up every file it
-changes, and lists any `next_steps`. Then, per harness:
-
-- **Claude Code** also needs its activity hooks:
-
-  ```bash
-  python3 .agents/skills/introspection-onboarding/scripts/adapters/claude-code/install_activity.py --dry-run  # then without
-  ```
-
-- **Codex** needs no hooks.
-- **omp**: follow the
-  [harness configuration workflow](../../.agents/skills/introspection-onboarding/references/harness-configuration-workflow.md).
+Each run changes only the settings its profile manages, installs the harness's
+activity hooks (Claude Code's settings hooks, omp's plugin; Codex needs none), backs up
+every file it changes, and lists any `next_steps`.
 
 Restart running agent sessions so they pick up the settings.
 

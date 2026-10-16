@@ -6,9 +6,8 @@ without bypassing a failed check.
 ## Checks
 
 1. `agent-introspection doctor` (read-only) exits 0 (no check is `fail`), and each
-   `warn`, `off`, or `info` has a known reason. It covers the config, SigNoz (every `facts preflight`
-   check folded into `signoz`; run `agent-introspection facts preflight` for each
-   check's detail), the collector and hooks endpoint, each enabled harness's
+   `warn`, `off`, or `info` has a known reason. It covers the config, SigNoz (every preflight check
+   folded into `signoz`, each failing one with its detail), the collector and hooks endpoint, each enabled harness's
    configuration, hooks, and telemetry, the spool, the schedule, the
    prompt-label key, and the dashboard's ClickHouse URL. Add `--drift` to compare each
    enabled harness's telemetry with its saved fingerprint; a `drifted` service or an

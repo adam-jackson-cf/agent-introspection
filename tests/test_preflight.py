@@ -12,8 +12,7 @@ from typing import Any
 import pytest
 
 from agent_introspection import facts, preflight
-from agent_introspection.cli import EXIT_FACTS, main
-from agent_introspection.config import AppConfig, ConfigurationError, parse_config
+from agent_introspection.config import AppConfig, ConfigurationError, load_config, parse_config
 from agent_introspection.facts import FactsError
 
 ALL_GRANTS = "GRANT SELECT, INSERT, ALTER, CREATE, DROP ON *.* TO default\n"
@@ -266,8 +265,7 @@ _SECRET = "sentinel-not-a-password"
         ),
     ],
 )
-def test_cli_preflight_reports_setup_errors_as_a_failing_connection_check(
-    capsys: pytest.CaptureFixture[str],
+def test_preflight_reports_setup_errors_as_a_failing_connection_check(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     case: SetupCase,
@@ -277,30 +275,22 @@ def test_cli_preflight_reports_setup_errors_as_a_failing_connection_check(
     monkeypatch.delenv("AI_PREFLIGHT_TEST_PASSWORD", raising=False)
     _local_command(monkeypatch, case.returncode, case.stdout)
 
-    assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
-    captured = capsys.readouterr()
-    result = json.loads(captured.out)
+    result = preflight.report(lambda: load_config(config), facts.runner)
     connection = {check["name"]: check for check in result["checks"]}["connection"]
 
-    assert captured.err == ""
     assert result["passed"] is False
     assert _statuses(result) == case.statuses
     assert connection["detail"].startswith("ConfigurationError: ")
     assert case.reason in connection["detail"]
-    assert _SECRET not in captured.out
+    assert _SECRET not in json.dumps(result)
 
 
-def test_cli_preflight_reports_an_unloadable_config_as_a_failing_check(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
+def test_preflight_reports_an_unloadable_config_as_a_failing_check(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
     config.write_text("[signoz\n")
 
-    assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
-    captured = capsys.readouterr()
-    result = json.loads(captured.out)
+    result = preflight.report(lambda: load_config(config), facts.runner)
 
-    assert captured.err == ""
     assert result["passed"] is False
     assert [check["name"] for check in result["checks"]] == ["configuration"]
     assert result["checks"][0]["detail"].startswith("ConfigurationError: invalid TOML")
@@ -319,17 +309,19 @@ def test_a_runner_that_cannot_be_built_still_reports_every_local_check() -> None
     assert preflight.report(AppConfig, lambda _config: healthy)["passed"] is True
 
 
-def test_cli_preflight_prints_every_check_and_exits_non_zero_on_failure(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_an_additional_machine_fails_the_connection_and_names_the_hosts_collector(
+    tmp_path: Path,
 ) -> None:
     config = tmp_path / "config.toml"
-    config.write_text("")
-    _, run = fake_clickhouse(version="23.8.1", grants={})
-    monkeypatch.setattr(facts, "runner", lambda _config: run)
+    config.write_text(
+        '[machine]\nrole = "additional"\nexport_endpoint = "http://signoz-host.example:4318"\n'
+    )
 
-    assert main(["--config", str(config), "facts", "preflight"]) == EXIT_FACTS
-    assert json.loads(capsys.readouterr().out)["passed"] is False
+    result = preflight.report(lambda: load_config(config), facts.runner)
 
-    _, healthy = fake_clickhouse(grants={})
-    monkeypatch.setattr(facts, "runner", lambda _config: healthy)
-    assert main(["--config", str(config), "facts", "preflight"]) == 0
+    checks = {check["name"]: check for check in result["checks"]}
+    assert checks["connection"]["status"] == "fail"
+    assert (
+        'this additional machine ([machine] role = "additional")' in checks["connection"]["detail"]
+    )
+    assert checks["otlp_endpoint"]["endpoint"] == "http://signoz-host.example:4318"

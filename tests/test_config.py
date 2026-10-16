@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from agent_introspection.config import (
+    DEFAULT_DATABASE_PATH,
     ConfigurationError,
+    DatabaseConfig,
     MachineRole,
     load_config,
     parse_config,
@@ -18,8 +21,12 @@ from agent_introspection.config import (
 def test_documented_defaults_are_canonical() -> None:
     config = parse_config({})
 
-    assert config.database.path == (
-        Path.home() / ".local/share/agent-introspection/introspection.sqlite3"
+    assert config.database.path == DEFAULT_DATABASE_PATH
+    assert DEFAULT_DATABASE_PATH.parts[-4:] == (
+        ".local",
+        "share",
+        "agent-introspection",
+        "introspection.sqlite3",
     )
     assert config.database.busy_timeout_ms == 5_000
     assert config.signoz.clickhouse_url == "http://127.0.0.1:8123"
@@ -102,7 +109,12 @@ def _example_with_every_setting() -> str:
 
 
 def test_example_configuration_is_valid_and_the_defaults() -> None:
-    assert load_config(EXAMPLE) == parse_config({})
+    example = load_config(EXAMPLE)
+    # The example spells the database path with ~, which expands to this test's home.
+    assert example.database.path == Path.home() / DEFAULT_DATABASE_PATH.relative_to(
+        DEFAULT_DATABASE_PATH.parents[3]
+    )
+    assert replace(example, database=DatabaseConfig()) == parse_config({})
 
 
 def test_every_setting_the_example_documents_is_accepted(tmp_path: Path) -> None:
@@ -192,7 +204,7 @@ def test_password_command_is_an_argv_list_and_excludes_the_env_variable() -> Non
 
 
 def test_enabled_harnesses_are_optional_and_kept_as_listed() -> None:
-    assert parse_config({}).harnesses_enabled is None
+    assert parse_config({}).harnesses_enabled == ("claude-code", "codex")
     config = parse_config({"harnesses": {"enabled": ["claude-code", "codex"]}})
 
     assert config.harnesses_enabled == ("claude-code", "codex")

@@ -170,14 +170,63 @@ than six hours counts as closed.
 
 ## Install
 
-The shim is `.agents/skills/introspection-onboarding/scripts/activity-shim.sh`;
-the installers copy it to
-`~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
-See the [adapter READMEs](../../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
-for the commands. Failures are logged by exception type only to
-`~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
+`agent-introspection harness configure <harness>` installs a harness's hooks after its
+export settings. The runtime ships in the CLI package
+(`src/agent_introspection/hook_runtime/`): it copies the shim and omp's plugin package
+to `~/.local/lib/agent-introspection/activity-hooks-v1/` (the shim mode 0755, each
+replaced file backed up), so no hook runs a repository path, then registers the hooks.
+A second run changes nothing; `--dry-run` reports the same actions and writes nothing;
+`agent-introspection harness remove-hooks <harness>` takes them out again. `doctor`
+warns when the installed shim differs from the one the CLI ships, so rerun
+`harness configure` after updating the CLI. Failures are logged by exception type only
+to `~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
 delivery also needs the `spool sync` timer (see the onboarding skill's
 [additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
+
+### Claude Code
+
+One entry per event in the `hooks` of the settings file `harness configure` writes
+(`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`), each running
+`/bin/sh ~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh claude-code <Event>`
+with a 10-second timeout. Entries are recognised by that command, so a rerun replaces
+them and another tool's hooks are kept as they are. The shim prints nothing, so
+`PreToolUse` never makes a permission decision.
+
+| Claude event                       | Record             | Reads                                                                                      |
+| ---------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
+| `PreToolUse` (matcher `*`)         | `tool_call`        | `tool_name`, `tool_input`, `tool_use_id`, `cwd`                                            |
+| `PostToolUseFailure` (matcher `*`) | `tool_failure`     | `tool_name`, `tool_use_id`, `error`, `is_interrupt`                                        |
+| `UserPromptSubmit`                 | `prompt_submitted` | `prompt_id`, prompt length (for interrupt and steer inference)                             |
+| `Stop`                             | `turn_stop`        | `prompt_id`; numeric usage and model of the turn's assistant messages in `transcript_path` |
+| `StopFailure`                      | `turn_failure`     | `error` (kept only when it is an identifier)                                               |
+| `SubagentStart`                    | `subagent_start`   | `agent_id`, `agent_type`, `prompt_id`                                                      |
+
+### omp
+
+`activity.ts` is an omp extension in a plugin package (`package.json` declares it
+under `omp.extensions`). `harness configure omp` links it with
+`omp plugin link ~/.local/lib/agent-introspection/activity-hooks-v1/omp`, which records
+it in omp's plugin directory (`~/.omp/plugins`); nothing goes in
+`~/.omp/agent/extensions/` or `config.yml`, so a `~/.omp` shared across machines never
+names an extension a machine lacks. Updating the installed files needs no relink;
+`harness remove-hooks omp` runs `omp plugin uninstall agent-introspection-activity`.
+
+Each handler builds a small JSON envelope (`session_id` from `getSessionId()`, `cwd`,
+and the fields below) and spawns the shim (`AGENT_INTROSPECTION_SHIM` overrides its
+path) detached. Handlers never block, throw, or return a result.
+
+| omp event                             | Record                                                | Envelope fields                                 |
+| ------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
+| `tool_call`                           | `tool_call`                                           | `toolCallId`, `toolName`, `input`               |
+| `tool_result` with `isError`          | `tool_failure`                                        | `toolCallId`, `toolName`, error text, exit code |
+| `before_agent_start`                  | none; sends an `omp.user_prompt` OTLP log (see below) | `prompt`                                        |
+| `tool_approval_resolved`              | `approval`                                            | `toolCallId`, `toolName`, `approved`            |
+| `auto_retry_start` / `auto_retry_end` | `retry`                                               | `attempt`, `success`                            |
+| `input` while `ctx.isIdle()` is false | `steer`                                               | text length only is kept                        |
+
+A `tool_result` that is an error hands its text to the shim in memory; `hooks.py` keeps
+only the normalized failure signature, its hash, and the exit code. A failed spawn
+appends `<time> omp <event> spawn <code>` to the hook log, with no payload.
 
 ## Prompt export
 
@@ -190,8 +239,16 @@ export to SigNoz, labelled in the app rather than in a hook:
 | Codex (all surfaces) | `log_user_prompt = true` under `[otel]` in each `<codex-root>/config.toml`                                                                                              | `codex.user_prompt` |
 | omp                  | The activity extension sends it on `before_agent_start` to omp's own OTLP endpoint (`OTEL_EXPORTER_OTLP_*`, loaded from `~/.omp/.env`), because omp has no prompt event | `omp.user_prompt`   |
 
+omp's log carries the attributes `event.name`, `session.id`, `prompt`, and
+`prompt_length`, with resource `service.name` from `OTEL_SERVICE_NAME` (default
+`oh-my-pi`), posted as OTLP/JSON to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, else
+`OTEL_EXPORTER_OTLP_ENDPOINT` + `/v1/logs`, with `OTEL_EXPORTER_OTLP_*HEADERS`. It sends
+nothing until `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` is set in `~/.omp/.env`
+(`harness configure omp --prompt-export`).
+
 `facts sync` (`classify.run`) reads unlabelled prompts from SigNoz, sends each
-redacted and clipped to Jev, and stores only the answers in
+redacted and clipped to Jev with the OpenRouter key that `[labels]
+openrouter_key_command` prints (the one key source), and stores only the answers in
 `introspection.prompt_labels`; a failed decision is retried up to three times, and
 `facts classify --days N` labels on demand. The facts loader drops the `prompt`
 attribute, so prompt text is stored only in SigNoz's own tables, for their 90-day

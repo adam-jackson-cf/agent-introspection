@@ -185,8 +185,8 @@ model usage would leave 19 signals visible.
 
 1. **An opencode plugin adapter** for the activity hook route
    ([Hook Events](../references/hook-events.md)), like the omp extension in the
-   onboarding skill's `scripts/adapters/omp/`: a plugin that hands each event to
-   `scripts/activity-shim.sh`, an `opencode` producer in
+   CLI package's `hook_runtime/omp/`: a plugin that hands each event to
+   `hook_runtime/activity-shim.sh`, an `opencode` producer in
    `src/agent_introspection/hooks.py`, and `hook_adapter = "opencode"` in the profile.
    Each field below must be checked on the build that runs, with counts only:
 

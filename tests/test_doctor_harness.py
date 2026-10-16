@@ -21,7 +21,6 @@ from tests.support.doctor_machine import (
     Machine,
     build_machine,
     find,
-    installer,
     one,
     replace_settings,
     settings_of,
@@ -307,19 +306,6 @@ def test_unreadable_config_files_fail_and_skip_their_settings(machine: Machine) 
     assert omp["fix"] == "agent-introspection harness configure omp"
 
 
-def test_the_doctor_knows_every_event_the_claude_code_installer_registers(
-    machine: Machine,
-) -> None:
-    adapter = installer()
-    shim = machine.home / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM
-
-    assert dict(doctor_harness.CLAUDE_HOOK_EVENTS) == adapter.EVENTS
-    assert all(
-        adapter.command(shim, event) == doctor_harness.claude_hook_command(shim, event)
-        for event in adapter.EVENTS
-    )
-
-
 def test_missing_hooks_a_bare_shim_and_a_foreign_plugin_link_fail(machine: Machine) -> None:
     path = machine.home / ".claude/settings.json"
     settings = json.loads(path.read_text())
@@ -336,11 +322,14 @@ def test_missing_hooks_a_bare_shim_and_a_foreign_plugin_link_fail(machine: Machi
     claude = one(result, "activity_hooks", "claude-code")
     assert claude["status"] == "fail"
     assert claude["detail"].endswith("events do not run the managed shim: PreToolUse, Stop")
-    assert "install_activity.py" in claude["fix"]
+    assert (
+        claude["fix"]
+        == "`agent-introspection harness configure claude-code` (with --dry-run first)"
+    )
     assert one(result, "activity_shim", "omp")["detail"].endswith("is not executable")
     omp = one(result, "activity_hooks", "omp")
     assert "does not resolve to ~/.local/lib/agent-introspection" in omp["detail"]
-    assert "omp plugin link" in omp["fix"]
+    assert omp["fix"] == "`agent-introspection harness configure omp` (with --dry-run first)"
 
 
 @pytest.mark.parametrize(

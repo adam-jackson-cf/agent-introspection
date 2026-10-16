@@ -21,6 +21,7 @@ import shlex
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
@@ -31,13 +32,13 @@ from agent_introspection.json_types import JsonMapping
 
 STATUSES: Final = ("pass", "warn", "fail", "off", "info")
 VERSION_TIMEOUT_SECONDS: Final = 5
-# Where the activity-hook installers put the shim and the omp plugin, under the home.
+# Where `harness configure` installs the shim and the omp plugin, under the home.
 MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/activity-hooks-v1")
 SHIM: Final = "activity-shim.sh"
 OMP_PLUGIN_LINK: Final = Path(".omp/plugins/node_modules/agent-introspection-activity")
 OMP_PLUGIN_FILES: Final = ("package.json", "activity.ts")
-# The events the Claude Code installer registers, with their tool-name matchers
-# (introspection-onboarding scripts/adapters/claude-code/install_activity.py).
+# The events `harness configure claude-code` registers, with their tool-name matchers
+# (hook_install.py).
 CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "PreToolUse": "*",
     "PostToolUseFailure": "*",
@@ -642,10 +643,7 @@ def _runs_shim(entries: object, matcher: str | None, command: str) -> bool:
 
 def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
     """Check settings.json runs the managed shim for each activity event."""
-    fix = (
-        "install the hooks with the onboarding skill's "
-        "scripts/adapters/claude-code/install_activity.py (run it with --dry-run first)"
-    )
+    fix = "`agent-introspection harness configure claude-code` (with --dry-run first)"
     settings = next((item for item in files if item.spec.format == "json" and not item.error), None)
     if settings is None:
         return check("activity_hooks", "fail", "no readable settings.json to hold the hooks", fix)
@@ -673,10 +671,7 @@ def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
 def omp_plugin_check(home: Path) -> Check:
     """Check omp's plugin link resolves to the managed plugin directory."""
     managed = home / MANAGED_RUNTIME / "omp"
-    fix = (
-        "follow the onboarding skill's scripts/adapters/omp/README.md: install the plugin "
-        f"files, then `omp plugin link {shell_path(managed, home)}`"
-    )
+    fix = "`agent-introspection harness configure omp` (with --dry-run first)"
     link = home / OMP_PLUGIN_LINK
     if not link.exists():
         problem = "is a broken link" if link.is_symlink() else "does not exist"
@@ -694,26 +689,31 @@ def omp_plugin_check(home: Path) -> Check:
     return check("activity_hooks", "pass", f"the omp plugin links {shown_path(managed, home)}")
 
 
-def shim_check(home: Path) -> Check:
-    """Check the managed shim exists and is executable."""
+def shim_check(home: Path, profile_key: str) -> Check:
+    """Check the managed shim exists, is executable, and is the one this CLI ships."""
     shim = home / MANAGED_RUNTIME / SHIM
-    fix = (
-        "install the onboarding skill's scripts/activity-shim.sh there (mode 0755); "
-        "the Claude Code installer and the omp README both do"
-    )
+    fix = f"`agent-introspection harness configure {profile_key}` installs it"
     if not shim.is_file():
         return check("activity_shim", "fail", f"{shown_path(shim, home)} does not exist", fix)
     if not os.access(shim, os.X_OK):
         return check("activity_shim", "fail", f"{shown_path(shim, home)} is not executable", fix)
-    return check("activity_shim", "pass", f"{shown_path(shim, home)} is executable")
+    shipped = files("agent_introspection").joinpath("hook_runtime", SHIM).read_text("utf-8")
+    if shim.read_text("utf-8") != shipped:
+        return check(
+            "activity_shim",
+            "warn",
+            f"{shown_path(shim, home)} differs from the shim this CLI ships",
+            f"`agent-introspection harness configure {profile_key}` updates it",
+        )
+    return check("activity_shim", "pass", f"{shown_path(shim, home)} is executable and current")
 
 
 def hook_checks(profile: profiles.Profile, files: Sequence[LoadedFile], home: Path) -> list[Check]:
     """Check the activity hooks of a profile with a hook adapter."""
     if profile.hook_adapter == "claude-code":
-        return [claude_hooks_check(files, home), shim_check(home)]
+        return [claude_hooks_check(files, home), shim_check(home, profile.key)]
     if profile.hook_adapter == "omp":
-        return [omp_plugin_check(home), shim_check(home)]
+        return [omp_plugin_check(home), shim_check(home, profile.key)]
     return []
 
 
@@ -751,7 +751,7 @@ def telemetry_check(profile: profiles.Profile, context: HarnessContext) -> Check
             "telemetry",
             "fail",
             f"the telemetry query raised {telemetry.error}",
-            "run `agent-introspection facts preflight` to check ClickHouse access",
+            "see the signoz check for ClickHouse access",
         )
     empty = {"spans": 0, "logs": 0, "last_seen": 0}
     counts = {

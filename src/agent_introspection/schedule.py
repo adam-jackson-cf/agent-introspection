@@ -240,10 +240,7 @@ def _job_path(config: AppConfig) -> list[str]:
 
     A ClickHouse password needs its command's executable, because the scheduler cannot
     pass the password variable to the job.
-    Prompt labels need ``[labels] openrouter_key_command``'s executable, because
-    OPENROUTER_API_KEY is not set for the job either. Without a key command, omp's
-    directory (when omp is installed) lets labelling fall back to omp's stored
-    OpenRouter credential (`omp token openrouter`).
+    Prompt labels need ``[labels] openrouter_key_command``'s executable.
     """
     signoz = config.signoz
     required: list[str] = []
@@ -252,14 +249,11 @@ def _job_path(config: AppConfig) -> list[str]:
             "the scheduled job cannot receive signoz.clickhouse_password_env; "
             "use signoz.clickhouse_password_command for a scheduled sync"
         )
-    elif signoz.clickhouse_password_command is not None:
+    if signoz.clickhouse_password_command is not None:
         required.append(signoz.clickhouse_password_command[0])
-    key_command = config.labels_openrouter_key_command
-    if key_command is not None:
-        required.append(key_command[0])
-    tools = [_tool_directory(name) for name in required]
-    omp = shutil.which("omp") if key_command is None else None
-    return [*tools, *([str(Path(omp).parent)] if omp else [])]
+    if config.labels_openrouter_key_command is not None:
+        required.append(config.labels_openrouter_key_command[0])
+    return [_tool_directory(name) for name in required]
 
 
 def _backup_path(path: Path) -> Path:

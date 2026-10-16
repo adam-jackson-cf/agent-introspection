@@ -47,13 +47,16 @@ actionable).
   CLI requirement. `clickhouse_container`, `docker_context`, and `[dashboard]` join
   `config._RETIRED_KEYS`, so an old config fails with "retired; delete them".
 - **D5: Hooks are installed by `harness configure`.** The shim and the omp plugin are
-  package data in `agent_introspection`, copied to the managed runtime directory; Claude
-  Code's six hooks are a profile `[[hook]]` table written by a new JSON hooks writer
-  (the owned-entry merge from `install_activity.py`, keeping third-party hooks, in the
-  exact `/bin/sh <shim> claude-code <event>` form doctor checks).
-  `harness configure --remove-hooks` replaces `install_activity.py --remove`.
-  `install_activity.py` and the manual copy loop are deleted; `tests/test_hooks.py`
-  loads the shim and adapters through `importlib.resources`.
+  package data (`src/agent_introspection/hook_runtime/`), copied to the managed
+  runtime directory by `hook_install.py`, which also writes Claude Code's six owned
+  hook entries (the owned-entry merge from `install_activity.py`, keeping third-party
+  hooks, in the exact `/bin/sh <shim> claude-code <event>` form doctor checks) and runs
+  `omp plugin link`. The events stay one constant shared with doctor
+  (`doctor_harness.CLAUDE_HOOK_EVENTS`), not a profile table. `harness remove-hooks
+<key>` replaces `install_activity.py --remove`. `install_activity.py`, the adapter
+  READMEs (folded into `hook-events.md`), and the manual copy loop are deleted.
+  Doctor warns when the installed shim differs from the shipped one. Tests never run
+  the real omp (an autouse fake) or touch the real home (an autouse `HOME`).
 - **D6: `[hooks] otlp_logs_endpoint` defaults to `{[signoz] otlp_endpoint}/v1/logs`.**
   The "set it only after `facts install`" rule goes. Records that reach SigNoz before
   the loaders exist are read by `facts backfill` (its record window keys

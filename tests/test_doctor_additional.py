@@ -58,6 +58,7 @@ def test_an_additional_machine_checks_the_host_collector_and_leaves_signoz_to_th
         "signoz",
         "host_collector",
         "hooks_endpoint",
+        "disabled_harnesses",
         "spool",
         "schedule",
         "spool_sync",

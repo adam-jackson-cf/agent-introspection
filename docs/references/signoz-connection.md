@@ -110,15 +110,12 @@ covers them.
    on `introspection.*`. The facts database is always `introspection`. A local
    install's default user usually has them.
 
-6. Run `agent-introspection facts preflight`. It checks the config, the connection,
-   the ClickHouse version, the SigNoz columns the projections read, grants, and recent
-   producer data, read-only. It always prints its JSON report: a config that does not
-   load, or a connection that cannot be set up, is a failing check rather than an
-   error message. Any failing check exits 30.
-
-7. Run `agent-introspection doctor` for the rest of the install: the collector ports,
-   the hooks endpoint, each enabled harness, the schedule, and the dashboard's
-   ClickHouse URL, each with a fix.
+6. Run `agent-introspection doctor`. Its `signoz` check runs every preflight check,
+   read-only: the config, the connection, the ClickHouse version, the SigNoz columns
+   the projections read, grants, and recent producer data, naming each failing one
+   with its detail. The rest covers the install: the collector ports, the hooks
+   endpoint, each enabled harness, the schedule, and the dashboard's ClickHouse URL,
+   each with a fix.
 
 ## SigNoz layouts
 
@@ -138,7 +135,7 @@ it for each layout.
 
 ## What To Check
 
-- `signoz detect` reports the SigNoz you expect, and `facts preflight` exits zero.
+- `signoz detect` reports the SigNoz you expect.
 - `doctor` reports no `fail`.
 - Each harness's OTLP export points at the local collector; the
   `introspection-onboarding` skill's
@@ -148,7 +145,6 @@ it for each layout.
 
 ## Related Docs
 
-- [CLI Reference](cli-reference.md#onboarding): `signoz detect`, `doctor`, and
-  `facts preflight` output.
+- [CLI Reference](cli-reference.md#onboarding): `signoz detect` and `doctor` output.
 - [Dashboard Companion](dashboard-companion.md): the dashboard's own ClickHouse user.
 - [Facts Store](facts-store.md): what the grants are used for.

@@ -180,20 +180,15 @@ def printed(key: str, code: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess((), code, key, "stderr text")
 
 
-def test_the_key_comes_from_the_environment_then_the_command_then_omp(
+def test_the_key_comes_only_from_the_configured_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    commands = KeyCommands(security=printed("command-key\n"), omp=printed("omp-key\n"))
+    commands = KeyCommands(security=printed("command-key\n"))
     monkeypatch.setattr(classify, "_run_key_command", commands)
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
 
-    assert classify.api_key(("security", "-w")) == "env-key"
-    assert commands.ran == []
-
-    monkeypatch.delenv("OPENROUTER_API_KEY")
     assert classify.api_key(("security", "-w")) == "command-key"
-    assert classify.api_key() == "omp-key"
-    assert commands.ran == [("security", "-w"), classify.OMP_KEY_COMMAND]
+    assert commands.ran == [("security", "-w")]
 
 
 @pytest.mark.parametrize(
@@ -205,10 +200,10 @@ def test_the_key_comes_from_the_environment_then_the_command_then_omp(
         subprocess.TimeoutExpired("security", 10, output="leaked-key"),
     ],
 )
-def test_a_failing_key_command_is_an_error_without_its_output_or_an_omp_fallback(
+def test_a_failing_key_command_is_an_error_without_its_output(
     monkeypatch: pytest.MonkeyPatch, outcome: subprocess.CompletedProcess[str] | Exception
 ) -> None:
-    commands = KeyCommands(security=outcome, omp=printed("omp-key"))
+    commands = KeyCommands(security=outcome)
     monkeypatch.setattr(classify, "_run_key_command", commands)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
@@ -219,14 +214,16 @@ def test_a_failing_key_command_is_an_error_without_its_output_or_an_omp_fallback
     assert commands.ran == [("security", "-w")]
 
 
-def test_no_key_source_names_every_way_to_provide_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(classify, "_run_key_command", KeyCommands(omp=OSError("no omp")))
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+def test_no_key_command_names_the_setting_even_with_a_key_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands = KeyCommands()
+    monkeypatch.setattr(classify, "_run_key_command", commands)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
 
-    with pytest.raises(classify.JevUnavailableError) as raised:
-        classify.api_key()
-    for source in ("OPENROUTER_API_KEY", "[labels] openrouter_key_command", "omp"):
-        assert source in str(raised.value)
+    with pytest.raises(classify.JevUnavailableError, match=r"\[labels\] openrouter_key_command"):
+        classify.api_key(None)
+    assert commands.ran == []
 
 
 def test_labels_resolve_the_key_with_the_configured_command(

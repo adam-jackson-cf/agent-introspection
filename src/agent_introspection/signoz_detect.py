@@ -143,7 +143,7 @@ def _install_notes(present: bool, ports: dict[str, bool]) -> list[str]:
     if present:
         return [
             "A SigNoz or ClickHouse is present: connect to it and never reconfigure it "
-            "(`agent-introspection facts preflight` checks it); the guided install refuses."
+            "(`agent-introspection doctor` checks it); the guided install refuses."
         ]
     busy = [port for port, used in ports.items() if used]
     if busy:

@@ -76,20 +76,18 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    - `[harnesses] enabled`: the harnesses the user chose (see the
      [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses)).
    - `[labels] openrouter_key_command`: a command that prints the OpenRouter key for
-     prompt labels, which the scheduled sync can run. `OPENROUTER_API_KEY` works only
-     interactively; omp's stored credential is the last fallback.
+     prompt labels (the one key source), which the scheduled sync runs too.
    - `[hooks] otlp_logs_endpoint`: leave it out; records go to the collector's
      `/v1/logs`.
    - `[machine]`: leave it out; this machine is the host. Only an additional machine
      sets it ([additional machines workflow](additional-machines-workflow.md)).
-4. **Preflight.** `agent-introspection facts preflight` checks the version, the SigNoz
-   columns, grants, `system.view_refreshes`, and recent producer data, read-only. It
-   always prints one JSON report, with configuration and connection errors as failing
-   checks, and exits 30 when any check fails. Fix each failure at its owner; never
-   weaken a check.
-5. **Gates and CLI.** `bash scripts/run-ci-quality-gates.sh`, then
-   `uv tool install --force --reinstall .` (the scheduled job and every hook run this
-   copy).
+4. **Check.** `agent-introspection doctor`: its `signoz` check runs every preflight
+   check (the version, the SigNoz columns, grants, `system.view_refreshes`, and recent
+   producer data), read-only, and names each failing one with its detail. Fix each
+   failure at its owner; never weaken a check.
+5. **CLI.** `uv tool install --force --reinstall .` (the scheduled job and every hook
+   run this copy). The quality gates are for changing this repository, not for
+   installing it.
 6. **Facts.** `agent-introspection facts install`, then `facts backfill --days 90`. If
    a reinstall drops a stored attribute, also run
    `OPTIMIZE TABLE introspection.spans FINAL` and `… introspection.logs FINAL`.
@@ -123,5 +121,5 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 
 ## Done when
 
-- `facts preflight` and `doctor` pass, every step has evidence, and the Pipeline view
+- `doctor` passes, every step has evidence, and the Pipeline view
   is healthy for 90 days for every enabled harness (or each gap has a recorded reason).

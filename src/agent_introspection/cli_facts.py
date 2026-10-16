@@ -12,7 +12,6 @@ from agent_introspection import (
     evaluation,
     facts,
     findings,
-    preflight,
     schedule,
     spool,
 )
@@ -36,9 +35,6 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
 def facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "schedule":
         return _schedule_command(args)
-    if args.facts_command == "preflight":
-        # Preflight always prints its report: setup errors become failing checks.
-        return preflight.report(lambda: app_config(args), facts.runner)
     config = app_config(args)
     run = facts.runner(config)
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
@@ -123,7 +119,6 @@ def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 
 def add_facts_parser(commands: Any) -> None:
     facts_parser = commands.add_parser("facts").add_subparsers(dest="facts_command", required=True)
-    facts_parser.add_parser("preflight", help="read-only checks before facts install")
     verify = facts_parser.add_parser(
         "verify", help="build the store in a scratch database to check every statement"
     )
