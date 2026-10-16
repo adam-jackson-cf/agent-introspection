@@ -120,7 +120,7 @@ def plist(executable: Path, path_dirs: Iterable[str], config: Path | None = None
     })
 
 
-def _unit_quote(value: str) -> str:
+def unit_quote(value: str) -> str:
     """Quote one unit-file value, escaping backslashes, quotes, and ``%`` specifiers."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     return f'"{escaped}"'
@@ -134,10 +134,10 @@ def service_unit(executable: Path, path_dirs: Iterable[str], config: Path | None
     """
     # `$` would expand an environment variable in ExecStart; `$$` is a literal one.
     command = " ".join(
-        _unit_quote(argument).replace("$", "$$")
+        unit_quote(argument).replace("$", "$$")
         for argument in _program_arguments(executable, config)
     )
-    path = _unit_quote(f"PATH={':'.join(dict.fromkeys(path_dirs))}")
+    path = unit_quote(f"PATH={':'.join(dict.fromkeys(path_dirs))}")
     return (
         "[Unit]\n"
         "Description=Agent Introspection facts sync on the SigNoz host\n"
@@ -197,7 +197,7 @@ def log_line(message: str, path: Path | None = None, now: datetime | None = None
         print(text, end="", file=sys.stderr)
 
 
-def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+def launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ("launchctl", *args),
         capture_output=True,
@@ -207,7 +207,7 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
+def systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ("systemctl", "--user", *args),
         capture_output=True,
@@ -217,7 +217,7 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _scheduler() -> str:
+def platform_scheduler() -> str:
     """Return the scheduler this platform uses: launchd on macOS, systemd on Linux."""
     scheduler = SCHEDULERS.get(sys.platform)
     if scheduler is None:
@@ -268,7 +268,7 @@ def schedule_install(config: Path | None = None) -> dict[str, Any]:
     A job that fails to start restores and restarts the job it replaced. An additional
     machine is refused: it has no ClickHouse for ``facts sync``.
     """
-    scheduler = _scheduler()
+    scheduler = platform_scheduler()
     loaded = load_config(config)
     require_host(loaded, "the scheduled `facts sync` needs SigNoz's ClickHouse")
     executable = Path(sys.executable).with_name("agent-introspection")
@@ -282,7 +282,7 @@ def schedule_install(config: Path | None = None) -> dict[str, Any]:
 
 def schedule_remove() -> dict[str, Any]:
     """Stop the job and delete its files; on macOS also retire the legacy job."""
-    if _scheduler() == "launchd":
+    if platform_scheduler() == "launchd":
         return _remove_launchd()
     return _remove_systemd()
 
@@ -292,19 +292,19 @@ def schedule_status() -> dict[str, Any]:
 
     ``loaded`` means launchd has the job, or the systemd timer is active.
     """
-    status = _launchd_status() if _scheduler() == "launchd" else _systemd_status()
+    status = _launchd_status() if platform_scheduler() == "launchd" else _systemd_status()
     return status | {
         "inbox_backlog": spool.backlog(),
         "inbox_rejected": spool.rejected_count(),
     }
 
 
-def _launchd_domain() -> str:
+def launchd_domain() -> str:
     return f"gui/{os.getuid()}"
 
 
-def _launchd_loaded(label: str) -> bool:
-    return _launchctl("list", label).returncode == 0
+def launchd_loaded(label: str) -> bool:
+    return launchctl("list", label).returncode == 0
 
 
 def _bootout(domain: str, label: str, *, loaded: bool) -> str | None:
@@ -314,7 +314,7 @@ def _bootout(domain: str, label: str, *, loaded: bool) -> str | None:
     is returned: that job is still running, and the caller must not go on as if it
     were stopped.
     """
-    stopped = _launchctl("bootout", f"{domain}/{label}")
+    stopped = launchctl("bootout", f"{domain}/{label}")
     if loaded and stopped.returncode != 0:
         return stopped.stderr.strip() or "launchctl bootout failed"
     return None
@@ -326,7 +326,7 @@ def _retire_legacy_job(domain: str) -> RetiredJob | None:
     Returns None when no legacy job is installed or loaded. A loaded job that cannot
     be stopped is an error, so two jobs never sync at once.
     """
-    loaded = _launchd_loaded(LEGACY_LABEL)
+    loaded = launchd_loaded(LEGACY_LABEL)
     if not (loaded or LEGACY_PLIST.exists()):
         return None
     if (detail := _bootout(domain, LEGACY_LABEL, loaded=loaded)) is not None:
@@ -343,12 +343,12 @@ def _install_launchd(
 ) -> dict[str, Any]:
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     previous = PLIST.read_bytes() if PLIST.exists() else None
-    domain = _launchd_domain()
+    domain = launchd_domain()
     retired = _retire_legacy_job(domain)
     PLIST.write_bytes(plist(executable, path_dirs, config))
     # Whether the job being replaced runs: a job the user stopped stays stopped if
     # the new one fails to load and the old one is put back.
-    was_loaded = _launchd_loaded(LABEL)
+    was_loaded = launchd_loaded(LABEL)
     if (detail := _bootout(domain, LABEL, loaded=was_loaded)) is not None:
         # The job still runs as it was loaded: put its plist back as it was too.
         if previous is None:
@@ -356,7 +356,7 @@ def _install_launchd(
         else:
             PLIST.write_bytes(previous)
         raise RuntimeError(_still_running(detail, retired))
-    loaded = _launchctl("bootstrap", domain, str(PLIST))
+    loaded = launchctl("bootstrap", domain, str(PLIST))
     if loaded.returncode != 0:
         message = loaded.stderr.strip() or "launchctl bootstrap failed"
         replaced = ReplacedJob(previous, was_loaded) if previous is not None else None
@@ -408,7 +408,7 @@ def _restore_launchd_job(
         raise RuntimeError(message)
     if not reload:
         raise RuntimeError(f"{message}; {restored.name} is back in place, not loaded, as it was")
-    reloaded = _launchctl("bootstrap", domain, str(restored))
+    reloaded = launchctl("bootstrap", domain, str(restored))
     if reloaded.returncode != 0:
         detail = reloaded.stderr.strip() or "launchctl bootstrap failed"
         raise RuntimeError(
@@ -419,8 +419,8 @@ def _restore_launchd_job(
 
 
 def _remove_launchd() -> dict[str, Any]:
-    domain = _launchd_domain()
-    if (detail := _bootout(domain, LABEL, loaded=_launchd_loaded(LABEL))) is not None:
+    domain = launchd_domain()
+    if (detail := _bootout(domain, LABEL, loaded=launchd_loaded(LABEL))) is not None:
         raise RuntimeError(_still_running(detail, None))
     existed = PLIST.exists()
     PLIST.unlink(missing_ok=True)
@@ -434,13 +434,13 @@ def _remove_launchd() -> dict[str, Any]:
 
 
 def _launchd_status() -> dict[str, Any]:
-    legacy_loaded = _launchd_loaded(LEGACY_LABEL)
+    legacy_loaded = launchd_loaded(LEGACY_LABEL)
     legacy_installed = LEGACY_PLIST.exists()
     return {
         "scheduler": "launchd",
         "label": LABEL,
         "installed": PLIST.exists(),
-        "loaded": _launchd_loaded(LABEL),
+        "loaded": launchd_loaded(LABEL),
         # A job left by an earlier release; `facts schedule install` retires it.
         "legacy": (
             {"label": LEGACY_LABEL, "installed": legacy_installed, "loaded": legacy_loaded}
@@ -453,7 +453,7 @@ def _launchd_status() -> dict[str, Any]:
 def _systemctl_failure(*commands: tuple[str, ...]) -> str | None:
     """Run each ``systemctl --user`` command in turn; return the first failure's message."""
     for command in commands:
-        result = _systemctl(*command)
+        result = systemctl(*command)
         if result.returncode != 0:
             return result.stderr.strip() or f"systemctl --user {' '.join(command)} failed"
     return None
@@ -499,14 +499,14 @@ def _restore_systemd_units(
     the state the timer is back in.
     """
     if state is None:
-        _systemctl("disable", "--now", TIMER.name)
+        systemctl("disable", "--now", TIMER.name)
     for path in (SERVICE, TIMER):
         if path in previous:
             path.write_bytes(previous[path])
         else:
             path.unlink(missing_ok=True)
     if state is None:
-        _systemctl("daemon-reload")
+        systemctl("daemon-reload")
         raise RuntimeError(message)
     detail = _systemctl_failure(*state.restore())
     if detail is not None:
@@ -527,7 +527,7 @@ def _remove_systemd() -> dict[str, Any]:
     scheduled, so its units stay and the removal is refused, as for launchd.
     """
     before = _timer_state(TIMER)
-    stopped = _systemctl("disable", "--now", TIMER.name)
+    stopped = systemctl("disable", "--now", TIMER.name)
     if stopped.returncode != 0 and (before.enabled or before.active):
         detail = stopped.stderr.strip() or "systemctl disable failed"
         raise RuntimeError(
@@ -537,7 +537,7 @@ def _remove_systemd() -> dict[str, Any]:
     existed = SERVICE.exists() or TIMER.exists()
     SERVICE.unlink(missing_ok=True)
     TIMER.unlink(missing_ok=True)
-    _systemctl("daemon-reload")
+    systemctl("daemon-reload")
     return {"removed": existed, "scheduler": "systemd", "unit": TIMER.name}
 
 
@@ -552,8 +552,8 @@ def _lingering() -> bool:
 
 def _timer_state(timer: Path) -> TimerState:
     return TimerState(
-        enabled=_systemctl("is-enabled", timer.name).stdout.strip() == "enabled",
-        active=_systemctl("is-active", timer.name).returncode == 0,
+        enabled=systemctl("is-enabled", timer.name).stdout.strip() == "enabled",
+        active=systemctl("is-active", timer.name).returncode == 0,
     )
 
 

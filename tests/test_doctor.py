@@ -9,7 +9,14 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import cli_doctor, config, doctor, facts, producers, signoz_detect
+from agent_introspection import (
+    cli_doctor,
+    config,
+    doctor,
+    facts,
+    producers,
+    signoz_detect,
+)
 from agent_introspection.cli import EXIT_FACTS, main
 from tests.support.doctor_machine import (
     CLAUDE_ENV,
@@ -605,3 +612,28 @@ def test_the_command_wires_the_probes_that_touch_this_machine(
     probes.drift_report(lambda _sql: "", None, ())
     probes.drift_report(lambda _sql: "", tmp_path, ())
     assert seen == [producers.FINGERPRINT_DIR, tmp_path]
+
+
+@pytest.mark.parametrize(
+    ("status", "port_open", "expected"),
+    [
+        ({"installed": False, "loaded": False}, False, "off"),
+        ({"installed": True, "loaded": False}, False, "warn"),
+        ({"installed": True, "loaded": True}, False, "warn"),
+        ({"installed": True, "loaded": True}, True, "pass"),
+    ],
+)
+def test_doctor_checks_the_dashboard_service_and_its_port(
+    machine: Machine, status: dict[str, bool], port_open: bool, expected: str
+) -> None:
+    probes = replace(
+        machine.probes,
+        dashboard_status=lambda: status,
+        tcp_open=lambda _host, port: port_open or port != 4173,
+    )
+
+    service = one(machine.report(probes), "dashboard_service")
+
+    assert service["status"] == expected
+    if expected != "pass":
+        assert "agent-introspection dashboard install --repo <checkout>" in service["fix"]

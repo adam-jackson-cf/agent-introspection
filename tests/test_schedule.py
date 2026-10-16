@@ -106,8 +106,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox: Path) -> Path:
     monkeypatch.setattr(schedule, "SPOOL_SYNC_TIMER", units / schedule.SPOOL_SYNC_TIMER.name)
     monkeypatch.setattr(schedule, "BACKUPS", tmp_path / "backups")
     monkeypatch.setattr(schedule, "LINGER", tmp_path / "linger")
-    monkeypatch.setattr(schedule, "_launchctl", _never)
-    monkeypatch.setattr(schedule, "_systemctl", _never)
+    monkeypatch.setattr(schedule, "launchctl", _never)
+    monkeypatch.setattr(schedule, "systemctl", _never)
     (tmp_path / "agent-introspection").write_text("")
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(schedule, "load_config", lambda _config: AppConfig())
@@ -117,7 +117,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox: Path) -> Path:
 
 def _on(monkeypatch: pytest.MonkeyPatch, platform: str, scheduler: Launchd | Systemd) -> None:
     monkeypatch.setattr(sys, "platform", platform)
-    name = "_launchctl" if isinstance(scheduler, Launchd) else "_systemctl"
+    name = "launchctl" if isinstance(scheduler, Launchd) else "systemctl"
     monkeypatch.setattr(schedule, name, scheduler)
 
 
@@ -563,7 +563,7 @@ def test_systemd_install_that_fails_to_start_restores_and_restarts_the_previous_
         return systemd(*args)
 
     _on(monkeypatch, "linux", systemd)
-    monkeypatch.setattr(schedule, "_systemctl", enable_only_the_old_units)
+    monkeypatch.setattr(schedule, "systemctl", enable_only_the_old_units)
 
     with pytest.raises(RuntimeError, match=r"bad unit; .*\.timer is back in place and active"):
         schedule.schedule_install()
@@ -597,7 +597,7 @@ def test_systemd_install_that_fails_puts_back_a_stopped_timer_stopped(
         return systemd(*args)
 
     _on(monkeypatch, "linux", systemd)
-    monkeypatch.setattr(schedule, "_systemctl", enable_only_the_old_units)
+    monkeypatch.setattr(schedule, "systemctl", enable_only_the_old_units)
 
     with pytest.raises(RuntimeError, match=r"bad unit; .*\.timer is back in place, not active"):
         schedule.schedule_install()

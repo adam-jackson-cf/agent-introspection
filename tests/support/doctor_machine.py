@@ -150,6 +150,7 @@ def fake_probes(machine: Machine) -> doctor.Probes:
             "legacy": None,
         },
         spool_sync_status=lambda: pytest.fail("only an additional machine has a spool-sync timer"),
+        dashboard_status=lambda: {"scheduler": "launchd", "installed": True, "loaded": True},
         detect=lambda: pytest.fail("signoz detect runs only when ClickHouse is unreachable"),
         drift_report=lambda _run, _saved, services: {
             "services": [{"service": service, "status": "unchanged"} for service in services],
@@ -276,4 +277,5 @@ def make_additional(machine: Machine) -> None:
         http_get=host_only,
         drift_report=host_only,
         spool_sync_status=lambda: dict(SPOOL_SYNC),
+        dashboard_status=host_only,
     )

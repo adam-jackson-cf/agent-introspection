@@ -33,7 +33,15 @@ from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import doctor_harness, facts, hooks, preflight, profiles, spool
+from agent_introspection import (
+    dashboard_service,
+    doctor_harness,
+    facts,
+    hooks,
+    preflight,
+    profiles,
+    spool,
+)
 from agent_introspection.config import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_OTLP_ENDPOINT,
@@ -109,7 +117,8 @@ class Probes:
     """Every way the doctor touches the machine, so tests can replace each one.
 
     ``cli_doctor.default_probes`` wires the real ones: ``facts.runner``, the seams
-    below, ``schedule.schedule_status`` and ``schedule.spool_sync_status``,
+    below, ``schedule.schedule_status``, ``schedule.spool_sync_status``,
+    ``dashboard_service.status``,
     ``signoz_detect.detect``, and ``producers.drift_report``.
     """
 
@@ -119,6 +128,7 @@ class Probes:
     http_get: GetProbe
     schedule_status: StatusProbe
     spool_sync_status: StatusProbe
+    dashboard_status: StatusProbe
     detect: StatusProbe
     drift_report: DriftProbe
     harness: doctor_harness.HarnessProbes
@@ -210,7 +220,7 @@ class _Doctor:
                 ("spool", self.spool_check),
                 ("schedule", self.schedule_checks),
                 ("prompt_labels", self.labels_check),
-                ("dashboard", self.dashboard_check),
+                ("dashboard", self.dashboard_checks),
             )
         return (
             ("signoz", partial(_not_on_this_machine, "signoz")),
@@ -609,6 +619,42 @@ class _Doctor:
         if self.environ.get(DASHBOARD_URL_ENV):
             return self.environ[DASHBOARD_URL_ENV], DASHBOARD_URL_ENV
         return self.config.signoz.clickhouse_url, "[signoz] clickhouse_url"
+
+    def dashboard_checks(self) -> list[Check]:
+        return [self.dashboard_check(), self.dashboard_service_check()]
+
+    def dashboard_service_check(self) -> Check:
+        """Check the dashboard service runs and answers on its port."""
+        install = (
+            "`agent-introspection dashboard install --repo <checkout>` builds it and "
+            "(re)starts the service"
+        )
+        status = self.probes.dashboard_status()
+        if not status.get("installed"):
+            return check(
+                "dashboard_service",
+                "off",
+                "the dashboard is not installed as a service",
+                f"optional: {install}",
+            )
+        if not status.get("loaded"):
+            return check(
+                "dashboard_service",
+                "warn",
+                "the dashboard service is installed but not running",
+                install,
+            )
+        port = dashboard_service.PORT
+        if not self.probes.tcp_open("127.0.0.1", port):
+            return check(
+                "dashboard_service",
+                "warn",
+                f"the dashboard service runs, but nothing answers on 127.0.0.1:{port}",
+                f"read {dashboard_service.LOG}, then {install}",
+            )
+        return check(
+            "dashboard_service", "pass", f"the dashboard answers on http://127.0.0.1:{port}"
+        )
 
     def dashboard_check(self) -> Check:
         url, source = self._dashboard_url()

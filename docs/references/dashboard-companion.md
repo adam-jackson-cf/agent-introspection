@@ -5,9 +5,18 @@ its views correctly.
 
 ## Server
 
-The companion is an independent Bun package in `dashboard/`. `bun run --cwd dashboard
-build` writes the assets to `dashboard/dist/`; `bun run --cwd dashboard start` serves
-them. The server binds only to `127.0.0.1:4173`.
+The companion is an independent Bun package in `dashboard/`. The server binds only to
+`127.0.0.1:4173`. `agent-introspection dashboard install --repo <checkout>` runs it as
+a user service: it builds the checkout's dashboard (`bun install --frozen-lockfile`,
+then `bun run build`) and starts `bun server.ts` there as a launchd agent kept alive
+(macOS) or a systemd user service restarted on failure (Linux), logging to
+`~/.local/share/agent-introspection/dashboard.log`. The service serves the checkout it
+was installed from, so pulling or switching branches changes it at its next restart;
+rerun `dashboard install` after an update. `dashboard status` and `dashboard remove`
+report and stop it, and `doctor`'s `dashboard_service` check says whether it answers.
+The service cannot run a ClickHouse password command, so a password-protected
+ClickHouse is refused: run the server by hand instead (`bun run --cwd dashboard build`,
+then `bun run --cwd dashboard start` with the credentials below set).
 
 It queries the local SigNoz ClickHouse over HTTP at `INTROSPECTION_CLICKHOUSE_URL`,
 else `[signoz] clickhouse_url` in the agent-introspection config, else that key's

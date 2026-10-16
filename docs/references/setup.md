@@ -114,10 +114,8 @@ text for its retention (the facts store never does). Once you accept that, rerun
 
 ```bash
 agent-introspection facts schedule install
+agent-introspection dashboard install --repo .   # builds and starts the dashboard service
 agent-introspection doctor
-bun install --cwd dashboard --frozen-lockfile
-bun run --cwd dashboard build
-bun run --cwd dashboard start
 ```
 
 The schedule syncs every minute. On Linux, `loginctl enable-linger "$USER"` keeps it
