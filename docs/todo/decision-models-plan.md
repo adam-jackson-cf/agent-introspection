@@ -6,8 +6,8 @@ Status: **proposed** 2026-10-12. Not scheduled for implementation.
 
 Add a **Decision models** page to the Behaviour group that shows how agent
 policy enforcement uses Jev, the TypeSafe decision model reached through
-OpenRouter (`POST https://openrouter.ai/api/alpha/decisions`, model
-`~typesafe/jev-latest`, pinned `typesafe/jev-1.13-20260917`). Policy
+OpenRouter (`POST https://openrouter.ai/api/alpha/decisions`, requested and
+checked as the pinned `typesafe/jev-1.13-20260917`). Policy
 enforcement is a decision, not a tool failure: omp `blocked` tool results are
 recorded as the `policy_blocked` outcome and excluded from tool failure rates.
 

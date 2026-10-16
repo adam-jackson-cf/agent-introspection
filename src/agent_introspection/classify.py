@@ -31,8 +31,9 @@ from typing import Any
 from agent_introspection.facts import DATABASE, SqlRunner
 from agent_introspection.inbox import insert_statements
 
-JEV_MODEL = "~typesafe/jev-latest"
-# OpenRouter rejects versioned selectors, so the resolved model is checked instead.
+# Requests name the pinned version, so a newer Jev never labels prompts until the questions are
+# re-evaluated against it; the resolved model is still checked in case OpenRouter maps the name
+# elsewhere.
 JEV_PINNED_MODEL = "typesafe/jev-1.13-20260917"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 CLASSIFIER_VERSION = 1
@@ -213,12 +214,14 @@ def label(answers: dict[str, Any], cost: float) -> dict[str, Any]:
     """Flatten Jev's answers into the ``prompt_label`` hook-event attributes."""
     task_type = answers["task_type"]
     sentiment = answers["sentiment"]
+    # A score answer's `score` is the expected level (a float); the label is its most likely level.
+    level = max(range(len(SENTIMENTS)), key=lambda i: sentiment["probabilities"][str(i)])
     return {
         "task_type": task_type["choice"],
         "task_type_confidence": float(task_type["confidence"]),
         "correction": float(answers["correction"]["noul"]),
         "correction_kind": answers["correction_kind"]["choice"],
-        "sentiment": SENTIMENTS[int(sentiment["score"])],
+        "sentiment": SENTIMENTS[level],
         "sentiment_confidence": float(sentiment["confidence"]),
         "classifier_model": JEV_PINNED_MODEL,
         "classifier_version": CLASSIFIER_VERSION,
@@ -234,11 +237,18 @@ def _answers_match(answers: dict[str, Any]) -> bool:
         if question["type"] == "choice" and given.get("choice") not in question["criteria"]:
             return False
         if question["type"] == "score":
-            score = given.get("score")
-            if (
-                not isinstance(score, int)
-                or isinstance(score, bool)
-                or not 0 <= score < len(question["criteria"])
+            levels = len(question["criteria"])
+            score, probabilities = given.get("score"), given.get("probabilities")
+            if not (
+                isinstance(score, int | float)
+                and not isinstance(score, bool)
+                and 0 <= score <= levels - 1
+                and isinstance(probabilities, dict)
+                and set(probabilities) == {str(level) for level in range(levels)}
+                and all(
+                    isinstance(p, int | float) and not isinstance(p, bool)
+                    for p in probabilities.values()
+                )
             ):
                 return False
     return True
@@ -251,7 +261,7 @@ def decide(harness: str, prompt: str, key: str, post: Poster) -> dict[str, Any]:
     ``DecisionError`` when this one decision failed. Neither message carries text.
     """
     state = {"harness": harness, "message": clip(redact(prompt))}
-    body = json.dumps({"model": JEV_MODEL, "state": state, "questions": QUESTIONS}).encode()
+    body = json.dumps({"model": JEV_PINNED_MODEL, "state": state, "questions": QUESTIONS}).encode()
     try:
         response = post(body, key)
     except JevUnavailableError:

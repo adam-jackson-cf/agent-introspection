@@ -26,7 +26,13 @@ def jev_response(**overrides: Any) -> dict[str, Any]:
                 "choice": "ignored_instruction",
                 "confidence": 0.8,
             },
-            "sentiment": {"type": "score", "score": 0, "confidence": 0.7},
+            # Jev's score is the expected level; the label is the most likely level.
+            "sentiment": {
+                "type": "score",
+                "score": 0.6,
+                "probabilities": {"0": 0.55, "1": 0.3, "2": 0.15},
+                "confidence": 0.7,
+            },
         },
         "usage": {"cost": 0.000035},
     }
@@ -71,8 +77,12 @@ def test_run_labels_prompts_and_stores_only_answers() -> None:
     insert = ch.statements[-1]
     assert insert.startswith("INSERT INTO introspection.prompt_labels")
     assert "ignored_instruction" in insert
+    assert "frustrated" in insert
     assert "uv, not pip" not in insert
     assert "supersecret123" not in sent[0].decode()
+    # A floating selector such as ~typesafe/jev-latest would let a newer, unevaluated Jev label
+    # prompts.
+    assert json.loads(sent[0])["model"] == classify.JEV_PINNED_MODEL
     assert "supersecret123" not in insert
 
 
