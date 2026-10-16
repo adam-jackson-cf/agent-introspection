@@ -191,3 +191,13 @@ install`, or `setup` without `--dry-run` against this machine, and never run
 - Never edit `~/.claude`, `~/.codex`, `~/.omp`, `~/.config/agent-introspection`,
   LaunchAgents, or systemd units on this machine.
 - Read-only ClickHouse and workflow-store queries print only names and counts.
+
+## Status
+
+| Phase                                    | State                                                                                                                                    |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Attribution removal                    | done                                                                                                                                     |
+| 2 HTTP only, records endpoint default    | done; `[signoz] clickhouse_url` also defaults to `http://127.0.0.1:8123`                                                                 |
+| 3 Hooks, key route, harnesses, preflight | done                                                                                                                                     |
+| 4 Dashboard service                      | done; a ClickHouse password makes it refuse                                                                                              |
+| 5 `setup`                                | done; a retired key stops it at `config` (the user deletes it) instead of being dropped, since the TOML writer cannot remove keys safely |

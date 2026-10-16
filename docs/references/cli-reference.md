@@ -94,6 +94,7 @@ step. [Producer Onboarding](producer-onboarding.md) explains the lifecycle they 
 | `dashboard install [--repo PATH]`                                                   | Builds the dashboard in a checkout (default: the current directory) and (re)starts its user service on `127.0.0.1:4173`: a launchd agent on macOS, a systemd user service on Linux. Refuses an additional machine, a ClickHouse password, or a path that is not a checkout.                                                                                                                          | First install, and after every update of the checkout.                  |
 | `dashboard status` / `dashboard remove`                                             | Whether the dashboard service is installed and running (read-only); stop it and delete its file.                                                                                                                                                                                                                                                                                                     | Checking or turning off the dashboard.                                  |
 | `doctor [--live] [--drift]`                                                         | Read-only checks of every onboarding step, each with a status and a `fix`. `--live` also sends one empty OTLP/HTTP logs request, which stores nothing; `--drift` also compares each enabled harness with its saved fingerprint.                                                                                                                                                                      | After each install step, and whenever something looks wrong.            |
+| `setup [--dry-run] [options]`                                                       | The whole single-machine install: writes the options into the config, runs the preflight checks, `facts install` and `backfill`, `harness configure` for each enabled harness, `facts schedule install`, `dashboard install`, then `doctor`; stops at the first failing step.                                                                                                                        | Installing or reinstalling; run `--dry-run` first.                      |
 
 ### signoz detect
 
@@ -201,6 +202,26 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
 - `impact` adds `status` and `projection` (a count of each outcome per surface, or under
   the profile key for a candidate). For a producer this machine already enables, it
   adds `already_enabled`, a `note`, and `hidden_now`.
+
+### setup
+
+- Options: `--harness KEY` (repeatable; the whole `[harnesses] enabled` list, default
+  Claude Code and Codex), `--prompt-export`, `--openrouter-key-command "CMD"`,
+  `--clickhouse-url`, `--clickhouse-user`, `--clickhouse-password-command "CMD"`,
+  `--otlp-endpoint`, `--backfill-days N` (default 90), `--no-dashboard`, and `--repo
+PATH` (the checkout the dashboard is built from, default the current directory). A
+  command is one shell-quoted string, split into an argv list. An option not given
+  leaves its key as it is, so its default applies.
+- The config is written through the line-preserving TOML writer (comments and other
+  keys kept, the file backed up and keeping its permissions), then loaded; a retired
+  key or an additional machine stops the run at `config`.
+- Output: `dry_run`, `passed`, `steps` (each step's own result: the config `diff`, the
+  facts install and backfill counts, each harness's `configure` result, the schedule,
+  the dashboard), and `doctor` (`passed`, `summary`, and every `warn` or `fail`). A
+  failing step adds `stopped_at` and `error` and exits 30.
+- `--dry-run` writes nothing: it shows the config diff, runs the read-only preflight,
+  previews each harness's settings and hooks, and runs `doctor` on the machine as it
+  is. It never installs SigNoz.
 
 ### doctor
 

@@ -18,15 +18,24 @@ explicit request.
 
 Prerequisites: macOS or Linux, Python 3.12+ with [`uv`](https://docs.astral.sh/uv/),
 [Bun](https://bun.sh), Docker with Compose 2.24.4+, and `~/.local/bin` on your `PATH`.
-An existing self-hosted SigNoz is optional; setup can install one.
+An existing self-hosted SigNoz is optional; the onboarding skill can install one.
 
 ```bash
 git clone https://github.com/adam-jackson-cf/agent-introspection.git
 cd agent-introspection
-uv sync
-uv tool install --force --reinstall .   # rerun after every update
-agent-introspection --help
+uv tool install --force --reinstall .   # rerun after every update, then setup
+agent-introspection signoz detect       # find the SigNoz on this machine
+agent-introspection setup --dry-run     # preview every step
+agent-introspection setup               # config, facts, harnesses, sync, dashboard, doctor
 ```
+
+`setup` writes the config, builds the facts store, configures Claude Code and Codex
+(export settings and activity hooks; for omp too, pass
+`--harness claude-code --harness codex --harness oh-my-pi`), schedules the
+minute sync, starts the dashboard at <http://127.0.0.1:4173>, and ends with
+`agent-introspection doctor`. It stops at the first failing step and names it; every
+step is idempotent, so rerun it to reinstall. Restart running agent sessions so they
+pick up their settings.
 
 ## Quick Start
 
@@ -35,16 +44,14 @@ Open the repository in Claude Code or Codex and ask:
 > Use the introspection-onboarding skill to set up Agent Introspection on this machine.
 
 The [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md) skill
-finds or installs SigNoz, writes your config, builds the facts store, connects each
-harness, and schedules the sync. It shows a dry run before changing any file, backs up
-what it changes, and asks before each decision that is yours, such as installing SigNoz
-or exporting prompts.
+finds or installs SigNoz, asks the decisions that are yours (which harnesses, prompt
+export, the prompt-label key), shows `setup --dry-run`, and runs `setup` once you
+confirm. Every file it changes is backed up first.
 
 When it finishes, `agent-introspection doctor` shows `"passed": true` and the dashboard
-at <http://127.0.0.1:4173> shows your agent sessions within a few minutes of use.
-
-To do it by hand, follow [Setup](docs/references/setup.md). If anything looks wrong,
-run `agent-introspection doctor` and follow the `fix` on each `fail` or `warn`.
+shows your agent sessions within a few minutes of use. To do it by hand, follow
+[Setup](docs/references/setup.md). If anything looks wrong, run
+`agent-introspection doctor` and follow the `fix` on each `fail` or `warn`.
 
 ## What Agent Introspection Does
 

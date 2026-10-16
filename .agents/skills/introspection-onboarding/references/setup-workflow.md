@@ -10,9 +10,9 @@ machines, finish here first, then follow the
 version of this path. When a step here changes a command, an order, or a success
 signal, update that guide in the same change.
 
-Run every command from the repository root. Until step 5 installs the CLI, run it as
-`uv run agent-introspection …` (an older installed copy may lack the newer commands).
-Before and after each step, `agent-introspection doctor` (read-only) shows what is
+Run every command from the repository root. Install the CLI first (step 1): the
+scheduled job, every hook, and `setup` itself run that copy. Before and after each
+step, `agent-introspection doctor` (read-only) shows what is
 missing: every check that is not `pass` carries a `fix` (statuses are explained in the
 [validation workflow](validation-workflow.md#configuration-check)).
 
@@ -28,6 +28,7 @@ missing: every check that is not `pass` carries a `fix` (statuses are explained 
   on loopback with the opt-in `scripts/signoz/docker-compose.clickhouse-http.yaml`
   (their change to SigNoz, which restarts ClickHouse). The override also moves SigNoz's
   OTLP and UI ports to loopback.
+- [Bun](https://bun.sh) on `PATH` for the dashboard service, unless `--no-dashboard`.
 - A ClickHouse user with `SELECT` on `signoz_traces.*`, `signoz_logs.*`, and
   `system.view_refreshes`, plus `CREATE DATABASE, CREATE TABLE, CREATE VIEW,
 DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
@@ -48,75 +49,81 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 
 ## Steps
 
-1. **Find SigNoz.** `agent-introspection signoz detect` (read-only, always exits 0)
+1. **CLI.** `uv tool install --force --reinstall .`, then `agent-introspection --help`.
+   An older installed copy lacks the newer commands and would reinstall stale hooks
+   and an old schedule label. The quality gates are for changing this repository, not
+   for installing it.
+2. **Find SigNoz.** `agent-introspection signoz detect` (read-only, always exits 0)
    lists SigNoz and ClickHouse containers, whether Docker answers, which of the local
    ports 4317, 4318, 8123, and 8080 are open, `signoz_present`, `clickhouse_ping`
    (ClickHouse answered `/ping` on loopback), and `notes`. When it finds a SigNoz,
-   connect to that one (step 3) and never change it.
-2. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
+   connect to that one and never change it. When its ClickHouse does not answer on
+   `127.0.0.1:8123`, publishing it with the opt-in override (which restarts ClickHouse)
+   is the user's decision; a container name the runtime resolves (OrbStack's
+   `*.orb.local`) is the alternative, passed as `--clickhouse-url`.
+3. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
    whether the user wants a new one; without that request, stop and say so. Run
    `bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run`,
    show the plan, and run it again without `--dry-run` only after the user confirms. It
    refuses (exit 3) when it finds any SigNoz or ClickHouse, running or stopped, or
    their leftovers, and stops (exit 1) on a missing requirement (including Docker
    Compose older than 2.24.4), a Docker daemon on another machine, or a non-empty
-   `--dir`. The config's `[signoz]` defaults reach it. The new SigNoz listens on
-   `127.0.0.1` only (ClickHouse HTTP, OTLP, and the UI), and its ClickHouse needs no
-   password key. Details are in the [scripts README](../scripts/signoz/README.md).
-3. **Configure.** With the user (never asking them to paste a secret), write
-   `~/.config/agent-introspection/config.toml` from `config.example.toml`, which
-   documents every table:
-   - `[signoz]`: only what differs from the defaults: `clickhouse_url`,
-     `clickhouse_user`, and, only if there is a password, `clickhouse_password_command` (for example a
-     Keychain lookup; the scheduled sync runs it too). `clickhouse_password_env` works
-     interactively, but `facts schedule install` refuses it. `otlp_endpoint` is the
-     local collector's OTLP/HTTP base URL (default `http://127.0.0.1:4318`, which suits
-     the guided install's loopback-only ports; `localhost` also works where it resolves
-     to 127.0.0.1 first), which `harness configure` writes into each harness.
-   - `[harnesses] enabled`: the harnesses the user chose (see the
-     [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses)).
-   - `[labels] openrouter_key_command`: a command that prints the OpenRouter key for
-     prompt labels (the one key source), which the scheduled sync runs too.
-   - `[hooks] otlp_logs_endpoint`: leave it out; records go to the collector's
-     `/v1/logs`.
-   - `[machine]`: leave it out; this machine is the host. Only an additional machine
-     sets it ([additional machines workflow](additional-machines-workflow.md)).
-4. **Check.** `agent-introspection doctor`: its `signoz` check runs every preflight
-   check (the version, the SigNoz columns, grants, `system.view_refreshes`, and recent
-   producer data), read-only, and names each failing one with its detail. Fix each
-   failure at its owner; never weaken a check.
-5. **CLI.** `uv tool install --force --reinstall .` (the scheduled job and every hook
-   run this copy). The quality gates are for changing this repository, not for
-   installing it.
-6. **Facts.** `agent-introspection facts install`, then `facts backfill --days 90`. If
-   a reinstall drops a stored attribute, also run
-   `OPTIMIZE TABLE introspection.spans FINAL` and `… introspection.logs FINAL`.
-7. **Workflow store** (only for a reinstall that changes finding identities): copy
+   `--dir`. Every `[signoz]` default reaches it: ClickHouse HTTP, OTLP, and the UI on
+   `127.0.0.1` only, and a ClickHouse user with no password. Details are in the
+   [scripts README](../scripts/signoz/README.md).
+4. **Decisions.** Ask the user, never assuming and never asking them to paste a secret:
+   - the harnesses (`--harness`, repeatable; default Claude Code and Codex, omp is
+     opt-in as `oh-my-pi`; see the
+     [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses));
+   - prompt export (`--prompt-export`): prompt text is then kept in SigNoz for its
+     retention; the facts store never keeps it;
+   - prompt labels: a command that prints the OpenRouter key
+     (`--openrouter-key-command "security find-generic-password -s openrouter -w"`, for
+     example), the one key source, which the scheduled sync runs too; without it,
+     labels stay off;
+   - only what differs from the `[signoz]` defaults: `--clickhouse-url`,
+     `--clickhouse-user`, `--clickhouse-password-command` (a password makes the
+     dashboard service refuse; it is then run by hand), `--otlp-endpoint`;
+   - the dashboard service (`--no-dashboard` skips it; `--repo` names the checkout).
+
+   `[hooks]` and `[machine]` stay out: records go to the collector's `/v1/logs`, and
+   this machine is the host.
+
+5. **Preview.** `agent-introspection setup <options> --dry-run`, and show the user: the
+   config diff, the read-only preflight (it stops there on a failing check, naming it
+   with its detail; fix each at its owner and never weaken a check), each harness's
+   planned settings and hooks, and the doctor report as the machine is now.
+6. **Workflow store** (only for a reinstall that changes finding identities): copy
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.
-8. **Harnesses.** Run the
-   [harness configuration workflow](harness-configuration-workflow.md) for each
-   harness the user chose.
-9. **Schedule.** `agent-introspection facts schedule install`, then
-   `facts schedule status`. The job runs `facts sync --log` every minute:
+7. **Setup.** After the user confirms, `agent-introspection setup <options>`: config,
+   preflight, `facts install` and `facts backfill`, `harness configure` for each
+   enabled harness, `facts schedule install`, `dashboard install`, then `doctor`. It
+   stops at the first failing step and names it (`stopped_at`, exit 30); fix that step
+   and rerun, since every step is idempotent. If a reinstall drops a stored attribute,
+   also run `OPTIMIZE TABLE introspection.spans FINAL` and
+   `… introspection.logs FINAL`. The schedule:
    - macOS: a launchd agent labelled `dev.agent-introspection.sync`. Install retires
      the job an earlier release installed under another label (status reports it
      under `legacy`), moving its plist to
-     `~/.local/share/agent-introspection/schedule-backups/`. Reinstall the CLI first
-     (step 5): an older copy would install the old label again.
+     `~/.local/share/agent-introspection/schedule-backups/`.
    - Linux: the systemd user units `agent-introspection-sync.service` and
-     `agent-introspection-sync.timer` in `~/.config/systemd/user/`. The timer stops
-     when the user logs out unless lingering is on: install and status report `linger`
-     but never enable it, so ask the user to run `loginctl enable-linger "$USER"`.
+     `agent-introspection-sync.timer` in `~/.config/systemd/user/`, and the dashboard's
+     `agent-introspection-dashboard.service`. They stop when the user logs out unless
+     lingering is on: install and status report `linger` but never enable it, so ask
+     the user to run `loginctl enable-linger "$USER"`.
    - Any other platform is refused.
-10. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
-    and `evaluations` report no error, and `labels` is not `skipped`. Hook records reach
-    `hook_events` through SigNoz, so allow a minute before checking them.
-11. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
+8. **Restart** running sessions of each configured harness: they read their settings
+   at start.
+9. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
+   and `evaluations` report no error, and `labels` is not `skipped` when a key command
+   is set. Hook records reach `hook_events` through SigNoz, so allow a minute before
+   checking them.
+10. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
     `warn`, `off`, or `info` has a reason the user accepts.
-12. **Validate.** The [validation workflow](validation-workflow.md), then the
+11. **Validate.** The [validation workflow](validation-workflow.md), then the
     `introspection-operations` health workflow over 90 days.
-13. **Record** a reinstall in the commit or pull request message: date, commit, steps,
+12. **Record** a reinstall in the commit or pull request message: date, commit, steps,
     row counts, parity results, and anything unresolved.
 
 ## Done when

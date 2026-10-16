@@ -85,6 +85,15 @@ class _Plan:
     updates: dict[str, SettingValue]
 
 
+def profile_keys(enabled: Sequence[str]) -> list[str]:
+    """Return the distinct profile keys that ``[harnesses] enabled`` names, in its order.
+
+    A Codex surface (``codex_exec``) and ``codex`` both name the ``codex`` profile.
+    """
+    known = profiles.load_profiles()
+    return list(dict.fromkeys(profiles.resolve(name, known).key for name in enabled))
+
+
 def harness_list(enabled: Sequence[str] | None, *, versions: bool = True) -> dict[str, Any]:
     """Return every bundled profile with its status, enablement, binary, and version.
 
