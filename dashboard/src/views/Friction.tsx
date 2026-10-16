@@ -238,9 +238,9 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
       </Section>
       <Section title="Tasks with explicit friction">
         <Panel
-          title="Where to look"
+          title="Failure classes in friction tasks"
           source="where_to_look"
-          subtitle="Failure classes in tasks the user interrupted or steered, or that errored, by project; generic error types left out"
+          subtitle="Failure classes in tasks the user interrupted or steered, or that errored; generic error types left out"
           signals={[
             "tools.failure_signature",
             "friction.interrupt",
@@ -251,7 +251,6 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         >
           <DataTable
             columns={[
-              { key: "project", label: "Project" },
               { key: "failure_class", label: "Failure class" },
               { key: "tasks", label: "Tasks", numeric: true },
               { key: "failures", label: "Failures", numeric: true },
@@ -270,7 +269,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
               },
             ]}
             rows={data.where_to_look ?? []}
-            empty="No failure class with a Git project in friction tasks in the selected range."
+            empty="No failure class in friction tasks in the selected range."
           />
         </Panel>
         <Panel
@@ -290,11 +289,6 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 key: "harness",
                 label: "Harness",
                 render: (row) => <HarnessName value={row.harness} />,
-              },
-              {
-                key: "project",
-                label: "Project",
-                render: (row) => orDash(row.project),
               },
               {
                 key: "task_type",

@@ -1,13 +1,10 @@
-"""Per-harness ``doctor`` checks: binary, config files, export settings, hooks, sessions.
+"""Per-harness ``doctor`` checks: binary, config files, export settings, hooks, telemetry.
 
 ``doctor`` runs one block of these checks per enabled harness profile (``profiles.py``;
 the ``codex`` profile covers its three surfaces). A profile's config files resolve as
 ``harness configure`` resolves the files it writes (``profiles.config_paths``):
 ``first`` takes the first path whose variables are set, ``each`` every chosen or
-existing root, and a resolved file that does not exist is reported missing. An
-``each`` file is also looked for in the parent of every extra root that config
-``[sessions.roots]`` adds for the profile's session store, because a Codex home keeps
-``sessions/`` beside ``config.toml`` (Orca's per-account homes, for example).
+existing root, and a resolved file that does not exist is reported missing.
 
 Files are read as ``harness configure`` reads them (``config_writers.read_table``).
 Only a profile's managed settings are put into a result, and their values are shown
@@ -28,7 +25,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import config_writers, facts, preflight, profiles, sessions
+from agent_introspection import config_writers, facts, preflight, profiles
 from agent_introspection.config import AppConfig
 from agent_introspection.json_types import JsonMapping
 
@@ -49,7 +46,6 @@ CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "StopFailure": None,
     "SubagentStart": None,
 }
-STALE_SESSION_DAYS: Final = 14
 # Rows are counted over a day; the last row is looked for over a week.
 LAST_SEEN_DAYS: Final = 7
 RAISED_FIX: Final = (
@@ -132,7 +128,6 @@ class HarnessContext:
 
     config: AppConfig
     enabled: tuple[str, ...]
-    stores: Mapping[str, sessions.Store]
     telemetry: Telemetry
     probes: HarnessProbes
     now: float
@@ -306,23 +301,9 @@ def _unique(paths: Iterable[Path]) -> list[Path]:
     return list(seen.values())
 
 
-def implied_homes(profile: profiles.Profile, config: AppConfig) -> list[Path]:
-    """Return the parents of the extra session roots config adds for the profile's store."""
-    extra = config.session_roots.get(profile.session_store, ())
-    return [directory.parent for root in extra for directory in sessions.expand_root(root)]
-
-
-def config_paths(
-    spec: profiles.ConfigFile, homes: Sequence[Path], probes: HarnessProbes
-) -> list[Path]:
-    """Return the files ``spec`` names, as ``harness configure`` resolves the ones it writes.
-
-    An ``each`` file also counts where it exists in one of ``homes``.
-    """
-    name = Path(spec.paths[0]).name
-    implied = [home / name for home in homes] if spec.roots == "each" else []
-    found = [path for path in implied if path.is_file()]
-    return _unique(profiles.config_paths(spec, probes.environ, probes.home, found))
+def config_paths(spec: profiles.ConfigFile, probes: HarnessProbes) -> list[Path]:
+    """Return the files ``spec`` names, as ``harness configure`` resolves the ones it writes."""
+    return _unique(profiles.config_paths(spec, probes.environ, probes.home, []))
 
 
 def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
@@ -343,11 +324,10 @@ def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
 
 def load_files(profile: profiles.Profile, context: HarnessContext) -> list[LoadedFile]:
     """Resolve and read every config file the profile names."""
-    homes = implied_homes(profile, context.config)
     return [
         load_file(spec, path)
         for spec in profile.config_files
-        for path in config_paths(spec, homes, context.probes)
+        for path in config_paths(spec, context.probes)
     ]
 
 
@@ -737,41 +717,6 @@ def hook_checks(profile: profiles.Profile, files: Sequence[LoadedFile], home: Pa
     return []
 
 
-# --- Session store -------------------------------------------------------------------
-
-
-def _store_roots(store: sessions.Store) -> list[Path]:
-    if store.format == sessions.StoreFormat.SQLITE:
-        return list(sessions.session_files(store))
-    return [directory for root in store.roots for directory in sessions.expand_root(root)]
-
-
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
-def store_check(profile: profiles.Profile, context: HarnessContext) -> Check:
-    """Check the session store's roots exist and hold a recent session."""
-    store = profile.session_store_spec or context.stores[profile.session_store]
-    fix = (
-        f"use {profile.title} once on this machine, or add where it keeps sessions under "
-        f"[sessions.roots] {store.name} in the config"
-    )
-    roots = _store_roots(store)
-    if not roots:
-        return check("session_store", "warn", f"none of {', '.join(store.roots)} exists", fix)
-    newest = max((_mtime(path) for path in sessions.session_files(store)), default=0.0)
-    if newest <= 0:
-        return check("session_store", "warn", f"{len(roots)} root(s), no session yet", fix)
-    detail = f"{len(roots)} root(s); newest session {age(context.now - newest)} ago"
-    if context.now - newest > STALE_SESSION_DAYS * _DAY_SECONDS:
-        return check("session_store", "warn", f"{detail}, none in {STALE_SESSION_DAYS} days", fix)
-    return check("session_store", "pass", detail)
-
-
 # --- Telemetry -----------------------------------------------------------------------
 
 
@@ -855,6 +800,5 @@ def harness_checks(profile: profiles.Profile, context: HarnessContext) -> list[C
             "prompt_export", lambda: prompt_check(profile, files, context), harness=profile.key
         ),
         *guarded("activity_hooks", lambda: hook_checks(profile, files, home), harness=profile.key),
-        *guarded("session_store", lambda: store_check(profile, context), harness=profile.key),
         *guarded("telemetry", lambda: telemetry_check(profile, context), harness=profile.key),
     ]

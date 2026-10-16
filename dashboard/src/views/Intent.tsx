@@ -19,7 +19,6 @@ import {
   maybe,
   num,
   SERIES,
-  shortTime,
 } from "../format";
 
 const words = (value: unknown) => String(value ?? "").replaceAll("_", " ");
@@ -72,7 +71,6 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
       .join(" · ");
   const kindTotals = rowsOf(data, "correction_kind_totals");
   const payoff = rowsOf(data, "effort_payoff");
-  const repeated = rowsOf(data, "repeated");
   return (
     <>
       <Section title="At a glance">
@@ -103,13 +101,6 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
           detail={`${fmtCount(num(all.frustrated_n))} of ${fmtCount(num(all.frustrated_den))} labelled next prompts`}
           n={num(all.frustrated_den)}
           signals={["intent.frustration"]}
-        />
-        <Kpi
-          title="Repeated corrections"
-          source="repeated_count"
-          value={fmtCount(num(data.repeated_count?.[0]?.repeated))}
-          detail="project × correction kind in ≥ 2 tasks and ≥ 2 sessions"
-          signals={["intent.correction_kind"]}
         />
       </Section>
       <Section title="Daily trend">
@@ -281,52 +272,11 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
           />
         </Panel>
       </Section>
-      <Section title="Which corrections repeat?">
-        <Panel
-          title="Repeated corrections by project"
-          source="repeated"
-          subtitle="Project × correction kind over the selected window; ≥ 2 tasks in ≥ 2 sessions is a repeat. Evaluation workspaces excluded."
-          signals={["intent.correction_kind", "intent.corrected"]}
-          span={12}
-        >
-          <DataTable
-            columns={[
-              { key: "project", label: "Project" },
-              {
-                key: "correction_kind",
-                label: "Correction",
-                render: (row) => words(row.correction_kind),
-              },
-              {
-                key: "harnesses",
-                label: "Harnesses",
-                render: (row) => (
-                  <span className="breakdown">
-                    {(Array.isArray(row.harnesses) ? row.harnesses : []).map(
-                      (harness) => (
-                        <HarnessName key={String(harness)} value={harness} />
-                      ),
-                    )}
-                  </span>
-                ),
-              },
-              { key: "tasks", label: "Tasks", numeric: true },
-              { key: "sessions", label: "Sessions", numeric: true },
-              { key: "task_types", label: "Task types" },
-              {
-                key: "last_seen",
-                label: "Last seen (UTC)",
-                render: (row) => shortTime(row.last_seen),
-              },
-            ]}
-            rows={repeated}
-            empty="No corrected task has a project in the selected range."
-          />
-        </Panel>
+      <Section title="Which tasks were corrected?">
         <Panel
           title="Recent corrected tasks"
           source="recent"
-          subtitle="The latest 25 tasks whose next prompt corrected the agent; open one for its session. Evaluation workspaces excluded."
+          subtitle="The latest 25 tasks whose next prompt corrected the agent; open one for its session"
           signals={["intent.corrected", "intent.task_type"]}
           span={12}
         >
@@ -364,11 +314,6 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 key: "sentiment_next",
                 label: "Next sentiment",
                 render: (row) => String(row.sentiment_next) || "—",
-              },
-              {
-                key: "project",
-                label: "Project",
-                render: (row) => String(row.project ?? "") || "—",
               },
             ]}
             rows={rowsOf(data, "recent")}

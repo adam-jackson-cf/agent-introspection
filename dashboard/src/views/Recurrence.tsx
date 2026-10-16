@@ -9,7 +9,7 @@ import {
   useView,
   useSelectedHarnesses,
 } from "../components";
-import { fmtCount, fmtPct, HARNESS_COLOR, HARNESS_LABEL, num } from "../format";
+import { fmtCount, HARNESS_COLOR, HARNESS_LABEL, num } from "../format";
 
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
@@ -95,18 +95,14 @@ const CLUSTER_COLUMNS: Column[] = [
 const firstRow = (rows: Row[] | undefined): Row => rows?.[0] ?? {};
 
 function deriveRecurrence(data: Record<string, Row[]>) {
-  const concentration = data.concentration ?? [];
   return {
     targets: firstRow(data.target_summary),
     summary: firstRow(data.cluster_summary),
     actionable: clusterRows(data.actionable ?? []),
     recurring: clusterRows(data.clusters ?? []),
-    concentration,
-    localized: firstRow(concentration),
     daily: dailyWide(data.daily ?? []),
     actionableTotal: num(firstRow(data.actionable_summary).actionable),
     targetsTotal: num(firstRow(data.targets).total_files),
-    concentrationTotal: num(firstRow(concentration).total_signatures),
   };
 }
 
@@ -118,12 +114,9 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
     summary,
     actionable,
     recurring,
-    concentration,
-    localized,
     daily,
     actionableTotal,
     targetsTotal,
-    concentrationTotal,
   } = deriveRecurrence(data);
   const series = selected.map((harness) => ({
     key: harness,
@@ -154,18 +147,6 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
           value={fmtCount(num(targets.recurring))}
           detail={`of ${fmtCount(num(targets.targets))} files touched in ≥ 2 tasks`}
           signals={["recur.targets"]}
-        />
-        <Kpi
-          title="Localized signatures"
-          source="concentration"
-          value={fmtPct(
-            typeof localized.localized_rate === "number"
-              ? localized.localized_rate
-              : null,
-            0,
-          )}
-          detail={`${num(localized.localized_signatures)} of ${num(localized.shown)} signatures with ≥ 80% in one project`}
-          signals={["recur.project_concentration"]}
         />
       </Section>
       <Section title="Daily trend">
@@ -248,39 +229,6 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
           <ViewLink view="guardrails">
             Open Verification and guardrails
           </ViewLink>
-        </Panel>
-        <Panel
-          title="Project concentration"
-          source="concentration"
-          subtitle="Where each repeated signature occurs (first 80 characters shown, grouped by a hash of the full line); project from the harness session stores"
-          signals={["recur.project_concentration"]}
-          span={12}
-        >
-          <DataTable
-            columns={[
-              {
-                key: "harness",
-                label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
-              },
-              { key: "signature", label: "Signature" },
-              { key: "occurrences", label: "Count", numeric: true },
-              { key: "projects", label: "Projects", numeric: true },
-              { key: "top_project", label: "Top project" },
-              {
-                key: "share",
-                label: "Top share",
-                numeric: true,
-                render: (row) =>
-                  fmtPct(
-                    typeof row.top_share === "number" ? row.top_share : null,
-                    0,
-                  ),
-              },
-            ]}
-            rows={concentration}
-            total={concentrationTotal}
-          />
         </Panel>
       </Section>
     </>

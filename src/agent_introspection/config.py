@@ -6,7 +6,7 @@ import ipaddress
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -101,9 +101,6 @@ class AppConfig:
     # Registry harness keys this machine uses (`codex` names the three Codex surfaces);
     # None means every registry harness. `facts install` validates the keys.
     harnesses_enabled: tuple[str, ...] | None = None
-    # Extra session-store roots per store name (`[sessions.roots]`), for example an
-    # Orca per-account Codex home; `~`, `$VAR`, and globs expand at scan time.
-    session_roots: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # OTLP/HTTP logs URL every record is sent to (`[hooks] otlp_logs_endpoint`); any
     # reachable host. None falls back to the OTEL_* environment, else spool only.
     hooks_otlp_logs_endpoint: str | None = None
@@ -129,7 +126,6 @@ _ROOT_KEYS = frozenset({
     "signoz",
     "dashboard",
     "harnesses",
-    "sessions",
     "hooks",
     "labels",
     "machine",
@@ -137,7 +133,6 @@ _ROOT_KEYS = frozenset({
 _MACHINE_KEYS = frozenset({"role", "export_endpoint"})
 _HOOKS_KEYS = frozenset({"otlp_logs_endpoint"})
 _LABELS_KEYS = frozenset({"openrouter_key_command"})
-_SESSIONS_KEYS = frozenset({"roots"})
 _HARNESSES_KEYS = frozenset({"enabled"})
 _DASHBOARD_KEYS = frozenset({"clickhouse_url"})
 _DATABASE_KEYS = frozenset({"path", "busy_timeout_ms"})
@@ -149,10 +144,16 @@ _HTTP_KEYS = frozenset({
     "clickhouse_password_command",
 })
 _SIGNOZ_KEYS = _DOCKER_KEYS | _HTTP_KEYS | {"otlp_endpoint"}
-# Keys the retired scan pipeline read. They are still rejected, so stale settings
-# never look active, but the error names them as safe to delete.
+# Keys the retired scan pipeline and project attribution read. They are still
+# rejected, so stale settings never look active, but the error names them as safe to
+# delete.
 _RETIRED_KEYS = {
-    "configuration": frozenset({"scheduler", "lifecycle", "legacy_project_attribution"}),
+    "configuration": frozenset({
+        "scheduler",
+        "lifecycle",
+        "legacy_project_attribution",
+        "sessions",
+    }),
     "signoz": frozenset({
         "health_url",
         "otlp_http_endpoint",
@@ -374,7 +375,7 @@ def _reject_unknown(actual: set[str], allowed: frozenset[str], *, location: str)
     retired = [key for key in unknown if key in _RETIRED_KEYS.get(location, frozenset())]
     message = f"unsupported keys in {location}: {', '.join(unknown)}"
     if retired:
-        message += f" ({', '.join(retired)} retired with the scan pipeline; delete them)"
+        message += f" ({', '.join(retired)} retired; delete them)"
     raise ConfigurationError(message)
 
 
@@ -385,8 +386,6 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     signoz = _table(data, "signoz")
     dashboard = _table(data, "dashboard")
     harnesses = _table(data, "harnesses")
-    sessions = _table(data, "sessions")
-    _reject_unknown(set(sessions), _SESSIONS_KEYS, location="sessions")
     _reject_unknown(set(database), _DATABASE_KEYS, location="database")
     _reject_unknown(set(signoz), _SIGNOZ_KEYS, location="signoz")
     _reject_unknown(set(dashboard), _DASHBOARD_KEYS, location="dashboard")
@@ -419,7 +418,6 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else None
         ),
         harnesses_enabled=_enabled_harnesses(harnesses),
-        session_roots=_session_roots(sessions),
         hooks_otlp_logs_endpoint=(
             _otlp_url(hooks["otlp_logs_endpoint"], field="hooks.otlp_logs_endpoint")
             if "otlp_logs_endpoint" in hooks
@@ -431,18 +429,6 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             else None
         ),
     )
-
-
-def _session_roots(sessions: dict[str, Any]) -> dict[str, tuple[str, ...]]:
-    roots = sessions.get("roots", {})
-    if not isinstance(roots, dict) or not all(
-        isinstance(name, str)
-        and isinstance(paths, list)
-        and all(isinstance(path, str) and path for path in paths)
-        for name, paths in roots.items()
-    ):
-        raise ConfigurationError("sessions.roots must map a store name to a list of paths")
-    return {name: tuple(paths) for name, paths in roots.items()}
 
 
 _OTLP_LOGS_ENDPOINT = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"

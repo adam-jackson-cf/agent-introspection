@@ -11,6 +11,7 @@ activity-hook adapter it relies on, and a status for every producer capability
 
 from __future__ import annotations
 
+import glob
 import re
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import capabilities, facts, hooks, sessions
+from agent_introspection import capabilities, facts, hooks
 from agent_introspection.capabilities import CapabilityClaim
 from agent_introspection.config import OTLP_GRPC_PORT, OTLP_HTTP_PORT, is_local_host
 
@@ -47,16 +48,14 @@ _PROFILE_KEYS = frozenset({
     "binary",
     "version_args",
     "verified_versions",
-    "session_store",
     "hook_adapter",
     "sources",
     "config_file",
     "setting",
     "capabilities",
     "capability_overrides",
-    "session_store_spec",
 })
-_CONFIG_FILE_KEYS = frozenset({"id", "paths", "format", "table", "roots"})
+_CONFIG_FILE_KEYS = frozenset({"id", "paths", "format", "table", "roots", "home_globs"})
 _SETTING_KEYS = frozenset({"file", "key", "value", "group", "purpose"})
 _CLAIM_KEYS = frozenset({"status", "route", "evidence", "lacks"})
 # The collector producers export to when config [signoz] otlp_endpoint is unset. An IP
@@ -93,6 +92,9 @@ class ConfigFile:
     format: str
     table: str
     roots: str
+    # Glob patterns of more config directories for an ``each`` file, such as Orca's
+    # per-account Codex homes; ``~`` expands, and every matching directory is a root.
+    home_globs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,14 +124,12 @@ class Profile:
     binary: str
     version_args: tuple[str, ...]
     verified_versions: tuple[str, ...]
-    session_store: str
     hook_adapter: str
     capabilities: Mapping[str, CapabilityClaim]
     sources: tuple[str, ...] = ()
     config_files: tuple[ConfigFile, ...] = ()
     settings: tuple[Setting, ...] = ()
     capability_overrides: Mapping[str, Mapping[str, CapabilityClaim]] = field(default_factory=dict)
-    session_store_spec: sessions.Store | None = None
 
     @property
     def aliases(self) -> tuple[str, ...]:
@@ -149,9 +149,7 @@ def expand_config_path(raw: str, environ: Mapping[str, str], home: Path) -> Path
     is unset or empty is None, so a harness's config-directory variable falls through
     to its default path. ``~`` expands only as the path's first part, as a shell does,
     never inside a variable's value. Nothing is globbed: each path names one file or
-    directory. Session-store roots keep their own expansion
-    (``sessions.expand_root``), because they are glob patterns that match many
-    directories.
+    directory.
     """
     names = [braced or bare for braced, bare in _PATH_VARIABLE.findall(raw)]
     if any(not environ.get(name) for name in names):
@@ -173,10 +171,10 @@ def config_paths(
     replaces the default location, as it does for the harness (``CLAUDE_CONFIG_DIR``),
     even before the harness has written a file there. A file configured in each root
     (``each``) is in every remaining path that names a variable, the home the user
-    chose, and in every other whose directory exists. ``extras`` are more files of the
-    same name in directories named elsewhere (``--root``, or homes config implies):
-    they replace a ``first`` file's path and join the ``each`` ones. With nothing
-    chosen, the first remaining path is.
+    chose, in every other whose directory exists, and in every directory a
+    ``home_globs`` pattern matches. ``extras`` are more files of the same name in
+    directories named by ``--root``: they replace a ``first`` file's path and join the
+    ``each`` ones. With nothing chosen, the first remaining path is.
     """
     candidates = [
         (raw, path)
@@ -189,7 +187,18 @@ def config_paths(
     chosen = [
         path for raw, path in candidates if _PATH_VARIABLE.search(raw) or path.parent.is_dir()
     ]
-    return [*chosen, *extras] or first
+    return [*chosen, *_glob_homes(config_file, home), *extras] or first
+
+
+def _glob_homes(config_file: ConfigFile, home: Path) -> list[Path]:
+    """Return the file in every directory a ``home_globs`` pattern matches, sorted."""
+    name = Path(config_file.paths[0]).name
+    patterns = [
+        str(home / pattern[2:]) if pattern.startswith("~/") else pattern
+        for pattern in config_file.home_globs
+    ]
+    directories = {Path(match) for pattern in patterns for match in glob.glob(pattern)}
+    return [directory / name for directory in sorted(directories) if directory.is_dir()]
 
 
 def render_value(value: SettingValue, context: Mapping[str, str]) -> SettingValue:
@@ -441,10 +450,17 @@ def _config_files(value: object, where: str) -> tuple[ConfigFile, ...]:
             format=_choice(entry, "format", FILE_FORMATS, label),
             table=_optional_text(entry, "table", label),
             roots=_choice(entry, "roots", ROOT_MODES, label),
+            home_globs=_texts(entry, "home_globs", label, empty=True)
+            if "home_globs" in entry
+            else (),
         )
         _require(
             config.format != "dotenv" or config.table == "",
             f"{label}: a dotenv file has no tables",
+        )
+        _require(
+            config.roots == "each" or not config.home_globs,
+            f"{label}: home_globs needs roots = each",
         )
         config_files.append(config)
     return tuple(config_files)
@@ -520,15 +536,6 @@ def _overrides(value: object, where: str) -> dict[str, dict[str, CapabilityClaim
     }
 
 
-def _store_spec(value: object, where: str) -> sessions.Store | None:
-    if value is None:
-        return None
-    try:
-        return sessions.parse_store(cast(Mapping[str, Any], value))
-    except sessions.SessionStoreError as error:
-        raise ProfileError(f"{where}: session_store_spec: {error}") from None
-
-
 def _check_registry(profile: Profile, registry: facts.Registry, where: str) -> None:
     """Check the profile's harness identity and hook adapter against the registry."""
     if profile.status == "candidate":
@@ -553,25 +560,6 @@ def _check_registry(profile: Profile, registry: facts.Registry, where: str) -> N
     )
     stray = sorted(set(profile.capability_overrides) - set(profile.registry_keys))
     _require(not stray, f"{where}: overrides for unknown surface {', '.join(stray)}")
-
-
-def _check_store(profile: Profile, stores: Mapping[str, sessions.Store], where: str) -> None:
-    """Check the profile names exactly one session store, and that the store exists."""
-    spec = profile.session_store_spec
-    _require(
-        (profile.session_store == "") != (spec is None),
-        f"{where}: name a session_store or give a [session_store_spec], not both",
-    )
-    if spec is not None:
-        _require(
-            profile.status == "candidate",
-            f"{where}: a registered profile's store belongs in session_stores.toml",
-        )
-        return
-    store = stores.get(profile.session_store)
-    _require(store is not None, f"{where}: unknown session_store {profile.session_store}")
-    uncovered = sorted(set(profile.registry_keys) - set(cast(sessions.Store, store).harnesses))
-    _require(not uncovered, f"{where}: store {profile.session_store} omits {', '.join(uncovered)}")
 
 
 def _check_claim(
@@ -602,16 +590,15 @@ def _check_claim(
 def parse_profile(
     document: Mapping[str, Any],
     registry: facts.Registry,
-    stores: Mapping[str, sessions.Store],
     where: str = "profile",
 ) -> Profile:
-    """Validate one parsed profile against the contract, the registry, and the stores.
+    """Validate one parsed profile against the contract and the registry.
 
     Raises
     ------
     ProfileError
         When a key is missing, unknown, or of the wrong type, or the profile names a
-        harness, route, store, adapter, capability, or signal that does not exist.
+        harness, route, adapter, capability, or signal that does not exist.
     """
     _require(document.get("schema") == SCHEMA, f"{where}: schema must be {SCHEMA}")
     _table(document, where, _PROFILE_KEYS)
@@ -625,40 +612,31 @@ def parse_profile(
         binary=_text(document, "binary", where),
         version_args=_texts(document, "version_args", where, empty=True),
         verified_versions=_texts(document, "verified_versions", where),
-        session_store=_optional_text(document, "session_store", where),
         hook_adapter=_optional_text(document, "hook_adapter", where),
         capabilities=_claims(document.get("capabilities"), f"{where} capabilities", complete=True),
         sources=_texts(document, "sources", where, empty=True),
         config_files=config_files,
         settings=_settings(document.get("setting", []), config_files, where),
         capability_overrides=_overrides(document.get("capability_overrides", {}), where),
-        session_store_spec=_store_spec(document.get("session_store_spec"), where),
     )
     _check_registry(profile, registry, where)
-    _check_store(profile, stores, where)
     for surface in ("", *profile.capability_overrides):
         for capability, claim in profile.claims(surface).items():
             _check_claim(profile, registry, capability, claim)
     return profile
 
 
-def _parse_text(
-    text: str, registry: facts.Registry, stores: Mapping[str, sessions.Store], where: str
-) -> Profile:
+def _parse_text(text: str, registry: facts.Registry, where: str) -> Profile:
     try:
         document = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         raise ProfileError(f"{where}: {error}") from None
-    return parse_profile(document, registry, stores, where)
-
-
-def _stores() -> dict[str, sessions.Store]:
-    return {store.name: store for store in sessions.load_stores()}
+    return parse_profile(document, registry, where)
 
 
 def load_profile(path: Path, registry: facts.Registry | None = None) -> Profile:
     """Load and validate one profile file, such as a draft for a candidate producer."""
-    return _parse_text(path.read_text(), registry or facts.load_registry(), _stores(), str(path))
+    return _parse_text(path.read_text(), registry or facts.load_registry(), str(path))
 
 
 def _check_profile_set(profiles: Sequence[Profile], registry: facts.Registry) -> None:
@@ -686,11 +664,10 @@ def load_profiles(registry: facts.Registry | None = None) -> tuple[Profile, ...]
         share a name, or a registry harness has no registered profile.
     """
     registry = registry or facts.load_registry()
-    stores = _stores()
     profiles: list[Profile] = []
     for resource in sorted(files(PACKAGE).iterdir(), key=lambda item: item.name):
         if resource.name.endswith(".toml"):
-            profile = _parse_text(resource.read_text(), registry, stores, resource.name)
+            profile = _parse_text(resource.read_text(), registry, resource.name)
             _require(
                 resource.name == f"{profile.key}.toml",
                 f"{resource.name}: the file name must be {profile.key}.toml",

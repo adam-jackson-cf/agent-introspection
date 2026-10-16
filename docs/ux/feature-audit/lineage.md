@@ -145,3 +145,8 @@ How `server.ts` loads them: `loadRegistry` (`dashboard/server.ts:129-155`) batch
 - Redesign-risk: registry-driven info notes (alignment/note per harness), hidden-signal list and Pipeline exclusions/coverage panels are derived from the registry tables, not UI strings; any redesign must keep loading `signals`, `support`, `routes`, `strays`, `exclusions`, `harnesses`.
 
 **Totals:** fact views 9 signals 64
+
+## Project attribution removed (2026-10-17, DC11)
+
+- `introspection.session_projects` and the `session_project` view are dropped by `facts install`, with their loaders. The registry loses `pipeline.project_attribution`, `recur.project_concentration` and `intervene.practice_recurrence`, and the `session_store` capability.
+- Evaluation workspaces are excluded by a tool call's working directory (`tool_calls.workdir`) or failure signature under a temporary directory; repeated corrections are no longer a finding.

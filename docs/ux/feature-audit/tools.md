@@ -127,3 +127,7 @@ No removed rows. New: TOOL-F14..F20, TOOL-S07..S14, TOOL-C10..C12.
 
 - DC9: the Repeated attempts and Tool loops tables are one Repeated calls table (`tools.repeated_calls`, signals `tools.repeats` and `tools.loops`), one row per identical call in a task: Harness, Project, Session, Tool, Command, Attempts, Longest run (consecutive repeats), Failed, Started. Failed excludes omp `policy_blocked` calls. `repeat_summary` still feeds the KPI.
 - The Command column is the program after splitting on `&&`, `||`, `;`, `|` and unwrapping runners (`uv run`, `npx`, `python -m`), so `cd x && pytest` reads `pytest`.
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Repeated calls loses its Project column.

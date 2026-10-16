@@ -59,7 +59,7 @@ A known producer starts at **decide**: its profile is bundled and already checke
   `internal` (this tool's own records), or `unregistered` (anything else).
 
 Turning a candidate into a harness is a code change: a registry `[harnesses]` key, a
-route or a reason for every signal, a store in `session_stores.toml`, the profile with
+route or a reason for every signal, the profile with
 status `registered`, and an activity-hook adapter where one is needed. The
 `introspection-operations` skill's
 [change workflow](../../.agents/skills/introspection-operations/references/change-workflow.md)
@@ -69,9 +69,9 @@ lists every place a harness is named.
 
 The registry
 ([`signal_support.toml`](../../src/agent_introspection/facts_sql/signal_support.toml))
-declares the 15 capabilities under `[[capability]]`, and every harness-scoped signal
-lists the ones it `requires`: Project attribution, for example, requires
-`session_identity`, `task_boundary`, and `session_store`. System signals, which
+declares the 14 capabilities under `[[capability]]`, and every harness-scoped signal
+lists the ones it `requires`: Recurring failure signatures, for example, requires
+`task_boundary`, `tool_calls`, and `tool_failure`. System signals, which
 describe the pipeline or the improvement loop rather than a harness, require none.
 
 Each capability has hints: case-insensitive regular expressions matched against span
@@ -95,7 +95,6 @@ loads it by path. Drafts are never written into the bundled package.
 | `registry_keys`                               | The `[harnesses]` keys it covers; empty for a candidate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `service_names`                               | The `service.name` values it exports under; the first fills `{service_name}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `binary`, `version_args`, `verified_versions` | The command, the arguments that print its version, and the versions its claims were checked on. `harness list` and `doctor` compare the installed version with these.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `session_store` or `[session_store_spec]`     | A `[[store]]` name in `session_stores.toml`, or, for a candidate only, an inline store of the same shape (see [Project Attribution](project-attribution.md)).                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `hook_adapter`                                | The activity-hook producer key (`claude-code` or `omp`), or empty.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `sources`                                     | Documentation URLs behind the claims.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `[[config_file]]`                             | `id`; `paths` (a leading `~`, `$VAR`, and `${VAR}` expand; a path whose variable is unset is skipped); `format` (`json`, `toml`, or `dotenv`); `table`, the dotted path of the settings table (`""` for the top level); and `roots`: `first` (the first path whose variables are set, existing or not: a set config-directory variable such as `CLAUDE_CONFIG_DIR` replaces the default location, as it does for the harness) or `each` (every path that names a set variable, and every other whose directory exists, as for Codex homes). `harness configure` writes these files and `doctor` reads the same ones. |
@@ -124,11 +123,10 @@ is coarser than a signal, `lacks` names the signals it cannot serve, and for tho
 claim counts as `missing`. Codex `model_usage`, for example, has no cache writes, so it
 lacks Cache creation.
 
-Loading checks every profile against the registry and the session stores: a route must
+Loading checks every profile against the registry: a route must
 be one of the profile's registry routes, and a route from an activity hook needs status
 `hook`; `hook` needs a `hook_adapter`; `lacks` may name only signals that require the
-capability; a registered profile names at least one export setting and a store from
-`session_stores.toml`; every registry harness has exactly one registered profile; and
+capability; a registered profile names at least one export setting; every registry harness has exactly one registered profile; and
 no name resolves to two profiles.
 
 ## Projection and impact
@@ -219,5 +217,3 @@ saved. A version that passes this review can then be added to the profile's
   output.
 - [Data Gaps](data-gaps.md#harness-support-matrix): what each enabled harness keeps
   hidden today.
-- [Project Attribution](project-attribution.md): session stores, including SQLite
-  stores and a candidate's inline store.

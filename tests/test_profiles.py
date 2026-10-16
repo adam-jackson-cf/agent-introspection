@@ -3,17 +3,15 @@ from __future__ import annotations
 import copy
 import dataclasses
 import re
-import sqlite3
 import tomllib
 from collections.abc import Callable, Mapping
-from contextlib import closing
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_introspection import capabilities, facts, profiles, sessions
+from agent_introspection import capabilities, facts, profiles
 
 _ALIGNMENT_OUTCOMES = {
     "aligned": capabilities.REACHABLE,
@@ -25,10 +23,6 @@ _ALIGNMENT_OUTCOMES = {
 
 def _document(key: str) -> dict[str, Any]:
     return tomllib.loads(files(profiles.PACKAGE).joinpath(f"{key}.toml").read_text())
-
-
-def _stores() -> dict[str, sessions.Store]:
-    return {store.name: store for store in sessions.load_stores()}
 
 
 def test_bundled_profiles_validate_and_cover_every_registry_harness() -> None:
@@ -137,8 +131,7 @@ def _claim(capability: str, **changes: Any) -> Callable[[dict[str, Any]], None]:
         ("omp", lambda d: d.update(registry_keys=["omp"]), "unknown: omp"),
         ("omp", lambda d: d.update(service_names=["omp"]), "service name its rows carry"),
         ("omp", lambda d: d.update(verified_versions=[]), "verified_versions must be a non-empty"),
-        ("omp", lambda d: d.update(session_store="gemini"), "unknown session_store gemini"),
-        ("omp", lambda d: d.update(session_store="codex"), "store codex omits oh-my-pi"),
+        ("omp", lambda d: d.update(session_store="omp"), "unknown key session_store"),
         ("omp", lambda d: d.update(hook_adapter="gemini"), "hook_adapter must be"),
         ("omp", lambda d: d["capabilities"].pop("delegation"), "no claim for delegation"),
         ("omp", lambda d: d["capabilities"].update(cost={}), "unknown key cost"),
@@ -170,13 +163,6 @@ def _claim(capability: str, **changes: Any) -> Callable[[dict[str, Any]], None]:
         ("claude-code", lambda d: d.update(hook_adapter=""), "a hook status needs a hook_adapter"),
         ("codex", lambda d: d.update(registry_keys=["codex"]), "unknown: codex"),
         ("opencode", lambda d: d.update(registry_keys=["opencode"]), "covers no registry harness"),
-        ("opencode", lambda d: d.update(session_store="omp"), "not both"),
-        ("opencode", lambda d: d.pop("session_store_spec"), "not both"),
-        (
-            "opencode",
-            lambda d: d["session_store_spec"].pop("query"),
-            "session_store_spec: session store 'opencode': missing query",
-        ),
         ("opencode", lambda d: d.update(status="registered"), "registry_keys must name"),
     ],
 )
@@ -187,16 +173,7 @@ def test_profiles_reject_documents_that_break_the_contract(
     mutate(document)
 
     with pytest.raises(profiles.ProfileError, match=re.escape(message)):
-        profiles.parse_profile(document, facts.load_registry(), _stores())
-
-
-def test_a_registered_profile_keeps_its_store_in_session_stores() -> None:
-    document = copy.deepcopy(_document("omp"))
-    document["session_store"] = ""
-    document["session_store_spec"] = _document("opencode")["session_store_spec"]
-
-    with pytest.raises(profiles.ProfileError, match=r"belongs in session_stores\.toml"):
-        profiles.parse_profile(document, facts.load_registry(), _stores())
+        profiles.parse_profile(document, facts.load_registry())
 
 
 def test_profile_names_must_be_unambiguous_and_cover_every_harness() -> None:
@@ -247,23 +224,6 @@ def test_settings_render_their_placeholders_into_the_written_value() -> None:
     assert {setting.group for setting in claude.settings} == {"export", "prompt_export"}
     with pytest.raises(profiles.ProfileError, match="no value for otlp_endpoint"):
         by_key["OTEL_EXPORTER_OTLP_ENDPOINT"].render({})
-
-
-def test_opencode_store_spec_reads_its_session_table(tmp_path: Path) -> None:
-    spec = profiles.resolve("opencode").session_store_spec
-    assert spec is not None
-    database = tmp_path / "opencode.db"
-    with closing(sqlite3.connect(database)) as connection:
-        connection.execute("CREATE TABLE session (id TEXT, directory TEXT, time_created INTEGER)")
-        connection.execute("INSERT INTO session VALUES ('ses_1', '/work/repo', 1760300000123)")
-        connection.commit()
-        cursor = connection.execute(spec.query)
-        columns = [column[0] for column in cursor.description]
-        rows = cursor.fetchall()
-
-    assert spec.format == sessions.StoreFormat.SQLITE
-    assert columns == ["session_id", "cwd", "started_at"]
-    assert rows == [("ses_1", "/work/repo", "2025-10-12T20:13:20.123Z")]
 
 
 @pytest.mark.parametrize(
@@ -433,3 +393,30 @@ def test_an_additional_machines_exporters_reach_the_collector_only_by_the_hosts_
     assert _transport("claude-code", _ENDPOINT, pair, host) == "grpc"
     assert profiles.on_collector_host("http://localhost:4318", "http://127.0.0.1:4318")
     assert not profiles.on_collector_host("http://localhost:4318", host)
+
+
+def test_home_globs_add_every_matching_codex_home(tmp_path: Path) -> None:
+    spec = next(item for item in profiles.resolve("codex").config_files if item.id == "config")
+    homes = [
+        tmp_path / "Library/Application Support/orca/codex-accounts" / name / "home"
+        for name in ("b", "a")
+    ]
+    for home in homes:
+        home.mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+
+    found = profiles.config_paths(spec, {}, tmp_path)
+
+    assert found == [
+        tmp_path / ".codex/config.toml",
+        homes[1] / "config.toml",
+        homes[0] / "config.toml",
+    ]
+
+
+def test_home_globs_need_a_file_kept_in_each_root() -> None:
+    document = copy.deepcopy(_document("omp"))
+    document["config_file"][0]["home_globs"] = ["~/x/*"]
+
+    with pytest.raises(profiles.ProfileError, match="home_globs needs roots = each"):
+        profiles.parse_profile(document, facts.load_registry())

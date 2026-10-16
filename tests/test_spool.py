@@ -11,10 +11,9 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import hooks, sessions, spool
+from agent_introspection import hooks, spool
 from agent_introspection.config import AppConfig
 from tests.support.otlp_collector import Collector, hook_record, names, spool_records
-from tests.test_sessions import store, write_jsonl
 
 # --- OTLP body --------------------------------------------------------------------
 
@@ -53,22 +52,13 @@ def test_the_body_is_one_resource_with_a_compact_record_per_log(
     }
 
 
-@pytest.mark.parametrize(
-    ("schema", "time_field", "event_name"),
-    [
-        (spool.SESSION_PROJECT_SCHEMA, "resolved_at", "agent_introspection.session_project"),
-        (spool.STATUS_SCHEMA, "reported_at", "agent_introspection.spool_status"),
-    ],
-)
-def test_every_family_is_named_and_timed_by_its_own_field(
-    schema: str, time_field: str, event_name: str
-) -> None:
-    item = {"schema": schema, "event_id": "e", time_field: "2026-10-01T00:00:00Z"}
+def test_the_status_family_is_named_and_timed_by_its_own_field() -> None:
+    item = {"schema": spool.STATUS_SCHEMA, "event_id": "e", "reported_at": "2026-10-01T00:00:00Z"}
 
     (entry,) = json.loads(spool.build_body([item]))["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
 
     attributes = {a["key"]: a["value"]["stringValue"] for a in entry["attributes"]}
-    assert attributes["event.name"] == event_name
+    assert attributes["event.name"] == "agent_introspection.spool_status"
     assert entry["timeUnixNano"] == str(int(datetime(2026, 10, 1, tzinfo=UTC).timestamp()) * 10**9)
 
 
@@ -295,7 +285,7 @@ def test_the_status_record_reports_backlog_age_counters_and_last_error(
 
     assert status["schema"] == spool.STATUS_SCHEMA
     assert (status["pending"], status["rejected"], status["oldest_pending_seconds"]) == (3, 1, 90)
-    assert status["sent_total"] == {"hook-event": 2, "session-project": 0}
+    assert status["sent_total"] == {"hook-event": 2}
     assert status["last_error_class"] == "http_503"
     assert status["cli_version"] == "1.2.3"
     assert status["reported_at"] == "2026-10-12T12:00:00.000000Z"
@@ -308,46 +298,30 @@ def sync_config(collector: Collector | None) -> AppConfig:
     return AppConfig(hooks_otlp_logs_endpoint=collector.url if collector else None)
 
 
-def one_session_store(tmp_path: Path) -> sessions.Store:
-    root = tmp_path / "projects"
-    write_jsonl(
-        root / "a" / "one.jsonl",
-        {"sessionId": "s1", "cwd": "/nowhere", "timestamp": "2026-10-01T10:00:00Z"},
-    )
-    result: sessions.Store = store("claude-code", root)
-    return result
+def test_sync_reports_status_after_draining(collector: Collector, inbox: Path) -> None:
+    spool_records(inbox, 1)
 
+    result = spool.sync(sync_config(collector), environ={})
 
-def test_sync_attributes_then_reports_status_then_drains(
-    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [one_session_store(tmp_path)])
-
-    result = spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
-
-    assert result["sessions"] == {"sessions": 1, "missing_workspace": 1}
     assert result["drain"]["sent"] == 2
-    assert {r["schema"] for r in collector.records} == {
-        spool.SESSION_PROJECT_SCHEMA,
-        spool.STATUS_SCHEMA,
-    }
+    assert {r["schema"] for r in collector.records} == {hooks.SCHEMA, spool.STATUS_SCHEMA}
     assert names(inbox) == set()
 
 
 def test_sync_ships_records_before_a_heartbeat_that_counts_them(
-    collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    collector: Collector, inbox: Path
 ) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [one_session_store(tmp_path)])
+    spool_records(inbox, 1)
 
-    result = spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+    result = spool.sync(sync_config(collector), environ={})
 
     per_request = [
         [json.loads(e["body"]["stringValue"])["schema"] for e in body_logs(body)]
         for body in collector.bodies
     ]
-    assert per_request == [[spool.SESSION_PROJECT_SCHEMA], [spool.STATUS_SCHEMA]]
+    assert per_request == [[hooks.SCHEMA], [spool.STATUS_SCHEMA]]
     (heartbeat,) = [r for r in collector.records if r["schema"] == spool.STATUS_SCHEMA]
-    assert heartbeat["sent_total"] == {"hook-event": 0, "session-project": 1}
+    assert heartbeat["sent_total"] == {"hook-event": 1}
     assert result["drain"]["sent"] == 2
     assert result["drain"]["batches"] == 2
 
@@ -366,18 +340,17 @@ def heartbeat_files(inbox: Path) -> list[dict[str, Any]]:
 def test_sync_sends_the_heartbeat_alone_when_the_record_drain_stops_early(
     collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
     stale_id = seed_stale_heartbeat(inbox)
     spool_records(inbox, 120)
     collector.script = [(200, "{}"), (503, "")]
 
-    spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+    spool.sync(sync_config(collector), environ={})
 
     last = [e["body"]["stringValue"] for e in body_logs(collector.bodies[-1])]
     assert [json.loads(text)["schema"] for text in last] == [spool.STATUS_SCHEMA]
     assert stale_id not in {r["event_id"] for r in collector.records}
     (beat,) = [r for r in collector.records if r["schema"] == spool.STATUS_SCHEMA]
-    assert beat["sent_total"] == {"hook-event": 50, "session-project": 0}
+    assert beat["sent_total"] == {"hook-event": 50}
     assert beat["pending"] == 70
     assert heartbeat_files(inbox) == []
 
@@ -385,11 +358,10 @@ def test_sync_sends_the_heartbeat_alone_when_the_record_drain_stops_early(
 def test_sync_spools_only_the_fresh_heartbeat_when_it_cannot_be_sent(
     collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
     stale_id = seed_stale_heartbeat(inbox)
     collector.default = (503, "")
 
-    spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+    spool.sync(sync_config(collector), environ={})
 
     (kept,) = heartbeat_files(inbox)
     assert kept["event_id"] != stale_id
@@ -398,11 +370,10 @@ def test_sync_spools_only_the_fresh_heartbeat_when_it_cannot_be_sent(
 def test_sync_skips_the_heartbeat_while_another_drain_holds_the_lock(
     collector: Collector, inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
     spool_records(inbox, 2)
     with (inbox / ".drain.lock").open("a") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
-        result = spool.sync(sync_config(collector), scan_state=tmp_path / "scan.json", environ={})
+        result = spool.sync(sync_config(collector), environ={})
 
     assert result["drain"]["busy"] is True
     assert collector.bodies == []
@@ -414,13 +385,11 @@ def body_logs(body: dict[str, Any]) -> list[dict[str, Any]]:
     return logs
 
 
-def test_sync_without_an_endpoint_only_spools_the_attribution(
-    inbox: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [one_session_store(tmp_path)])
+def test_sync_without_an_endpoint_keeps_the_spool(inbox: Path) -> None:
+    spool_records(inbox, 1)
 
-    result = spool.sync(sync_config(None), scan_state=tmp_path / "scan.json", environ={})
+    result = spool.sync(sync_config(None), environ={})
 
-    assert result["drain"] == {"skipped": "no_endpoint"}
+    assert result == {"drain": {"skipped": "no_endpoint"}}
     (written,) = inbox.glob("*.json")
-    assert json.loads(written.read_text())["schema"] == spool.SESSION_PROJECT_SCHEMA
+    assert json.loads(written.read_text())["schema"] == hooks.SCHEMA

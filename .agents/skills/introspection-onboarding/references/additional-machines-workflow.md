@@ -1,15 +1,14 @@
 # Additional machines workflow
 
 An add-on to the single-machine setup. An additional machine runs harnesses but has no
-SigNoz and no facts store. It sends its harness telemetry, and its hook, attribution,
-and spool-status records, over OTLP to the collector on the host (the machine that
-runs SigNoz and the facts store), so each session is attributed to a project whichever
-machine ran it. Finish the [setup workflow](setup-workflow.md) on the host first.
+SigNoz and no facts store. It sends its harness telemetry, and its hook and spool-status
+records, over OTLP to the collector on the host (the machine that runs SigNoz and the
+facts store). Finish the [setup workflow](setup-workflow.md) on the host first.
 
 ```text
 additional machine                                         host
 harness telemetry ──────────── OTLP ─────────────────────▶ collector ─▶ SigNoz ─▶ facts store
-hook and attribution records ─▶ spool ─▶ spool sync timer ─▶ collector (OTLP/HTTP logs)
+hook records ──────────────▶ spool ─▶ spool sync timer ─▶ collector (OTLP/HTTP logs)
 ```
 
 ## On the host
@@ -57,11 +56,11 @@ hook and attribution records ─▶ spool ─▶ spool sync timer ─▶ collect
    before the host's `facts install` created the loaders wait for the 3-day sweep or a
    `facts backfill` on the host.
    Set `[harnesses] enabled` to the harnesses this machine runs, so `doctor` checks
-   those, and `[sessions.roots]` for any extra session-store roots.
+   those.
 
 3. **Harnesses.** Run the
    [harness configuration workflow](harness-configuration-workflow.md) (export, hooks,
-   session store, opt-in prompt export) as on the host. On this machine,
+   opt-in prompt export) as on the host. On this machine,
    `harness configure` writes `[machine] export_endpoint` into each harness (Codex:
    `/v1/logs`, `/v1/traces`, and `/v1/metrics` under it), with the same backups and
    `--dry-run` preview. An exporter that already sends to the host's collector over
@@ -72,8 +71,8 @@ hook and attribution records ─▶ spool ─▶ spool sync timer ─▶ collect
    `git -C "$UNITS_SRC" checkout <commit>`, where `UNITS_SRC` is a fresh temporary
    directory such as `$(mktemp -d)/repo`. Install the
    systemd user units from its `.agents/skills/introspection-onboarding/scripts/` and
-   enable them. The service runs `agent-introspection spool sync` (attribution scan,
-   status record, OTLP drain), and the timer starts it every minute. Back up any
+   enable them. The service runs `agent-introspection spool sync` (status record and
+   OTLP drain), and the timer starts it every minute. Back up any
    existing unit with the same name first:
 
    ```sh

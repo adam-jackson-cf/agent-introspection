@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Introspection spool sync (attribution scan and OTLP delivery)
+Description=Agent Introspection spool sync (status record and OTLP delivery)
 Wants=network-online.target
 After=network-online.target
 

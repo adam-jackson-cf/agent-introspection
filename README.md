@@ -101,7 +101,7 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 | Run or debug a command                 | [CLI Reference](docs/references/cli-reference.md)                                                                                                             |
 | Read the dashboard and its blind spots | [Dashboard Companion](docs/references/dashboard-companion.md), [Data Gaps](docs/references/data-gaps.md), [Signal Catalog](docs/references/signal-catalog.md) |
 | Add a producer or harness              | [Producer Onboarding](docs/references/producer-onboarding.md), [Producer Capabilities](docs/references/producer-capabilities.md)                              |
-| Understand the data pipeline           | [Facts Store](docs/references/facts-store.md), [Hook Events](docs/references/hook-events.md), [Project Attribution](docs/references/project-attribution.md)   |
+| Understand the data pipeline           | [Facts Store](docs/references/facts-store.md), [Hook Events](docs/references/hook-events.md)                                                                  |
 | Run the improvement loop               | [Proposal Lifecycle](docs/references/proposal-lifecycle.md)                                                                                                   |
 | Contribute code                        | [Development](docs/references/development.md)                                                                                                                 |
 

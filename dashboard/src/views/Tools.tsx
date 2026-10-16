@@ -222,11 +222,6 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 render: (row) => <HarnessName value={row.harness} />,
               },
               {
-                key: "project",
-                label: "Project",
-                render: (row) => orDash(row.project),
-              },
-              {
                 key: "example_session",
                 label: "Session",
                 render: (row) => (

@@ -79,7 +79,6 @@ queries to one day.
 | `approvals`        | hook_available, lacks Sandbox outcomes                                            | `Permission.ask` spans are empty; `permission.ask` hook and `permission.replied` event.    |
 | `delegation`       | hook_available (was unverified)                                                   | `session.created` carries `parentID` (below).                                              |
 | `prompt_text`      | hook_available                                                                    | No logs; the `chat.message` hook sees the prompt.                                          |
-| `session_store`    | native                                                                            | `[session_store_spec]` reads 3,271 sessions, and holds every telemetry key.                |
 
 Hook and event payload fields come from the installed `@opencode-ai/plugin` and
 `@opencode-ai/sdk` 1.2.6 type definitions. Their key names were also counted in the
@@ -202,8 +201,8 @@ model usage would leave 19 signals visible.
    | `session.created` event                                  | `delegation`, `task_boundary`                                       | `info.parentID`, joined to the parent's `task` tool call                                                                            |
    | an interrupted turn                                      | `user_friction`                                                     | whether the assistant message ends in `MessageAbortedError`                                                                         |
 
-2. **The session store.** The inline `[session_store_spec]` already reads the real
-   database. On registration it moves to `session_stores.toml` as a `[[store]]`.
+2. **The session store.** Not needed: project attribution was removed (2026-10-17), so
+   no harness's session store is read and the profile's inline store is gone.
 3. **The collector filter**
    ([`otel-collector-opencode-filter.yaml`](../../.agents/skills/introspection-onboarding/scripts/signoz/otel-collector-opencode-filter.yaml)).
    Live counts match its header: 29 span names, 16.57M of 17.88M rows (92.7%). It keeps

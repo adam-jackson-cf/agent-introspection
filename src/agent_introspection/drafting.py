@@ -1,10 +1,11 @@
 """Draft one intervention proposal with a bounded, read-only ``codex exec`` review.
 
 ``draft`` exports the next candidate (reserving a review session), asks Codex to
-root-cause it from the evidence pack and audit the affected project's established
-tools, and imports the structured answer through the same validated path as
-``proposal create``. Codex runs in a read-only sandbox with its telemetry export
-disabled, so drafting never changes a project or adds its own runs to the facts.
+root-cause it from the evidence pack and audit the established tools of the
+repository where the failures ran, and imports the structured answer through the
+same validated path as ``proposal create``. Codex runs in a read-only sandbox with
+its telemetry export disabled, so drafting never changes a project or adds its own
+runs to the facts.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from agent_introspection.facts import SqlRunner
 from agent_introspection.interventions import CANONICAL_TIER_LABELS, InterventionType
 from agent_introspection.proposals import (
     CLUSTER_TASK_RATE,
-    CORRECTION_TASK_RATE,
     MIN_METRIC_WINDOW_DAYS,
     SUCCESS_METRICS,
     ProposalInput,
@@ -206,21 +206,20 @@ def output_schema(review: dict[str, Any]) -> dict[str, Any]:
 
 
 _INSTRUCTIONS = f"""\
-You are drafting one intervention proposal for a recurring agent problem: either
-a tool-failure cluster (the finding subject has tool_family and failure_class) or
-a repeated user correction in one project (the subject has project and
-correction_kind). You are read-only: never edit, create, or delete files, never run
-commands that change state, and never apply the intervention. Only investigate
-and answer.
+You are drafting one intervention proposal for a recurring agent problem: a
+tool-failure cluster (the finding subject has tool_family and failure_class). You
+are read-only: never edit, create, or delete files, never run commands that change
+state, and never apply the intervention. Only investigate and answer.
 
 For each candidate in the review payload below:
 
 1. Root cause. Reason from the candidate's evidence pack only (for example daily
-   counts, projects, command shape, failure signatures, what the agent did next,
-   task outcomes and labels, example tasks). State the most likely cause of the
+   counts, working directories, command shape, failure signatures, what the agent
+   did next, task outcomes and labels, example tasks). State the most likely cause of the
    recurrence, not a restatement of the symptom.
-2. Established-tool audit. The working directory is the project where the
-   finding happened most. Inspect its established tools first (package scripts,
+2. Established-tool audit. The working directory is the one where the cluster's
+   failures ran most (the evidence pack's first workdir) when it exists on this
+   machine. Inspect the established tools of its repository first (package scripts,
    Makefile/justfile, pyproject/tool configs, pre-commit and lint configs, CI,
    hooks, AGENTS.md, skills). Record established_tool_audit as exactly these
    three tiers in this order: {json.dumps(list(CANONICAL_TIER_LABELS))}. For
@@ -238,15 +237,13 @@ For each candidate in the review payload below:
    - otherwise agents_guidance, with scope folder, project or cross-project and
      target "folder guidance", "project guidance" or "~/.codex/AGENTS.md".
    create_skill_handoff is null for every other type.
-4. predicted_success_metric: {{"metric": "{CLUSTER_TASK_RATE}" for a failure
-   cluster or "{CORRECTION_TASK_RATE}" for a repeated correction, "harnesses":
+4. predicted_success_metric: {{"metric": "{CLUSTER_TASK_RATE}", "harnesses":
    the subset of the finding's harnesses the change affects, "baseline_days"
    and "evaluation_days": integers >= {MIN_METRIC_WINDOW_DAYS}, "max_ratio": a
    number in (0, 1]}}. {CLUSTER_TASK_RATE} is the share of tasks that hit the
-   failure cluster; {CORRECTION_TASK_RATE} is the share of the project's
-   labelled tasks whose next prompt was a correction of the finding's kind.
-   Success means the share in the evaluation window after the change is
-   applied is at most max_ratio times the share in the baseline window before.
+   failure cluster. Success means the share in the evaluation window after the
+   change is applied is at most max_ratio times the share in the baseline window
+   before.
 5. Copy occurrence_count, task_count and day_count from the finding
    (occurrence_count, canonical_task_count, local_day_count), set finding_id to
    the candidate id, and put evidence references (signatures, example task ids)
@@ -281,12 +278,14 @@ def build_prompt(review: dict[str, Any]) -> str:
 
 
 def working_directory(review: dict[str, Any], fallback: Path) -> Path:
-    """Return the candidate's project root when it exists locally, else ``fallback``."""
+    """Return the candidate's top failure workdir when it exists locally, else ``fallback``.
+
+    Workdirs are home-redacted (``~/...``) in the facts, so ``~`` expands to this home.
+    """
     for candidate in review["payload"]["candidates"]:
-        root = candidate.get("project_root")
-        if root:
-            path = Path(str(root)).expanduser()
-            if path.is_dir():
+        for entry in candidate.get("evidence", {}).get("workdirs", []):
+            path = Path(str(entry.get("workdir", ""))).expanduser()
+            if entry.get("workdir") and path.is_dir():
                 return path
     return fallback
 

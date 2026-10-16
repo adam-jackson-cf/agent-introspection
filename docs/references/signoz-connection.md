@@ -17,7 +17,7 @@ ClickHouse access for the facts store, or a multi-node ClickHouse cluster, where
 `introspection` tables would land on only one node.
 
 Additional machines that run harnesses are an add-on: they keep no SigNoz and no facts
-store, and send their harnesses' telemetry and their hook, attribution, and
+store, and send their harnesses' telemetry and their hook and
 spool-status records over OTLP to the host's collector. Such a machine sets
 `[machine] role = "additional"`: its `export_endpoint` (where `harness configure`
 points its harnesses) and `[hooks] otlp_logs_endpoint` are the only addresses in this

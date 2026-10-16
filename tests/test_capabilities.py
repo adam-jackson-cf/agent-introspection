@@ -154,7 +154,6 @@ def test_hints_do_not_claim_unrelated_names() -> None:
 
     assert not by_id["session_identity"].matches("attribute_keys", "session.title")
     assert not by_id["delegation"].matches("span_names", "invoke_agent")
-    assert not by_id["session_store"].matches("attribute_keys", "cwd")
 
 
 def _mutate_capability(document: dict[str, Any], **changes: Any) -> None:
@@ -166,7 +165,7 @@ def _mutate_capability(document: dict[str, Any], **changes: Any) -> None:
     [
         (lambda d: _mutate_capability(d, id="tokens"), "unknown id"),
         (lambda d: _mutate_capability(d, id="export"), "duplicate id export"),
-        (lambda d: d["capability"].pop(), "session_store not declared"),
+        (lambda d: d["capability"].pop(), "prompt_text not declared"),
         (lambda d: _mutate_capability(d, need=""), "need must be text"),
         (lambda d: _mutate_capability(d, owner="x"), "unknown key owner"),
         (lambda d: _mutate_capability(d, hints={"span_names": []}), "hints must be a table"),

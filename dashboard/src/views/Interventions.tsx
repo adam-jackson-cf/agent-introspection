@@ -103,7 +103,6 @@ export default function Interventions({
   const proposals = data.proposals ?? [];
   const history = data.proposal_events ?? [];
   const comparisons = data.comparisons ?? [];
-  const corrections = data.corrections ?? [];
   const baseline = data.baseline_daily ?? [];
   const tiers = data.tiers ?? [];
   return (
@@ -123,23 +122,17 @@ export default function Interventions({
         />
         <Kpi
           title="Applied interventions"
-          source={["cluster_daily", "correction_daily", "task_daily"]}
+          source={["cluster_daily", "task_daily"]}
           value={fmtCount(num(kpi.applied))}
           detail={appliedDetail(kpi)}
           signals={["intervene.post_recurrence"]}
-        />
-        <Kpi
-          title="Repeated corrections"
-          value={fmtCount(num(kpi.corrections))}
-          detail="practices users keep correcting, not yet codified"
-          signals={["intervene.practice_recurrence"]}
         />
       </Section>
       <Section title="Did an intervention reduce what it targeted?">
         <Panel
           title="Post-intervention recurrence"
-          source={["cluster_daily", "correction_daily", "task_daily"]}
-          subtitle="The finding's own cluster or correction per task, equal windows before and after application; the verdict is the one `facts sync` recorded"
+          source={["cluster_daily", "task_daily"]}
+          subtitle="The finding's own cluster per task, equal windows before and after application; the verdict is the one `facts sync` recorded"
           signals={["intervene.post_recurrence"]}
           span={12}
         >
@@ -189,7 +182,7 @@ export default function Interventions({
         <Panel
           title="Recurrence baseline"
           source="baseline_daily"
-          subtitle="Per Europe/London day: failure-cluster failures per 100 attributed tasks, and next-prompt corrections per 100 labelled tasks with a project"
+          subtitle="Per Europe/London day: failure-cluster failures per 100 tasks, and next-prompt corrections per 100 tasks with a next-prompt label"
           signals={["intervene.post_recurrence"]}
           span={12}
         >
@@ -219,7 +212,7 @@ export default function Interventions({
       <Section title="Findings and proposals">
         <Panel
           title="Active findings"
-          subtitle="Failure clusters and repeated corrections promoted by `facts sync` (7 Europe/London days). Current workflow state, not the selected range"
+          subtitle="Failure clusters promoted by `facts sync` (7 Europe/London days), and dormant findings of retired detectors. Current workflow state, not the selected range"
           signals={["intervene.findings"]}
           span={12}
         >
@@ -234,7 +227,7 @@ export default function Interventions({
               {
                 key: "subject",
                 label:
-                  "Tool family · failure class, or project · correction kind",
+                  "Tool family · failure class (a retired repeated correction: project · correction kind)",
                 render: (row) => subjectLabel(row),
               },
               {
@@ -359,34 +352,6 @@ export default function Interventions({
             ]}
             rows={tiers}
             empty="No proposals yet."
-          />
-        </Panel>
-        <Panel
-          title="Uncodified practice recurrence"
-          subtitle="Repeated-correction findings: the same correction in one project across sessions"
-          signals={["intervene.practice_recurrence"]}
-        >
-          <DataTable
-            columns={[
-              { key: "project", label: "Project" },
-              {
-                key: "correction_kind",
-                label: "Correction",
-                render: (row) =>
-                  String(row.correction_kind ?? "—").replaceAll("_", " "),
-              },
-              {
-                key: "harnesses",
-                label: "Harnesses",
-                render: (row) => <HarnessList value={row.harnesses} />,
-              },
-              { key: "task_types", label: "Task types" },
-              { key: "sessions", label: "Sessions", numeric: true },
-              { key: "impact", label: "Tasks", numeric: true },
-              { key: "state", label: "State" },
-            ]}
-            rows={corrections}
-            empty="No correction repeats in one project across sessions."
           />
         </Panel>
       </Section>

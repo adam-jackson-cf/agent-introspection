@@ -623,7 +623,7 @@ def test_doctor_and_configure_resolve_a_profiles_config_paths_alike(
         which=lambda _binary: None, version=lambda _argv: "", environ=environ, home=home
     )
 
-    found = [path.resolve() for path in doctor_harness.config_paths(spec, [], probes)]
+    found = [path.resolve() for path in doctor_harness.config_paths(spec, probes)]
 
     assert found
     assert found == harness_config.config_targets(spec)

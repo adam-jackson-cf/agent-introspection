@@ -1,6 +1,6 @@
 /**
  * SQL for the records every machine sends over the one OTLP route (hook
- * events, session attribution, spool status), plus the cross-machine home-path
+ * events and spool status), plus the cross-machine home-path
  * rule the sanitization checks share.
  */
 import type { Row } from "../src/contracts";
@@ -23,10 +23,6 @@ export const AFTER_CUTOFF = `loaded_at >= toDateTime64('${HOME_PATH_CUTOFF}', 3,
 /** The record families the agent-introspection service sends (contract: event.name + schema). */
 const RAW_FAMILIES = {
   hooks: ["agent_introspection.hook_event", "agent-introspection.hook-event/1"],
-  attribution: [
-    "agent_introspection.session_project",
-    "agent-introspection.session-project/1",
-  ],
   spool: [
     "agent_introspection.spool_status",
     "agent-introspection.spool-status/1",
@@ -140,7 +136,7 @@ export const deliveryBeats = (source: string): string => `beats AS (
             timestamp AS produced_ns, family,
             JSONExtractInt(body, 'sent_total', family) AS sent_total
         FROM ${source}
-        ARRAY JOIN ['hook-event', 'session-project'] AS family
+        ARRAY JOIN ['hook-event'] AS family
         WHERE timestamp > ${NS_AGO(PRODUCER_PRUNE)}
             AND observed_timestamp > ${NS_AGO(DELIVERY_WINDOW)} AND observed_timestamp <= ${NS_AGO(`${DELIVERY_LAG_MINUTES} MINUTE`)}
             AND ${rawFamily("spool")}
@@ -151,11 +147,11 @@ export const deliveryBeats = (source: string): string => `beats AS (
 /** Per host and family, the arrival time of each record the host's loaders can see. */
 export const deliveryArrived = (source: string): string => `arrived AS (
     SELECT resources_string['host.name'] AS host,
-        if(attributes_string['event.name'] = 'agent_introspection.hook_event', 'hook-event', 'session-project') AS family,
+        'hook-event' AS family,
         observed_timestamp AS observed_ns
     FROM ${source}
     WHERE timestamp > ${NS_AGO(PRODUCER_PRUNE)} AND observed_timestamp > ${NS_AGO("25 HOUR")}
-        AND ((${rawFamily("hooks")}) OR (${rawFamily("attribution")}))
+        AND ${rawFamily("hooks")}
 )`;
 
 /**
@@ -194,7 +190,6 @@ const GAP_FRACTION = 0.02;
 
 const DELIVERY_COLUMNS = {
   "hook-event": ["hooks_sent", "hooks_received"],
-  "session-project": ["attribution_sent", "attribution_received"],
 } as const;
 
 /** Whether a family received fewer records than it sent beyond the tolerance. */

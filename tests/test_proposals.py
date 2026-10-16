@@ -362,15 +362,15 @@ def test_success_metric_must_match_the_finding_kind_and_harnesses(
     connection = proposal_database(open_workflow)
     connection.execute(
         "UPDATE findings SET subject = ?",
-        (json.dumps({"project": "example", "correction_kind": "ignored", "harnesses": ["omp"]}),),
+        (json.dumps({"tool_family": "shell", "failure_class": "x", "harnesses": ["omp"]}),),
     )
     connection.commit()
-    with pytest.raises(ValueError, match="must be correction_task_rate"):
-        create_proposal(connection, proposal_input())
-    correction = SUCCESS_METRIC | {"metric": "correction_task_rate"}
+    retired = SUCCESS_METRIC | {"metric": "correction_task_rate"}
+    with pytest.raises(ValueError, match="metric must be one of"):
+        create_proposal(connection, replace(proposal_input(), predicted_success_metric=retired))
     with pytest.raises(ValueError, match="not in the finding"):
-        create_proposal(connection, replace(proposal_input(), predicted_success_metric=correction))
+        create_proposal(connection, proposal_input())
     create_proposal(
         connection,
-        replace(proposal_input(), predicted_success_metric=correction | {"harnesses": ["omp"]}),
+        replace(proposal_input(), predicted_success_metric=SUCCESS_METRIC | {"harnesses": ["omp"]}),
     )

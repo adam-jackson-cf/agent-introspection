@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative } from "node:path";
 import {
@@ -46,10 +46,6 @@ const PORT = 4173;
 const WORKFLOW_DB =
   process.env.INTROSPECTION_WORKFLOW_DB ??
   join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
-/** Hook-event files waiting for `facts sync` (a growing backlog means the job is not running). */
-const HOOK_INBOX =
-  process.env.INTROSPECTION_HOOK_INBOX ??
-  join(homedir(), ".local/share/agent-introspection/hook-inbox");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
 /**
@@ -75,24 +71,10 @@ const securityHeaders = {
 
 /** Reads the workflow store's findings and proposals for the Interventions view. */
 export type WorkflowReader = () => Record<string, Row[]>;
-/** Counts hook files not yet synced into ClickHouse. */
-export type InboxReader = () => number;
-
-const countInbox: InboxReader = () => {
-  try {
-    return readdirSync(HOOK_INBOX).filter((name) => name.endsWith(".json"))
-      .length;
-  } catch (error) {
-    // The hooks create the inbox on their first write; until then nothing waits.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw error;
-  }
-};
 
 type Dependencies = {
   query: Query;
   workflow: WorkflowReader;
-  inbox: InboxReader;
   assets: Map<string, Response>;
   now: () => Date;
 };
@@ -200,7 +182,10 @@ async function loadRegistry(query: Query): Promise<Registry> {
   return { ...registry, hidden: hiddenSignals(registry) };
 }
 
-/** Scalar fields of a finding subject (facts.failure_cluster or facts.repeated_correction). */
+/**
+ * Scalar fields of a finding subject: facts.failure_cluster, or the retired
+ * facts.repeated_correction whose dormant findings stay as history.
+ */
 const SUBJECT_SCALARS = [
   "tool_family",
   "failure_class",
@@ -370,7 +355,6 @@ export function createApp(
       overrides.query ??
       clickhouse(clickhouseUrl(), fetch, credentialsFromEnv()),
     workflow: sqliteWorkflow(),
-    inbox: countInbox,
     assets: new Map(),
     now: () => new Date(),
     ...overrides,
@@ -452,10 +436,6 @@ export function createApp(
           ),
         },
       ));
-      data.project_sync = (data.project_sync ?? []).map((row) => ({
-        ...row,
-        inbox_backlog: dependencies.inbox(),
-      }));
     } else {
       const queries = VIEW_QUERIES[id];
       asOf = factsAsOf(refreshersFor(queries, withinSnapshots));

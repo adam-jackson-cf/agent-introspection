@@ -36,7 +36,7 @@ clickhouse_container = "signoz-clickhouse"
 # [harnesses]
 # enabled = ["claude-code", "oh-my-pi", "codex"]
 
-# Where activity-hook, session-attribution, and spool-status records are sent: the
+# Where activity-hook and spool-status records are sent: the
 # OTLP/HTTP logs URL of the collector on this machine (port 4318, never the gRPC port
 # 4317). Only an additional machine (see [machine] below) points it at the host's
 # collector instead. On the host, set it after `facts install` has created the
@@ -44,13 +44,6 @@ clickhouse_container = "signoz-clickhouse"
 # OTLP/HTTP endpoint; otherwise records wait in the local spool.
 # [hooks]
 # otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
-
-# Extra session-store roots, by store name in session_stores.toml, for sessions kept
-# outside a harness's usual home, such as Orca's per-account Codex homes. `~`, `$VAR`,
-# and glob patterns expand; a root that does not exist is skipped. A root is a
-# directory of session files for a jsonl store, and a database file for a sqlite one.
-# [sessions.roots]
-# codex = ["~/Library/Application Support/orca/codex-accounts/*/home/sessions"]
 
 # Prompt labels need an OpenRouter key. OPENROUTER_API_KEY works for interactive runs,
 # but the scheduled sync does not see it: give it a command that prints the key (an

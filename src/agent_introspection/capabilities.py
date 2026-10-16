@@ -36,7 +36,6 @@ CAPABILITY_IDS = (
     "approvals",
     "delegation",
     "prompt_text",
-    "session_store",
 )
 HINT_KINDS = ("span_names", "event_names", "attribute_keys")
 # native: in the producer's own telemetry now; hook: an installed activity hook supplies

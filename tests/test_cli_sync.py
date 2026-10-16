@@ -37,8 +37,6 @@ def test_facts_sync_ships_the_spool_then_runs_the_loaders_before_labels_and_find
         "spool",
         "SYSTEM REFRESH VIEW introspection.load_hook_events",
         "SYSTEM WAIT VIEW introspection.load_hook_events",
-        "SYSTEM REFRESH VIEW introspection.load_session_projects",
-        "SYSTEM WAIT VIEW introspection.load_session_projects",
         "labels",
         "findings",
         "evaluations",

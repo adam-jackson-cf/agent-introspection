@@ -15,11 +15,9 @@ import { presetFor } from "../app-state";
 import { OTHER_TOKEN } from "../tokens";
 import {
   fmtCount,
-  fmtPct,
   fmtSeconds,
   HARNESS_COLOR,
   HARNESS_LABEL,
-  maybe,
   num,
 } from "../format";
 import { CoverageSummary, StateChip } from "./PipelineCoverage";
@@ -278,12 +276,6 @@ const SPOOL_COLUMNS: Column[] = [
     render: (row) => delivery(row.hooks_received, row.hooks_sent),
   },
   {
-    key: "attribution_received",
-    label: "Attribution received / sent (24h)",
-    numeric: true,
-    render: (row) => delivery(row.attribution_received, row.attribution_sent),
-  },
-  {
     key: "delivery_gap",
     label: "Delivery",
     render: (row) =>
@@ -471,92 +463,26 @@ function checksPanels(data: Data) {
   );
 }
 
-function attributionPanels(data: Data) {
+function sanitizationPanel(data: Data) {
   return (
-    <>
-      <Panel
-        id="sanitization"
-        title="Sanitization"
-        subtitle="Stored rows holding raw text, identity keys, or home paths · all time"
-        signals={["pipeline.sanitization"]}
-        source="sanitization"
-      >
-        <DataTable
-          columns={[
-            { key: "source", label: "Table" },
-            { key: "rows", label: "Rows", numeric: true },
-            { key: "forbidden_keys", label: "Dropped keys", numeric: true },
-            { key: "long_status", label: "Text > 160", numeric: true },
-            { key: "home_paths", label: "Home paths", numeric: true },
-          ]}
-          rows={(data.sanitization ?? []).filter((row) => row.source !== "")}
-        />
-      </Panel>
-      <Panel
-        title="Project attribution"
-        subtitle="Tasks whose session has a Git project, resolved from the harness session stores · selected range"
-        signals={["pipeline.project_attribution"]}
-        source={["project_coverage", "project_sync", "project_rejections"]}
-      >
-        <DataTable
-          columns={[
-            {
-              key: "harness",
-              label: "Harness",
-              render: (row) => <HarnessName value={row.harness} />,
-            },
-            { key: "tasks", label: "Tasks", numeric: true },
-            { key: "attributed", label: "With project", numeric: true },
-            {
-              key: "no_session_record",
-              label: "No session record",
-              numeric: true,
-            },
-            {
-              key: "share",
-              label: "Share",
-              numeric: true,
-              render: (row) => fmtPct(maybe(row.share_rate), 0),
-            },
-          ]}
-          rows={data.project_coverage ?? []}
-        />
-        <DataTable
-          columns={[
-            {
-              key: "last_load",
-              label: "Last sync (UTC)",
-              render: (row) => String(row.last_load).slice(0, 19),
-            },
-            {
-              key: "age_seconds",
-              label: "Age",
-              numeric: true,
-              render: (row) => fmtSeconds(num(row.age_seconds)),
-            },
-            {
-              key: "inbox_backlog",
-              label: "Hook inbox backlog",
-              numeric: true,
-            },
-            { key: "events", label: "Sessions resolved", numeric: true },
-          ]}
-          rows={data.project_sync ?? []}
-          label="Project attribution: last sync"
-        />
-        <DataTable
-          columns={[
-            { key: "store", label: "Session store" },
-            { key: "reason", label: "No project because" },
-            { key: "n", label: "Sessions", numeric: true },
-          ]}
-          rows={data.project_rejections ?? []}
-          label="Project attribution: sessions without a project"
-          empty="Every session in the selected range has a project."
-        />
-        <ViewLink view="recurrence">Open Recurring failures</ViewLink>
-      </Panel>
-    </>
+    <Panel
+      id="sanitization"
+      title="Sanitization"
+      subtitle="Stored rows holding raw text, identity keys, or home paths · all time"
+      signals={["pipeline.sanitization"]}
+      source="sanitization"
+    >
+      <DataTable
+        columns={[
+          { key: "source", label: "Table" },
+          { key: "rows", label: "Rows", numeric: true },
+          { key: "forbidden_keys", label: "Dropped keys", numeric: true },
+          { key: "long_status", label: "Text > 160", numeric: true },
+          { key: "home_paths", label: "Home paths", numeric: true },
+        ]}
+        rows={(data.sanitization ?? []).filter((row) => row.source !== "")}
+      />
+    </Panel>
   );
 }
 
@@ -683,7 +609,7 @@ export default function Pipeline({ data }: { data: Data }) {
           signals={["pipeline.coverage"]}
         />
         {checksPanels(data)}
-        {attributionPanels(data)}
+        {sanitizationPanel(data)}
       </Section>
       <RegistryLists data={data} />
     </>

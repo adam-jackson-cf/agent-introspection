@@ -1,6 +1,6 @@
 """Chunked ClickHouse row inserts shared by the loaders that write rows themselves.
 
-Hook events and session attribution no longer pass through here: they travel the
+Hook events no longer pass through here: they travel the
 OTLP route (``spool.py``) and the ``facts`` loaders read them back from SigNoz.
 """
 

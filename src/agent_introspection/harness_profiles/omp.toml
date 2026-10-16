@@ -12,7 +12,6 @@ service_names = ["oh-my-pi"]
 binary = "omp"
 version_args = ["--version"]
 verified_versions = ["18.4.4"]
-session_store = "omp"
 hook_adapter = "omp"
 
 [[config_file]]
@@ -65,4 +64,3 @@ user_friction = { status = "hook", route = "hook.steer", evidence = "Interrupts 
 approvals = { status = "hook", route = "hook.approval", lacks = ["guard.sandbox"], evidence = "The `tool_approval_resolved` hook; omp's default mode approves without asking. omp has no sandbox, so Sandbox outcomes is not emitted." }
 delegation = { status = "native", route = "omp.subagent", evidence = "`invoke_agent <agent>` spans in the run's trace, advisors excluded." }
 prompt_text = { status = "hook", route = "omp.user_prompt", evidence = "omp exports no prompt event; the activity extension sends `omp.user_prompt` on `before_agent_start` when `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1`." }
-session_store = { status = "native", evidence = "Session files in `~/.omp/agent/sessions/*/*.jsonl` (store `omp`): the `session` record with the id and cwd." }

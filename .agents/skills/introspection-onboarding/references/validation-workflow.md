@@ -23,7 +23,7 @@ still prints.
 The checks run in this order: `config`, `signoz` (every `facts preflight` check
 folded into one), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
 enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
-`activity_hooks`, `activity_shim`, `session_store`, and `telemetry` (rows over 24
+`activity_hooks`, `activity_shim`, and `telemetry` (rows over 24
 hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
 `prompt_labels`, and `dashboard`. Points to know:
 
@@ -36,7 +36,7 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
 - Config files checked: the ones `harness configure` writes. A set `CLAUDE_CONFIG_DIR`
   or `CODEX_HOME` names the file even when it does not exist yet, and `config_files`
   then fails as missing. Codex homes: every configured home that is set or exists,
-  plus the parent of each `[sessions.roots] codex` root that holds a `config.toml`.
+  plus every directory the codex profile's `home_globs` matches (Orca's account homes).
 - `prompt_export` reads a file's first prompt-export setting as its switch (Claude
   Code's `OTEL_LOG_USER_PROMPTS`, Codex's `log_user_prompt`). While the switch is not
   on, the check is `off`, whatever the file's other settings hold. It warns when the
@@ -87,8 +87,6 @@ Beyond `doctor`, check by hand:
      (`agent-introspection spool status` counts both);
    - a probe record (the session's first hook event) is in
      `introspection.hook_events FINAL` with this machine's `host`;
-   - `introspection.session_projects FINAL` has the session with `status = 'attributed'`
-     and its project (or the reason it has none, such as `non_git_workspace`);
    - the prompt event (`user_prompt`, `codex.user_prompt`, `omp.user_prompt`) reached
      SigNoz with text, and `introspection.prompt_labels` has a `labelled` row for it,
      while `introspection.logs` holds no `prompt` key;

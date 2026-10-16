@@ -69,7 +69,6 @@ SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "src/agent_introspection/drafting.py": frozenset({"run_codex"}),
     "src/agent_introspection/facts.py": frozenset({"run", "_run_local_command"}),
     "src/agent_introspection/schedule.py": frozenset({"_launchctl", "_systemctl"}),
-    "src/agent_introspection/sessions.py": frozenset({"_run_git"}),
     "src/agent_introspection/signoz_detect.py": frozenset({"_run_docker"}),
 }
 # Files allowed to call importlib.import_module (PYQ221).

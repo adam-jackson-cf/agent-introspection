@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS findings (
     id TEXT PRIMARY KEY,
     fingerprint TEXT NOT NULL UNIQUE CHECK (length(fingerprint) = 64),
     category TEXT NOT NULL,
-    project_identity_id TEXT,
     trend_state TEXT NOT NULL CHECK (
         trend_state IN ('isolated', 'emerging', 'actionable', 'dormant')
     ),

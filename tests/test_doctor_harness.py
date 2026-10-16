@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import subprocess
 import sys
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -424,31 +422,13 @@ def test_installed_version_runs_the_binary_and_reads_its_version() -> None:
     assert version == ".".join(map(str, sys.version_info[:3]))
 
 
-def test_stale_or_missing_session_stores_and_idle_harnesses_warn(machine: Machine) -> None:
-    month_ago = time.time() - 30 * 86_400
-    os.utime(machine.home / ".claude/projects/p/s.jsonl", (month_ago, month_ago))
-    (machine.home / ".omp/agent/sessions/p/s.jsonl").unlink()
+def test_idle_harnesses_warn_and_a_failed_telemetry_query_fails(machine: Machine) -> None:
     machine.telemetry["oh-my-pi"] = (0, 0)
 
-    result = machine.report()
-
-    claude = one(result, "session_store", "claude-code")
-    assert claude["status"] == "warn"
-    assert claude["detail"].endswith("none in 14 days")
-    assert one(result, "session_store", "omp")["detail"] == "1 root(s), no session yet"
-    assert one(result, "session_store", "codex")["detail"].startswith("2 root(s); newest")
-    omp = one(result, "telemetry", "omp")
+    omp = one(machine.report(), "telemetry", "omp")
     assert omp["status"] == "warn"
     assert omp["detail"].startswith("no rows in 24 h; last seen")
 
-
-def test_a_store_with_no_roots_warns_and_a_failed_query_fails(machine: Machine) -> None:
-    for path in sorted((machine.home / ".omp/agent").rglob("*"), reverse=True):
-        if path.is_dir():
-            path.rmdir()
-        else:
-            path.unlink()
-    (machine.home / ".omp/agent").rmdir()
     run = machine.run_sql()
 
     def no_telemetry(sql: str) -> str:
@@ -459,12 +439,12 @@ def test_a_store_with_no_roots_warns_and_a_failed_query_fails(machine: Machine) 
 
     result = machine.report(replace(machine.probes, connect=lambda _config: no_telemetry))
 
-    assert one(result, "session_store", "omp")["detail"] == "none of ~/.omp/agent/sessions exists"
     telemetry = one(result, "telemetry", "omp")
     assert (telemetry["status"], telemetry["detail"]) == (
         "fail",
         "the telemetry query raised FactsError",
     )
+    assert not find(result, "session_store")
 
 
 def test_telemetry_counts_use_one_query_and_ignore_unknown_rows() -> None:
@@ -516,14 +496,14 @@ def test_config_paths_skip_unset_variables_and_take_the_first_path_whose_variabl
         which=lambda _binary: None, version=lambda _argv: "", environ={}, home=home
     )
 
-    assert doctor_harness.config_paths(claude, [], probes) == [home / ".claude/settings.json"]
+    assert doctor_harness.config_paths(claude, probes) == [home / ".claude/settings.json"]
     # A set CLAUDE_CONFIG_DIR replaces ~/.claude for Claude Code, even before it holds a
     # settings.json: that file is the one to read, and it is missing.
     chosen = replace(probes, environ={"CLAUDE_CONFIG_DIR": str(other)})
-    assert doctor_harness.config_paths(claude, [], chosen) == [other / "settings.json"]
+    assert doctor_harness.config_paths(claude, chosen) == [other / "settings.json"]
     assert doctor_harness.load_file(claude, other / "settings.json").error == "missing"
     write(other / "settings.json", "{}")
-    assert doctor_harness.config_paths(claude, [], chosen) == [other / "settings.json"]
+    assert doctor_harness.config_paths(claude, chosen) == [other / "settings.json"]
     assert doctor_harness.shown_path(other, home) == str(other)
 
 

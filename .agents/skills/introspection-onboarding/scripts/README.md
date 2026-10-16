@@ -4,9 +4,7 @@ Activity hooks close dashboard signals a harness's own telemetry lacks (tool arg
 identity, targets, and gate-bypass flags; Claude Code interrupts, steers, reasoning
 tokens, subagents, and failure text; omp approvals, retries, steers, and its prompt
 event). The record contract and derivations are in
-[`docs/references/hook-events.md`](../../../../docs/references/hook-events.md). Project attribution needs no
-hook: the spool sync reads each harness's session store (`session_stores.toml`) and
-sends session-project records over the same OTLP route.
+[`docs/references/hook-events.md`](../../../../docs/references/hook-events.md).
 
 ```text
 scripts/

@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection import facts, schedule, sessions
+from agent_introspection import facts, schedule
 from agent_introspection.cli import main
 from tests.support.otlp_collector import Collector, names, spool_records
 from tests.test_cli import config_file
 
 
-def test_spool_sync_attributes_and_sends_without_touching_clickhouse(
+def test_spool_sync_sends_without_touching_clickhouse(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -19,8 +19,6 @@ def test_spool_sync_attributes_and_sends_without_touching_clickhouse(
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text(f'[hooks]\notlp_logs_endpoint = "{collector.url}"\n')
-    monkeypatch.setattr(sessions, "load_stores", lambda _roots=None: [])
-    monkeypatch.setattr(sessions, "SCAN_STATE", tmp_path / "scan.json")
     monkeypatch.setattr(facts, "runner", lambda _config: pytest.fail("no ClickHouse"))
     spool_records(inbox, 2)
 

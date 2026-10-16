@@ -351,16 +351,13 @@ describe("pipeline checks", () => {
     }
   });
 
-  test("freshness compares hook and attribution logs with their fact tables", async () => {
+  test("freshness compares hook logs with their fact table", async () => {
     const sql = (await everySql()).join("\n");
     expect(sql).toContain(
       "SELECT 'hooks', 'agent-introspection', max(occurred_at)",
     );
-    expect(sql).toContain(
-      "SELECT 'attribution', 'agent-introspection', max(loaded_at)",
-    );
     expect(sql).toContain("'agent_introspection.hook_event'");
-    expect(sql).toContain("'agent_introspection.session_project'");
+    expect(sql).not.toContain("session_project");
   });
 
   test("home paths count only rows loaded after the cutoff, on both machines' paths", async () => {
@@ -445,19 +442,15 @@ describe("spool delivery: sent counters against records received", () => {
     },
   ];
   const delivery: Row[] = [
-    { host: "mac", family: "hook-event", sent: 500, received: 500 },
-    { host: "mac", family: "session-project", sent: 10, received: 9 },
+    { host: "mac", family: "hook-event", sent: 500, received: 499 },
     { host: "nuc", family: "hook-event", sent: 500, received: 480 },
-    { host: "nuc", family: "session-project", sent: 3, received: 3 },
   ];
 
   test("a host short of sent beyond the tolerance is flagged, a small lag is not", () => {
     const merged = withDelivery(status, delivery);
     expect(merged[0]).toMatchObject({
       hooks_sent: 500,
-      hooks_received: 500,
-      attribution_sent: 10,
-      attribution_received: 9,
+      hooks_received: 499,
       delivery_gap: 0,
     });
     expect(merged[1]).toMatchObject({ hooks_received: 480, delivery_gap: 1 });
@@ -467,7 +460,7 @@ describe("spool delivery: sent counters against records received", () => {
   test("a host with no windowed heartbeat has unknown counts and no flag", () => {
     expect(withDelivery(status, delivery)[2]).toMatchObject({
       hooks_sent: null,
-      attribution_received: null,
+      hooks_received: null,
       delivery_gap: 0,
     });
   });
@@ -711,18 +704,13 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
     // Parity KPI and subtitle window label.
     expect(sql).toContain("countIf(ok = 1) AS matching");
     expect(sql).toContain("AS window_label");
-    // Project share is an SQL rate over the attributed and tasks columns.
-    expect(sql).toContain(
-      "if(tasks > 0, 100 * attributed / tasks, NULL) AS share_rate",
-    );
     // Daily rows are summed over sources in SQL.
     expect(sql).toContain("count() AS n FROM (");
     expect(sql).toContain("GROUP BY day, harness ORDER BY day, harness");
-    // The harness filter is in the freshness, parity and project queries.
+    // The harness filter is in the freshness and parity queries.
     expect(
       sql.split("{harness:String} = '' OR harness = {harness:String}").length,
     ).toBeGreaterThan(4);
-    expect(sql).toContain("OR t.harness = {harness:String}");
   });
 
   test("sanitization totals violations per table with an All row", async () => {

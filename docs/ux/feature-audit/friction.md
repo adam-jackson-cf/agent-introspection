@@ -126,3 +126,8 @@ No removed rows. New: FRIC-F14..F20, FRIC-S08..S12, FRIC-C10..C12.
 
 - The explicit-friction task table gains Project, Type (Jev task type), Effort, Failing tool and Failure class (the task's first failed call); blanks read "—".
 - New Where to look panel (`friction.where_to_look`): project by failure class over interrupted, steered or errored tasks, excluding generic error types and sessions without a Git project.
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Where to look is renamed Failure classes in friction tasks: failure class over all interrupted, steered or errored tasks (Tasks, Failures, Harnesses, Last seen), no longer by project and no longer limited to sessions with a Git project.
+- The explicit-friction task table loses its Project column.

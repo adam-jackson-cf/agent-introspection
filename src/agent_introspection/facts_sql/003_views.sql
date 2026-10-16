@@ -771,18 +771,6 @@ SELECT
 FROM introspection.hook_events FINAL
 WHERE producer = 'omp' AND event_type = 'approval';
 
--- The Git project of each attributed session, joined to the facts by session ID
--- (session IDs are harness-native UUIDs, so the harness is not needed).
-CREATE OR REPLACE VIEW introspection.session_project AS
-SELECT
-    session_id,
-    project_name AS project,
-    project_id,
-    store,
-    project_root
-FROM introspection.session_projects FINAL
-WHERE status = 'attributed';
-
 -- Activity-hook events with the harness resolved, for registry route predicates and
 -- the Pipeline coverage grid. Codex hooks are shared by app-server, CLI, and exec, so
 -- a Codex event takes the harness of the session's Codex logs ('' until they arrive).

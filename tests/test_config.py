@@ -75,12 +75,13 @@ def test_load_config_uses_defaults_only_for_the_absent_canonical_file(tmp_path: 
     [
         ({"scheduler": {"interval_seconds": 300}}, "scheduler"),
         ({"signoz": {"otlp_http_endpoint": "x"}}, "otlp_http_endpoint"),
+        ({"sessions": {"roots": {"codex": ["~/x"]}}}, "sessions"),
     ],
 )
 def test_retired_keys_are_named_as_safe_to_delete(
     document: dict[str, object], retired: str
 ) -> None:
-    with pytest.raises(ConfigurationError, match=f"{retired} retired with the scan pipeline"):
+    with pytest.raises(ConfigurationError, match=f"{retired} retired; delete them"):
         parse_config(document)
 
 
@@ -123,7 +124,6 @@ def test_every_setting_the_example_documents_is_accepted(tmp_path: Path, mode: s
     assert config.dashboard_clickhouse_url is not None
     assert config.harnesses_enabled is not None
     assert config.hooks_otlp_logs_endpoint is not None
-    assert config.session_roots["codex"]
     assert config.labels_openrouter_key_command is not None
     assert (config.signoz.clickhouse_password_command is not None) == (mode == "http")
     assert config.machine.role is MachineRole.ADDITIONAL

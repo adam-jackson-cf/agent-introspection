@@ -42,7 +42,7 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
 - [Validation](references/validation-workflow.md): `doctor` for configuration, then a
   live session end to end.
 - [Additional machines](references/additional-machines-workflow.md): send another
-  machine's harness telemetry and hook and attribution records to this host's
+  machine's harness telemetry and hook records to this host's
   collector.
 
 Closing a signal gap with a new hook event, or adding a harness, is a code change: see

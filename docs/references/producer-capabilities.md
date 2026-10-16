@@ -55,10 +55,8 @@ and the profiles; edit those, not this page.
 - **Event names:** none
 - **Attribute keys:** `(^|\.)session[._]?id$`, `(^|\.)conversation[._]?id$`, `(^|\.)thread[._]?id$`
 - **Required by:**
-  - Pipeline: Project attribution (`pipeline.project_attribution`)
   - Cache efficiency: Usage-active sessions (`usage.active_sessions`)
   - Friction: Quick follow-up (`friction.quick_follow_up`), Clean completion (`friction.clean_completion`)
-  - Recurring failures: Project concentration (`recur.project_concentration`)
   - Requests and corrections: Labelled tasks (`intent.labelled`), Task type (`intent.task_type`), Corrected by the next prompt (`intent.corrected`), Correction kinds (`intent.correction_kind`), Frustrated follow-ups (`intent.frustration`), Effort payoff by task type (`intent.effort_payoff`)
 
 ### Task boundary (`task_boundary`)
@@ -69,7 +67,6 @@ and the profiles; edit those, not this page.
 - **Event names:** `turn`, `interaction`, `agent_(start|end)`
 - **Attribute keys:** `(^|\.)turn[._]?id$`, `(^|\.)prompt[._]?id$`, `interaction`
 - **Required by:**
-  - Pipeline: Project attribution (`pipeline.project_attribution`)
   - Reasoning effort: Tasks (`task.count`), Heavy-effort task share (`effort.heavy_share`), Task duration (`task.duration`), Model steps per task (`task.model_steps`), Reasoning tokens per task (`task.reasoning_tokens`), Delegations per task (`task.delegations`)
   - Tool failures: Tasks affected by failures (`tools.tasks_affected`), Repeated attempts (`tools.repeats`), Tool loops (`tools.loops`)
   - Friction: Interrupted tasks (`friction.interrupt`), Steered tasks (`friction.steer`), Errored tasks (`friction.error`), Quick follow-up (`friction.quick_follow_up`), Clean completion (`friction.clean_completion`), Recovery after failure (`friction.recovery`)
@@ -135,7 +132,7 @@ and the profiles; edit those, not this page.
   - Tool failures: Tool calls (`tools.calls`), Tool failure rate (`tools.failure_rate`), Failure signature (`tools.failure_signature`), Tasks affected by failures (`tools.tasks_affected`), Repeated attempts (`tools.repeats`), Tool loops (`tools.loops`)
   - Friction: Recovery after failure (`friction.recovery`)
   - Verification and guardrails: Quality-gate bypass (`guard.gate_bypass`), Command churn (`guard.command_churn`), Verification runs (`guard.verification`), Failures caught in the task (`guard.verification_caught`)
-  - Recurring failures: Recurring targets (`recur.targets`), Recurring failure signatures (`recur.signatures`), Actionable repeats (`recur.actionable`), Project concentration (`recur.project_concentration`)
+  - Recurring failures: Recurring targets (`recur.targets`), Recurring failure signatures (`recur.signatures`), Actionable repeats (`recur.actionable`)
 
 ### Tool argument identity (`tool_arguments`)
 
@@ -159,7 +156,7 @@ and the profiles; edit those, not this page.
 - **Attribute keys:** `^error\.(message|type)$`, `failure`, `exit_code`, `status_message`, `stderr`, `(^|[._])error$`
 - **Required by:**
   - Tool failures: Failure signature (`tools.failure_signature`)
-  - Recurring failures: Recurring failure signatures (`recur.signatures`), Actionable repeats (`recur.actionable`), Project concentration (`recur.project_concentration`)
+  - Recurring failures: Recurring failure signatures (`recur.signatures`), Actionable repeats (`recur.actionable`)
 
 ### User friction (`user_friction`)
 
@@ -202,17 +199,6 @@ and the profiles; edit those, not this page.
 - **Required by:**
   - Requests and corrections: Labelled tasks (`intent.labelled`), Task type (`intent.task_type`), Corrected by the next prompt (`intent.corrected`), Correction kinds (`intent.correction_kind`), Frustrated follow-ups (`intent.frustration`), Effort payoff by task type (`intent.effort_payoff`)
 
-### Session store (`session_store`)
-
-- **Need:** A local store mapping session ID to working directory.
-- **Check:** On disk, not in telemetry: a file or database record holding the session ID and the absolute working directory, whose ID equals the telemetry session key (becomes a `session_stores.toml` entry).
-- **Span names:** none
-- **Event names:** none
-- **Attribute keys:** none
-- **Required by:**
-  - Pipeline: Project attribution (`pipeline.project_attribution`)
-  - Recurring failures: Project concentration (`recur.project_concentration`)
-
 ## Status by producer
 
 The status each harness profile claims for the producer as a whole. A
@@ -234,7 +220,6 @@ registered profile's claims agree with every registry cell of its harnesses.
 | `approvals`        | native      | native | hook   | hook_available       |
 | `delegation`       | hook        | native | native | hook_available       |
 | `prompt_text`      | native      | native | hook   | hook_available       |
-| `session_store`    | native      | native | native | native               |
 
 ### Exceptions
 

@@ -9,7 +9,7 @@ without bypassing a failed check.
    `warn`, `off`, or `info` has a known reason. It covers the config, SigNoz (every `facts preflight`
    check folded into `signoz`; run `agent-introspection facts preflight` for each
    check's detail), the collector and hooks endpoint, each enabled harness's
-   configuration, hooks, session store, and telemetry, the spool, the schedule, the
+   configuration, hooks, and telemetry, the spool, the schedule, the
    prompt-label key, and the dashboard's ClickHouse URL. Add `--drift` to compare each
    enabled harness's telemetry with its saved fingerprint; a `drifted` service or an
    `unregistered` one goes to the onboarding skill's producer onboarding workflow
@@ -41,7 +41,7 @@ without bypassing a failed check.
    - coverage grid: a boundary route with no rows is a possible break; an `events`
      route with no rows is valid; rows under a `not applicable` cell or unclaimed rows
      need a registered stray or a fix;
-   - project attribution, and prompt-label coverage (Intent view): prompts arriving as
+   - prompt-label coverage (Intent view): prompts arriving as
      `REDACTED` mean that harness's prompt export is off; failed decisions are
      `status = 'failed'` rows in `introspection.prompt_labels`;
    - spool panel, per host: pending, rejected, oldest pending age, last error class,
@@ -49,10 +49,9 @@ without bypassing a failed check.
      wrong (HTTP logs URL on the collector's OTLP/HTTP port, not the gRPC port). A host
      whose latest status is older than 5 minutes is **unknown**, never backlog 0: check
      its timer (`systemctl --user list-timers`) or machine before trusting its data;
-   - hooks freshness (family-filtered raw hook logs against `hook_events`) and
-     attribution freshness (session-project logs against `session_projects`) are
-     separate rows; per host, cumulative sent counts should match rows loaded (a gap
-     is records lost after the collector acknowledged them).
+   - hooks freshness (family-filtered raw hook logs against `hook_events`) is its own
+     row; per host, cumulative sent counts should match rows loaded (a gap is records
+     lost after the collector acknowledged them).
 6. A boundary route going quiet while a similarly named attribute appears is a
    producer rename (omp moved `pi.gen_ai.*` to `omp.gen_ai.*` on 2026-09-29), not
    idleness: fix it with the change workflow.

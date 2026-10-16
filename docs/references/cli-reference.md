@@ -24,11 +24,10 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 | `facts verify [--compare]`               | Builds the whole store in a scratch database, then drops it, so a statement ClickHouse rejects fails here. `--compare` instead rebuilds the live snapshots now and checks each against a full read of its view; a mismatch prints every result and exits 30.                                                                        | After an install, or on demand before one.                        |
 | `facts install`                          | Verifies in a scratch database, then creates tables, loaders, views, and snapshots, loads the signal registry and `[harnesses] enabled`, and creates or migrates the workflow store.                                                                                                                                                | First install; after any change under `facts_sql/`.               |
 | `facts refresh <refresher>`              | Refreshes and waits for one named loader or refresher (a name from `facts status`), retrying once (not when still running after 30 min). An unknown name exits 50.                                                                                                                                                                  | Filling one empty table without a full rebuild.                   |
-| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains, including hook events and session attribution.                                                                                                                                                                                                                                               | After a span or log projection change.                            |
+| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains, including hook events.                                                                                                                                                                                                                                                                       | After a span or log projection change.                            |
 | `facts status`                           | Loader state and per-harness freshness.                                                                                                                                                                                                                                                                                             | Health checks.                                                    |
-| `facts sessions [--rescan]`              | Attributes new sessions from the harness session stores into the spool; `--rescan` forgets the scan state and re-reads every session file and database.                                                                                                                                                                             | After adding a session-store root, or to rebuild attribution.     |
-| `facts findings`                         | Promotes failure clusters and repeated corrections into workflow findings.                                                                                                                                                                                                                                                          | Refreshing findings on demand.                                    |
-| `facts sync [--log]`                     | `spool sync`, then the hook-event and session loaders, prompt labels, findings, and due proposal evaluations. `--log` writes the summary and errors, with a UTC timestamp, to the rotated `~/.local/share/agent-introspection/sync.log` instead of stdout and stderr.                                                               | What the schedule runs every minute, with `--log`.                |
+| `facts findings`                         | Promotes failure clusters into workflow findings.                                                                                                                                                                                                                                                                                   | Refreshing findings on demand.                                    |
+| `facts sync [--log]`                     | `spool sync`, then the hook-event loader, prompt labels, findings, and due proposal evaluations. `--log` writes the summary and errors, with a UTC timestamp, to the rotated `~/.local/share/agent-introspection/sync.log` instead of stdout and stderr.                                                                            | What the schedule runs every minute, with `--log`.                |
 | `facts classify [--days 2] [--limit 60]` | Labels exported prompts now. The OpenRouter key comes from `OPENROUTER_API_KEY`, else `[labels] openrouter_key_command`, else omp's stored credential; with none, or a key command that prints nothing, labels are skipped with the reason.                                                                                         | On-demand prompt labelling.                                       |
 | `facts schedule install\|remove\|status` | Manages the SigNoz host's job that runs `facts sync --log` every minute: a launchd agent on macOS, a systemd user timer on Linux. Other platforms exit 60.                                                                                                                                                                          | Install, uninstall, or check the schedule.                        |
 
@@ -74,15 +73,10 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 
 ## Spool
 
-| Command                 | What it does                                                                                                                                                                                                                             | When to use it                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `spool sync [--rescan]` | Attributes new sessions into the spool, records a spool-status heartbeat, and sends the spool to `[hooks] otlp_logs_endpoint` (else an OTLP/HTTP `OTEL_EXPORTER_OTLP_*` environment). With no endpoint nothing is sent and records wait. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
-| `spool status`          | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                                                                                      | Checking delivery.                                                                                                   |
-
-The attribution result of `facts sessions`, `spool sync`, and `facts sync` counts
-sessions by status, and lists under `unreadable` (store, database, error) any SQLite
-store database it could not read; the next scan retries it. See
-[Project Attribution](project-attribution.md).
+| Command        | What it does                                                                                                                                                                                    | When to use it                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `spool sync`   | Records a spool-status heartbeat and sends the spool to `[hooks] otlp_logs_endpoint` (else an OTLP/HTTP `OTEL_EXPORTER_OTLP_*` environment). With no endpoint nothing is sent and records wait. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
+| `spool status` | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                                             | Checking delivery.                                                                                                   |
 
 ## Onboarding
 
@@ -212,8 +206,8 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
 - Order: `config`; `signoz` (every `facts preflight` check, folded into one);
   `collector_http`, `collector_grpc`, `hooks_endpoint`, and `collector_live` (with
   `--live`); for each enabled harness profile `binary`, `config_files`,
-  `export_settings`, `prompt_export`, `activity_hooks`, `activity_shim`,
-  `session_store`, and `telemetry`; then `spool`, `schedule`, `schedule_legacy`,
+  `export_settings`, `prompt_export`, `activity_hooks`, `activity_shim`, and
+  `telemetry`; then `spool`, `schedule`, `schedule_legacy`,
   `schedule_linger` (Linux), `prompt_labels`, and `dashboard`; then `drift` and
   `drift_unnamed` (with `--drift`).
 - **Additional machine** (`[machine] role = "additional"`): `signoz`, `schedule`,
@@ -232,8 +226,8 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
   `{otlp_endpoint}/v1/logs`. Without it, no request carries data.
 - Config files checked: the ones `harness configure` writes. A file named by a set
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that does not exist fails `config_files` as
-  missing. Codex homes: every configured root that is set or exists, plus the parent of
-  each `[sessions.roots] codex` root that holds a `config.toml`.
+  missing. Codex homes: every configured root that is set or exists, plus every directory
+  the codex profile's `home_globs` matches (Orca's per-account homes).
 - A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
   scheduled sync, so doctor flags it: set `[hooks] otlp_logs_endpoint` and
   `[labels] openrouter_key_command` instead. Secrets are checked for presence only, and

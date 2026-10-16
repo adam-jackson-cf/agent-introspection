@@ -21,7 +21,6 @@ service_names = ["codex-app-server", "codex_cli_rs", "codex_exec"]
 binary = "codex"
 version_args = ["--version"]
 verified_versions = ["0.156.1"]
-session_store = "codex"
 hook_adapter = ""
 sources = ["https://developers.openai.com/codex/config-reference"]
 
@@ -31,6 +30,8 @@ paths = ["$CODEX_HOME/config.toml", "~/.codex/config.toml"]
 format = "toml"
 table = "otel"
 roots = "each"
+# Orca keeps one Codex home per account.
+home_globs = ["~/Library/Application Support/orca/codex-accounts/*/home"]
 
 [[setting]]
 file = "config"
@@ -75,7 +76,6 @@ user_friction = { status = "native", route = "codex.interrupt", evidence = "`tur
 approvals = { status = "native", route = "codex.tool_decision", evidence = "`codex.tool_decision` logs with `decision` and `source`, and `codex.sandbox_outcome` logs." }
 delegation = { status = "native", route = "codex.agent_spawn", evidence = "`codex.agent_communication` spawn sends from the turn's thread." }
 prompt_text = { status = "native", route = "codex.user_prompt", evidence = "`codex.user_prompt` logs carry the text with `log_user_prompt = true`." }
-session_store = { status = "native", evidence = "Rollout files in each Codex root's `sessions/` (store `codex`): `session_meta` with the id and cwd." }
 
 [capability_overrides.codex_exec]
 user_friction = { status = "not_applicable", evidence = "Headless one-shot runs: no user can interrupt, steer, or follow up." }

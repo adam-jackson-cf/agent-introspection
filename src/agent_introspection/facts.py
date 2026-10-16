@@ -83,9 +83,9 @@ class Loader:
     window: str
 
 
-# Hook-event and session-attribution records come from spool exporters on every
-# machine, so their loaders key on `observed_timestamp` (the collector's receive time)
-# alone: a record's own time is the producer's clock and can trail by an outage.
+# Hook-event records come from spool exporters on every machine, so their loaders key
+# on `observed_timestamp` (the collector's receive time) alone: a record's own time is
+# the producer's clock and can trail by an outage.
 _RECORD_LOAD_WINDOW = (
     "observed_timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 30 MINUTE)) * 1000000000"
 )
@@ -165,20 +165,15 @@ LOADERS = (
         schedule=MINUTE_SCHEDULE,
         window=_RECORD_LOAD_WINDOW,
     ),
-    Loader(
-        name="sweep_session_projects",
-        target="session_projects",
-        select_file="select_session_projects.sql",
-        schedule=sweep_schedule(39),
-        window=_RECORD_SWEEP_WINDOW,
-    ),
-    Loader(
-        name="load_session_projects",
-        target="session_projects",
-        select_file="select_session_projects.sql",
-        schedule=MINUTE_SCHEDULE,
-        window=_RECORD_LOAD_WINDOW,
-    ),
+)
+
+# Objects of the removed project attribution, dropped by every install so an upgraded
+# store keeps no loader selecting into a dropped table. Loaders and the view go first.
+RETIRED_OBJECTS = (
+    "DROP VIEW IF EXISTS introspection.sweep_session_projects",
+    "DROP VIEW IF EXISTS introspection.load_session_projects",
+    "DROP VIEW IF EXISTS introspection.session_project",
+    "DROP TABLE IF EXISTS introspection.session_projects",
 )
 
 _BACKFILL_WINDOWS = {
@@ -191,13 +186,11 @@ _BACKFILL_WINDOWS = {
         " AND timestamp < toUInt64(toUnixTimestamp64Nano(toDateTime64('{end}', 9, 'UTC')))"
     ),
     "hook_events": _RECORD_BACKFILL_WINDOW,
-    "session_projects": _RECORD_BACKFILL_WINDOW,
 }
 _SELECT_FILES = {
     "spans": "select_spans.sql",
     "logs": "select_logs.sql",
     "hook_events": "select_hook_events.sql",
-    "session_projects": "select_session_projects.sql",
 }
 
 
@@ -849,6 +842,7 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     harnesses = enabled_harnesses(registry, enabled)
     return [
         _sql("001_tables.sql"),
+        *RETIRED_OBJECTS,
         # Refreshers go before the loaders they wait on, a reader's before its source's.
         *(
             f"DROP VIEW IF EXISTS {DATABASE}.{name}"

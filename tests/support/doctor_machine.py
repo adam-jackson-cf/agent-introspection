@@ -207,25 +207,17 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
     write(home / ".claude/settings.json", json.dumps(settings, indent=2))
     write(home / ".omp/.env", OMP_ENV)
     write(home / ".codex/config.toml", CODEX_GRPC)
-    # Orca keeps per-account Codex homes under a path with a space, as on macOS.
-    orca = home / "Library/Application Support/Orca/account-1/home"
+    # Orca keeps per-account Codex homes under a path with a space, as on macOS; the
+    # codex profile's home_globs finds them.
+    orca = home / "Library/Application Support/orca/codex-accounts/account-1/home"
     write(orca / "config.toml", CODEX_HTTP)
-    for session in (
-        home / ".claude/projects/p/s.jsonl",
-        home / ".codex/sessions/2026/10/13/rollout-1.jsonl",
-        home / ".omp/agent/sessions/p/s.jsonl",
-        orca / "sessions/2026/10/13/rollout-2.jsonl",
-    ):
-        write(session, "{}\n")
     config_path = write(
         tmp_path / "config.toml",
         f'[database]\npath = "{tmp_path / "workflow.sqlite3"}"\n'
         f"[harnesses]\nenabled = {json.dumps(list(ENABLED))}\n"
         '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n'
         '[dashboard]\nclickhouse_url = "http://localhost:8123"\n'
-        '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n'
-        "[sessions.roots]\ncodex = "
-        f"{json.dumps([str(home / 'Library/Application Support/Orca/*/home/sessions')])}\n",
+        '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n',
     )
     built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)
     built.probes = fake_probes(built)

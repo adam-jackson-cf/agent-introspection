@@ -211,3 +211,7 @@ Removed: none. New since baseline: SHELL-F33–F55, SHELL-S03, S04, S06, S07, S0
 
 - Presets are live: the URL keeps `range=<days>`, so Refresh and a reopened link move the window to end now, and the selector no longer turns a preset into "Custom range" after five minutes (SHELL-F07, SHELL-S11, SHELL-C01, SHELL-C02, SHELL-C03, SHELL-C05; tests in `dashboard/src/app-state.test.ts`).
 - `DataTable` takes an optional `total` and shows "Showing N of M" above a table cut by a query limit (test in `dashboard/src/charts.test.tsx`). Pages pass it for every capped table whose true count the query returns.
+
+## Project attribution removed (2026-10-17, DC11)
+
+- GET /api/view no longer adds `inbox_backlog` to Pipeline rows: the `project_sync` dataset is gone (SHELL-F45).

@@ -46,38 +46,39 @@ def test_span_loaders_select_by_end_time_and_log_loader_by_ingest_time() -> None
 
 def test_record_loaders_window_on_collector_time_and_filter_their_family() -> None:
     loaders = {loader.name: loader for loader in facts.LOADERS}
-    families = {
-        "hook_events": ("agent_introspection.hook_event", "agent-introspection.hook-event/1"),
-        "session_projects": (
-            "agent_introspection.session_project",
-            "agent-introspection.session-project/1",
-        ),
-    }
+    minute, sweep = loaders["load_hook_events"], loaders["sweep_hook_events"]
 
-    for target, (event_name, schema) in families.items():
-        minute, sweep = loaders[f"load_{target}"], loaders[f"sweep_{target}"]
-        assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", target)
-        assert sweep.schedule.startswith("EVERY 1 HOUR OFFSET ")
-        assert sweep.target == target
-        assert "INTERVAL 30 MINUTE" in minute.window
-        assert "INTERVAL 3 DAY" in sweep.window
-        for loader in (minute, sweep):
-            assert loader.window.startswith("observed_timestamp")
-            assert "timestamp >" not in loader.window.replace("observed_timestamp", "")
-            ddl = facts.loader_ddl(loader)
-            assert "resources_string['service.name'] = 'agent-introspection'" in ddl
-            assert f"attributes_string['event.name'] = '{event_name}'" in ddl
-            assert f"JSONExtractString(body, 'schema') = '{schema}'" in ddl
+    assert (minute.schedule, minute.target) == ("EVERY 1 MINUTE", "hook_events")
+    assert sweep.schedule.startswith("EVERY 1 HOUR OFFSET ")
+    assert sweep.target == "hook_events"
+    assert "INTERVAL 30 MINUTE" in minute.window
+    assert "INTERVAL 3 DAY" in sweep.window
+    for loader in (minute, sweep):
+        assert loader.window.startswith("observed_timestamp")
+        assert "timestamp >" not in loader.window.replace("observed_timestamp", "")
+        ddl = facts.loader_ddl(loader)
+        assert "resources_string['service.name'] = 'agent-introspection'" in ddl
+        assert "attributes_string['event.name'] = 'agent_introspection.hook_event'" in ddl
+        assert "JSONExtractString(body, 'schema') = 'agent-introspection.hook-event/1'" in ddl
+
+
+def test_install_drops_the_removed_attribution_objects_loaders_first() -> None:
+    statements = facts.install_statements()
+    drops = [statements.index(drop) for drop in facts.RETIRED_OBJECTS]
+
+    assert drops == sorted(drops)
+    assert statements[drops[0] - 1] == facts._sql("001_tables.sql")
+    assert facts.RETIRED_OBJECTS[-1] == "DROP TABLE IF EXISTS introspection.session_projects"
+    assert not any("session_project" in loader.target for loader in facts.LOADERS)
 
 
 def test_no_select_reads_the_agent_introspection_service_without_a_family_filter() -> None:
     for name in ("select_logs.sql", "select_spans.sql"):
         assert "agent-introspection" not in facts._sql(name)
-    for name in ("select_hook_events.sql", "select_session_projects.sql"):
-        select = facts._sql(name)
-        assert select.count("'agent-introspection'") == 1
-        assert select.count("attributes_string['event.name']") == 1
-        assert select.count("JSONExtractString(body, 'schema')") == 1
+    select = facts._sql("select_hook_events.sql")
+    assert select.count("'agent-introspection'") == 1
+    assert select.count("attributes_string['event.name']") == 1
+    assert select.count("JSONExtractString(body, 'schema')") == 1
 
 
 def test_hook_event_select_flattens_attrs_by_json_type() -> None:
@@ -96,32 +97,14 @@ def test_hook_event_select_flattens_attrs_by_json_type() -> None:
     assert select.index("AS loaded_at") < select.index("AS host")
 
 
-def test_session_projects_select_keeps_the_newest_record_per_session() -> None:
-    select = facts._sql("select_session_projects.sql")
-
-    assert "GROUP BY session_id" in select
-    for column in ("project_id", "status", "remote", "host", "started_at"):
-        assert f"argMax(r_{column}, r_resolved_at) AS {column}" in select
-    assert select.index("AS loaded_at") < select.index("AS host") < select.index("AS resolved_at")
-    # ReplacingMergeTree(loaded_at) must keep the newest resolution across refreshes.
-    assert "toDateTime64(max(r_resolved_at), 3, 'UTC') AS loaded_at" in select
-    assert "now64" not in select
-
-
 def test_tables_add_the_cross_machine_columns_after_their_create() -> None:
     statements = facts.split_statements(facts._sql("001_tables.sql"))
 
     def index(fragment: str) -> int:
         return next(i for i, s in enumerate(statements) if fragment in s)
 
-    for table, column in (
-        ("session_projects", "host"),
-        ("session_projects", "remote"),
-        ("session_projects", "resolved_at"),
-        ("hook_events", "host"),
-    ):
-        alter = index(f"ALTER TABLE introspection.{table} ADD COLUMN IF NOT EXISTS {column} ")
-        assert index(f"CREATE TABLE IF NOT EXISTS introspection.{table}\n") < alter
+    alter = index("ALTER TABLE introspection.hook_events ADD COLUMN IF NOT EXISTS host ")
+    assert index("CREATE TABLE IF NOT EXISTS introspection.hook_events\n") < alter
 
 
 def test_home_redaction_covers_users_home_and_root_everywhere() -> None:
@@ -187,7 +170,7 @@ def test_verify_builds_only_a_scratch_store_that_never_refreshes() -> None:
     assert len(recent) == len(facts.SNAPSHOTS)
     assert all(re.search(r"EVERY 1 YEAR OFFSET \d+ MINUTE DEPENDS", s) for s in recent)
     sweeps = [s for s in refreshers if f"{database}.sweep_" in s]
-    assert len(sweeps) == 4
+    assert len(sweeps) == 3
     assert all(re.search(r"REFRESH EVERY 1 YEAR OFFSET \d+ MINUTE\n", s) for s in sweeps)
 
 
@@ -229,7 +212,7 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
             assert re.search(r"\nTO introspection\.\w+ EMPTY\nAS SELECT", refresher)
             assert (
                 "DEPENDS ON introspection.load_spans, introspection.load_logs,"
-                " introspection.load_hook_events, introspection.load_session_projects"
+                " introspection.load_hook_events"
             ) in refresher
             # A refresher must spill before it reaches a memory ceiling below the server's.
             settings = _refresher_settings(refresher)
@@ -246,9 +229,8 @@ def test_every_fact_view_has_a_snapshot_split_into_replaced_history_and_recent_p
     fact_views = {
         name.split(" ")[0] for name in views.split("CREATE OR REPLACE VIEW introspection.")[1:]
     }
-    # session_project is a small lookup joined at query time, not a fact view.
-    # Lookup views (latest project, hook tool details, hook harness) are not snapshotted.
-    helpers = {"session_project", "hook_rows", "hook_tool_calls"}
+    # Lookup views (hook tool details, hook harness) are not snapshotted.
+    helpers = {"hook_rows", "hook_tool_calls"}
     assert {s.view for s in facts.SNAPSHOTS} == fact_views - helpers
 
 
@@ -731,14 +713,11 @@ def test_backfill_reports_final_row_counts() -> None:
 
     result = facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
 
-    assert result["rows"] == {"spans": 7, "logs": 7, "hook_events": 7, "session_projects": 7}
+    assert result["rows"] == {"spans": 7, "logs": 7, "hook_events": 7}
     assert result["start"] == "2026-09-27T00:00:00+00:00"
-    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 4 * 5
+    assert sum(sql.startswith("INSERT INTO") for sql in executed) == 3 * 5
     inserted = {sql.split("\n")[0] for sql in executed if sql.startswith("INSERT INTO")}
-    assert inserted == {
-        f"INSERT INTO introspection.{t}"
-        for t in ("spans", "logs", "hook_events", "session_projects")
-    }
+    assert inserted == {f"INSERT INTO introspection.{t}" for t in ("spans", "logs", "hook_events")}
 
 
 def test_codex_commands_come_from_cmd_or_nested_exec_code_and_bypass_scans_all_arguments() -> None:

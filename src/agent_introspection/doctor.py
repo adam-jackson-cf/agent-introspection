@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import doctor_harness, facts, hooks, preflight, profiles, sessions, spool
+from agent_introspection import doctor_harness, facts, hooks, preflight, profiles, spool
 from agent_introspection.config import (
     DEFAULT_CONFIG_PATH,
     AppConfig,
@@ -379,7 +379,7 @@ class _Doctor:
             return check(
                 "hooks_endpoint",
                 "fail",
-                "no hooks endpoint: hook records and session attribution stay in the spool",
+                "no hooks endpoint: hook records stay in the spool",
                 self._hooks_endpoint_fix(),
             )
         host, port = _address(endpoint)
@@ -460,7 +460,6 @@ class _Doctor:
         context = doctor_harness.HarnessContext(
             config=self.config,
             enabled=self.enabled,
-            stores={store.name: store for store in sessions.load_stores(self.config.session_roots)},
             telemetry=self._telemetry(),
             probes=self.probes.harness,
             now=time.time(),
@@ -556,9 +555,8 @@ class _Doctor:
                 check(
                     "spool_sync",
                     "info",
-                    f"no spool-sync job is bundled for {status.get('platform')}: session "
-                    "attribution and spool-status records wait until `agent-introspection "
-                    "spool sync` runs",
+                    f"no spool-sync job is bundled for {status.get('platform')}: hook and "
+                    "spool-status records wait until `agent-introspection spool sync` runs",
                     "run `agent-introspection spool sync` every minute from a scheduler you "
                     "set up (launchd on macOS)",
                 ),

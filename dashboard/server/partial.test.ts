@@ -126,9 +126,8 @@ describe("refreshers feeding a view", () => {
     ]);
   });
 
-  test("a view reading hook or session-project tables depends on their record loaders, even past the snapshots", () => {
+  test("a view reading hook tables depends on their record loaders, even past the snapshots", () => {
     const hooks = { a: "SELECT 1 FROM introspection.hook_rows" };
-    const projects = { a: "SELECT 1 FROM introspection.session_project" };
     expect(refreshersFor(hooks, false)).toEqual([
       "load_spans",
       "sweep_spans",
@@ -136,14 +135,6 @@ describe("refreshers feeding a view", () => {
       "sweep_logs",
       "load_hook_events",
       "sweep_hook_events",
-    ]);
-    expect(refreshersFor(projects, false)).toEqual([
-      "load_spans",
-      "sweep_spans",
-      "load_logs",
-      "sweep_logs",
-      "load_session_projects",
-      "sweep_session_projects",
     ]);
     expect(refreshersFor({ a: "SELECT 1" }, true)).toEqual([
       "load_spans",

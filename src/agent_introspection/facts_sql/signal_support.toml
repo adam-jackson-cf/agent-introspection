@@ -201,16 +201,6 @@ span_names = []
 event_names = ['user_prompt', 'prompt']
 attribute_keys = ['(^|[._])prompt$', 'prompt[._](text|length)', 'user_prompt']
 
-[[capability]]
-id = "session_store"
-title = "Session store"
-need = "A local store mapping session ID to working directory."
-check = "On disk, not in telemetry: a file or database record holding the session ID and the absolute working directory, whose ID equals the telemetry session key (becomes a `session_stores.toml` entry)."
-[capability.hints]
-span_names = []
-event_names = []
-attribute_keys = []
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -521,19 +511,6 @@ requires = ["export", "model_usage"]
 codex = { route = "codex.usage", alignment = "aligned" }
 oh-my-pi = { route = "omp.chat", alignment = "aligned" }
 claude-code = { route = "claude.usage", alignment = "aligned" }
-
-[[signal]]
-id = "pipeline.project_attribution"
-view = "pipeline"
-title = "Project attribution"
-question = "Which share of each harness's tasks has a Git project?"
-unit = "%"
-formula = "Per harness: 100 × tasks whose session has a Git project / tasks. `facts sync` reads each session's working directory from the harness's own session store (session_stores.toml) and resolves its Git root on this machine. Sessions without a project (non-Git or missing workspace) and tasks whose session no store holds are shown alongside."
-requires = ["session_identity", "task_boundary", "session_store"]
-[signal.support]
-codex = { route = "codex.turn", alignment = "aligned", note = "`session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`." }
-oh-my-pi = { route = "omp.run", alignment = "aligned", note = "The `session` record (id, cwd) of `~/.omp/agent/sessions/*/*.jsonl`. Runs that keep no session file have no project." }
-claude-code = { route = "claude.interaction", alignment = "aligned", note = "The first transcript entry with `sessionId` and `cwd` in `~/.claude/projects/*/*.jsonl`." }
 
 [[signal]]
 id = "pipeline.recombination"
@@ -1185,7 +1162,7 @@ view = "recurrence"
 title = "Recurring targets"
 question = "Which files recur across tasks?"
 unit = "tasks"
-formula = "Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a project or path under a temporary directory) are excluded."
+formula = "Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a tool call's working directory or failure path under a temporary directory) are excluded."
 requires = ["task_boundary", "tool_calls", "tool_arguments"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "differs", note = "`x.targets`: `apply_patch` files, `path` arguments, and path-like command arguments (inferred), home as ~." }
@@ -1211,25 +1188,12 @@ view = "recurrence"
 title = "Actionable repeats"
 question = "Which repeated failures cross the evidence threshold for intervention?"
 unit = "signatures"
-formula = "Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a project or path under a temporary directory) are excluded."
+formula = "Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a tool call's working directory or failure path under a temporary directory) are excluded."
 requires = ["task_boundary", "tool_calls", "tool_failure"]
 [signal.support]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks." }
-
-[[signal]]
-id = "recur.project_concentration"
-view = "recurrence"
-title = "Project concentration"
-question = "Is a repeated failure localized to one project?"
-unit = "%"
-formula = "Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store. Evaluation workspaces (a project or path under a temporary directory) are excluded."
-requires = ["session_identity", "tool_calls", "tool_failure", "session_store"]
-[signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned" }
-oh-my-pi = { route = "omp.execute_tool", alignment = "aligned" }
-claude-code = { route = "claude.tool_result", alignment = "aligned" }
 
 # ---------------------------------------------------------------------------
 # V10 Intent and corrections (Jev labels of submitted prompts)
@@ -1327,7 +1291,7 @@ view = "interventions"
 title = "Findings and proposals"
 question = "Which findings and intervention proposals exist, and in what state?"
 unit = "records"
-formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) and each repeated correction (project × correction kind) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order."
+formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order."
 scope = "system"
 
 [[signal]]
@@ -1336,16 +1300,7 @@ view = "interventions"
 title = "Post-intervention recurrence"
 question = "Did an applied intervention reduce what it targeted?"
 unit = "per task"
-formula = "For each applied proposal, its structured success metric: tasks with the finding's cluster (or correction) per task over the evaluation window after application, against the baseline window before; validated when the ratio is at most the metric's max_ratio, inconclusive with too few tasks. `facts sync` records the verdict as an immutable proposal event."
-scope = "system"
-
-[[signal]]
-id = "intervene.practice_recurrence"
-view = "interventions"
-title = "Uncodified practice recurrence"
-question = "Which corrections do users keep repeating, so the practice should be codified?"
-unit = "findings"
-formula = "Repeated-correction findings: in one project, ≥ 2 tasks in ≥ 2 sessions over 7 Europe/London days whose next prompt Jev read as a correction of the same kind (ignored instruction, wrong approach, wrong scope, incomplete, incorrect result)."
+formula = "For each applied proposal, its structured success metric: tasks with the finding's cluster per task over the evaluation window after application, against the baseline window before; validated when the ratio is at most the metric's max_ratio, inconclusive with too few tasks. `facts sync` records the verdict as an immutable proposal event."
 scope = "system"
 
 [[signal]]

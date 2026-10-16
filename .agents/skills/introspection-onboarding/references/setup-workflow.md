@@ -81,8 +81,6 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    - `[dashboard] clickhouse_url`: the local HTTP address, needed in docker mode.
    - `[harnesses] enabled`: the harnesses the user chose (see the
      [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses)).
-   - `[sessions.roots]`: extra session-store roots, such as Orca's per-account Codex
-     homes.
    - `[labels] openrouter_key_command`: a command that prints the OpenRouter key for
      prompt labels, which the scheduled sync can run. `OPENROUTER_API_KEY` works only
      interactively; omp's stored credential is the last fallback.
@@ -122,9 +120,8 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
      but never enable it, so ask the user to run `loginctl enable-linger "$USER"`.
    - Any other platform is refused.
 10. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
-    and `evaluations` report no error, and `labels` is not `skipped`. Hook and
-    attribution records reach `hook_events` and `session_projects` through SigNoz, so
-    allow a minute before checking them.
+    and `evaluations` report no error, and `labels` is not `skipped`. Hook records reach
+    `hook_events` through SigNoz, so allow a minute before checking them.
 11. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
     `warn`, `off`, or `info` has a reason the user accepts.
 12. **Validate.** The [validation workflow](validation-workflow.md), then the

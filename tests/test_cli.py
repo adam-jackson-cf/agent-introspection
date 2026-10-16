@@ -9,7 +9,6 @@ import pytest
 from agent_introspection import cli, facts, schedule
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
-from agent_introspection.findings import CORRECTION_DETECTOR_ID
 from agent_introspection.proposals import (
     ProposalState,
     TransitionProposalRequest,
@@ -430,7 +429,7 @@ def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
     insert_finding(connection, "a-low", impact=3, last_seen_ns=9)
     insert_finding(connection, "b-high", impact=8, last_seen_ns=2)
     insert_finding(
-        connection, "c-correction", impact=6, last_seen_ns=9, detector_id=CORRECTION_DETECTOR_ID
+        connection, "c-retired", impact=9, last_seen_ns=9, detector_id="facts.repeated_correction"
     )
     _, run = facts_runner()
     monkeypatch.setattr(facts, "runner", lambda _config: run)
@@ -441,7 +440,7 @@ def test_candidates_export_picks_the_highest_impact_cluster_with_its_evidence(
     assert review["ordered_candidate_ids"] == ["b-high"]
     candidate = review["payload"]["candidates"][0]
     assert candidate["finding"]["subject"]["impact"] == 8
-    assert candidate["project_root"] == "~/Projects/example"
+    assert candidate["evidence"]["workdirs"][0]["workdir"] == "~/Projects/example"
     assert "signatures" in candidate["evidence"]
 
 

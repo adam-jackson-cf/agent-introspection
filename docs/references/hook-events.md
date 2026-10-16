@@ -29,11 +29,10 @@ harness hook (Claude Code settings, omp extension)
 Every machine runs the same route; there is no direct ClickHouse write. The record
 families that share it are:
 
-| Family          | Schema                                  | `event.name`                          | Producer                                          | Stored in                                          |
-| --------------- | --------------------------------------- | ------------------------------------- | ------------------------------------------------- | -------------------------------------------------- |
-| Hook event      | `agent-introspection.hook-event/1`      | `agent_introspection.hook_event`      | `agent-introspection hook`                        | `introspection.hook_events`                        |
-| Session project | `agent-introspection.session-project/1` | `agent_introspection.session_project` | the attribution scan in `spool sync`/`facts sync` | `introspection.session_projects`                   |
-| Spool status    | `agent-introspection.spool-status/1`    | `agent_introspection.spool_status`    | each `spool sync`                                 | not stored; the Pipeline view reads it from SigNoz |
+| Family       | Schema                               | `event.name`                       | Producer                   | Stored in                                          |
+| ------------ | ------------------------------------ | ---------------------------------- | -------------------------- | -------------------------------------------------- |
+| Hook event   | `agent-introspection.hook-event/1`   | `agent_introspection.hook_event`   | `agent-introspection hook` | `introspection.hook_events`                        |
+| Spool status | `agent-introspection.spool-status/1` | `agent_introspection.spool_status` | each `spool sync`          | not stored; the Pipeline view reads it from SigNoz |
 
 SigNoz holds older rows under the same `service.name` (`agent-introspection`) that
 belong to a retired pipeline. Every reader of these logs (loaders, backfill, Pipeline
@@ -46,10 +45,8 @@ freshness and sanitization) therefore selects a family by `service.name`,
 - Prompt text reaches the normalizer only from Claude Code's `UserPromptSubmit`, and
   only its length is kept.
 - Tool arguments and outputs are read in memory and reduced to the fields below.
-- Session attribution records carry the project identity, name, home-redacted root,
-  and a normalized remote (host/path only: userinfo, query string and fragment are dropped, and it is empty unless it is a dotted host plus path), so a
-  session is attributed to the same project from any machine. The status heartbeat
-  carries counts, the oldest pending age, and an exception class name only.
+- The status heartbeat carries counts, the oldest pending age, and an exception class
+  name only.
 
 ## Delivery
 

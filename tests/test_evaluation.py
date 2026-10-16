@@ -22,7 +22,6 @@ from tests.test_proposals import (
 )
 
 CLUSTER = {"tool_family": "shell", "failure_class": "not_found", "harnesses": ["codex_exec"]}
-CORRECTION = {"project": "example", "correction_kind": "ignored", "harnesses": ["codex_exec"]}
 
 
 def applied_proposal(
@@ -139,22 +138,6 @@ def test_windows_older_than_the_snapshot_read_the_live_views(open_workflow: Open
     assert all("introspection.tool_calls\n" in sql for sql in statements)
     assert all("introspection.task_outcomes\n" in sql for sql in statements)
     assert all("_snapshot" not in sql for sql in statements)
-
-
-def test_correction_findings_use_the_correction_task_rate(open_workflow: OpenWorkflow) -> None:
-    metric = SUCCESS_METRIC | {"metric": "correction_task_rate"}
-    connection, _, applied_at = applied_proposal(open_workflow, CORRECTION, metric)
-    statements, run = facts((20, 6), (20, 2))
-
-    result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
-
-    assert [item["verdict"] for item in result["evaluated"]] == ["validated"]
-    assert all("task_labels_snapshot" in sql for sql in statements)
-    assert all("p.project = 'example'" in sql for sql in statements)
-    assert all("correction_kind_next = 'ignored'" in sql for sql in statements)
-    assert all(
-        "l.harness IN (SELECT harness FROM introspection.harnesses" in sql for sql in statements
-    )
 
 
 def test_cluster_rates_count_only_the_enabled_harnesses(open_workflow: OpenWorkflow) -> None:

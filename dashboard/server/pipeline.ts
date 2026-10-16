@@ -420,9 +420,6 @@ const FRESHNESS_CTES = `WITH
         UNION ALL
         SELECT 'hooks', 'agent-introspection', max(occurred_at), toUInt8(1) FROM introspection.hook_events
         WHERE occurred_at > now() - INTERVAL 1 DAY HAVING count() > 0
-        UNION ALL
-        SELECT 'attribution', 'agent-introspection', max(loaded_at), toUInt8(1) FROM introspection.session_projects
-        WHERE loaded_at > now() - INTERVAL 1 DAY HAVING count() > 0
     ),
     raw AS (
         SELECT 'spans' AS source, serviceName AS harness, max(timestamp) AS latest
@@ -444,13 +441,6 @@ const FRESHNESS_CTES = `WITH
         WHERE timestamp > ${NS_AGO("1 DAY")}
             AND observed_timestamp < ${NS_AGO("1 MINUTE")}
             AND ${rawFamily("hooks")}
-        HAVING count() > 0
-        UNION ALL
-        SELECT 'attribution', 'agent-introspection', fromUnixTimestamp64Nano(toInt64(max(timestamp)), 'UTC')
-        FROM signoz_logs.distributed_logs_v2
-        WHERE timestamp > ${NS_AGO("1 DAY")}
-            AND observed_timestamp < ${NS_AGO("1 MINUTE")}
-            AND ${rawFamily("attribution")}
         HAVING count() > 0
     ),
     fresh AS (
@@ -766,34 +756,6 @@ const selectedHarness = (params: Params) => {
     harness === "" ? rows : rows.filter((row) => row.harness === harness);
 };
 
-/**
- * Per harness: tasks, tasks whose session has a project, and tasks whose session the
- * resolver found in no session store (for example a run that kept no session).
- */
-const PROJECT_COVERAGE = `SELECT t.harness AS harness, count() AS tasks,
-    countIf(s.status = 'attributed') AS attributed,
-    countIf(s.status = '') AS no_session_record,
-    if(tasks > 0, 100 * attributed / tasks, NULL) AS share_rate
-FROM introspection.task_outcomes_snapshot AS t
-LEFT JOIN (
-    SELECT session_id, any(status) AS status FROM introspection.session_projects FINAL GROUP BY session_id
-) AS s ON s.session_id = t.session_id
-WHERE t.start_ts >= {start:DateTime64(3, 'UTC')} AND t.start_ts < {end:DateTime64(3, 'UTC')}
-    AND ({harness:String} = '' OR t.harness = {harness:String})
-GROUP BY harness ORDER BY harness`;
-
-/** Sessions the resolver could not attribute, by session store and reason. */
-const PROJECT_REJECTIONS = `SELECT store, status AS reason, count() AS n
-FROM introspection.session_projects FINAL
-WHERE status != 'attributed'
-    AND started_at >= {start:DateTime64(3, 'UTC')} AND started_at < {end:DateTime64(3, 'UTC')}
-GROUP BY store, reason ORDER BY n DESC`;
-
-/** When the resolver last stored a session, and how many it holds. */
-const PROJECT_SYNC = `SELECT toString(max(loaded_at)) AS last_load,
-    dateDiff('second', max(loaded_at), now64(3)) AS age_seconds, count() AS events
-FROM introspection.session_projects FINAL`;
-
 const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, count() AS n FROM (
     SELECT ts, harness, 'spans' AS source FROM introspection.spans FINAL WHERE ${inWindow("ts")}
     UNION ALL
@@ -860,9 +822,6 @@ export async function pipelineData(
     parity: PARITY,
     parity_summary: PARITY_SUMMARY,
     daily_rows: DAILY_ROWS,
-    project_coverage: PROJECT_COVERAGE,
-    project_rejections: PROJECT_REJECTIONS,
-    project_sync: PROJECT_SYNC,
     spool_status: SPOOL_STATUS,
     spool_delivery: SPOOL_DELIVERY,
     ...recombinationQueries(),
@@ -909,9 +868,6 @@ export async function pipelineData(
       freshness_exceptions: freshnessExceptions(results.freshness!),
       unrouted: selected(missed.list),
       unrouted_summary: [unroutedSummary(selected(missed.totals))],
-      project_coverage: results.project_coverage!,
-      project_rejections: results.project_rejections!,
-      project_sync: results.project_sync!,
       spool_status: spool,
       spool_exceptions: spoolExceptions(spool),
       spool_summary: [spoolSummary(spool)],

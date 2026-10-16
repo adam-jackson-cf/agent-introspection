@@ -43,32 +43,6 @@ ENGINE = ReplacingMergeTree(loaded_at)
 PARTITION BY toYYYYMM(ts)
 ORDER BY (harness, log_id);
 
--- Session-to-project attribution (`facts sync` and `spool sync`, sessions.py): one row
--- per session from the harnesses' own session stores, `attributed` with its Git
--- project or the reason it has none; `resolved_by` is `workspace` (its directory's Git
--- root) or `remote` (the directory is gone; its recorded Git remote matched a
--- repository known to some machine). Records from every machine arrive as OTLP logs
--- through SigNoz (load_session_projects); `host` is the producing machine and
--- `resolved_at` orders a session's records, newest wins: the loaders set `loaded_at` to
--- the record's `resolved_at`, so ReplacingMergeTree(loaded_at) keeps the newest one.
-CREATE TABLE IF NOT EXISTS introspection.session_projects
-(
-    session_id String,
-    store LowCardinality(String),
-    status LowCardinality(String),
-    project_id String,
-    project_name String,
-    project_root String,
-    resolved_by LowCardinality(String),
-    started_at DateTime64(3, 'UTC'),
-    loaded_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY session_id;
-ALTER TABLE introspection.session_projects ADD COLUMN IF NOT EXISTS host LowCardinality(String) DEFAULT '';
-ALTER TABLE introspection.session_projects ADD COLUMN IF NOT EXISTS remote String DEFAULT '';
-ALTER TABLE introspection.session_projects ADD COLUMN IF NOT EXISTS resolved_at DateTime64(6, 'UTC') DEFAULT loaded_at;
-
 
 -- Normalized activity-hook events (see docs/references/hook-events.md) that close signals the
 -- producers' own telemetry lacks. Hooks keep no raw prompt, argument, or output

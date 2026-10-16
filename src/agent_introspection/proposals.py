@@ -93,8 +93,7 @@ def require_successful_validation(evidence: JsonMapping) -> None:
 
 
 CLUSTER_TASK_RATE = "cluster_task_rate"
-CORRECTION_TASK_RATE = "correction_task_rate"
-SUCCESS_METRICS = (CLUSTER_TASK_RATE, CORRECTION_TASK_RATE)
+SUCCESS_METRICS = (CLUSTER_TASK_RATE,)
 MIN_METRIC_WINDOW_DAYS = 7
 _SUCCESS_METRIC_KEYS = frozenset({
     "metric",
@@ -112,8 +111,7 @@ class SuccessMetric:
     Success means (matching tasks per task over ``evaluation_days`` after the proposal
     was applied) <= ``max_ratio`` x (the same over ``baseline_days`` before), counted
     only for ``harnesses``. ``cluster_task_rate`` matches tasks that hit a failure
-    cluster; ``correction_task_rate`` matches labelled tasks in the finding's project
-    whose next prompt was a correction of the finding's kind.
+    cluster.
     """
 
     metric: str
@@ -265,8 +263,6 @@ def metric_for_subject(subject: dict[str, Any]) -> str | None:
     """Return the success metric a finding subject is measured by, if it has one."""
     if "tool_family" in subject and "failure_class" in subject:
         return CLUSTER_TASK_RATE
-    if "project" in subject and "correction_kind" in subject:
-        return CORRECTION_TASK_RATE
     return None
 
 

@@ -73,7 +73,6 @@ def test_sweeps_each_own_a_distinct_hour_offset_in_the_x9_class() -> None:
         "sweep_spans": "EVERY 1 HOUR OFFSET 9 MINUTE",
         "sweep_logs": "EVERY 1 HOUR OFFSET 19 MINUTE",
         "sweep_hook_events": "EVERY 1 HOUR OFFSET 29 MINUTE",
-        "sweep_session_projects": "EVERY 1 HOUR OFFSET 39 MINUTE",
     }
     assert {_minute_class(s) for s in sweeps.values()} == {9}
 

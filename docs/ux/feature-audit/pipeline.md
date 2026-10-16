@@ -162,3 +162,10 @@ No baseline row is removed. Baseline row PIPE-F17 said "Three tables"; all three
 - Coverage KPI vs grid: not a defect. `coverageGrid` emits one row per (signal, harness in HARNESSES) with a support row (`pipeline.ts:319-350`); the grid renders exactly those columns (all of HARNESSES for All, the selected one otherwise) and finds cells by signal and harness (`Pipeline.tsx:77-84`). The KPI counts the same filtered rows, so no unexplained cell is hidden. PIPE-F06, PIPE-S04, PIPE-C06.
 
 **Totals:** features 35 signals 21 ui calcs 14 removed since baseline 0 new since baseline 10
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Project attribution panel removed (PIPE-F20 and its sync and rejection tables); signal `pipeline.project_attribution` removed from the registry.
+- Spool status loses the Attribution received / sent column; delivery is checked for hook records only.
+- Freshness compares hook records only; the `attribution` source row is gone.
+- The hook inbox backlog figure, shown in the attribution sync table, is gone with it; each host's pending spool count stays in Spool status.
