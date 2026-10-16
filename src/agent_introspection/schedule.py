@@ -238,8 +238,8 @@ def _tool_directory(name: str) -> str:
 def _job_path(config: AppConfig) -> list[str]:
     """Return the tool directories the scheduled job needs on PATH.
 
-    Docker mode needs the docker CLI. HTTP mode needs the password command's
-    executable, because the scheduler cannot pass the password variable to the job.
+    A ClickHouse password needs its command's executable, because the scheduler cannot
+    pass the password variable to the job.
     Prompt labels need ``[labels] openrouter_key_command``'s executable, because
     OPENROUTER_API_KEY is not set for the job either. Without a key command, omp's
     directory (when omp is installed) lets labelling fall back to omp's stored
@@ -247,9 +247,7 @@ def _job_path(config: AppConfig) -> list[str]:
     """
     signoz = config.signoz
     required: list[str] = []
-    if signoz.mode == "docker":
-        required.append("docker")
-    elif signoz.clickhouse_password_env is not None:
+    if signoz.clickhouse_password_env is not None:
         raise RuntimeError(
             "the scheduled job cannot receive signoz.clickhouse_password_env; "
             "use signoz.clickhouse_password_command for a scheduled sync"

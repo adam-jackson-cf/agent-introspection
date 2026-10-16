@@ -57,7 +57,7 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 - **Both:** the job runs the `agent-introspection` executable of the environment that
   ran `install`, so run it from the standalone copy. It passes `--config` when one was
   given, and sets only `PATH`: the system directories plus the directories of the
-  docker CLI in docker mode, of the `clickhouse_password_command` and
+  `clickhouse_password_command` and
   `[labels] openrouter_key_command` executables, and of omp when no key command is
   set. Variables from your shell, such as
   `OPENROUTER_API_KEY` or `OTEL_EXPORTER_OTLP_*`, never reach it, and `install` refuses
@@ -73,10 +73,10 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 
 ## Spool
 
-| Command        | What it does                                                                                                                                                                                    | When to use it                                                                                                       |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `spool sync`   | Records a spool-status heartbeat and sends the spool to `[hooks] otlp_logs_endpoint` (else an OTLP/HTTP `OTEL_EXPORTER_OTLP_*` environment). With no endpoint nothing is sent and records wait. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
-| `spool status` | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                                             | Checking delivery.                                                                                                   |
+| Command        | What it does                                                                                                                                                        | When to use it                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `spool sync`   | Records a spool-status heartbeat and sends the spool to the collector's `/v1/logs` (or `[hooks] otlp_logs_endpoint`). Records it cannot send wait for the next run. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
+| `spool status` | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                 | Checking delivery.                                                                                                   |
 
 ## Onboarding
 
@@ -222,15 +222,14 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
 - A config that does not load is a failing `config` check, and the rest run on the
   defaults. A check that raises is reported as a failure naming the exception class,
   and the others still run.
-- `--live` posts an empty OTLP/HTTP logs request to the hooks endpoint, else to
-  `{otlp_endpoint}/v1/logs`. Without it, no request carries data.
+- `--live` posts an empty OTLP/HTTP logs request to the logs endpoint records go to.
+  Without it, no request carries data.
 - Config files checked: the ones `harness configure` writes. A file named by a set
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that does not exist fails `config_files` as
   missing. Codex homes: every configured root that is set or exists, plus every directory
   the codex profile's `home_globs` matches (Orca's per-account homes).
-- A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
-  scheduled sync, so doctor flags it: set `[hooks] otlp_logs_endpoint` and
-  `[labels] openrouter_key_command` instead. Secrets are checked for presence only, and
+- `OPENROUTER_API_KEY` set only in the shell is invisible to the scheduled sync, so
+  doctor flags it: set `[labels] openrouter_key_command` instead. Secrets are checked for presence only, and
   key commands are never run.
 - When ClickHouse is unreachable, the machine is treated as not the SigNoz host: a
   missing schedule is `info`, and `telemetry` and `drift` report that they were not

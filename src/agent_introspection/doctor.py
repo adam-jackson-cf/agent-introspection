@@ -35,11 +35,11 @@ from urllib.parse import urlsplit
 from agent_introspection import doctor_harness, facts, hooks, preflight, profiles, spool
 from agent_introspection.config import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_OTLP_ENDPOINT,
     AppConfig,
     ConfigurationError,
     is_local_host,
     load_config,
-    resolve_otlp_logs_endpoint,
 )
 from agent_introspection.doctor_harness import Check, check, guarded
 
@@ -61,9 +61,6 @@ _LEFT_TO_THE_HOST: Final = {
     "prompt_labels": "the host's `facts sync` labels prompts with its own key",
     "dashboard": "the dashboard reads the host's ClickHouse",
 }
-_HOOKS_ENDPOINT_FIX: Final = (
-    'set [hooks] otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs" in the config'
-)
 _SCHEDULE_FIX: Final = "agent-introspection facts schedule install"
 _SPOOL_SYNC_UNITS: Final = (
     "install the onboarding skill's agent-introspection-spool-sync units, as its "
@@ -73,12 +70,12 @@ _LEGACY_FIX: Final = (
     "reinstall the CLI (`uv tool install --force --reinstall .` in the repo), then "
     "`agent-introspection facts schedule install` retires the legacy job"
 )
-_DASHBOARD_FIX: Final = (
-    "set [dashboard] clickhouse_url to ClickHouse's HTTP interface on this machine: "
-    "SigNoz's Compose file does not publish port 8123 by default, so publish it on "
-    "loopback with the opt-in Compose override in the onboarding skill's "
+_CLICKHOUSE_HTTP_FIX: Final = (
+    "point [signoz] clickhouse_url at ClickHouse's HTTP interface on this machine: "
+    "SigNoz does not publish port 8123 by default, so publish it on loopback with the "
+    "opt-in Compose override in the onboarding skill's "
     "scripts/signoz/docker-compose.clickhouse-http.yaml, or use OrbStack's "
-    "http://signoz-clickhouse.orb.local:8123"
+    "http://<clickhouse container>.orb.local:8123"
 )
 # No proxy: a loopback address must never be sent through one.
 _LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -227,7 +224,7 @@ class _Doctor:
 
     def _collector_base(self) -> str:
         """Return the OTLP base URL of the collector this machine's harnesses export to."""
-        return (self.config.collector_endpoint or profiles.DEFAULT_OTLP_ENDPOINT).rstrip("/")
+        return (self.config.collector_endpoint or DEFAULT_OTLP_ENDPOINT).rstrip("/")
 
     # --- Config and SigNoz -----------------------------------------------------------
 
@@ -276,7 +273,7 @@ class _Doctor:
             return check(
                 "signoz",
                 "pass",
-                f"ClickHouse {version} ({result['mode']} mode); every facts preflight check passes",
+                f"ClickHouse {version}; every facts preflight check passes",
             )
         if self.run is None:
             return check(
@@ -304,9 +301,8 @@ class _Doctor:
             )
         if present:
             return (
-                "SigNoz is present but the CLI cannot reach its ClickHouse: compare [signoz] in "
-                "the config (clickhouse_container, docker_context, or clickhouse_url) with "
-                "`agent-introspection signoz detect`"
+                "SigNoz is present but its ClickHouse HTTP interface does not answer: "
+                + _CLICKHOUSE_HTTP_FIX
             )
         return (
             "SigNoz seems absent: only if the user asks for a new one, run the onboarding "
@@ -332,7 +328,7 @@ class _Doctor:
             ]
         checks.append(self.hooks_endpoint_check())
         if self.options.live:
-            checks.append(self.live_check(self._hooks_endpoint() or f"{base}/v1/logs"))
+            checks.append(self.live_check(self.config.otlp_logs_endpoint))
         return checks
 
     def _host_collector_check(self, base: str) -> Check:
@@ -363,29 +359,10 @@ class _Doctor:
             "start the SigNoz collector, or set [signoz] otlp_endpoint to where it listens",
         )
 
-    def _hooks_endpoint(self) -> str | None:
-        # The hook path's own resolution (spool.hook_endpoint) without its log write.
-        return resolve_otlp_logs_endpoint(self.config.hooks_otlp_logs_endpoint, self.environ)
-
-    def _hooks_endpoint_fix(self) -> str:
-        if not self.config.machine.additional:
-            return _HOOKS_ENDPOINT_FIX
-        logs = f"{self._collector_base()}/v1/logs"
-        return f'set [hooks] otlp_logs_endpoint = "{logs}" (the host\'s collector) in the config'
-
     def hooks_endpoint_check(self) -> Check:
-        endpoint = self._hooks_endpoint()
-        if endpoint is None:
-            return check(
-                "hooks_endpoint",
-                "fail",
-                "no hooks endpoint: hook records stay in the spool",
-                self._hooks_endpoint_fix(),
-            )
+        endpoint = self.config.otlp_logs_endpoint
         host, port = _address(endpoint)
-        configured = self.config.hooks_otlp_logs_endpoint is not None
-        # An endpoint from the environment is not printed: it is not this tool's setting.
-        where = f"{host}:{port}" if configured else "the OTEL_EXPORTER_OTLP_* environment"
+        where = f"{host}:{port}"
         if not self.probes.tcp_open(host, port):
             return check(
                 "hooks_endpoint",
@@ -400,14 +377,8 @@ class _Doctor:
                 "warn",
                 f"{where} accepts connections but is not the host's collector "
                 f"({_address(base)[0]}): records go to another SigNoz unless both name one machine",
-                self._hooks_endpoint_fix(),
-            )
-        if not configured:
-            return check(
-                "hooks_endpoint",
-                "warn",
-                f"reachable, but set only by {where}, which the scheduled sync does not see",
-                self._hooks_endpoint_fix(),
+                "remove [hooks] otlp_logs_endpoint from the config, so records go to "
+                "[machine] export_endpoint's /v1/logs",
             )
         return check("hooks_endpoint", "pass", f"{where} accepts connections")
 
@@ -619,23 +590,19 @@ class _Doctor:
             "(a command that prints the key, such as a Keychain lookup)",
         )
 
-    def _dashboard_url(self) -> tuple[str | None, str]:
+    def _dashboard_url(self) -> tuple[str, str]:
         if self.environ.get(DASHBOARD_URL_ENV):
             return self.environ[DASHBOARD_URL_ENV], DASHBOARD_URL_ENV
-        if self.config.dashboard_clickhouse_url is not None:
-            return self.config.dashboard_clickhouse_url, "[dashboard] clickhouse_url"
         return self.config.signoz.clickhouse_url, "[signoz] clickhouse_url"
 
     def dashboard_check(self) -> Check:
         url, source = self._dashboard_url()
-        if url is None:
-            return check("dashboard", "warn", "no ClickHouse URL for the dashboard", _DASHBOARD_FIX)
         if not is_local_host(urlsplit(url).hostname or ""):
             return check(
                 "dashboard",
                 "warn",
                 f"the URL in {source} is not on this machine, so the dashboard refuses it",
-                _DASHBOARD_FIX,
+                _CLICKHOUSE_HTTP_FIX,
             )
         try:
             status, body = self.probes.http_get(f"{url.rstrip('/')}/ping")
@@ -644,7 +611,7 @@ class _Doctor:
                 "dashboard",
                 "warn",
                 f"ClickHouse at {source} does not answer /ping ({type(exc).__name__})",
-                _DASHBOARD_FIX,
+                _CLICKHOUSE_HTTP_FIX,
             )
         if status == 200 and body.strip() == b"Ok.":
             return check("dashboard", "pass", f"ClickHouse at {source} answers /ping")
@@ -652,7 +619,7 @@ class _Doctor:
             "dashboard",
             "warn",
             f"ClickHouse at {source} answered /ping with HTTP {status}",
-            _DASHBOARD_FIX,
+            _CLICKHOUSE_HTTP_FIX,
         )
 
     # --- Drift -----------------------------------------------------------------------

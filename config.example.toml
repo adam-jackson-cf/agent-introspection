@@ -2,31 +2,19 @@
 path = "~/.local/share/agent-introspection/introspection.sqlite3"
 busy_timeout_ms = 5000
 
-# Configure exactly one connection mode to the SigNoz installed on this machine;
-# non-local addresses are refused.
-#
-# docker (default): the SigNoz ClickHouse container, found with `docker ps`. A SigNoz
-# installed from its older deploy/docker Compose files names it signoz-clickhouse; one
-# installed with Foundry, SigNoz's current installer (which the onboarding skill's
-# install-signoz.sh uses), names it signoz-telemetrystore-clickhouse-0-0.
-[signoz]
-clickhouse_container = "signoz-clickhouse"
-# docker_context = "desktop-linux"   # optional; defaults to the current Docker context
-
-# http: ClickHouse's HTTP interface at a local address. Replace the two docker keys
-# above with these. A password, if any, is printed by a command (usable by the
-# scheduled sync) and never stored in this file.
-# clickhouse_url = "http://127.0.0.1:8123"   # ClickHouse's HTTP port, published on loopback
+# The SigNoz on this machine. Every key has a default, which suits a SigNoz installed
+# by the onboarding skill's install-signoz.sh; non-local addresses are refused.
+# clickhouse_url is ClickHouse's HTTP interface, which the CLI and the dashboard both
+# read. SigNoz does not publish it by default: publish it on loopback with the skill's
+# scripts/signoz/docker-compose.clickhouse-http.yaml, or name a local container address
+# your runtime resolves (such as OrbStack's *.orb.local). A password, if any, is
+# printed by a command (usable by the scheduled sync) and never stored in this file.
+# INTROSPECTION_CLICKHOUSE_URL overrides clickhouse_url for the dashboard only.
+# [signoz]
+# clickhouse_url = "http://127.0.0.1:8123"
 # clickhouse_user = "default"
 # clickhouse_password_command = ["security", "find-generic-password", "-s", "signoz-clickhouse", "-w"]
-# otlp_endpoint = "http://127.0.0.1:4318"   # OTLP/HTTP collector harnesses export to (either mode; never 4317)
-
-# The dashboard reads ClickHouse over HTTP only. In docker mode, give it the local
-# address of ClickHouse's HTTP interface (a port published on loopback, or a local
-# container name your runtime resolves, such as OrbStack's *.orb.local). In http mode
-# it uses [signoz] clickhouse_url. INTROSPECTION_CLICKHOUSE_URL overrides both.
-# [dashboard]
-# clickhouse_url = "http://127.0.0.1:8123"
+# otlp_endpoint = "http://127.0.0.1:4318"   # OTLP/HTTP collector harnesses export to (never 4317)
 
 # The harnesses this machine uses. Harness parity, the dashboard's harness selector,
 # and the findings detectors cover only these; a signal some enabled harness cannot
@@ -36,12 +24,10 @@ clickhouse_container = "signoz-clickhouse"
 # [harnesses]
 # enabled = ["claude-code", "oh-my-pi", "codex"]
 
-# Where activity-hook and spool-status records are sent: the
-# OTLP/HTTP logs URL of the collector on this machine (port 4318, never the gRPC port
-# 4317). Only an additional machine (see [machine] below) points it at the host's
-# collector instead. On the host, set it after `facts install` has created the
-# loaders. Absent means the OTEL_EXPORTER_OTLP_* variables apply when they name an
-# OTLP/HTTP endpoint; otherwise records wait in the local spool.
+# Where activity-hook and spool-status records are sent: an OTLP/HTTP logs URL (never
+# the gRPC port 4317). Absent means /v1/logs on the collector this machine's harnesses
+# export to ([signoz] otlp_endpoint, or [machine] export_endpoint on an additional
+# machine), which is right unless records must go elsewhere.
 # [hooks]
 # otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
 
@@ -56,11 +42,11 @@ clickhouse_container = "signoz-clickhouse"
 # This machine's role. Absent, or role = "host", means it runs SigNoz and the facts
 # store. An additional machine runs harnesses but no SigNoz and sends everything to the
 # host's collector: set role = "additional" and export_endpoint to that collector's
-# OTLP/HTTP base URL (another machine's address is allowed here; no credentials), and
-# point [hooks] otlp_logs_endpoint at its /v1/logs. `harness configure` then writes that
-# endpoint into each harness, `doctor` checks the host's collector and the spool-sync
-# timer instead of SigNoz, and commands that need ClickHouse (facts, producers) refuse
-# to run. [signoz], [dashboard], and [labels] are not used there.
+# OTLP/HTTP base URL (another machine's address is allowed here; no credentials).
+# `harness configure` then writes that endpoint into each harness, records go to its
+# /v1/logs, `doctor` checks the host's collector and the spool-sync timer instead of
+# SigNoz, and commands that need ClickHouse (facts, producers) refuse to run. [signoz]
+# and [labels] are not used there.
 # [machine]
 # role = "additional"
 # export_endpoint = "http://signoz-host.local:4318"

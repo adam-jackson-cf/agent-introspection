@@ -99,7 +99,7 @@ def _version(run: SqlRunner) -> Check:
 
 
 def _transport(config: AppConfig) -> Check:
-    url = urlsplit(config.signoz.clickhouse_url or "")
+    url = urlsplit(config.signoz.clickhouse_url)
     # The config only accepts local hosts, so this records what the CLI talks to.
     return _check("transport", "pass", f"{url.scheme} to {url.hostname} on this machine")
 
@@ -289,10 +289,8 @@ def _server_checks(run: SqlRunner) -> list[Check]:
 
 
 def _report(config: AppConfig, server_checks: list[Check]) -> dict[str, Any]:
-    checks = [_transport(config)] if config.signoz.mode == "http" else []
-    checks += [*server_checks, _otlp(config)]
+    checks = [_transport(config), *server_checks, _otlp(config)]
     return {
-        "mode": config.signoz.mode,
         "passed": all(check["status"] != "fail" for check in checks),
         "checks": checks,
     }
@@ -308,15 +306,14 @@ def report(
 ) -> dict[str, Any]:
     """Load the configuration, connect, and run every check; never raise a setup error.
 
-    A configuration that does not load fails a ``configuration`` check (``mode`` is
-    then None). A runner that cannot be built, such as a missing ClickHouse password,
-    fails a ``connection`` check, as does a Docker context that is not local.
+    A configuration that does not load fails a ``configuration`` check. A runner that
+    cannot be built, such as a missing ClickHouse password, fails a ``connection``
+    check.
     """
     try:
         config = load()
     except ConfigurationError as exc:
         return {
-            "mode": None,
             "passed": False,
             "checks": [_setup_failure("configuration", exc)],
         }

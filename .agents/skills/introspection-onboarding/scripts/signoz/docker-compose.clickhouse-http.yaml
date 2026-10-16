@@ -1,8 +1,8 @@
 # Publishes SigNoz on 127.0.0.1 only, this machine: ClickHouse HTTP (8123), the
 # collector's OTLP ports (4317 gRPC, 4318 HTTP), and the UI (8080).
 #
-# Agent Introspection's dashboard reads ClickHouse over HTTP, and so does the CLI in
-# http mode ([signoz] clickhouse_url). SigNoz does not publish ClickHouse's HTTP port,
+# Agent Introspection's CLI and dashboard read ClickHouse over HTTP ([signoz]
+# clickhouse_url, default http://127.0.0.1:8123). SigNoz does not publish that port,
 # so it is otherwise reachable only inside the Compose network. SigNoz publishes its
 # OTLP and UI ports on every interface; on a desktop, nothing outside this machine
 # needs them, so `!override` replaces those port lists rather than adding to them

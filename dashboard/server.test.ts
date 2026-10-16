@@ -8,6 +8,7 @@ import { createApp, parseFilters, sqliteWorkflow } from "./server";
 import {
   clickhouse,
   clickhouseUrl,
+  DEFAULT_CLICKHOUSE_URL,
   credentialsFromEnv,
   live,
   SNAPSHOT_DAYS,
@@ -803,21 +804,13 @@ describe("view queries", () => {
 describe("ClickHouse address", () => {
   const config = (text: string | undefined) => () => text;
 
-  test("the environment variable wins, then [dashboard], then the http-mode [signoz] URL", () => {
+  test("the environment variable wins, then [signoz] clickhouse_url", () => {
     expect(
       clickhouseUrl(
         { INTROSPECTION_CLICKHOUSE_URL: "http://127.0.0.1:1", HOME: "/h" },
-        config('[dashboard]\nclickhouse_url = "http://127.0.0.1:2"'),
+        config('[signoz]\nclickhouse_url = "http://127.0.0.1:3"'),
       ),
     ).toBe("http://127.0.0.1:1");
-    expect(
-      clickhouseUrl(
-        { HOME: "/h" },
-        config(
-          '[dashboard]\nclickhouse_url = "http://127.0.0.1:2"\n[signoz]\nclickhouse_url = "http://127.0.0.1:3"',
-        ),
-      ),
-    ).toBe("http://127.0.0.1:2");
     expect(
       clickhouseUrl(
         { HOME: "/h" },
@@ -826,15 +819,12 @@ describe("ClickHouse address", () => {
     ).toBe("http://127.0.0.1:3");
   });
 
-  test("no configured address is an error, not an assumed runtime", () => {
-    expect(() =>
-      clickhouseUrl(
-        { HOME: "/h" },
-        config('[signoz]\nclickhouse_container = "signoz-clickhouse"'),
-      ),
-    ).toThrow("INTROSPECTION_CLICKHOUSE_URL");
-    expect(() => clickhouseUrl({ HOME: "/h" }, config(undefined))).toThrow(
-      "/h/.config/agent-introspection/config.toml",
+  test("without a configured address it reads the CLI's default", () => {
+    expect(clickhouseUrl({ HOME: "/h" }, config("[harnesses]\n"))).toBe(
+      DEFAULT_CLICKHOUSE_URL,
+    );
+    expect(clickhouseUrl({ HOME: "/h" }, config(undefined))).toBe(
+      "http://127.0.0.1:8123",
     );
   });
 });

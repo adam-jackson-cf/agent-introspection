@@ -62,18 +62,13 @@ mkdir -p ~/.config/agent-introspection
 cp config.example.toml ~/.config/agent-introspection/config.toml
 ```
 
-Edit the copy. It needs two things: how to reach ClickHouse, and which harnesses you
-use.
-
-| Your SigNoz                                   | `[signoz]`                                                                   | `[dashboard]`                                             |
-| --------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Installed by the guided script                | Paste what it printed (`clickhouse_url`, `clickhouse_user`, `otlp_endpoint`) | Not needed                                                |
-| Existing, ClickHouse HTTP on `127.0.0.1:8123` | `clickhouse_url = "http://127.0.0.1:8123"`, `clickhouse_user = "default"`    | Not needed                                                |
-| Existing, ClickHouse not published            | `clickhouse_container` = the name `signoz detect` shows                      | `clickhouse_url` of an HTTP address the dashboard reaches |
-
-The dashboard always reads ClickHouse over HTTP. If yours is not published, add the
-opt-in [ClickHouse HTTP override](../../.agents/skills/introspection-onboarding/scripts/signoz/docker-compose.clickhouse-http.yaml)
-to your SigNoz Compose project; it publishes ClickHouse on `127.0.0.1:8123` only.
+Edit the copy. Every `[signoz]` key has a default that reaches a SigNoz installed by
+the guided script, or any SigNoz whose ClickHouse HTTP interface is on
+`127.0.0.1:8123`. The CLI and the dashboard both read ClickHouse over HTTP, so if
+`signoz detect` says yours is not published, add the opt-in
+[ClickHouse HTTP override](../../.agents/skills/introspection-onboarding/scripts/signoz/docker-compose.clickhouse-http.yaml)
+to your SigNoz Compose project (it publishes ClickHouse on `127.0.0.1:8123` only), or set
+`[signoz] clickhouse_url` to an address your container runtime resolves.
 
 Under `[harnesses]`, list the harnesses you use, for example
 `enabled = ["claude-code", "codex"]` (omp is `oh-my-pi`). Then check:
@@ -96,14 +91,8 @@ agent-introspection facts backfill --days 90
 
 ### 5. Connect your harnesses
 
-Uncomment `[hooks]` in the config so activity records reach the collector:
-
-```toml
-[hooks]
-otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"
-```
-
-For each harness, preview and then write its export settings:
+Activity records go to the local collector's `/v1/logs` with no setting. For each
+harness, preview and then write its export settings:
 
 ```bash
 agent-introspection harness configure claude-code --dry-run   # then without --dry-run

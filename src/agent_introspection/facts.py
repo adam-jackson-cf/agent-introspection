@@ -27,7 +27,6 @@ import subprocess
 import time
 import tomllib
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -41,7 +40,6 @@ from agent_introspection.config import (
     AppConfig,
     ConfigurationError,
     SigNozConfig,
-    is_local_host,
     require_host,
 )
 
@@ -887,73 +885,6 @@ def backfill_statements(target: str, start: datetime, end: datetime) -> list[str
     ]
 
 
-def _require_local_docker_context(context: str | None) -> None:
-    """Raise unless the Docker context's daemon endpoint is a local socket or host."""
-    command = ("docker", "context", "inspect", *((context,) if context is not None else ()))
-    try:
-        completed = _run_local_command(command)
-        host = json.loads(completed.stdout)[0]["Endpoints"]["docker"]["Host"]
-    except (OSError, subprocess.TimeoutExpired, ValueError, LookupError, TypeError) as exc:
-        raise ConfigurationError("could not resolve the Docker context endpoint") from exc
-    if not isinstance(host, str):
-        raise ConfigurationError("could not resolve the Docker context endpoint")
-    parsed = urllib.parse.urlsplit(host)
-    if parsed.scheme in ("unix", "npipe") or (
-        parsed.scheme == "tcp" and is_local_host(parsed.hostname or "")
-    ):
-        return
-    raise ConfigurationError(
-        "signoz.docker_context must target a Docker daemon on this machine, "
-        f"not {parsed.scheme}://{parsed.hostname or ''}"
-    )
-
-
-def docker_runner(config: AppConfig) -> SqlRunner:
-    """Return a runner that executes multi-statement SQL through ``clickhouse-client``.
-
-    The first statement batch verifies that the Docker context targets a local daemon.
-    """
-    # Without a configured context, docker uses the current one (`docker context show`).
-    context = config.signoz.docker_context
-    prefix = (
-        "docker",
-        *(("--context", context) if context is not None else ()),
-        "exec",
-        "-i",
-        config.signoz.clickhouse_container,
-        "clickhouse-client",
-        "--multiquery",
-    )
-    verified = False
-
-    def run(sql: str) -> str:
-        nonlocal verified
-        if not verified:
-            _require_local_docker_context(context)
-            verified = True
-        try:
-            completed = subprocess.run(
-                prefix,
-                input=sql,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=_QUERY_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise StatementTimeoutError("ClickHouse statement timed out") from exc
-        if completed.returncode != 0:
-            lines = completed.stderr.strip().splitlines()
-            raise FactsError(
-                next(
-                    (line for line in lines if "DB::Exception" in line), lines[-1] if lines else ""
-                )
-            )
-        return completed.stdout
-
-    return run
-
-
 _QUOTES = frozenset("'\"`")
 
 
@@ -1055,8 +986,6 @@ def http_runner(config: AppConfig) -> SqlRunner:
     logged or included in errors.
     """
     signoz = config.signoz
-    if signoz.clickhouse_url is None:
-        raise ConfigurationError("signoz.clickhouse_url is not configured")
     password = clickhouse_password(signoz)
     token = base64.b64encode(f"{signoz.clickhouse_user}:{password}".encode()).decode()
     # wait_end_of_query buffers the result, so a failure mid-query is an HTTP error.
@@ -1088,12 +1017,12 @@ def http_runner(config: AppConfig) -> SqlRunner:
 
 
 def runner(config: AppConfig) -> SqlRunner:
-    """Return the SQL runner for the configured connection mode.
+    """Return the SQL runner over ClickHouse's HTTP interface.
 
     An additional machine has no ClickHouse, so every command that needs one stops here.
     """
     require_host(config, "this command needs SigNoz's ClickHouse")
-    return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
+    return http_runner(config)
 
 
 def scratch_database_name(now: float | None = None) -> str:

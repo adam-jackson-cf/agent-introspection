@@ -23,7 +23,12 @@ from urllib.parse import urlsplit
 
 from agent_introspection import capabilities, facts, hooks
 from agent_introspection.capabilities import CapabilityClaim
-from agent_introspection.config import OTLP_GRPC_PORT, OTLP_HTTP_PORT, is_local_host
+from agent_introspection.config import (
+    DEFAULT_OTLP_ENDPOINT,
+    OTLP_GRPC_PORT,
+    OTLP_HTTP_PORT,
+    is_local_host,
+)
 
 SCHEMA = "agent-introspection.harness-profile/1"
 PACKAGE = "agent_introspection.harness_profiles"
@@ -58,10 +63,6 @@ _PROFILE_KEYS = frozenset({
 _CONFIG_FILE_KEYS = frozenset({"id", "paths", "format", "table", "roots", "home_globs"})
 _SETTING_KEYS = frozenset({"file", "key", "value", "group", "purpose"})
 _CLAIM_KEYS = frozenset({"status", "route", "evidence", "lacks"})
-# The collector producers export to when config [signoz] otlp_endpoint is unset. An IP
-# address, not localhost, which some clients resolve to ::1 first while SigNoz may
-# publish its ports on 127.0.0.1 only.
-DEFAULT_OTLP_ENDPOINT = "http://127.0.0.1:4318"
 # The local collector's OTLP port for each transport, and the transport of each
 # OTEL_EXPORTER_OTLP_PROTOCOL value.
 OTLP_PORTS = {"http": OTLP_HTTP_PORT, "grpc": OTLP_GRPC_PORT}

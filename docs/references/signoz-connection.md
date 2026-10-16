@@ -9,7 +9,7 @@ The facts store lives in the local SigNoz's ClickHouse. By default Agent
 Introspection runs on one machine, a person's own desktop, against a self-hosted
 SigNoz on that same machine. It never reconfigures an existing SigNoz, and it installs
 a new one only when the user asks, through the guided install below. It refuses any
-ClickHouse or collector address in `[signoz]` or `[dashboard]` that is not local
+ClickHouse or collector address in `[signoz]` that is not local
 (loopback, `localhost`, or a local container name such as OrbStack's `*.orb.local`),
 and it assumes no
 particular container runtime. It cannot use SigNoz Cloud, which gives no direct
@@ -31,9 +31,9 @@ covers them.
 
 - A self-hosted SigNoz on this machine, with ClickHouse 24.10 or later, or none yet
   and Docker with Compose 2.24.4 or later for the guided install.
-- `~/.config/agent-introspection/config.toml`, copied from
-  [`config.example.toml`](../../config.example.toml). Its `[signoz]` table selects
-  exactly one connection mode.
+- ClickHouse's HTTP interface reachable at a local address. The CLI and the dashboard
+  both read ClickHouse over HTTP, at `[signoz] clickhouse_url` (default
+  `http://127.0.0.1:8123`, where the guided install publishes it).
 
 ## Steps
 
@@ -65,11 +65,10 @@ covers them.
      foundryctl v0.3.0, checked against a pinned SHA-256. `--dir` (default
      `${XDG_DATA_HOME:-~/.local/share}/agent-introspection/signoz`) holds
      `casting.yaml`, the generated Compose files, and foundryctl.
-   - It starts the stack with the loopback override (step 4) and prints the `[signoz]`
-     settings for http mode: `clickhouse_url`, `clickhouse_user`, and `otlp_endpoint`
-     (`http://127.0.0.1:4318`). ClickHouse's default user has no password and is
-     published on loopback only, so no password key and no `[dashboard]` table are
-     needed.
+   - It starts the stack with the loopback override (step 3). Every `[signoz]` default
+     then fits: ClickHouse HTTP on `http://127.0.0.1:8123` with the default user, which
+     has no password and is published on loopback only, and the collector on
+     `http://127.0.0.1:4318`.
    - On its own, Foundry publishes the OTLP ports 4317 and 4318 and the UI port 8080 on
      every network interface. The override replaces those with `127.0.0.1` ones, so the
      new SigNoz serves this machine alone. A host for additional machines needs 4318
@@ -79,45 +78,31 @@ covers them.
      says how to stop the stack, and that removing its volumes deletes the data,
      including the facts store.
 
-3. Choose a connection mode.
-
-   The **docker** mode (the default) runs `clickhouse-client` in the SigNoz ClickHouse
-   container:
-
-   ```toml
-   [signoz]
-   clickhouse_container = "signoz-clickhouse"   # the name `docker ps` shows
-   # docker_context = "desktop-linux"          # optional; else the current context
-   ```
-
-   The **http** mode uses ClickHouse's HTTP interface at a local address. A password,
-   when the user has one, comes from `clickhouse_password_command` (for example a
-   Keychain lookup, which the scheduled sync can also run) or, for interactive use only,
-   from the environment variable `clickhouse_password_env` names; it is never stored in
-   the file.
-
-   ```toml
-   [signoz]
-   clickhouse_url = "http://127.0.0.1:8123"
-   clickhouse_user = "default"
-   otlp_endpoint = "http://127.0.0.1:4318"
-   ```
-
-   The container name depends on how SigNoz was installed; see
-   [SigNoz layouts](#signoz-layouts).
-
-4. Give the dashboard ClickHouse's HTTP interface. The dashboard always reads
-   ClickHouse over HTTP: in http mode it uses `[signoz] clickhouse_url`; in docker mode
-   set `[dashboard] clickhouse_url` to a local HTTP address. SigNoz's Compose file does
-   not publish port 8123, so either use a container name your runtime resolves on the
-   host, or publish it on loopback with the opt-in override
-   [`docker-compose.clickhouse-http.yaml`](../../.agents/skills/introspection-onboarding/scripts/signoz/docker-compose.clickhouse-http.yaml).
-   The override also replaces the OTLP (4317, 4318) and UI (8080) port lists with
-   `127.0.0.1` ones, through Compose's `!override` tag (Docker Compose 2.24.4 or
-   later). Applying it to an existing SigNoz is the user's change: add it after the
-   stack's own Compose file and recreate the stack; run the same command without it to
-   revert. It names Foundry's services; for an older install, rename its three keys to
+3. Make ClickHouse's HTTP interface reachable. SigNoz does not publish port 8123 by
+   default. Either publish it on loopback with the opt-in override
+   [`docker-compose.clickhouse-http.yaml`](../../.agents/skills/introspection-onboarding/scripts/signoz/docker-compose.clickhouse-http.yaml),
+   which the guided install applies, or set `[signoz] clickhouse_url` to a container
+   name your runtime resolves on the host (such as OrbStack's
+   `http://<clickhouse container>.orb.local:8123`; the name depends on how SigNoz was
+   installed, see [SigNoz layouts](#signoz-layouts)). The override also replaces the
+   OTLP (4317, 4318) and UI (8080) port lists with `127.0.0.1` ones, through Compose's
+   `!override` tag (Docker Compose 2.24.4 or later). Applying it to an existing SigNoz
+   is the user's change, and it restarts ClickHouse: add it after the stack's own
+   Compose file and recreate the stack; run the same command without it to revert. It
+   names Foundry's services; for an older install, rename its three keys to
    `clickhouse`, `otel-collector`, and `signoz` first.
+
+4. Configure only what differs from the defaults. A password, when the user has one,
+   comes from `clickhouse_password_command` (for example a Keychain lookup, which the
+   scheduled sync can also run) or, for interactive use only, from the environment
+   variable `clickhouse_password_env` names; it is never stored in the file.
+
+   ```toml
+   [signoz]
+   clickhouse_url = "http://127.0.0.1:8123"   # the default
+   clickhouse_user = "default"                # the default
+   otlp_endpoint = "http://127.0.0.1:4318"    # the default
+   ```
 
 5. Grant the CLI user `SELECT` on `signoz_traces.*`, `signoz_logs.*`, and
    `system.view_refreshes`, plus
@@ -139,15 +124,14 @@ covers them.
 
 SigNoz has been installed two ways. `signoz detect` shows which one runs here.
 
-|                                    | Older `deploy/docker` install (deprecated)       | Foundry install (current)                                        |
-| ---------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
-| Compose file                       | `deploy/docker/docker-compose.yaml`              | `pours/deployment/compose.yaml`, generated by `foundryctl forge` |
-| ClickHouse Compose service         | `clickhouse`                                     | `signoz-telemetrystore-clickhouse-0-0`                           |
-| ClickHouse container               | `signoz-clickhouse`                              | `signoz-telemetrystore-clickhouse-0-0`                           |
-| Collector Compose service          | `otel-collector`                                 | `ingester`                                                       |
-| UI Compose service                 | `signoz`                                         | `signoz-signoz-0`                                                |
-| Collector config                   | `otel-collector-config.yaml`                     | `spec.ingester.spec.config.data` in `casting.yaml`               |
-| Docker-mode `clickhouse_container` | `signoz-clickhouse` (the example config's value) | `signoz-telemetrystore-clickhouse-0-0`                           |
+|                            | Older `deploy/docker` install (deprecated) | Foundry install (current)                                        |
+| -------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| Compose file               | `deploy/docker/docker-compose.yaml`        | `pours/deployment/compose.yaml`, generated by `foundryctl forge` |
+| ClickHouse Compose service | `clickhouse`                               | `signoz-telemetrystore-clickhouse-0-0`                           |
+| ClickHouse container       | `signoz-clickhouse`                        | `signoz-telemetrystore-clickhouse-0-0`                           |
+| Collector Compose service  | `otel-collector`                           | `ingester`                                                       |
+| UI Compose service         | `signoz`                                   | `signoz-signoz-0`                                                |
+| Collector config           | `otel-collector-config.yaml`               | `spec.ingester.spec.config.data` in `casting.yaml`               |
 
 The opt-in opencode collector filter in the same folder says how to apply and revert
 it for each layout.

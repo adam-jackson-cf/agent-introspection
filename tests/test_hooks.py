@@ -538,42 +538,33 @@ def test_a_hook_drains_one_batch_of_the_spool_and_leaves_the_rest(
     assert len(names(inbox)) == 61 - spool.BATCH_SIZE
 
 
-def test_a_hook_without_an_endpoint_only_spools(
+def test_a_hook_without_hooks_config_sends_to_the_collectors_logs_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
 ) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(f'[signoz]\notlp_endpoint = "{collector.base}"\n')
     feed_envelope(monkeypatch)
 
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+    assert hooks.main("claude-code", "PreToolUse", config) == 0
 
-    assert collector.bodies == []
-    assert len(names(inbox)) == 1
-
-
-def test_a_grpc_environment_never_receives_records_and_keeps_them(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
-) -> None:
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
-    feed_envelope(monkeypatch)
-
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
-
-    assert collector.bodies == []
-    assert len(names(inbox)) == 1
-    assert not (inbox / "rejected").exists()
+    assert len(collector.records) == 1
+    assert names(inbox) == set()
 
 
-def test_a_hook_falls_back_to_the_http_environment_endpoint(
+def test_the_otel_environment_never_redirects_records(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
 ) -> None:
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
     feed_envelope(monkeypatch)
 
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+    assert (
+        hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, "http://127.0.0.1:9/v1/logs"))
+        == 0
+    )
 
-    assert len(collector.records) == 1
-    assert names(inbox) == set()
+    assert collector.bodies == []
+    assert len(names(inbox)) == 1
 
 
 def test_a_hook_survives_an_unreachable_collector_and_an_invalid_config(

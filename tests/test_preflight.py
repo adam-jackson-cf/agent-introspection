@@ -70,8 +70,8 @@ def test_preflight_passes_a_compatible_server_and_only_reads() -> None:
     result = preflight.preflight(run, AppConfig())
 
     assert result["passed"] is True
-    assert result["mode"] == "docker"
     assert _statuses(result) == {
+        "transport": "pass",
         "clickhouse_version": "pass",
         "signoz_traces.distributed_signoz_index_v3": "pass",
         "signoz_logs.distributed_logs_v2": "pass",
@@ -156,7 +156,11 @@ def test_unreachable_server_fails_without_running_later_checks() -> None:
     result = preflight.preflight(down, AppConfig())
 
     assert result["passed"] is False
-    assert _statuses(result) == {"clickhouse_version": "fail", "otlp_endpoint": "info"}
+    assert _statuses(result) == {
+        "transport": "pass",
+        "clickhouse_version": "fail",
+        "otlp_endpoint": "info",
+    }
 
 
 _A_WINDOW = (datetime(2026, 9, 27, tzinfo=UTC), datetime(2026, 9, 27, 6, tzinfo=UTC))
@@ -260,15 +264,6 @@ _SECRET = "sentinel-not-a-password"
             ),
             id="password-command-fails",
         ),
-        pytest.param(
-            SetupCase(
-                config='[signoz]\ndocker_context = "remote"\n',
-                reason="must target a Docker daemon on this machine",
-                statuses={"connection": "fail", "otlp_endpoint": "info"},
-                stdout=json.dumps([{"Endpoints": {"docker": {"Host": "tcp://10.1.2.3:2376"}}}]),
-            ),
-            id="docker-context-not-local",
-        ),
     ],
 )
 def test_cli_preflight_reports_setup_errors_as_a_failing_connection_check(
@@ -306,7 +301,6 @@ def test_cli_preflight_reports_an_unloadable_config_as_a_failing_check(
     result = json.loads(captured.out)
 
     assert captured.err == ""
-    assert result["mode"] is None
     assert result["passed"] is False
     assert [check["name"] for check in result["checks"]] == ["configuration"]
     assert result["checks"][0]["detail"].startswith("ConfigurationError: invalid TOML")
@@ -319,7 +313,7 @@ def test_a_runner_that_cannot_be_built_still_reports_every_local_check() -> None
     result = preflight.report(AppConfig, refuse)
 
     assert result["passed"] is False
-    assert _statuses(result) == {"connection": "fail", "otlp_endpoint": "info"}
+    assert _statuses(result) == {"transport": "pass", "connection": "fail", "otlp_endpoint": "info"}
 
     _, healthy = fake_clickhouse(grants={})
     assert preflight.report(AppConfig, lambda _config: healthy)["passed"] is True

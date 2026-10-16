@@ -124,16 +124,16 @@ def _docker_notes(docker: dict[str, Any]) -> list[str]:
 def _clickhouse_notes(containers: list[Container], ping: bool) -> list[str]:
     if ping:
         return [
-            f"ClickHouse answers on http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: http mode can use "
-            f'clickhouse_url = "http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}".'
+            f"ClickHouse answers on http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}, the default "
+            "[signoz] clickhouse_url."
         ]
     return [
         f"ClickHouse container {container['name']} does not answer on "
-        f"{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: use docker mode "
-        f'(clickhouse_container = "{container["name"]}"), a local name your container '
-        f"runtime resolves (such as OrbStack's {container['name']}.orb.local), or publish its "
-        "HTTP port on loopback with the opt-in Compose override in the onboarding skill's "
-        "scripts/signoz/docker-compose.clickhouse-http.yaml."
+        f"{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: publish its HTTP port on loopback with the "
+        "opt-in Compose override in the onboarding skill's "
+        "scripts/signoz/docker-compose.clickhouse-http.yaml, or set [signoz] clickhouse_url "
+        f"to a local name your container runtime resolves (such as OrbStack's "
+        f"http://{container['name']}.orb.local:{CLICKHOUSE_HTTP_PORT})."
         for container in containers
         if _CLICKHOUSE_SERVER_IMAGE in container["image"].lower()
     ]

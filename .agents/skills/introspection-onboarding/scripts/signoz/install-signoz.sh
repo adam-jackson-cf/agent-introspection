@@ -22,7 +22,8 @@
 # writes casting.yaml pinning the SigNoz and collector images, runs `foundryctl gauge`
 # and `forge`, copies docker-compose.clickhouse-http.yaml next to the generated
 # compose.yaml, starts the stack with both files, waits for ClickHouse on
-# 127.0.0.1:8123, and prints the config.toml snippet for http mode. It prints no secret.
+# 127.0.0.1:8123, and says that the config.toml [signoz] defaults reach it. It prints no
+# secret.
 # The override publishes ClickHouse HTTP, OTLP, and the UI on 127.0.0.1 only, so this
 # SigNoz serves this machine alone until the user widens it (the override says how).
 #
@@ -337,17 +338,11 @@ step() {
 print_next() {
   cat <<EOF
 
-Add to your config.toml (default ~/.config/agent-introspection/config.toml), in place
-of any docker-mode keys:
-
-[signoz]
-clickhouse_url = "http://127.0.0.1:8123"
-clickhouse_user = "default"
-otlp_endpoint = "http://127.0.0.1:4318"
-
-In http mode the dashboard reads [signoz] clickhouse_url, so no [dashboard] table is
-needed. This ClickHouse's default user has no password and is published on loopback
-only, so no password key is needed.
+The [signoz] defaults of Agent Introspection's config.toml reach this SigNoz, so it
+needs no [signoz] table: clickhouse_url = "http://127.0.0.1:8123" (the CLI and the
+dashboard both read it), clickhouse_user = "default", and otlp_endpoint =
+"http://127.0.0.1:4318". This ClickHouse's default user has no password and is
+published on loopback only, so no password key is needed.
 
 SigNoz listens on 127.0.0.1 only: the UI at http://127.0.0.1:8080, OTLP on 4317 and
 4318, and ClickHouse HTTP on 8123. An additional machine that sends hook records here

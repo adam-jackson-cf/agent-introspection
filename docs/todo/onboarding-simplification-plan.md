@@ -34,7 +34,9 @@ actionable).
   attribution. The existing `failure_signature` path match stays. Accepted loss: a
   Codex call carries `workdir` only when the model passes one, so a Codex evaluation
   run whose calls omit it and whose signature names no temp path now counts.
-- **D4: ClickHouse is reached over HTTP only.** Docker mode (`clickhouse_container`,
+- **D4: ClickHouse is reached over HTTP only.** `[signoz] clickhouse_url` defaults to
+  `http://127.0.0.1:8123`, where the guided install publishes it, so that install needs
+  no `[signoz]` table; the dashboard falls back to the same default. Docker mode (`clickhouse_container`,
   `docker_context`, `docker exec` runner) and the `[dashboard]` table are removed. The
   dashboard already needs HTTP; `[signoz] clickhouse_url` serves both. `signoz detect`
   stays (read-only discovery) and names the override when port 8123 is closed.

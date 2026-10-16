@@ -26,8 +26,9 @@ harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook 
   ─> OTLP/HTTP logs POST ─> SigNoz ─> load_hook_events ─> introspection.hook_events
 ```
 
-Delivery needs `[hooks] otlp_logs_endpoint` (the collector's OTLP/HTTP logs URL). The
-host machine's scheduled `facts sync` drains the spool; each additional machine runs
+Records go to the collector's OTLP/HTTP logs URL (`/v1/logs` on `[signoz]
+otlp_endpoint`, or on `[machine] export_endpoint` on an additional machine). The host
+machine's scheduled `facts sync` drains the spool; each additional machine runs
 `agent-introspection spool sync` from the systemd user timer here, as the onboarding
 skill's additional machines workflow describes.
 

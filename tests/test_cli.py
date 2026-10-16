@@ -282,8 +282,7 @@ def test_an_additional_machine_refuses_every_command_that_needs_clickhouse(
     def reached(*_args: object) -> Any:
         pytest.fail("an additional machine reached ClickHouse or a scheduler")
 
-    for name in ("docker_runner", "http_runner"):
-        monkeypatch.setattr(facts, name, reached)
+    monkeypatch.setattr(facts, "http_runner", reached)
     monkeypatch.setattr(schedule, "_launchctl", reached)
     monkeypatch.setattr(schedule, "_systemctl", reached)
     refusal = 'which this additional machine ([machine] role = "additional") does not have'

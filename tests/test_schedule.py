@@ -179,11 +179,10 @@ def test_host_units_do_not_collide_with_the_spool_sync_units_of_other_machines()
     assert not names & {schedule.SERVICE.name, schedule.TIMER.name}
 
 
-def test_scheduled_job_path_follows_the_connection_mode_and_key_source(
+def test_scheduled_job_path_follows_the_password_and_key_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     found = {
-        "docker": "/opt/docker/bin/docker",
         "security": "/usr/bin/security",
         "pass": "/opt/pass/bin/pass",
         "omp": "/opt/omp/bin/omp",
@@ -194,10 +193,10 @@ def test_scheduled_job_path_follows_the_connection_mode_and_key_source(
     )
 
     # Without a key command, omp's directory serves the stored-credential fallback.
-    assert schedule._job_path(AppConfig()) == ["/opt/docker/bin", "/opt/omp/bin"]
+    assert schedule._job_path(AppConfig()) == ["/opt/omp/bin"]
     assert schedule._job_path(AppConfig(signoz=command)) == ["/usr/bin", "/opt/omp/bin"]
     keyed = AppConfig(labels_openrouter_key_command=("pass", "show", "openrouter"))
-    assert schedule._job_path(keyed) == ["/opt/docker/bin", "/opt/pass/bin"]
+    assert schedule._job_path(keyed) == ["/opt/pass/bin"]
 
     variable = SigNozConfig(clickhouse_url="http://localhost:8123", clickhouse_password_env="CH")
     with pytest.raises(RuntimeError, match="clickhouse_password_command"):

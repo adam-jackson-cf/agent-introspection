@@ -47,8 +47,7 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
   beside a switch that is on, such as `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant
   responses exported on purpose), is `info`: its detail names the value, and its fix
   says what `--prompt-export` would write over it. Leave it if the user chose it.
-- A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
-  scheduled sync: set `[hooks] otlp_logs_endpoint` and
+- `OPENROUTER_API_KEY` set only in the shell is invisible to the scheduled sync: set
   `[labels] openrouter_key_command` in the config instead.
 - The dashboard needs ClickHouse's HTTP interface at a local address: a port published
   on loopback (for example with the opt-in

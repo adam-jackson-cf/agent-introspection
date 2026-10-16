@@ -1,9 +1,9 @@
 """The record spool and its one route to the facts store: OTLP/HTTP logs.
 
 Every machine writes its records (activity-hook events and spool status) as one JSON
-file each into the spool, ``hooks.INBOX``. ``drain`` ships them
-in batches of at most ``BATCH_SIZE`` to the logs endpoint (``[hooks]
-otlp_logs_endpoint``, else the OTEL environment), where SigNoz keeps them and the
+file each into the spool, ``hooks.INBOX``. ``drain`` ships them in batches of at most
+``BATCH_SIZE`` to the logs endpoint (``AppConfig.otlp_logs_endpoint``: ``[hooks]
+otlp_logs_endpoint``, else the collector's ``/v1/logs``), where SigNoz keeps them and the
 ``facts`` loaders read them back into ClickHouse. ``sync`` is the whole periodic step:
 record a status heartbeat and drain.
 
@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent_introspection import hooks
-from agent_introspection.config import AppConfig, load_config, resolve_otlp_logs_endpoint
+from agent_introspection.config import AppConfig, load_config
 
 STATUS_SCHEMA = "agent-introspection.spool-status/1"
 SERVICE_NAME = "agent-introspection"
@@ -418,20 +418,17 @@ def _prune_heartbeats(directory: Path) -> None:
             path.unlink(missing_ok=True)
 
 
-def hook_endpoint(
-    config: Path | None = None, environ: Mapping[str, str] | None = None
-) -> str | None:
+def hook_endpoint(config: Path | None = None) -> str | None:
     """Return the logs endpoint for the hook path, loading configuration leniently.
 
-    A missing configuration file is fine (the environment fallback applies); an invalid
-    one means no endpoint, so records stay spooled, and its error class is logged.
+    A missing configuration file is fine (the defaults apply); an invalid one means no
+    endpoint, so records stay spooled, and its error class is logged.
     """
     try:
-        configured = load_config(config).hooks_otlp_logs_endpoint
+        return load_config(config).otlp_logs_endpoint
     except Exception as exc:
         hooks.log("spool", type(exc).__name__, "0")
         return None
-    return resolve_otlp_logs_endpoint(configured, environ)
 
 
 # --- Status and sync --------------------------------------------------------------
@@ -470,12 +467,8 @@ def sync(
     config: AppConfig,
     *,
     inbox: Path | None = None,
-    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Record a status heartbeat and drain the spool.
-
-    Without an endpoint nothing is sent (and no heartbeat is written, which would only
-    pile up), so records wait in the spool until one is configured.
+    """Record a status heartbeat and drain the spool to ``config.otlp_logs_endpoint``.
 
     Ordering invariant: under one drain lock, unsent heartbeats from earlier runs are
     deleted (superseded; the counter is cumulative), records are drained, the status
@@ -488,9 +481,7 @@ def sync(
     absorbs. A busy lock skips the heartbeat.
     """
     directory = _directory(inbox)
-    endpoint = resolve_otlp_logs_endpoint(config.hooks_otlp_logs_endpoint, environ)
-    if endpoint is None:
-        return {"drain": {"skipped": "no_endpoint"}}
+    endpoint = config.otlp_logs_endpoint
     sent = DrainResult()
     directory.mkdir(parents=True, exist_ok=True)
     with _lock(directory) as held:

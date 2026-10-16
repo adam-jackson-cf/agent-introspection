@@ -216,7 +216,6 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
         f'[database]\npath = "{tmp_path / "workflow.sqlite3"}"\n'
         f"[harnesses]\nenabled = {json.dumps(list(ENABLED))}\n"
         '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n'
-        '[dashboard]\nclickhouse_url = "http://localhost:8123"\n'
         '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n',
     )
     built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)

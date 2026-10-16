@@ -294,14 +294,14 @@ def test_the_status_record_reports_backlog_age_counters_and_last_error(
     assert (empty["pending"], empty["oldest_pending_seconds"]) == (0, None)
 
 
-def sync_config(collector: Collector | None) -> AppConfig:
-    return AppConfig(hooks_otlp_logs_endpoint=collector.url if collector else None)
+def sync_config(collector: Collector) -> AppConfig:
+    return AppConfig(hooks_otlp_logs_endpoint=collector.url)
 
 
 def test_sync_reports_status_after_draining(collector: Collector, inbox: Path) -> None:
     spool_records(inbox, 1)
 
-    result = spool.sync(sync_config(collector), environ={})
+    result = spool.sync(sync_config(collector))
 
     assert result["drain"]["sent"] == 2
     assert {r["schema"] for r in collector.records} == {hooks.SCHEMA, spool.STATUS_SCHEMA}
@@ -313,7 +313,7 @@ def test_sync_ships_records_before_a_heartbeat_that_counts_them(
 ) -> None:
     spool_records(inbox, 1)
 
-    result = spool.sync(sync_config(collector), environ={})
+    result = spool.sync(sync_config(collector))
 
     per_request = [
         [json.loads(e["body"]["stringValue"])["schema"] for e in body_logs(body)]
@@ -344,7 +344,7 @@ def test_sync_sends_the_heartbeat_alone_when_the_record_drain_stops_early(
     spool_records(inbox, 120)
     collector.script = [(200, "{}"), (503, "")]
 
-    spool.sync(sync_config(collector), environ={})
+    spool.sync(sync_config(collector))
 
     last = [e["body"]["stringValue"] for e in body_logs(collector.bodies[-1])]
     assert [json.loads(text)["schema"] for text in last] == [spool.STATUS_SCHEMA]
@@ -361,7 +361,7 @@ def test_sync_spools_only_the_fresh_heartbeat_when_it_cannot_be_sent(
     stale_id = seed_stale_heartbeat(inbox)
     collector.default = (503, "")
 
-    spool.sync(sync_config(collector), environ={})
+    spool.sync(sync_config(collector))
 
     (kept,) = heartbeat_files(inbox)
     assert kept["event_id"] != stale_id
@@ -373,7 +373,7 @@ def test_sync_skips_the_heartbeat_while_another_drain_holds_the_lock(
     spool_records(inbox, 2)
     with (inbox / ".drain.lock").open("a") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
-        result = spool.sync(sync_config(collector), environ={})
+        result = spool.sync(sync_config(collector))
 
     assert result["drain"]["busy"] is True
     assert collector.bodies == []
@@ -385,11 +385,10 @@ def body_logs(body: dict[str, Any]) -> list[dict[str, Any]]:
     return logs
 
 
-def test_sync_without_an_endpoint_keeps_the_spool(inbox: Path) -> None:
+def test_sync_keeps_the_spool_when_the_collector_is_unreachable(inbox: Path) -> None:
     spool_records(inbox, 1)
 
-    result = spool.sync(sync_config(None), environ={})
+    result = spool.sync(AppConfig(hooks_otlp_logs_endpoint="http://127.0.0.1:9/v1/logs"))
 
-    assert result == {"drain": {"skipped": "no_endpoint"}}
-    (written,) = inbox.glob("*.json")
-    assert json.loads(written.read_text())["schema"] == hooks.SCHEMA
+    assert result["drain"]["sent"] == 0
+    assert hooks.SCHEMA in {json.loads(path.read_text())["schema"] for path in inbox.glob("*.json")}

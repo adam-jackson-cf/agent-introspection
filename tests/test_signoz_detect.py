@@ -83,7 +83,9 @@ def test_detect_reports_signoz_and_clickhouse_containers_and_busy_ports(machine:
     assert result["ports"] == {"4317": True, "4318": True, "8123": False, "8080": True}
     assert (result["clickhouse_ping"], result["signoz_present"]) == (False, True)
     notes = " ".join(result["notes"])
-    assert 'clickhouse_container = "signoz-telemetrystore-clickhouse-0-0"' in notes
+    assert "signoz-telemetrystore-clickhouse-0-0 does not answer on 127.0.0.1:8123" in notes
+    assert "docker-compose.clickhouse-http.yaml" in notes
+    assert "http://signoz-telemetrystore-clickhouse-0-0.orb.local:8123" in notes
     assert "never reconfigure" in notes
 
 
@@ -97,7 +99,7 @@ def test_a_clickhouse_answering_on_loopback_counts_as_signoz(machine: Any) -> No
     assert (result["clickhouse_ping"], result["signoz_present"]) == (True, True)
     notes = " ".join(result["notes"])
     assert "Docker CLI not found" in notes
-    assert 'clickhouse_url = "http://127.0.0.1:8123"' in notes
+    assert "the default [signoz] clickhouse_url" in notes
 
 
 def test_clickhouse_is_pinged_only_when_its_port_is_open(machine: Any) -> None:
@@ -284,7 +286,7 @@ def test_install_dry_run_prints_the_plan_and_changes_nothing(
     assert "Plan (dry run: nothing is changed)" in result.stdout
     assert "foundryctl v0.3.0" in result.stdout
     assert "docker-compose.clickhouse-http.yaml up -d" in result.stdout
-    assert 'clickhouse_url = "http://127.0.0.1:8123"' in result.stdout
+    assert "needs no [signoz] table" in result.stdout
     assert not (tmp_path / "home").exists()
     assert set(docker_commands) <= _READ_ONLY_DOCKER
 

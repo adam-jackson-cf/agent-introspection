@@ -12,7 +12,6 @@ from agent_introspection.config import (
     load_config,
     parse_config,
     require_host,
-    resolve_otlp_logs_endpoint,
 )
 
 
@@ -23,8 +22,9 @@ def test_documented_defaults_are_canonical() -> None:
         Path.home() / ".local/share/agent-introspection/introspection.sqlite3"
     )
     assert config.database.busy_timeout_ms == 5_000
-    assert config.signoz.clickhouse_container == "signoz-clickhouse"
-    assert config.signoz.docker_context is None
+    assert config.signoz.clickhouse_url == "http://127.0.0.1:8123"
+    assert config.signoz.clickhouse_user == "default"
+    assert config.otlp_logs_endpoint == "http://127.0.0.1:4318/v1/logs"
 
 
 def test_parse_config_expands_paths_and_preserves_explicit_values(
@@ -34,13 +34,13 @@ def test_parse_config_expands_paths_and_preserves_explicit_values(
 
     config = parse_config({
         "database": {"path": "$INTROSPECTION_ROOT/state.sqlite3", "busy_timeout_ms": 12_000},
-        "signoz": {"clickhouse_container": "clickhouse", "docker_context": "desktop"},
+        "signoz": {"clickhouse_url": "http://localhost:18123/", "clickhouse_user": "reader"},
     })
 
     assert config.database.path == tmp_path / "state.sqlite3"
     assert config.database.busy_timeout_ms == 12_000
-    assert config.signoz.clickhouse_container == "clickhouse"
-    assert config.signoz.docker_context == "desktop"
+    assert config.signoz.clickhouse_url == "http://localhost:18123"
+    assert config.signoz.clickhouse_user == "reader"
 
 
 @pytest.mark.parametrize(
@@ -76,6 +76,9 @@ def test_load_config_uses_defaults_only_for_the_absent_canonical_file(tmp_path: 
         ({"scheduler": {"interval_seconds": 300}}, "scheduler"),
         ({"signoz": {"otlp_http_endpoint": "x"}}, "otlp_http_endpoint"),
         ({"sessions": {"roots": {"codex": ["~/x"]}}}, "sessions"),
+        ({"signoz": {"clickhouse_container": "signoz-clickhouse"}}, "clickhouse_container"),
+        ({"signoz": {"docker_context": "desktop-linux"}}, "docker_context"),
+        ({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123"}}, "dashboard"),
     ],
 )
 def test_retired_keys_are_named_as_safe_to_delete(
@@ -88,44 +91,31 @@ def test_retired_keys_are_named_as_safe_to_delete(
 EXAMPLE = Path(__file__).parents[1] / "config.example.toml"
 # A commented-out table header or `key = value` line in the example.
 COMMENTED_SETTING = re.compile(r"^# (\[[\w.]+\]|\w+ = .*)$")
-SIGNOZ_MODE_KEYS = {
-    "docker": {"clickhouse_container", "docker_context"},
-    "http": {"clickhouse_url", "clickhouse_user", "clickhouse_password_command"},
-}
 
 
-def _example_with_every_setting(mode: str) -> str:
-    """Return the example with each commented setting switched on, for one [signoz] mode."""
-    other = SIGNOZ_MODE_KEYS["http" if mode == "docker" else "docker"]
-    lines: list[str] = []
-    table = ""
-    for line in EXAMPLE.read_text().splitlines():
-        match = COMMENTED_SETTING.match(line)
-        text = match.group(1) if match else line
-        if text.startswith("["):
-            table = text.strip("[]")
-        if not (table == "signoz" and text.split(" = ", 1)[0] in other):
-            lines.append(text)
-    return "\n".join(lines)
+def _example_with_every_setting() -> str:
+    """Return the example with each commented setting switched on."""
+    return "\n".join(
+        match.group(1) if (match := COMMENTED_SETTING.match(line)) else line
+        for line in EXAMPLE.read_text().splitlines()
+    )
 
 
-def test_example_configuration_is_valid() -> None:
-    assert load_config(EXAMPLE).signoz.clickhouse_container == "signoz-clickhouse"
+def test_example_configuration_is_valid_and_the_defaults() -> None:
+    assert load_config(EXAMPLE) == parse_config({})
 
 
-@pytest.mark.parametrize("mode", ["docker", "http"])
-def test_every_setting_the_example_documents_is_accepted(tmp_path: Path, mode: str) -> None:
+def test_every_setting_the_example_documents_is_accepted(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    path.write_text(_example_with_every_setting(mode))
+    path.write_text(_example_with_every_setting())
 
     config = load_config(path)
 
-    assert config.signoz.mode == mode
-    assert config.dashboard_clickhouse_url is not None
+    assert config.signoz.clickhouse_url == "http://127.0.0.1:8123"
+    assert config.signoz.clickhouse_password_command is not None
     assert config.harnesses_enabled is not None
     assert config.hooks_otlp_logs_endpoint is not None
     assert config.labels_openrouter_key_command is not None
-    assert (config.signoz.clickhouse_password_command is not None) == (mode == "http")
     assert config.machine.role is MachineRole.ADDITIONAL
     assert config.collector_endpoint == config.machine.export_endpoint
 
@@ -143,7 +133,7 @@ def test_the_openrouter_key_command_is_an_argv_list_and_never_the_key() -> None:
         parse_config({"labels": "security"})
 
 
-def test_http_mode_reads_url_user_and_password_variable_name() -> None:
+def test_signoz_reads_url_user_and_password_variable_name() -> None:
     config = parse_config({
         "signoz": {
             "clickhouse_url": "http://signoz-clickhouse.orb.local:8123/",
@@ -153,22 +143,16 @@ def test_http_mode_reads_url_user_and_password_variable_name() -> None:
         }
     })
 
-    assert config.signoz.mode == "http"
     assert config.signoz.clickhouse_url == "http://signoz-clickhouse.orb.local:8123"
     assert config.signoz.clickhouse_user == "introspection"
     assert config.signoz.clickhouse_password_env == "INTROSPECTION_CLICKHOUSE_PASSWORD"
     assert config.signoz.otlp_endpoint == "http://localhost:4318"
-    assert parse_config({}).signoz.mode == "docker"
 
 
 @pytest.mark.parametrize(
     ("signoz", "message"),
     [
-        (
-            {"clickhouse_url": "http://localhost:8123", "clickhouse_container": "c"},
-            "exactly one connection mode",
-        ),
-        ({"clickhouse_user": "u"}, "need clickhouse_url"),
+        ({"clickhouse_url": "http://ch.example.com:8123"}, "this machine"),
         ({"clickhouse_url": "ftp://ch"}, "http:// or https://"),
         ({"clickhouse_url": "http://user:secret@localhost:8123"}, "must not embed credentials"),
         (
@@ -181,7 +165,7 @@ def test_http_mode_reads_url_user_and_password_variable_name() -> None:
         ),
     ],
 )
-def test_http_mode_rejects_mixed_modes_and_inline_secrets(
+def test_signoz_rejects_remote_addresses_and_inline_secrets(
     signoz: dict[str, object], message: str
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
@@ -205,14 +189,6 @@ def test_password_command_is_an_argv_list_and_excludes_the_env_variable() -> Non
                 "clickhouse_password_command": ["security"],
             }
         })
-
-
-def test_dashboard_url_is_optional_and_local() -> None:
-    config = parse_config({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123/"}})
-    assert config.dashboard_clickhouse_url == "http://127.0.0.1:8123"
-    assert parse_config({}).dashboard_clickhouse_url is None
-    with pytest.raises(ConfigurationError, match="this machine"):
-        parse_config({"dashboard": {"clickhouse_url": "http://ch.example.com:8123"}})
 
 
 def test_enabled_harnesses_are_optional_and_kept_as_listed() -> None:
@@ -325,37 +301,29 @@ def test_a_collector_endpoint_on_the_otlp_grpc_port_is_refused(
         parse_config(document)
 
 
-PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
-HTTP_ENV = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318/"}
-DERIVED = "http://collector:4318/v1/logs"
-
-
 @pytest.mark.parametrize(
-    ("configured", "environ", "expected"),
+    ("document", "expected"),
     [
-        ("http://cfg/v1/logs", HTTP_ENV, "http://cfg/v1/logs"),
-        ("http://cfg/v1/logs", {PROTOCOL: "grpc", **HTTP_ENV}, "http://cfg/v1/logs"),
-        (None, {}, None),
-        (None, HTTP_ENV, DERIVED),
-        (None, {PROTOCOL: "http/protobuf", **HTTP_ENV}, DERIVED),
-        (None, {PROTOCOL: "http/json", **HTTP_ENV}, DERIVED),
-        (None, {PROTOCOL: "grpc", **HTTP_ENV}, None),
-        (None, {"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "grpc", **HTTP_ENV}, None),
+        ({}, "http://127.0.0.1:4318/v1/logs"),
         (
-            None,
-            {"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/json", PROTOCOL: "grpc", **HTTP_ENV},
-            DERIVED,
+            {"signoz": {"otlp_endpoint": "http://localhost:14318/"}},
+            "http://localhost:14318/v1/logs",
         ),
         (
-            None,
-            {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4318/custom"} | HTTP_ENV,
-            "http://logs:4318/custom",
+            {"machine": {"role": "additional", "export_endpoint": "http://host.local:4318"}},
+            "http://host.local:4318/v1/logs",
         ),
-        (None, {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://u:p@logs/x"}, None),
-        (None, {"OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4317"}, None),
+        ({"hooks": {"otlp_logs_endpoint": "http://cfg:4318/custom"}}, "http://cfg:4318/custom"),
     ],
 )
-def test_the_endpoint_comes_from_config_first_then_only_an_http_environment(
-    configured: str | None, environ: dict[str, str], expected: str | None
+def test_records_go_to_the_configured_logs_url_else_the_collectors(
+    document: dict[str, Any], expected: str
 ) -> None:
-    assert resolve_otlp_logs_endpoint(configured, environ) == expected
+    assert parse_config(document).otlp_logs_endpoint == expected
+
+
+def test_the_dashboard_defaults_to_the_clickhouse_url_the_cli_does() -> None:
+    from agent_introspection.config import DEFAULT_CLICKHOUSE_URL
+
+    source = (Path(__file__).parents[1] / "dashboard/server/clickhouse.ts").read_text()
+    assert f'export const DEFAULT_CLICKHOUSE_URL = "{DEFAULT_CLICKHOUSE_URL}";' in source

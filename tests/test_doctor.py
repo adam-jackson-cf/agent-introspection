@@ -121,7 +121,7 @@ def _unreachable(_config: config.AppConfig) -> facts.SqlRunner:
     ("present", "fix"),
     [
         (False, "SigNoz seems absent: only if the user asks for a new one, run the onboarding"),
-        (True, "SigNoz is present but the CLI cannot reach its ClickHouse"),
+        (True, "SigNoz is present but its ClickHouse HTTP interface does not answer"),
     ],
 )
 def test_an_unreachable_clickhouse_asks_signoz_detect_what_to_fix(
@@ -222,7 +222,7 @@ def test_a_partly_enabled_profile_counts_only_its_enabled_surfaces(machine: Mach
     assert "'codex_cli_rs'" not in telemetry
 
 
-def test_a_hooks_endpoint_from_the_environment_only_warns_and_is_not_printed(
+def test_without_a_hooks_endpoint_records_go_to_the_collectors_logs_url(
     machine: Machine,
 ) -> None:
     machine.config.write_text(
@@ -230,14 +230,16 @@ def test_a_hooks_endpoint_from_the_environment_only_warns_and_is_not_printed(
             '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n', ""
         )
     )
-    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://secret-host.example:4318"}
+    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://elsewhere.example:4318"}
     probes = replace(machine.probes, harness=replace(machine.probes.harness, environ=environ))
 
     hooks_endpoint = one(machine.report(probes), "hooks_endpoint")
 
-    assert hooks_endpoint["status"] == "warn"
-    assert "secret-host" not in json.dumps(hooks_endpoint)
-    unreachable = replace(probes, tcp_open=lambda host, _port: host != "secret-host.example")
+    assert (hooks_endpoint["status"], hooks_endpoint["detail"]) == (
+        "pass",
+        "127.0.0.1:4318 accepts connections",
+    )
+    unreachable = replace(probes, tcp_open=lambda _host, port: port != 4318)
     assert one(machine.report(unreachable), "hooks_endpoint")["status"] == "fail"
 
 
@@ -424,12 +426,12 @@ def test_prompt_labels_check_presence_only(
 @pytest.mark.parametrize(
     ("environ", "answer", "expected", "detail"),
     [
-        ({}, (200, b"Ok.\n"), "pass", "ClickHouse at [dashboard] clickhouse_url answers /ping"),
+        ({}, (200, b"Ok.\n"), "pass", "ClickHouse at [signoz] clickhouse_url answers /ping"),
         (
             {},
             (404, b""),
             "warn",
-            "ClickHouse at [dashboard] clickhouse_url answered /ping with HTTP 404",
+            "ClickHouse at [signoz] clickhouse_url answered /ping with HTTP 404",
         ),
         (
             {"INTROSPECTION_CLICKHOUSE_URL": "http://clickhouse.example:8123"},
@@ -459,25 +461,15 @@ def test_the_dashboard_url_must_be_local_and_answer_ping(
     assert "clickhouse.example" not in json.dumps(dashboard)
 
 
-def test_no_dashboard_url_warns_with_the_compose_note(machine: Machine) -> None:
-    machine.config.write_text(
-        machine.config.read_text().replace(
-            '[dashboard]\nclickhouse_url = "http://localhost:8123"\n', ""
-        )
-    )
-
+def test_an_unanswered_dashboard_ping_warns_with_the_compose_note(machine: Machine) -> None:
     def timed_out(_url: str) -> tuple[int, bytes]:
         raise TimeoutError
 
-    dashboard = one(machine.report(), "dashboard")
+    dashboard = one(machine.report(replace(machine.probes, http_get=timed_out)), "dashboard")
 
     assert dashboard["status"] == "warn"
+    assert dashboard["detail"].endswith("does not answer /ping (TimeoutError)")
     assert "does not publish port 8123" in dashboard["fix"]
-    machine.config.write_text(
-        machine.config.read_text() + '[dashboard]\nclickhouse_url = "http://localhost:8123"\n'
-    )
-    late = one(machine.report(replace(machine.probes, http_get=timed_out)), "dashboard")
-    assert late["detail"].endswith("does not answer /ping (TimeoutError)")
 
 
 def test_drift_warns_per_drifted_or_unreadable_service_and_unregistered_or_unnamed_producer(
@@ -567,7 +559,8 @@ def test_an_absent_default_config_means_the_defaults(
     result = doctor.report(doctor.Options(inbox=machine.inbox), machine.probes)
 
     assert one(result, "config")["status"] == "info"
-    assert one(result, "hooks_endpoint")["status"] == "fail"
+    # With no config, records go to the local collector's logs URL.
+    assert one(result, "hooks_endpoint")["detail"] == "127.0.0.1:4318 accepts connections"
 
 
 def test_the_command_prints_one_json_report_and_exits_by_its_result(

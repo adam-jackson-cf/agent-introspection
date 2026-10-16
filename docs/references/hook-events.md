@@ -19,7 +19,7 @@ harness hook (Claude Code settings, omp extension)
       hands the envelope to a detached `agent-introspection hook <producer> <event>`
         └─> normalizer (src/agent_introspection/hooks.py): derives fields, drops text
               └─> spool: ~/.local/share/agent-introspection/hook-inbox/<event_id>.json
-                    └─> OTLP/HTTP logs POST (`[hooks] otlp_logs_endpoint`)
+                    └─> OTLP/HTTP logs POST (the collector's /v1/logs)
                           └─> SigNoz collector ─> signoz_logs
                                 └─> loader load_hook_events (every minute)
                                       └─> introspection.hook_events
@@ -54,10 +54,13 @@ freshness and sanitization) therefore selects a family by `service.name`,
   `agent-introspection spool sync` (inside the SigNoz host's scheduled `facts sync`,
   from a systemd user timer on other machines) drains the rest within a 20-second
   budget under a non-blocking lock on `hook-inbox/.drain.lock`.
-- The endpoint is `[hooks] otlp_logs_endpoint`, the full logs URL on the collector's
-  OTLP/HTTP port (never the gRPC port). Without it, an `OTEL_EXPORTER_OTLP_*`
-  environment is used only when its protocol is unset or `http/*`. With no endpoint
-  records stay in the spool.
+- The endpoint is `/v1/logs` on the collector this machine's harnesses export to
+  (`[signoz] otlp_endpoint`, default `http://127.0.0.1:4318`, or `[machine]
+export_endpoint` on an additional machine); `[hooks] otlp_logs_endpoint` overrides it
+  with a full logs URL on an OTLP/HTTP port (never the gRPC port). The
+  `OTEL_EXPORTER_OTLP_*` environment never redirects records. Records that reach
+  SigNoz before `facts install` creates the loaders are loaded by `facts backfill` or
+  the hourly 3-day sweep.
 - Outcome per batch: a 2xx with an empty body, `{}`, or no rejected count deletes the
   files. `partialSuccess.rejectedLogRecords` above zero, or a 400 carrying an OTLP
   status, moves the batch to `hook-inbox/rejected/` (it may hold accepted records;
@@ -172,9 +175,8 @@ the installers copy it to
 `~/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh`.
 See the [adapter READMEs](../../.agents/skills/introspection-onboarding/scripts/README.md#activity-hooks)
 for the commands. Failures are logged by exception type only to
-`~/.local/share/agent-introspection/hooks.log`. Delivery also needs
-`[hooks] otlp_logs_endpoint` in `~/.config/agent-introspection/config.toml` and, on a
-machine without `facts sync`, the `spool sync` timer (see the onboarding skill's
+`~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
+delivery also needs the `spool sync` timer (see the onboarding skill's
 [additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
 
 ## Prompt export

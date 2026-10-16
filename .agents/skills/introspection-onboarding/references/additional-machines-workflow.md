@@ -41,18 +41,16 @@ hook records ──────────────▶ spool ─▶ spool sy
    [machine]
    role = "additional"
    export_endpoint = "http://<collector-host>:4318"   # where its harnesses export
-
-   [hooks]
-   otlp_logs_endpoint = "http://<collector-host>:4318/v1/logs"   # where records go
    ```
 
-   Both name the host collector's OTLP/HTTP port (usually 4318), never the gRPC port
-   (4317), and they are the only settings that may name another machine; a URL never
-   carries credentials. With `role = "additional"`, every command that needs ClickHouse
+   It names the host collector's OTLP/HTTP port (usually 4318), never the gRPC port
+   (4317); records go to its `/v1/logs`. It and `[hooks] otlp_logs_endpoint` (needed
+   only to send records elsewhere) are the only settings that may name another
+   machine; a URL never carries credentials. With `role = "additional"`, every command that needs ClickHouse
    (`facts` but `facts schedule status` and `remove`, `producers`, `candidates export`,
    `proposal draft`, and `proposal evaluate`) refuses to run with a message saying so
    (exit 10; `facts preflight` reports it as a failing `connection` check): run it on
-   the host. `[signoz]`, `[dashboard]`, and `[labels]` are not used here. Records sent
+   the host. `[signoz]` and `[labels]` are not used here. Records sent
    before the host's `facts install` created the loaders wait for the 3-day sweep or a
    `facts backfill` on the host.
    Set `[harnesses] enabled` to the harnesses this machine runs, so `doctor` checks

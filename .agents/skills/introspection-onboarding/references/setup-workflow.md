@@ -20,17 +20,14 @@ missing: every check that is not `pass` carries a `fix` (statuses are explained 
 
 - A self-hosted SigNoz on this machine with ClickHouse 24.10 or later, on a single
   node. SigNoz Cloud (no ClickHouse access) and multi-node clusters are unsupported.
-- ClickHouse reachable from this machine in one of two modes; ask the user which:
-  - **docker mode:** `docker exec` into the ClickHouse container (the name `docker ps`
-    shows);
-  - **http mode:** its HTTP interface at a local address: loopback, `localhost`, or a
-    container name the runtime resolves on this machine (for example OrbStack's
-    `*.orb.local`). The config refuses other hosts.
-- The dashboard reads ClickHouse over HTTP in both modes. SigNoz does not publish
-  ClickHouse's HTTP port by default; if the runtime cannot resolve the container name,
-  the user may publish it on loopback with the opt-in
-  `scripts/signoz/docker-compose.clickhouse-http.yaml` (their change to SigNoz). The
-  override also moves SigNoz's OTLP and UI ports to loopback.
+- ClickHouse's HTTP interface at a local address: loopback, `localhost`, or a container
+  name the runtime resolves on this machine (for example OrbStack's `*.orb.local`). The
+  CLI and the dashboard both read it at `[signoz] clickhouse_url` (default
+  `http://127.0.0.1:8123`); the config refuses other hosts. SigNoz does not publish it
+  by default: unless the runtime resolves the container name, the user may publish it
+  on loopback with the opt-in `scripts/signoz/docker-compose.clickhouse-http.yaml`
+  (their change to SigNoz, which restarts ClickHouse). The override also moves SigNoz's
+  OTLP and UI ports to loopback.
 - A ClickHouse user with `SELECT` on `signoz_traces.*`, `signoz_logs.*`, and
   `system.view_refreshes`, plus `CREATE DATABASE, CREATE TABLE, CREATE VIEW,
 DROP TABLE, DROP VIEW, INSERT, SELECT` on `introspection.*` (a local install's
@@ -43,8 +40,7 @@ SigNoz is installed in one of two layouts, which name things differently:
 | Foundry (current; used by the guided install) | `signoz-telemetrystore-clickhouse-0-0` | `ingester`        | `config.data` in `casting.yaml` |
 | `deploy/docker` Compose files (deprecated)    | `signoz-clickhouse`                    | `otel-collector`  | `otel-collector-config.yaml`    |
 
-Docker mode names the ClickHouse container in `[signoz] clickhouse_container`;
-`config.example.toml` shows the older name. On its own, a Foundry install publishes the
+On its own, a Foundry install publishes the
 OTLP ports 4317 and 4318 and the UI port 8080 on all interfaces, and does not publish
 ClickHouse's HTTP port 8123. The override, which the guided install applies, publishes
 all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
@@ -64,27 +60,26 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    refuses (exit 3) when it finds any SigNoz or ClickHouse, running or stopped, or
    their leftovers, and stops (exit 1) on a missing requirement (including Docker
    Compose older than 2.24.4), a Docker daemon on another machine, or a non-empty
-   `--dir`. It prints the `[signoz]` settings for http mode. The new SigNoz listens on
+   `--dir`. The config's `[signoz]` defaults reach it. The new SigNoz listens on
    `127.0.0.1` only (ClickHouse HTTP, OTLP, and the UI), and its ClickHouse needs no
    password key. Details are in the [scripts README](../scripts/signoz/README.md).
 3. **Configure.** With the user (never asking them to paste a secret), write
    `~/.config/agent-introspection/config.toml` from `config.example.toml`, which
    documents every table:
-   - `[signoz]`: exactly one mode. Docker: `clickhouse_container`, and `docker_context`
-     only if it is not the current context. HTTP: `clickhouse_url`, `clickhouse_user`,
-     and, only if there is a password, `clickhouse_password_command` (for example a
+   - `[signoz]`: only what differs from the defaults: `clickhouse_url`,
+     `clickhouse_user`, and, only if there is a password, `clickhouse_password_command` (for example a
      Keychain lookup; the scheduled sync runs it too). `clickhouse_password_env` works
      interactively, but `facts schedule install` refuses it. `otlp_endpoint` is the
      local collector's OTLP/HTTP base URL (default `http://127.0.0.1:4318`, which suits
      the guided install's loopback-only ports; `localhost` also works where it resolves
      to 127.0.0.1 first), which `harness configure` writes into each harness.
-   - `[dashboard] clickhouse_url`: the local HTTP address, needed in docker mode.
    - `[harnesses] enabled`: the harnesses the user chose (see the
      [harness configuration workflow](harness-configuration-workflow.md#choose-the-harnesses)).
    - `[labels] openrouter_key_command`: a command that prints the OpenRouter key for
      prompt labels, which the scheduled sync can run. `OPENROUTER_API_KEY` works only
      interactively; omp's stored credential is the last fallback.
-   - `[hooks] otlp_logs_endpoint`: leave unset until step 8.
+   - `[hooks] otlp_logs_endpoint`: leave it out; records go to the collector's
+     `/v1/logs`.
    - `[machine]`: leave it out; this machine is the host. Only an additional machine
      sets it ([additional machines workflow](additional-machines-workflow.md)).
 4. **Preflight.** `agent-introspection facts preflight` checks the version, the SigNoz
@@ -101,12 +96,9 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 7. **Workflow store** (only for a reinstall that changes finding identities): copy
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.
-8. **Harnesses and endpoint.** Run the
+8. **Harnesses.** Run the
    [harness configuration workflow](harness-configuration-workflow.md) for each
-   harness the user chose. Then, now that `facts install` has created the loaders, set
-   `[hooks] otlp_logs_endpoint` to the local collector's OTLP/HTTP logs URL, on the
-   same host and port as `otlp_endpoint` (such as `http://127.0.0.1:4318/v1/logs`;
-   never the gRPC port 4317).
+   harness the user chose.
 9. **Schedule.** `agent-introspection facts schedule install`, then
    `facts schedule status`. The job runs `facts sync --log` every minute:
    - macOS: a launchd agent labelled `dev.agent-introspection.sync`. Install retires

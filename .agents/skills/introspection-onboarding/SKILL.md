@@ -14,8 +14,9 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
   it and `agent-introspection signoz detect` finds none: run
   `scripts/signoz/install-signoz.sh --dry-run` first, then without `--dry-run`.
   Applying the other files in `scripts/signoz/` is the user's decision.
-- Ask how ClickHouse is reached: docker mode (`docker exec` into its container) or
-  http mode (its HTTP interface at a local address). Assume neither.
+- ClickHouse is reached over its HTTP interface at a local address (`[signoz]
+clickhouse_url`, default `http://127.0.0.1:8123`). When `signoz detect` finds it
+  unpublished, publishing it (the opt-in Compose override) is the user's decision.
 - Run `agent-introspection doctor` (read-only) first at every step and follow each
   check's `fix`. Never weaken or skip a failing check.
 - Never assume which harnesses to include; ask.
