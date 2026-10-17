@@ -26,7 +26,7 @@ die() {
 
 need_root() {
   [ -n "${1-}" ] && [ -f "$1/state/sandbox" ] || die "not a sandbox root: ${1-<none>}"
-  cd "$1" && pwd
+  cd "$1" && pwd -P
 }
 
 free_port() {
