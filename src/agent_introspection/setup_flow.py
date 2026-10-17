@@ -16,9 +16,12 @@ The steps run in order, and the first that fails stops the run:
 7. ``doctor``: every check, as ``agent-introspection doctor`` reports it.
 
 Every step is idempotent, so a rerun is a reinstall. ``dry_run`` reports what each step
-would do and changes nothing: the config diff, the read-only preflight, each harness's
-planned changes, and the doctor report of the machine as it is. ``setup`` never
-installs SigNoz; that stays the onboarding skill's opt-in guided script.
+would do and changes nothing: the config diff, the read-only preflight against the
+options given, each harness's planned changes, and the refusals the schedule and
+dashboard would hit. It passes when the real run would get through every step; it
+runs no ``doctor``, whose report of a machine not yet set up would only fail.
+``setup`` never installs SigNoz; that stays the onboarding skill's opt-in guided
+script.
 """
 
 from __future__ import annotations
@@ -240,6 +243,8 @@ def run(options: SetupOptions) -> dict[str, Any]:
             "error": str(exc),
             "steps": steps,
         }
+    if options.dry_run:
+        return {"dry_run": True, "passed": True, "steps": steps}
     checked = _doctor(options)
     return {
         "dry_run": options.dry_run,

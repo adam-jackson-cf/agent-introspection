@@ -219,9 +219,10 @@ PATH` (the checkout the dashboard is built from, default the current directory).
   facts install and backfill counts, each harness's `configure` result, the schedule,
   the dashboard), and `doctor` (`passed`, `summary`, and every `warn` or `fail`). A
   failing step adds `stopped_at` and `error` and exits 30.
-- `--dry-run` writes nothing: it shows the config diff, runs the read-only preflight,
-  previews each harness's settings and hooks, and runs `doctor` on the machine as it
-  is. It never installs SigNoz.
+- `--dry-run` writes nothing: it shows the config diff, runs the read-only preflight
+  against the options given, previews each harness's settings and hooks, and checks the
+  refusals the schedule and dashboard would hit. It passes (exit 0) when the real run
+  would get through every step, and runs no `doctor`. It never installs SigNoz.
 
 ### doctor
 

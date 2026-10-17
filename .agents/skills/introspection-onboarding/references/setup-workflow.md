@@ -92,7 +92,8 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 5. **Preview.** `agent-introspection setup <options> --dry-run`, and show the user: the
    config diff, the read-only preflight (it stops there on a failing check, naming it
    with its detail; fix each at its owner and never weaken a check), each harness's
-   planned settings and hooks, and the doctor report as the machine is now.
+   planned settings and hooks. A dry run that passes means the real run will get
+   through every step; it runs no `doctor`.
 6. **Workflow store** (only for a reinstall that changes finding identities): copy
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.

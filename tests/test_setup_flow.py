@@ -132,7 +132,9 @@ def test_a_dry_run_changes_nothing_and_previews_each_harness(steps: Steps, tmp_p
 
     assert not (tmp_path / "config.toml").exists()
     assert '+clickhouse_url = "http://localhost:18123"' in result["steps"]["config"]["diff"]
-    assert steps.names() == ["preflight", "configure", "configure", "doctor"]
+    assert steps.names() == ["preflight", "configure", "configure"]
+    assert result["passed"] is True
+    assert "doctor" not in result
     assert ("preflight", "http://localhost:18123") in steps.calls
     assert [value for name, value in steps.calls if name == "configure"] == [
         ("claude-code", True, False),
