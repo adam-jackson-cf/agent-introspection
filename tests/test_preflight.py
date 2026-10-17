@@ -195,12 +195,14 @@ def test_a_registry_that_does_not_parse_never_stops_the_cli_from_starting() -> N
 def test_checked_columns_and_services_are_the_ones_the_projections_read() -> None:
     spans = facts.render_select("select_spans.sql", "1")
     logs = facts.render_select("select_logs.sql", "1")
+    hook_events = facts.render_select("select_hook_events.sql", "1")
     registry = list(facts.load_registry().harnesses)
 
     for column in preflight.SPAN_COLUMNS:
         assert column in spans
     for column in preflight.LOG_COLUMNS:
-        assert column in logs
+        assert column in logs + hook_events
+    assert "resources_string" in hook_events
     checked: list[str] = []
 
     def run(sql: str) -> str:

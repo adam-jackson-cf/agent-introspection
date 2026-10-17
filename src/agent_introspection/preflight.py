@@ -29,7 +29,8 @@ from agent_introspection.facts import (
 # `facts install` sets no experimental flag, so 24.10 is the minimum.
 MINIMUM_VERSION: Final = (24, 10)
 
-# The SigNoz columns facts_sql/select_spans.sql and select_logs.sql read.
+# The SigNoz columns facts_sql/select_spans.sql, select_logs.sql, and
+# select_hook_events.sql read.
 SPAN_TABLE: Final = ("signoz_traces", "distributed_signoz_index_v3")
 SPAN_COLUMNS: Final = (
     "timestamp",
@@ -57,6 +58,7 @@ LOG_COLUMNS: Final = (
     "attributes_string",
     "attributes_number",
     "attributes_bool",
+    "resources_string",
     "resource",
 )
 
