@@ -256,9 +256,10 @@ wait_for_dashboard() {
 
 dashboard_views_clean() {
   # Every view answers 200 with no failed dataset (`errors` empty).
-  local view
+  local view window
+  window="start=$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)&end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   for view in pipeline cache effort tools friction guardrails provider recurrence intent interventions; do
-    curl -fsS -m 30 "http://127.0.0.1:4173/api/view?view=$view" >"$ROOT/state/verify/view-$view.json" || return 1
+    curl -fsS -m 30 "http://127.0.0.1:4173/api/view?view=$view&$window" >"$ROOT/state/verify/view-$view.json" || return 1
     python3 -I -c 'import json, sys; sys.exit(1 if json.load(open(sys.argv[1])).get("errors") else 0)' \
       "$ROOT/state/verify/view-$view.json" || { echo "view $view has errors" >&2; return 1; }
   done
