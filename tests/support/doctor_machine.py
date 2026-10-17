@@ -202,6 +202,8 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
         '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n'
         '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n',
     )
+    # The hooks read this config, as `harness configure --config` points them.
+    write(runtime / doctor_harness.CONFIG_POINTER, f"{config_path.resolve()}\n")
     built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)
     built.probes = fake_probes(built)
     return built

@@ -162,7 +162,9 @@ def _facts(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
 
 def _harnesses(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
     configure = harness_config.ConfigureOptions(
-        dry_run=options.dry_run, prompt_export=options.prompt_export
+        dry_run=options.dry_run,
+        prompt_export=options.prompt_export,
+        config_path=options.config_path,
     )
     return {
         key: harness_config.configure(key, config.collector_endpoint, configure)

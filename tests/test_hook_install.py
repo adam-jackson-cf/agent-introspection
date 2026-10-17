@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-from agent_introspection import doctor_harness, harness_config, hook_install
+from agent_introspection import config, doctor_harness, harness_config, hook_install
 from agent_introspection.hook_install import HookInstallError, HookOptions
 from tests.conftest import FakeOmp
 
@@ -25,7 +26,7 @@ def test_the_runtime_is_copied_from_the_package_with_modes_and_backups(tmp_path:
     shim.write_text("#!/bin/sh\n# user-edited\n")
 
     planned = hook_install.install_runtime(HookOptions(home=tmp_path, dry_run=True))
-    assert [item["action"] for item in planned] == ["change", "add", "add"]
+    assert [item["action"] for item in planned] == ["change", "add", "add", "unchanged"]
     assert shim.read_text() == "#!/bin/sh\n# user-edited\n"
 
     installed = hook_install.install_runtime(HookOptions(home=tmp_path))
@@ -138,7 +139,12 @@ def test_configure_installs_the_hooks_and_doctor_then_passes_them(
 
     result = harness_config.configure("claude-code", None, harness_config.ConfigureOptions())
 
-    assert {item["action"] for item in result["hooks"]["runtime"]} == {"add"}
+    assert [item["action"] for item in result["hooks"]["runtime"]] == [
+        "add",
+        "add",
+        "add",
+        "unchanged",
+    ]
     settings = json.loads((tmp_path / ".claude/settings.json").read_text())
     assert set(settings["hooks"]) == set(doctor_harness.CLAUDE_HOOK_EVENTS)
     assert settings["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
@@ -201,3 +207,57 @@ def test_a_hung_omp_is_reported_as_a_hook_install_error(tmp_path: Path) -> None:
 
     with pytest.raises(HookInstallError, match=r"`omp plugin link .*` failed"):
         hook_install.link_omp_plugin(HookOptions(home=tmp_path, run=hang))
+
+
+def test_a_selected_config_is_pointed_at_and_the_default_removes_the_pointer(
+    tmp_path: Path,
+) -> None:
+    pointer = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.CONFIG_POINTER
+    selected = tmp_path / "custom.toml"
+
+    hook_install.install_runtime(HookOptions(home=tmp_path, config_path=selected))
+
+    assert pointer.read_text() == f"{selected.resolve()}\n"
+    assert doctor_harness.pointer_check(tmp_path, "omp", selected)["status"] == "pass"
+    stale = doctor_harness.pointer_check(tmp_path, "omp", None)
+    assert (stale["status"], stale["fix"]) == (
+        "warn",
+        "`agent-introspection harness configure omp` points them at it",
+    )
+    default = HookOptions(home=tmp_path, config_path=config.DEFAULT_CONFIG_PATH)
+    assert hook_install.install_runtime(default)[-1]["action"] == "remove"
+    assert not pointer.exists()
+    assert doctor_harness.pointer_check(tmp_path, "omp", None)["status"] == "pass"
+
+
+def test_the_shim_exports_the_pointed_config_unless_one_is_set(tmp_path: Path) -> None:
+    hook_install.install_runtime(HookOptions(home=tmp_path, config_path=tmp_path / "c.toml"))
+    shim = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM
+    seen = tmp_path / "seen"
+    fake = tmp_path / "bin/agent-introspection"
+    fake.parent.mkdir()
+    fake.write_text(f'#!/bin/sh\nprintf %s "$AGENT_INTROSPECTION_CONFIG" > "{seen}"\n')
+    fake.chmod(0o755)
+
+    for preset, expected in ((None, str((tmp_path / "c.toml").resolve())), ("/x.toml", "/x.toml")):
+        seen.unlink(missing_ok=True)
+        environment = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "AGENT_INTROSPECTION_BIN": str(fake),
+        }
+        if preset is not None:
+            environment["AGENT_INTROSPECTION_CONFIG"] = preset
+        subprocess.run(
+            ["/bin/sh", str(shim), "omp", "tool_call"],
+            input="{}",
+            env=environment,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        for _ in range(100):
+            if seen.exists():
+                break
+            time.sleep(0.05)
+        assert seen.read_text() == expected

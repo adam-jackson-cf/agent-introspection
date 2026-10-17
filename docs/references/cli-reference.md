@@ -234,8 +234,8 @@ PATH` (the checkout the dashboard is built from, default the current directory).
   check with its detail);
   `collector_http`, `collector_grpc`, `hooks_endpoint`, and `collector_live` (with
   `--live`); for each enabled harness profile `binary`, `config_files`,
-  `export_settings`, `prompt_export`, `activity_hooks`, `activity_shim`, and
-  `telemetry`; `disabled_harnesses` (a registry harness left out of `[harnesses]
+  `export_settings`, `prompt_export`, `activity_hooks`, `activity_shim`,
+  `hook_config`, and `telemetry`; `disabled_harnesses` (a registry harness left out of `[harnesses]
 enabled` that sent rows this week); then `spool`, `schedule`, `schedule_legacy`,
   `schedule_linger` (Linux), `prompt_labels`, `dashboard` (the ClickHouse URL it reads),
   and `dashboard_service` (`off` when not installed, else whether it answers on port
@@ -262,7 +262,8 @@ enabled` that sent rows this week); then `spool`, `schedule`, `schedule_legacy`,
 - `prompt_labels` reads only `[labels] openrouter_key_command`, the one key source.
   Secrets are checked for presence only, and key commands are never run.
 - `activity_shim` warns when the installed shim differs from the one the CLI ships:
-  rerun `harness configure` after updating the CLI.
+  rerun `harness configure` after updating the CLI. `hook_config` warns when the
+  hooks read a config file other than the one doctor checked.
 - When ClickHouse is unreachable, the machine is treated as not the SigNoz host: a
   missing schedule is `info`, and `telemetry` and `drift` report that they were not
   checked.

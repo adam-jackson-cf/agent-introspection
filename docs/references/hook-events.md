@@ -178,7 +178,13 @@ replaced file backed up), so no hook runs a repository path, then registers the 
 A second run changes nothing; `--dry-run` reports the same actions and writes nothing;
 `agent-introspection harness remove-hooks <harness>` takes them out again. `doctor`
 warns when the installed shim differs from the one the CLI ships, so rerun
-`harness configure` after updating the CLI. Failures are logged by exception type only
+`harness configure` after updating the CLI. With a non-default config file
+(`agent-introspection --config <path> harness configure`, or `setup --config`), the
+path goes in a `config-path` file beside the shim, which the shim exports as
+`AGENT_INTROSPECTION_CONFIG` unless that is already set; with the default file it is
+removed. One home holds one, so the last `harness configure` sets it for every
+harness, and `doctor`'s `hook_config` warns when it names a config other than the one
+doctor checked. Failures are logged by exception type only
 to `~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
 delivery also needs the `spool sync` timer (see the onboarding skill's
 [additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).

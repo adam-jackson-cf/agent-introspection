@@ -27,7 +27,7 @@ from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
 from agent_introspection import config_writers, facts, preflight, profiles
-from agent_introspection.config import AppConfig
+from agent_introspection.config import DEFAULT_CONFIG_PATH, AppConfig
 from agent_introspection.json_types import JsonMapping
 
 STATUSES: Final = ("pass", "warn", "fail", "off", "info")
@@ -35,6 +35,8 @@ VERSION_TIMEOUT_SECONDS: Final = 5
 # Where `harness configure` installs the shim and the omp plugin, under the home.
 MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/activity-hooks-v1")
 SHIM: Final = "activity-shim.sh"
+# Beside the shim: the config path the hooks read, written only for a non-default one.
+CONFIG_POINTER: Final = "config-path"
 OMP_PLUGIN_LINK: Final = Path(".omp/plugins/node_modules/agent-introspection-activity")
 OMP_PLUGIN_FILES: Final = ("package.json", "activity.ts")
 # The events `harness configure claude-code` registers, with their tool-name matchers
@@ -132,6 +134,7 @@ class HarnessContext:
     telemetry: Telemetry
     probes: HarnessProbes
     now: float
+    config_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -702,6 +705,31 @@ def omp_plugin_check(home: Path) -> Check:
     return check("activity_hooks", "pass", f"the omp plugin links {shown_path(managed, home)}")
 
 
+def pointed_config(config_path: Path | None) -> str | None:
+    """Return the config path the hooks must be pointed at; None for the default file."""
+    if config_path is None:
+        return None
+    selected = config_path.expanduser().resolve(strict=False)
+    return None if selected == DEFAULT_CONFIG_PATH.resolve(strict=False) else str(selected)
+
+
+def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Check:
+    """Check the hooks read the config file doctor checked."""
+    pointer = home / MANAGED_RUNTIME / CONFIG_POINTER
+    read = pointer.read_text("utf-8").strip() if pointer.is_file() else None
+    expected = pointed_config(config_path)
+    if read == expected:
+        shown = read or f"the default {shown_path(DEFAULT_CONFIG_PATH, home)}"
+        return check("hook_config", "pass", f"the hooks read {shown}")
+    selected = f" --config {expected}" if expected else ""
+    return check(
+        "hook_config",
+        "warn",
+        f"the hooks read {read or 'the default config'}, not the one doctor checked",
+        f"`agent-introspection{selected} harness configure {profile_key}` points them at it",
+    )
+
+
 def shim_check(home: Path, profile_key: str) -> Check:
     """Check the managed shim exists, is executable, and is the one this CLI ships."""
     shim = home / MANAGED_RUNTIME / SHIM
@@ -721,12 +749,18 @@ def shim_check(home: Path, profile_key: str) -> Check:
     return check("activity_shim", "pass", f"{shown_path(shim, home)} is executable and current")
 
 
-def hook_checks(profile: profiles.Profile, files: Sequence[LoadedFile], home: Path) -> list[Check]:
+def hook_checks(
+    profile: profiles.Profile,
+    files: Sequence[LoadedFile],
+    home: Path,
+    config_path: Path | None = None,
+) -> list[Check]:
     """Check the activity hooks of a profile with a hook adapter."""
+    runtime = [shim_check(home, profile.key), pointer_check(home, profile.key, config_path)]
     if profile.hook_adapter == "claude-code":
-        return [claude_hooks_check(files, home), shim_check(home, profile.key)]
+        return [claude_hooks_check(files, home), *runtime]
     if profile.hook_adapter == "omp":
-        return [omp_plugin_check(home), shim_check(home, profile.key)]
+        return [omp_plugin_check(home), *runtime]
     return []
 
 
@@ -812,6 +846,10 @@ def harness_checks(profile: profiles.Profile, context: HarnessContext) -> list[C
         *guarded(
             "prompt_export", lambda: prompt_check(profile, files, context), harness=profile.key
         ),
-        *guarded("activity_hooks", lambda: hook_checks(profile, files, home), harness=profile.key),
+        *guarded(
+            "activity_hooks",
+            lambda: hook_checks(profile, files, home, context.config_path),
+            harness=profile.key,
+        ),
         *guarded("telemetry", lambda: telemetry_check(profile, context), harness=profile.key),
     ]

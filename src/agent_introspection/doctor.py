@@ -472,6 +472,7 @@ class _Doctor:
             telemetry=telemetry,
             probes=self.probes.harness,
             now=time.time(),
+            config_path=self.options.config_path,
         )
         return [
             *(

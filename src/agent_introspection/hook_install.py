@@ -11,6 +11,11 @@ registers the hooks with the harness:
 - omp: ``omp plugin link <runtime>/omp``, which records the plugin in omp's plugin
   directory; nothing goes in ``~/.omp/agent``.
 
+When a non-default config file was selected, its path goes in a pointer file beside
+the shim (``doctor_harness.CONFIG_POINTER``), which the shim exports as
+``AGENT_INTROSPECTION_CONFIG``; with the default file the pointer is removed. One home
+holds one pointer, so the last ``harness configure`` sets it for every harness.
+
 Every write backs up the file it replaces to ``<file>.bak-<UTC timestamp>`` and is
 atomic; a second run changes nothing. A dry run reports the same actions and writes
 nothing.
@@ -30,10 +35,12 @@ from typing import Any, Final
 from agent_introspection import config_writers
 from agent_introspection.doctor_harness import (
     CLAUDE_HOOK_EVENTS,
+    CONFIG_POINTER,
     MANAGED_RUNTIME,
     OMP_PLUGIN_LINK,
     SHIM,
     claude_hook_command,
+    pointed_config,
 )
 
 # The runtime files, by path under ``hook_runtime/`` and the managed directory, and mode.
@@ -60,12 +67,14 @@ class HookOptions:
     ``home`` holds the managed runtime and omp's plugin directory; ``run`` runs the
     ``omp`` command (a test passes a fake). ``backed_up`` names files this run already
     backed up or created, so the hook write adds no second backup of them.
+    ``config_path`` is the selected config file, None for the default.
     """
 
     home: Path
     dry_run: bool = False
     run: CommandRunner | None = None
     backed_up: frozenset[Path] = frozenset()
+    config_path: Path | None = None
 
 
 def packaged(name: str) -> str:
@@ -89,9 +98,30 @@ def _install_file(name: str, mode: int, options: HookOptions) -> dict[str, Any]:
     return {"path": str(target), "action": action, "backup": str(backup) if backup else None}
 
 
+def _point_config(options: HookOptions) -> dict[str, Any]:
+    """Write the selected config path beside the shim, or remove it for the default."""
+    target = options.home / MANAGED_RUNTIME / CONFIG_POINTER
+    selected = pointed_config(options.config_path)
+    content = f"{selected}\n" if selected is not None else None
+    current = target.read_text("utf-8") if target.is_file() else None
+    if current == content:
+        return {"path": str(target), "action": "unchanged", "backup": None}
+    action = "remove" if content is None else "add" if current is None else "change"
+    if not options.dry_run:
+        if content is None:
+            target.unlink()
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            config_writers.atomic_write(target, content, 0o644)
+    return {"path": str(target), "action": action, "backup": None}
+
+
 def install_runtime(options: HookOptions) -> list[dict[str, Any]]:
-    """Copy the shim and omp's plugin package into the managed directory."""
-    return [_install_file(name, mode, options) for name, mode in RUNTIME_FILES]
+    """Copy the shim and omp's plugin package in, and point the shim at the config."""
+    return [
+        *(_install_file(name, mode, options) for name, mode in RUNTIME_FILES),
+        _point_config(options),
+    ]
 
 
 # --- Claude Code ---------------------------------------------------------------------

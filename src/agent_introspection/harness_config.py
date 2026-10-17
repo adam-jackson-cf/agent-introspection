@@ -56,6 +56,7 @@ class ConfigureOptions:
     prompt_export: bool = False
     force: bool = False
     roots: tuple[str, ...] = ()
+    config_path: Path | None = None
 
 
 class SettingChange(TypedDict):
@@ -390,7 +391,12 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
         hook_install.install(
             profile.hook_adapter,
             _settings_files(profile, options.roots),
-            hook_install.HookOptions(home=Path.home(), dry_run=options.dry_run, backed_up=written),
+            hook_install.HookOptions(
+                home=Path.home(),
+                dry_run=options.dry_run,
+                backed_up=written,
+                config_path=options.config_path,
+            ),
         )
         if profile.hook_adapter
         else {}

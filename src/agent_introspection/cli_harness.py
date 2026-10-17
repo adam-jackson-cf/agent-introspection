@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Any
 
 from agent_introspection import harness_config
@@ -97,5 +98,6 @@ def harness_command(args: argparse.Namespace) -> dict[str, Any]:
         prompt_export=args.prompt_export,
         force=args.force,
         roots=tuple(args.root),
+        config_path=Path(args.config) if args.config else None,
     )
     return harness_config.configure(args.key, config.collector_endpoint, options)
