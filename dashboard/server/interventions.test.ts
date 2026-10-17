@@ -107,6 +107,20 @@ test("a cluster counts only the metric's harnesses and its own cluster", () => {
   expect(result.pre_rate).toBe(2 / 20);
 });
 
+test("a retired repeated-correction proposal shows no measured rates", () => {
+  const { tool_family: _family, failure_class: _class, ...rest } = proposal;
+  const retired: Row = { ...rest, detector: "facts.repeated_correction" };
+  const result = prePost(retired, facts([cluster("2026-09-08", 1)]), ...RANGE);
+  expect(result.kind).toBe("correction");
+  expect([result.pre_matched, result.pre_rate, result.post_rate]).toEqual([
+    null,
+    null,
+    null,
+  ]);
+  expect(result.change_pct).toBeNull();
+  expect(result.pre_tasks).toBe(20);
+});
+
 test("a dormant repeated-correction finding keeps its kind for its subject label", () => {
   const data = interventionsData(
     { task_daily: tasks },

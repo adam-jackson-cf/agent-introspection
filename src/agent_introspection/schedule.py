@@ -235,7 +235,7 @@ def _tool_directory(name: str) -> str:
     return str(Path(found).parent)
 
 
-def _job_path(config: AppConfig) -> list[str]:
+def job_path(config: AppConfig) -> list[str]:
     """Return the tool directories the scheduled job needs on PATH.
 
     A ClickHouse password needs its command's executable, because the scheduler cannot
@@ -274,7 +274,7 @@ def schedule_install(config: Path | None = None) -> dict[str, Any]:
     executable = Path(sys.executable).with_name("agent-introspection")
     if not executable.exists():
         raise RuntimeError(f"{executable} not found; cannot schedule a missing executable")
-    path_dirs = (*_job_path(loaded), *SYSTEM_PATH)
+    path_dirs = (*job_path(loaded), *SYSTEM_PATH)
     if scheduler == "launchd":
         return _install_launchd(executable, path_dirs, config)
     return _install_systemd(executable, path_dirs, config)

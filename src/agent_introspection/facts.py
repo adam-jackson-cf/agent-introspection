@@ -166,7 +166,9 @@ LOADERS = (
 )
 
 # Objects of the removed project attribution, dropped by every install so an upgraded
-# store keeps no loader selecting into a dropped table. Loaders and the view go first.
+# store keeps no loader selecting into a dropped table. They go after the refreshers
+# that, on an upgraded store, still wait on the old loaders; loaders and the view go
+# before the table.
 RETIRED_OBJECTS = (
     "DROP VIEW IF EXISTS introspection.sweep_session_projects",
     "DROP VIEW IF EXISTS introspection.load_session_projects",
@@ -840,7 +842,6 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
     harnesses = enabled_harnesses(registry, enabled)
     return [
         _sql("001_tables.sql"),
-        *RETIRED_OBJECTS,
         # Refreshers go before the loaders they wait on, a reader's before its source's.
         *(
             f"DROP VIEW IF EXISTS {DATABASE}.{name}"
@@ -848,6 +849,7 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
             for name in (*snapshot_refreshers(snapshot), f"refresh_{snapshot.view}")
         ),
         *(f"DROP VIEW IF EXISTS {DATABASE}.{loader.name}" for loader in LOADERS),
+        *RETIRED_OBJECTS,
         *(loader_ddl(loader) for loader in LOADERS),
         *(statement for views_file in VIEW_FILES for statement in view_file_statements(views_file)),
         *route_check_statements(registry),

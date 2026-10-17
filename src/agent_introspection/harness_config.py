@@ -318,7 +318,7 @@ def _changed(items: Sequence[Mapping[str, Any]]) -> bool:
 
 
 def _hooks_changed(hooks: Mapping[str, Any]) -> bool:
-    entries = [*hooks.get("runtime", []), hooks.get("settings", {}), hooks.get("plugin", {})]
+    entries = [*hooks.get("runtime", []), *hooks.get("settings", []), hooks.get("plugin", {})]
     return _changed(entries)
 
 
@@ -340,19 +340,21 @@ def _registered(name: str) -> Profile:
     return profile
 
 
-def _settings_file(profile: Profile, roots: Sequence[str]) -> Path | None:
-    """Return the JSON settings file that holds Claude Code's hooks, if the profile has one."""
-    for config_file in profile.config_files:
-        if config_file.format == "json":
-            return config_targets(config_file, roots)[0]
-    return None
+def _settings_files(profile: Profile, roots: Sequence[str]) -> list[Path]:
+    """Return the JSON settings files that hold Claude Code's hooks, one per root."""
+    return [
+        path
+        for config_file in profile.config_files
+        if config_file.format == "json"
+        for path in config_targets(config_file, roots)
+    ]
 
 
-def remove_hooks(name: str, *, dry_run: bool = False) -> dict[str, Any]:
+def remove_hooks(name: str, *, dry_run: bool = False, roots: Sequence[str] = ()) -> dict[str, Any]:
     """Take a registered harness's activity hooks out; its export settings stay."""
     profile = _registered(name)
     options = hook_install.HookOptions(home=Path.home(), dry_run=dry_run)
-    hooks = hook_install.remove(profile.hook_adapter, _settings_file(profile, ()), options)
+    hooks = hook_install.remove(profile.hook_adapter, _settings_files(profile, roots), options)
     return {
         "harness": profile.key,
         "dry_run": dry_run,
@@ -377,6 +379,7 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
     """
     profile = _registered(name)
     context = profiles.export_context(profile, otlp_endpoint)
+    hook_install.require(profile.hook_adapter)
     files = [
         _configure_file(profile, config_file, path, options, context)
         for config_file in profile.config_files
@@ -386,7 +389,7 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
     hooks = (
         hook_install.install(
             profile.hook_adapter,
-            _settings_file(profile, options.roots),
+            _settings_files(profile, options.roots),
             hook_install.HookOptions(home=Path.home(), dry_run=options.dry_run, backed_up=written),
         )
         if profile.hook_adapter

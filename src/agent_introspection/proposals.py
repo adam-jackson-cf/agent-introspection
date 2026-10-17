@@ -94,6 +94,8 @@ def require_successful_validation(evidence: JsonMapping) -> None:
 
 CLUSTER_TASK_RATE = "cluster_task_rate"
 SUCCESS_METRICS = (CLUSTER_TASK_RATE,)
+# Metrics older proposals may carry that nothing measures any more.
+RETIRED_METRICS = ("correction_task_rate",)
 MIN_METRIC_WINDOW_DAYS = 7
 _SUCCESS_METRIC_KEYS = frozenset({
     "metric",

@@ -182,8 +182,8 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
     runtime = home / doctor_harness.MANAGED_RUNTIME
     shim = write(runtime / doctor_harness.SHIM, hook_install.packaged(doctor_harness.SHIM))
     shim.chmod(0o755)
-    write(runtime / "omp/package.json", "{}\n")
-    write(runtime / "omp/activity.ts", "export default {}\n")
+    for name in doctor_harness.OMP_PLUGIN_FILES:
+        write(runtime / "omp" / name, hook_install.packaged(f"omp/{name}"))
     link = home / doctor_harness.OMP_PLUGIN_LINK
     link.parent.mkdir(parents=True)
     link.symlink_to(runtime / "omp")

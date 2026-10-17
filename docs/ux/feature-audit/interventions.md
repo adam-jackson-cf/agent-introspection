@@ -152,5 +152,5 @@ Removed since baseline: none found.
 ## Project attribution removed (2026-10-17, DC11)
 
 - Repeated corrections KPI (INTV-F05) and Uncodified practice recurrence table (INTV-F12) removed; signal `intervene.practice_recurrence` removed from the registry. The repeated-correction detector is retired: its findings go dormant and stay listed, labelled project · correction kind.
-- Post-intervention recurrence compares failure clusters only (`correction_daily` removed).
+- Post-intervention recurrence compares failure clusters only (`correction_daily` removed). An applied proposal of the retired detector shows its task counts with Before, After, and Rate change empty, not a measured 0.
 - The corrections baseline series counts corrected tasks per 100 tasks with a next-prompt label (Intent's corrected rate), over all tasks rather than tasks with a project.

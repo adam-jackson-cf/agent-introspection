@@ -77,13 +77,24 @@ def build(directory: Path, bun: Path) -> None:
             raise RuntimeError(f"bun {' '.join(step)} failed: {lines[-1] if lines else ''}")
 
 
-def _environment(bun: Path, config: Path | None) -> dict[str, str]:
-    path = ":".join(dict.fromkeys((str(bun.parent), *schedule.SYSTEM_PATH)))
-    selected = {"AGENT_INTROSPECTION_CONFIG": str(config)} if config is not None else {}
-    return {"PATH": path, **selected}
+def _environment(settings: AppConfig, bun: Path, config: Path | None) -> dict[str, str]:
+    """Return the service's variables.
+
+    PATH, and what the server reads only from its own environment: the workflow store,
+    a non-default ClickHouse user, and the config path.
+    """
+    environment = {
+        "PATH": ":".join(dict.fromkeys((str(bun.parent), *schedule.SYSTEM_PATH))),
+        "INTROSPECTION_WORKFLOW_DB": str(settings.database.path.expanduser()),
+    }
+    if settings.signoz.clickhouse_user != "default":
+        environment["INTROSPECTION_CLICKHOUSE_USER"] = settings.signoz.clickhouse_user
+    if config is not None:
+        environment["AGENT_INTROSPECTION_CONFIG"] = str(config)
+    return environment
 
 
-def plist(directory: Path, bun: Path, config: Path | None = None) -> bytes:
+def plist(settings: AppConfig, directory: Path, bun: Path, config: Path | None = None) -> bytes:
     """Return the launchd agent that keeps ``bun server.ts`` running in ``directory``."""
     return plistlib.dumps({
         "Label": LABEL,
@@ -91,18 +102,24 @@ def plist(directory: Path, bun: Path, config: Path | None = None) -> bytes:
         "WorkingDirectory": str(directory),
         "RunAtLoad": True,
         "KeepAlive": True,
-        "EnvironmentVariables": _environment(bun, config),
+        "EnvironmentVariables": _environment(settings, bun, config),
         "StandardOutPath": str(LOG),
         "StandardErrorPath": str(LOG),
     })
 
 
-def service_unit(directory: Path, bun: Path, config: Path | None = None) -> str:
-    """Return the systemd user service that keeps ``bun server.ts`` running."""
+def service_unit(
+    settings: AppConfig, directory: Path, bun: Path, config: Path | None = None
+) -> str:
+    """Return the systemd user service that keeps ``bun server.ts`` running.
+
+    ``WorkingDirectory=`` takes a bare path (systemd does not unquote it), so only its
+    ``%`` specifier character is escaped.
+    """
     quote = schedule.unit_quote
     environment = "".join(
         f"Environment={quote(f'{name}={value}')}\n"
-        for name, value in _environment(bun, config).items()
+        for name, value in _environment(settings, bun, config).items()
     )
     return (
         "[Unit]\n"
@@ -110,7 +127,7 @@ def service_unit(directory: Path, bun: Path, config: Path | None = None) -> str:
         "\n"
         "[Service]\n"
         "Type=simple\n"
-        f"WorkingDirectory={quote(str(directory))}\n"
+        f"WorkingDirectory={str(directory).replace('%', '%%')}\n"
         f"{environment}"
         f"ExecStart={quote(str(bun)).replace('$', '$$')} server.ts\n"
         "Restart=on-failure\n"
@@ -121,8 +138,11 @@ def service_unit(directory: Path, bun: Path, config: Path | None = None) -> str:
 
 
 def _start_launchd(content: bytes) -> None:
+    """Replace the agent; when the new one will not start, put the running one back."""
     domain = schedule.launchd_domain()
+    previous: bytes | None = None
     if schedule.launchd_loaded(LABEL):
+        previous = PLIST.read_bytes() if PLIST.exists() else None
         stopped = schedule.launchctl("bootout", f"{domain}/{LABEL}")
         if stopped.returncode != 0:
             raise RuntimeError(f"could not stop {LABEL}: {stopped.stderr.strip()}")
@@ -130,7 +150,12 @@ def _start_launchd(content: bytes) -> None:
     PLIST.write_bytes(content)
     started = schedule.launchctl("bootstrap", domain, str(PLIST))
     if started.returncode != 0:
-        raise RuntimeError(f"launchctl bootstrap failed: {started.stderr.strip()}")
+        restored = ""
+        if previous is not None:
+            PLIST.write_bytes(previous)
+            back = schedule.launchctl("bootstrap", domain, str(PLIST)).returncode == 0
+            restored = "; the previous service was restored" if back else ""
+        raise RuntimeError(f"launchctl bootstrap failed: {started.stderr.strip()}{restored}")
 
 
 def _start_systemd(content: str) -> None:
@@ -144,18 +169,21 @@ def _start_systemd(content: str) -> None:
             )
 
 
-def install(config: AppConfig, repo: Path, config_path: Path | None = None) -> dict[str, Any]:
-    """Build the dashboard in ``repo`` and (re)start its service on ``PORT``."""
+def check(config: AppConfig, repo: Path) -> tuple[str, Path, Path]:
+    """Refuse what ``install`` would refuse; return the scheduler, directory, and bun."""
     require_host(config, "the dashboard reads the host's ClickHouse")
     _require_no_password(config)
-    scheduler = schedule.platform_scheduler()
-    directory = dashboard_directory(repo)
-    bun = _bun()
+    return schedule.platform_scheduler(), dashboard_directory(repo), _bun()
+
+
+def install(config: AppConfig, repo: Path, config_path: Path | None = None) -> dict[str, Any]:
+    """Build the dashboard in ``repo`` and (re)start its service on ``PORT``."""
+    scheduler, directory, bun = check(config, repo)
     build(directory, bun)
     if scheduler == "launchd":
-        _start_launchd(plist(directory, bun, config_path))
+        _start_launchd(plist(config, directory, bun, config_path))
     else:
-        _start_systemd(service_unit(directory, bun, config_path))
+        _start_systemd(service_unit(config, directory, bun, config_path))
     return {
         "installed": True,
         "scheduler": scheduler,

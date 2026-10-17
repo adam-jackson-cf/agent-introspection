@@ -659,7 +659,7 @@ def test_the_hooks_go_in_the_settings_file_configure_writes(
         "claude-code", None, harness_config.ConfigureOptions(dry_run=True)
     )
 
-    assert result["hooks"]["settings"]["path"] == str(target)
+    assert result["hooks"]["settings"][0]["path"] == str(target)
     assert [item["path"] for item in result["files"]] == [str(target)]
 
 

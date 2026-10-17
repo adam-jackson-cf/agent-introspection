@@ -1,9 +1,10 @@
 """Read-only checks that a SigNoz ClickHouse can host the facts store.
 
-``facts preflight`` runs these before ``facts install`` against an existing or local
-SigNoz. Nothing is created or written: grants are read with ``SHOW GRANTS``, source
-tables through ``system.columns`` and ``WHERE 0`` probes. A configuration that does
-not load, or a connection that cannot be set up, is reported as a failing check.
+``setup`` runs these before ``facts install``, and ``doctor`` reports them, against an
+existing or local SigNoz. Nothing is created or written: grants are read with ``SHOW
+GRANTS``, source tables through ``system.columns`` and ``WHERE 0`` probes. A
+configuration that does not load, or a connection that cannot be set up, is reported
+as a failing check.
 """
 
 from __future__ import annotations

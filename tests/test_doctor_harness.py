@@ -355,6 +355,18 @@ def test_omp_plugin_problems(
     assert omp["detail"].endswith(detail)
 
 
+def test_an_omp_plugin_older_than_the_cli_warns(machine: Machine) -> None:
+    managed = machine.home / doctor_harness.MANAGED_RUNTIME / "omp"
+    (managed / "activity.ts").write_text("export default {}\n")
+
+    omp = one(machine.report(), "activity_hooks", "omp")
+
+    assert (omp["status"], omp["detail"]) == (
+        "warn",
+        "the plugin is out of date: activity.ts differ from what this CLI ships",
+    )
+
+
 def test_a_missing_shim_fails_both_hook_adapters(machine: Machine) -> None:
     (machine.home / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM).unlink()
 

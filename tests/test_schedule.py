@@ -111,7 +111,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox: Path) -> Path:
     (tmp_path / "agent-introspection").write_text("")
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(schedule, "load_config", lambda _config: AppConfig())
-    monkeypatch.setattr(schedule, "_job_path", lambda _config: ["/opt/tools"])
+    monkeypatch.setattr(schedule, "job_path", lambda _config: ["/opt/tools"])
     return tmp_path
 
 
@@ -193,17 +193,17 @@ def test_scheduled_job_path_follows_the_password_and_key_sources(
     )
 
     # omp's directory is never added: labels read only the configured key command.
-    assert schedule._job_path(AppConfig()) == []
-    assert schedule._job_path(AppConfig(signoz=command)) == ["/usr/bin"]
+    assert schedule.job_path(AppConfig()) == []
+    assert schedule.job_path(AppConfig(signoz=command)) == ["/usr/bin"]
     keyed = AppConfig(labels_openrouter_key_command=("pass", "show", "openrouter"))
-    assert schedule._job_path(keyed) == ["/opt/pass/bin"]
+    assert schedule.job_path(keyed) == ["/opt/pass/bin"]
 
     variable = SigNozConfig(clickhouse_url="http://localhost:8123", clickhouse_password_env="CH")
     with pytest.raises(RuntimeError, match="clickhouse_password_command"):
-        schedule._job_path(AppConfig(signoz=variable))
+        schedule.job_path(AppConfig(signoz=variable))
     missing = AppConfig(labels_openrouter_key_command=("op", "read", "x"))
     with pytest.raises(RuntimeError, match="op not found on PATH"):
-        schedule._job_path(missing)
+        schedule.job_path(missing)
 
 
 def test_password_command_output_is_the_password_and_never_in_errors() -> None:

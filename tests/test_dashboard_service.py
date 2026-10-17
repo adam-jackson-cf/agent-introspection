@@ -11,6 +11,7 @@ from agent_introspection import dashboard_service, schedule
 from agent_introspection.config import (
     AppConfig,
     ConfigurationError,
+    DatabaseConfig,
     MachineConfig,
     MachineRole,
     SigNozConfig,
@@ -70,6 +71,7 @@ def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
     assert agent["KeepAlive"] is True
     assert agent["EnvironmentVariables"] == {
         "PATH": "/opt/bun/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "INTROSPECTION_WORKFLOW_DB": str(AppConfig().database.path),
         "AGENT_INTROSPECTION_CONFIG": str(config),
     }
     assert recorder.scheduler == [("bootstrap", "gui/501", str(dashboard_service.PLIST))]
@@ -86,10 +88,18 @@ def test_install_restarts_a_systemd_user_service(
 ) -> None:
     monkeypatch.setattr(schedule, "platform_scheduler", lambda: "systemd")
 
-    dashboard_service.install(AppConfig(), REPO)
+    settings = AppConfig(
+        signoz=SigNozConfig(clickhouse_user="reader"),
+        database=DatabaseConfig(path=Path("/srv/ai/workflow.sqlite3")),
+    )
+
+    dashboard_service.install(settings, REPO)
 
     unit = dashboard_service.SERVICE.read_text()
-    assert f'WorkingDirectory="{REPO / "dashboard"}"\n' in unit
+    # systemd takes WorkingDirectory= as a bare path; a quoted one fails to load.
+    assert f"WorkingDirectory={REPO / 'dashboard'}\n" in unit
+    assert 'Environment="INTROSPECTION_WORKFLOW_DB=/srv/ai/workflow.sqlite3"\n' in unit
+    assert 'Environment="INTROSPECTION_CLICKHOUSE_USER=reader"\n' in unit
     assert f'ExecStart="{BUN}" server.ts\n' in unit
     assert "Restart=on-failure\n" in unit
     assert "AGENT_INTROSPECTION_CONFIG" not in unit
@@ -108,6 +118,32 @@ def test_a_failed_build_stops_before_the_service(
 
     assert recorder.scheduler == []
     assert not dashboard_service.PLIST.exists()
+
+
+def test_a_replacement_that_will_not_start_puts_the_running_agent_back(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "launchd")
+    monkeypatch.setattr(schedule, "launchd_loaded", lambda _label: True)
+    dashboard_service.PLIST.parent.mkdir(parents=True)
+    dashboard_service.PLIST.write_bytes(b"previous")
+    bootstraps: list[bytes] = []
+
+    def control(*args: str) -> subprocess.CompletedProcess[str]:
+        recorder.scheduler.append(args)
+        if args[0] != "bootstrap":
+            return subprocess.CompletedProcess(list(args), 0, "", "")
+        bootstraps.append(dashboard_service.PLIST.read_bytes())
+        code = 5 if len(bootstraps) == 1 else 0
+        return subprocess.CompletedProcess(list(args), code, "", "Bootstrap failed: 5")
+
+    monkeypatch.setattr(schedule, "launchctl", control)
+
+    with pytest.raises(RuntimeError, match="the previous service was restored"):
+        dashboard_service.install(AppConfig(), REPO)
+
+    assert bootstraps[1] == b"previous"
+    assert dashboard_service.PLIST.read_bytes() == b"previous"
 
 
 def test_install_refuses_a_path_that_is_not_a_checkout(

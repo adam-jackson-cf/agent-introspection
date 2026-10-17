@@ -68,6 +68,14 @@ def add_harness_parser(commands: Any) -> None:
     remove_hooks.add_argument(
         "--dry-run", action="store_true", help="report the changes, write nothing"
     )
+    remove_hooks.add_argument(
+        "--root",
+        action="extend",
+        nargs="+",
+        default=[],
+        metavar="PATH",
+        help="an extra config directory `harness configure --root` wrote hooks into",
+    )
     impact = harness.add_parser(
         "impact", help="preview the signals enabling a producer would hide (read-only)"
     )
@@ -83,7 +91,7 @@ def harness_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.harness_command == "impact":
         return harness_config.harness_impact(args.profile, config.harnesses_enabled)
     if args.harness_command == "remove-hooks":
-        return harness_config.remove_hooks(args.key, dry_run=args.dry_run)
+        return harness_config.remove_hooks(args.key, dry_run=args.dry_run, roots=args.root)
     options = harness_config.ConfigureOptions(
         dry_run=args.dry_run,
         prompt_export=args.prompt_export,

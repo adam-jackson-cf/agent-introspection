@@ -195,6 +195,28 @@ def test_a_retired_key_or_an_additional_machine_stops_at_the_config(
     assert (tmp_path / "config.toml").read_text() == existing
 
 
+def test_a_new_config_path_is_written_even_with_nothing_to_set(
+    steps: Steps, tmp_path: Path
+) -> None:
+    result = setup_flow.run(options(tmp_path))
+
+    assert result["passed"] is True
+    assert (tmp_path / "config.toml").exists()
+    assert result["steps"]["config"]["action"] == "add"
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_clickhouse_password_skips_the_dashboard_service(
+    steps: Steps, tmp_path: Path, dry_run: bool
+) -> None:
+    result = setup_flow.run(
+        options(tmp_path, dry_run=dry_run, clickhouse_password_command=("sh", "-c", "echo pw"))
+    )
+
+    assert result["steps"]["dashboard"]["skipped"].startswith("a ClickHouse password")
+    assert "dashboard" not in steps.names()
+
+
 def test_no_dashboard_skips_the_service(steps: Steps, tmp_path: Path) -> None:
     result = setup_flow.run(options(tmp_path, dashboard=False))
 

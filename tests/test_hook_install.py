@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -131,7 +133,7 @@ def test_configure_installs_the_hooks_and_doctor_then_passes_them(
     preview = harness_config.configure(
         "claude-code", None, harness_config.ConfigureOptions(dry_run=True)
     )
-    assert preview["hooks"]["settings"]["action"] == "add"
+    assert preview["hooks"]["settings"][0]["action"] == "add"
     assert not (tmp_path / doctor_harness.MANAGED_RUNTIME).exists()
 
     result = harness_config.configure("claude-code", None, harness_config.ConfigureOptions())
@@ -142,11 +144,11 @@ def test_configure_installs_the_hooks_and_doctor_then_passes_them(
     assert settings["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert doctor_harness.shim_check(tmp_path, "claude-code")["status"] == "pass"
     again = harness_config.configure("claude-code", None, harness_config.ConfigureOptions())
-    assert again["hooks"]["settings"]["action"] == "unchanged"
+    assert again["hooks"]["settings"][0]["action"] == "unchanged"
     assert again["next_steps"] == []
 
     removed = harness_config.remove_hooks("claude-code")
-    assert removed["hooks"]["settings"]["action"] == "remove"
+    assert removed["hooks"]["settings"][0]["action"] == "remove"
     assert "hooks" not in json.loads((tmp_path / ".claude/settings.json").read_text())
 
 
@@ -159,3 +161,43 @@ def test_a_stale_shim_warns_with_the_command_that_updates_it(tmp_path: Path) -> 
 
     assert stale["status"] == "warn"
     assert stale["fix"] == "`agent-introspection harness configure omp` updates it"
+
+
+def test_hooks_go_into_every_root_and_remove_hooks_reaches_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    roots = (tmp_path / "work-claude", tmp_path / "home-claude")
+    for root in roots:
+        root.mkdir()
+    options = harness_config.ConfigureOptions(roots=tuple(map(str, roots)))
+
+    result = harness_config.configure("claude-code", None, options)
+
+    written = [item["path"] for item in result["hooks"]["settings"]]
+    assert written == [str((root / "settings.json").resolve()) for root in roots]
+    extra = roots[1]
+    assert "hooks" in json.loads((extra / "settings.json").read_text())
+    removed = harness_config.remove_hooks("claude-code", roots=tuple(map(str, roots)))
+    assert [item["action"] for item in removed["hooks"]["settings"]] == ["remove", "remove"]
+    assert "hooks" not in json.loads((extra / "settings.json").read_text())
+
+
+def test_omp_missing_stops_configure_before_any_file_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(hook_install, "_which", lambda _name: None)
+
+    for dry_run in (True, False):
+        with pytest.raises(HookInstallError, match="omp is not on PATH"):
+            harness_config.configure("omp", None, harness_config.ConfigureOptions(dry_run=dry_run))
+    assert not (tmp_path / ".omp").exists()
+
+
+def test_a_hung_omp_is_reported_as_a_hook_install_error(tmp_path: Path) -> None:
+    def hang(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(list(command), 60)
+
+    with pytest.raises(HookInstallError, match=r"`omp plugin link .*` failed"):
+        hook_install.link_omp_plugin(HookOptions(home=tmp_path, run=hang))

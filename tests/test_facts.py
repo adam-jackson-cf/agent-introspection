@@ -60,12 +60,16 @@ def test_record_loaders_window_on_collector_time_and_filter_their_family() -> No
         assert "JSONExtractString(body, 'schema') = 'agent-introspection.hook-event/1'" in ddl
 
 
-def test_install_drops_the_removed_attribution_objects_loaders_first() -> None:
+def test_install_drops_the_removed_attribution_objects_after_the_refreshers() -> None:
     statements = facts.install_statements()
     drops = [statements.index(drop) for drop in facts.RETIRED_OBJECTS]
+    last_loader_drop = statements.index(
+        f"DROP VIEW IF EXISTS {facts.DATABASE}.{facts.LOADERS[-1].name}"
+    )
 
     assert drops == sorted(drops)
-    assert statements[drops[0] - 1] == facts._sql("001_tables.sql")
+    # On an upgraded store the refreshers still wait on the old loaders.
+    assert drops[0] == last_loader_drop + 1
     assert facts.RETIRED_OBJECTS[-1] == "DROP TABLE IF EXISTS introspection.session_projects"
     assert not any("session_project" in loader.target for loader in facts.LOADERS)
 

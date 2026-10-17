@@ -96,7 +96,7 @@ Every step is idempotent, so a rerun is a reinstall. Its options:
 | `--prompt-export`                       | Exports prompt text for the Intent view's labels; SigNoz then keeps it for its retention (the facts store never does). |
 | `--openrouter-key-command "CMD"`        | `[labels] openrouter_key_command`: a command that prints the key prompt labels need.                                   |
 | `--clickhouse-url`, `--clickhouse-user` | `[signoz]`, when ClickHouse is not at `http://127.0.0.1:8123` as `default`.                                            |
-| `--clickhouse-password-command "CMD"`   | `[signoz] clickhouse_password_command` (the dashboard service then refuses: run it by hand).                           |
+| `--clickhouse-password-command "CMD"`   | `[signoz] clickhouse_password_command` (setup then skips the dashboard service: run it by hand).                       |
 | `--otlp-endpoint`                       | `[signoz] otlp_endpoint`, when the collector is not at `http://127.0.0.1:4318`.                                        |
 
 On Linux, `loginctl enable-linger "$USER"` keeps the sync and the dashboard running

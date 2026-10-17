@@ -247,6 +247,20 @@ def test_a_record_the_spool_cannot_read_is_quarantined_and_the_rest_still_sent(
     assert names(inbox / "rejected") == {"broken.json", "foreign.json"}
 
 
+def test_a_leftover_record_of_a_retired_family_is_deleted_not_quarantined(
+    collector: Collector, inbox: Path
+) -> None:
+    spool_records(inbox, 1)
+    leftover = inbox / "project.json"
+    leftover.write_text('{"schema":"agent-introspection.session-project/1","event_id":"p"}')
+
+    result = spool.drain(collector.url)
+
+    assert (result.sent, result.rejected) == (1, 0)
+    assert not leftover.exists()
+    assert not (inbox / "rejected").exists()
+
+
 def test_the_logged_class_never_includes_record_text_or_the_endpoint(
     collector: Collector, inbox: Path
 ) -> None:

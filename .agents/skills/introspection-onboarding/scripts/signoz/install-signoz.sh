@@ -83,7 +83,7 @@ refuse() {
   printf 'install-signoz: refused: an existing SigNoz or its leftovers were found:\n' >&2
   printf '  - %s\n' "$@" >&2
   printf '%s\n' "Agent Introspection never reconfigures an existing SigNoz. Connect to it" \
-    "instead: agent-introspection signoz detect, then agent-introspection facts preflight." >&2
+    "instead: agent-introspection signoz detect, then agent-introspection setup --dry-run." >&2
   exit 3
 }
 
@@ -349,8 +349,8 @@ SigNoz listens on 127.0.0.1 only: the UI at http://127.0.0.1:8080, OTLP on 4317 
 needs 4318 reachable; the comments in $deployment/$OVERRIDE say how.
 
 Next:
-  agent-introspection facts preflight
-  agent-introspection doctor
+  agent-introspection setup --dry-run
+  agent-introspection setup
 EOF
 }
 

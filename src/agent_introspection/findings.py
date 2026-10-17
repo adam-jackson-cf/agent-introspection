@@ -7,8 +7,8 @@ harnesses, tool names, and the files it happened on. Impact is the affected task
 with tasks that did not end cleanly counted twice.
 
 Calls in evaluation workspaces (a tool call's working directory or failure path under
-a temporary directory) are excluded, because they are test workloads rather than work
-to improve.
+a temporary directory, or any call of a session that has one) are excluded, because
+they are test workloads rather than work to improve.
 
 - ``actionable``: at least 3 occurrences in 2 tasks on 2 days, or 5 occurrences
   in 3 tasks (the V8 actionable-repeat rule);
@@ -52,6 +52,23 @@ RETIRED_DETECTORS = (
 # A tool call's working directory or failure path under a temporary directory marks an
 # evaluation workspace (for example `/private/tmp/luna-eval-ws/N`).
 EVALUATION_PATH = r"(^|\\W)(/private)?/(tmp|var/folders)/"
+
+
+def outside_evaluation(alias: str = "c.") -> str:
+    """Return the condition that keeps a tool call out of evaluation workspaces.
+
+    A whole session is excluded once any of its calls ran in one, because a Codex call
+    records a working directory only when its arguments name one.
+    """
+    return (
+        f"NOT match({alias}workdir, '{EVALUATION_PATH}')"
+        f" AND NOT match({alias}failure_signature, '{EVALUATION_PATH}')"
+        f" AND ({alias}harness, {alias}session_id) NOT IN (SELECT harness, session_id"
+        f" FROM {DATABASE}.tool_calls_snapshot"
+        f" WHERE session_id != '' AND match(workdir, '{EVALUATION_PATH}'))"
+    )
+
+
 _LONDON_WEEK = "toDate({ts}, 'Europe/London') > toDate(now(), 'Europe/London') - 7"
 # A failure class that names only an error type or a header (`ShellError`,
 # `Traceback (most recent call last):`) cannot be root-caused; it stays emerging so
@@ -75,8 +92,7 @@ LEFT JOIN {DATABASE}.task_outcomes_snapshot AS t
     ON t.harness = c.harness AND t.task_id = c.task_id
 WHERE {_LONDON_WEEK.format(ts="c.ts")} AND {enabled_filter("c.harness")}
     AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
-    AND NOT match(c.workdir, '{EVALUATION_PATH}')
-    AND NOT match(c.failure_signature, '{EVALUATION_PATH}')
+    AND {outside_evaluation()}
 GROUP BY tool_family, failure_class
 HAVING tasks >= 2
 FORMAT JSONEachRow

@@ -168,6 +168,29 @@ def test_legacy_free_text_metrics_are_skipped(open_workflow: OpenWorkflow) -> No
     ]
 
 
+def test_a_retired_metric_is_skipped_by_name(open_workflow: OpenWorkflow) -> None:
+    connection, _, applied_at = applied_proposal(open_workflow)
+    metric = {
+        "metric": "correction_task_rate",
+        "harnesses": ["codex"],
+        "baseline_days": 14,
+        "evaluation_days": 14,
+        "max_ratio": 0.5,
+    }
+    connection.execute(
+        "INSERT INTO proposals VALUES ('retired', 'finding-1', 'applied', ?, 'a', 'b', 1)",
+        (json.dumps({"predicted_success_metric": metric}),),
+    )
+    connection.commit()
+    _, run = facts((10, 5), (10, 1))
+
+    result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
+
+    assert {"proposal_id": "retired", "reason": "retired success metric correction_task_rate"} in (
+        result["skipped"]
+    )
+
+
 def test_cluster_query_ignores_matching_failures_after_the_window_end(
     open_workflow: OpenWorkflow,
 ) -> None:

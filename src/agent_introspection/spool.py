@@ -63,6 +63,8 @@ FAMILIES: dict[str, Family] = {
     STATUS_SCHEMA: Family("spool-status", "agent_introspection.spool_status", "reported_at"),
 }
 _COUNTED = ("hook-event",)
+# Families this release no longer sends; a leftover file is deleted, not quarantined.
+RETIRED_SCHEMAS = frozenset({"agent-introspection.session-project/1"})
 
 
 def host_name() -> str:
@@ -309,6 +311,18 @@ def _read_record(path: Path) -> Record | None:
     return item if isinstance(item, dict) else None
 
 
+def _left_to_quarantine(path: Path) -> bool:
+    """Delete an unreadable file of a retired family; return whether one is left to quarantine."""
+    try:
+        item = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return path.exists()
+    if isinstance(item, dict) and item.get("schema") in RETIRED_SCHEMAS:
+        path.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def _quarantine(paths: list[Path], directory: Path) -> None:
     quarantine = directory / "rejected"
     quarantine.mkdir(exist_ok=True)
@@ -330,7 +344,7 @@ def _ship(
     for path in paths:
         item = _read_record(path)
         if item is None:
-            if path.exists():
+            if _left_to_quarantine(path):
                 invalid.append(path)
         else:
             batch.append((path, item))

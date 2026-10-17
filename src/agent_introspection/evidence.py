@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 from agent_introspection.facts import DATABASE, SqlRunner, enabled_filter, sql_string
+from agent_introspection.findings import outside_evaluation
 
 WINDOW_DAYS = 14
 _C = f"{DATABASE}.tool_calls_snapshot"
@@ -31,6 +32,7 @@ def _cluster(tool_family: str, failure_class: str, alias: str = "") -> str:
         f" AND {alias}failure_class = {sql_string(failure_class)}"
         f" AND {alias}outcome = 'failed' AND {alias}ts > now() - INTERVAL {WINDOW_DAYS} DAY"
         f" AND {enabled_filter(f'{alias}harness')}"
+        f" AND {outside_evaluation(alias)}"
     )
 
 
@@ -62,7 +64,7 @@ FROM {_C} WHERE {cluster} GROUP BY signature ORDER BY failures DESC LIMIT 5""",
         'moved to another tool') AS next_step,
     count() AS failures
 FROM (
-    SELECT harness, tool_family, failure_class, outcome,
+    SELECT harness, session_id, workdir, failure_signature, tool_family, failure_class, outcome,
         leadInFrame(tool_family) OVER w AS next_family,
         leadInFrame(outcome) OVER w AS next_outcome,
         leadInFrame(failure_class) OVER w AS next_class,

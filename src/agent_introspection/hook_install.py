@@ -202,11 +202,22 @@ def _which(name: str) -> str | None:
     return shutil.which(name)
 
 
-def _omp(arguments: Sequence[str], options: HookOptions) -> None:
+def require(adapter: str) -> str:
+    """Refuse an adapter whose binary is missing, before anything is written; return it."""
+    if adapter != "omp":
+        return ""
     binary = _which("omp")
     if binary is None:
         raise HookInstallError("omp is not on PATH: install omp before its activity hooks")
-    result = (options.run or _run_omp)([binary, *arguments])
+    return binary
+
+
+def _omp(arguments: Sequence[str], options: HookOptions) -> None:
+    binary = require("omp")
+    try:
+        result = (options.run or _run_omp)([binary, *arguments])
+    except subprocess.SubprocessError as exc:
+        raise HookInstallError(f"`omp {' '.join(arguments)}` failed: {exc}") from None
     if result.returncode != 0:
         raise HookInstallError(f"`omp {' '.join(arguments)}` exited {result.returncode}")
 
@@ -229,25 +240,27 @@ def link_omp_plugin(options: HookOptions, *, remove: bool = False) -> dict[str, 
     return {"plugin": OMP_PLUGIN, "action": "link"}
 
 
-def install(adapter: str, settings: Path | None, options: HookOptions) -> dict[str, Any]:
+def install(adapter: str, settings: Sequence[Path], options: HookOptions) -> dict[str, Any]:
     """Install the runtime and register one harness's hooks; ``adapter`` is its hook adapter.
 
-    ``settings`` is the Claude Code settings file ``harness configure`` writes.
+    ``settings`` are the Claude Code settings files ``harness configure`` writes, one per
+    root.
     """
+    require(adapter)
     result: dict[str, Any] = {"runtime": install_runtime(options)}
     if adapter == "claude-code":
-        if settings is None:
+        if not settings:
             raise HookInstallError("no Claude Code settings file to hold the hooks")
-        result["settings"] = write_claude_hooks(settings, options)
+        result["settings"] = [write_claude_hooks(path, options) for path in settings]
     elif adapter == "omp":
         result["plugin"] = link_omp_plugin(options)
     return result
 
 
-def remove(adapter: str, settings: Path | None, options: HookOptions) -> dict[str, Any]:
+def remove(adapter: str, settings: Sequence[Path], options: HookOptions) -> dict[str, Any]:
     """Unregister one harness's hooks; the shared runtime stays for the other harnesses."""
-    if adapter == "claude-code" and settings is not None:
-        return {"settings": write_claude_hooks(settings, options, remove=True)}
+    if adapter == "claude-code" and settings:
+        return {"settings": [write_claude_hooks(path, options, remove=True) for path in settings]}
     if adapter == "omp":
         return {"plugin": link_omp_plugin(options, remove=True)}
     return {}

@@ -24,6 +24,8 @@ installs SigNoz; that stays the onboarding skill's opt-in guided script.
 from __future__ import annotations
 
 import difflib
+import sqlite3
+import subprocess
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -114,12 +116,16 @@ def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
         require_host(config, "setup installs the SigNoz host's facts store and schedule")
     except (config_writers.ConfigFileError, tomllib.TOMLDecodeError, ConfigurationError) as exc:
         raise SetupError("config", f"{path}: {exc}") from None
-    changed = text != before
+    # A missing file is always written: the later steps load it from this path.
+    changed = text != before or not path.exists()
     backup: Path | None = None
     if changed and not options.dry_run:
-        mode = path.stat().st_mode & 0o777 if path.exists() else config_writers.NEW_FILE_MODE
-        backup = config_writers.backup(path) if path.exists() else None
-        config_writers.atomic_write(path, text, mode)
+        try:
+            mode = path.stat().st_mode & 0o777 if path.exists() else config_writers.NEW_FILE_MODE
+            backup = config_writers.backup(path) if path.exists() else None
+            config_writers.atomic_write(path, text, mode)
+        except OSError as exc:
+            raise SetupError("config", f"{path}: {exc}") from None
     diff = "".join(
         difflib.unified_diff(before.splitlines(True), text.splitlines(True), str(path), str(path))
     )
@@ -164,8 +170,10 @@ def _harnesses(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
     }
 
 
-def _schedule(options: SetupOptions) -> dict[str, Any]:
+def _schedule(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
     if options.dry_run:
+        schedule.platform_scheduler()
+        schedule.job_path(config)
         return {"planned": "facts schedule install"}
     return schedule.schedule_install(options.config_path)
 
@@ -173,7 +181,13 @@ def _schedule(options: SetupOptions) -> dict[str, Any]:
 def _dashboard(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
     if not options.dashboard:
         return {"skipped": "--no-dashboard"}
-    directory = dashboard_service.dashboard_directory(options.repo)
+    signoz = config.signoz
+    if signoz.clickhouse_password_command is not None or signoz.clickhouse_password_env:
+        return {
+            "skipped": "a ClickHouse password: run the dashboard by hand "
+            "(`bun run --cwd dashboard start`) with INTROSPECTION_CLICKHOUSE_PASSWORD set"
+        }
+    _scheduler, directory, _bun = dashboard_service.check(config, options.repo)
     if options.dry_run:
         return {"planned": f"dashboard install --repo {directory.parent}"}
     return dashboard_service.install(config, options.repo, options.config_path)
@@ -195,7 +209,14 @@ def _step(name: str, run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         return run()
     except SetupError:
         raise
-    except (OSError, RuntimeError, ValueError, facts.FactsError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        facts.FactsError,
+        sqlite3.Error,
+        subprocess.SubprocessError,
+    ) as exc:
         raise SetupError(name, f"{type(exc).__name__}: {exc}") from None
 
 
@@ -207,7 +228,7 @@ def run(options: SetupOptions) -> dict[str, Any]:
         steps["signoz"] = _step("signoz", lambda: _signoz(config))
         steps["facts"] = _step("facts", lambda: _facts(config, options))
         steps["harnesses"] = _step("harnesses", lambda: _harnesses(config, options))
-        steps["schedule"] = _step("schedule", lambda: _schedule(options))
+        steps["schedule"] = _step("schedule", lambda: _schedule(config, options))
         steps["dashboard"] = _step("dashboard", lambda: _dashboard(config, options))
     except SetupError as exc:
         return {

@@ -63,6 +63,17 @@ const ACTIONABLE = `((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurre
  */
 export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`;
 /**
+ * Keeps a tool call out of evaluation workspaces, as findings.outside_evaluation does:
+ * a whole session is excluded once any of its calls ran in one, because a Codex call
+ * records a working directory only when its arguments name one.
+ */
+const outsideEvaluation = (
+  alias: string,
+) => `NOT match(${alias}.workdir, '${EVALUATION_PATH}')
+        AND NOT match(${alias}.failure_signature, '${EVALUATION_PATH}')
+        AND (${alias}.harness, ${alias}.session_id) NOT IN (SELECT harness, session_id
+            FROM ${C} WHERE session_id != '' AND match(workdir, '${EVALUATION_PATH}'))`;
+/**
  * Headless Codex exec has no next prompt (registry: not applicable), so it stays
  * out of next-prompt denominators instead of counting as never corrected.
  */
@@ -78,8 +89,7 @@ const failures = (
         c.failure_class AS failure_class, c.task_id AS task_id, c.ts AS ts, c.tool AS tool
     FROM ${C} AS c
     WHERE ${where} AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
-        AND NOT match(c.workdir, '${EVALUATION_PATH}')
-        AND NOT match(c.failure_signature, '${EVALUATION_PATH}')`;
+        AND ${outsideEvaluation("c")}`;
 
 /**
  * Failure clusters (tool family × failure class), one finished row per cluster
@@ -598,8 +608,7 @@ FROM (
     FROM ${C} AS c
     ARRAY JOIN c.targets AS target
     WHERE ${inWindowOf("c", "ts")} AND c.task_id != ''
-        AND NOT match(c.workdir, '${EVALUATION_PATH}')
-        AND NOT match(c.failure_signature, '${EVALUATION_PATH}')
+        AND ${outsideEvaluation("c")}
 )
 GROUP BY target HAVING tasks >= 2 ORDER BY tasks DESC, calls DESC LIMIT 30`,
     target_summary: `SELECT uniqExact(target) AS targets, uniqExactIf(target, tasks >= 2) AS recurring
@@ -610,8 +619,7 @@ FROM (
         FROM ${C} AS c
         ARRAY JOIN c.targets AS target
         WHERE ${inWindowOf("c", "ts")} AND c.task_id != ''
-            AND NOT match(c.workdir, '${EVALUATION_PATH}')
-            AND NOT match(c.failure_signature, '${EVALUATION_PATH}')
+            AND ${outsideEvaluation("c")}
     ) GROUP BY target
 )`,
     clusters: clusters(inWindowOf("c", "ts"), "tasks >= 2"),

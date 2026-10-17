@@ -96,13 +96,21 @@ function windowCounts(
   return { matched, tasks, rate: tasks > 0 ? matched / tasks : null };
 }
 
+/** The percentage change from `before` to `after`; NULL when either is missing or `before` is 0. */
+const rateChange = (before: number | null, after: number | null) =>
+  before === null || after === null || before === 0
+    ? null
+    : (100 * (after - before)) / before;
+
 /**
  * The finding's own task rate in equal runs of whole London days before and after
  * the application day, clipped to the selected range, over the metric's
  * harnesses (the finding's when the metric has none): tasks that hit its failure
  * cluster per task. The application day itself
  * mixes pre and post events, so neither window counts it. `change_pct` is the
- * rate change, NULL when either rate is missing or the earlier rate is 0.
+ * rate change, NULL when either rate is missing or the earlier rate is 0. A
+ * proposal of the retired repeated-correction detector has no cluster to match,
+ * so its matched counts and rates are NULL rather than a measured 0.
  */
 export function prePost(
   proposal: Row,
@@ -131,19 +139,18 @@ export function prePost(
     addDays(appliedDay, 1),
     addDays(appliedDay, days),
   );
-  const changed =
-    pre.rate === null || post.rate === null || pre.rate === 0
-      ? null
-      : (100 * (post.rate - pre.rate)) / pre.rate;
+  const tagged = withKind(proposal);
+  const measured = tagged.kind === "cluster";
+  const changed = measured ? rateChange(pre.rate, post.rate) : null;
   return {
-    ...withKind(proposal),
+    ...tagged,
     days,
-    pre_matched: pre.matched,
+    pre_matched: measured ? pre.matched : null,
     pre_tasks: pre.tasks,
-    pre_rate: pre.rate,
-    post_matched: post.matched,
+    pre_rate: measured ? pre.rate : null,
+    post_matched: measured ? post.matched : null,
     post_tasks: post.tasks,
-    post_rate: post.rate,
+    post_rate: measured ? post.rate : null,
     change_pct: changed,
     verdict: proposal.verdict ?? null,
     evaluated_ratio: proposal.evaluated_ratio ?? null,

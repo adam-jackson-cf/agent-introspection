@@ -686,6 +686,19 @@ def omp_plugin_check(home: Path) -> Check:
     absent = [name for name in OMP_PLUGIN_FILES if not (managed / name).is_file()]
     if absent:
         return check("activity_hooks", "fail", f"the plugin lacks {', '.join(absent)}", fix)
+    shipped = files("agent_introspection").joinpath("hook_runtime", "omp")
+    stale = [
+        name
+        for name in OMP_PLUGIN_FILES
+        if (managed / name).read_text("utf-8") != shipped.joinpath(name).read_text("utf-8")
+    ]
+    if stale:
+        return check(
+            "activity_hooks",
+            "warn",
+            f"the plugin is out of date: {', '.join(stale)} differ from what this CLI ships",
+            "`agent-introspection harness configure omp` updates it",
+        )
     return check("activity_hooks", "pass", f"the omp plugin links {shown_path(managed, home)}")
 
 

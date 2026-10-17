@@ -33,6 +33,7 @@ from agent_introspection.facts import (
 )
 from agent_introspection.proposals import (
     CLUSTER_TASK_RATE,
+    RETIRED_METRICS,
     ProposalState,
     SuccessMetric,
     append_proposal_event,
@@ -208,8 +209,13 @@ def evaluate_due(
     skipped: list[dict[str, str]] = []
     rows = connection.execute(DUE_QUERY, (ProposalState.APPLIED, EVENT_TYPE)).fetchall()
     for proposal_id, payload_json, subject_json, applied_text in rows:
-        metric = SuccessMetric.from_payload(json.loads(payload_json))
+        payload_value = json.loads(payload_json)
+        metric = SuccessMetric.from_payload(payload_value)
         subject = json.loads(subject_json) if subject_json else {}
+        stored = payload_value.get("predicted_success_metric")
+        if isinstance(stored, dict) and stored.get("metric") in RETIRED_METRICS:
+            skipped.append(_skip(proposal_id, f"retired success metric {stored['metric']}"))
+            continue
         if metric is None:
             skipped.append(_skip(proposal_id, "legacy free-text success metric"))
             continue

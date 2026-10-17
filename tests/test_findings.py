@@ -159,6 +159,7 @@ def test_findings_from_a_retired_detector_go_dormant(
 def test_evaluation_workspaces_are_excluded_by_workdir_and_failure_path() -> None:
     assert f"NOT match(c.workdir, '{findings.EVALUATION_PATH}')" in findings.WINDOW_QUERY
     assert f"NOT match(c.failure_signature, '{findings.EVALUATION_PATH}')" in findings.WINDOW_QUERY
+    assert "(c.harness, c.session_id) NOT IN (SELECT harness, session_id" in findings.WINDOW_QUERY
     assert "session_project" not in findings.WINDOW_QUERY
 
 
