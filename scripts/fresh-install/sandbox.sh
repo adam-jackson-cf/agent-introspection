@@ -295,12 +295,13 @@ step() {
   local name=$1 expect=$2 code=0
   shift 2
   STEP=$((STEP + 1))
+  # stdout (the JSON report) and stderr (progress, diagnostics) are kept apart.
   local log="$ROOT/state/verify/$(printf '%02d' "$STEP")-$name.log"
-  (cd "$ROOT/repo" && "$ROOT/run" "$@") >"$log" 2>&1 || code=$?
+  (cd "$ROOT/repo" && "$ROOT/run" "$@") >"$log" 2>"${log%.log}.err" || code=$?
   if [ "$expect" = any ] || [ "$code" = "$expect" ]; then
     printf '  ok    %-28s exit %s\n' "$name" "$code"
   else
-    printf '  FAIL  %-28s exit %s (expected %s): %s\n' "$name" "$code" "$expect" "$log"
+    printf '  FAIL  %-28s exit %s (expected %s): %s\n' "$name" "$code" "$expect" "${log%.log}.{log,err}"
     FAILED=$((FAILED + 1))
   fi
 }
