@@ -219,13 +219,14 @@ def _signoz(config: AppConfig) -> dict[str, Any]:
     return {"passed": True}
 
 
-def _facts(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
+def _facts(config: AppConfig, options: SetupOptions, progress: Progress) -> dict[str, Any]:
     if options.dry_run:
         return {"planned": ["facts install", f"facts backfill --days {options.backfill_days}"]}
     run = facts.runner(config)
     installed = facts.install(run, config.harnesses_enabled)
     connect_workflow(config.database.path, busy_timeout_ms=config.database.busy_timeout_ms).close()
-    return {"install": installed, "backfill": facts.backfill(run, days=options.backfill_days)}
+    backfilled = facts.backfill(run, days=options.backfill_days, progress=progress)
+    return {"install": installed, "backfill": backfilled}
 
 
 def _harnesses(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
@@ -281,7 +282,7 @@ def _announced[T](name: str, run: Callable[[], T], progress: Progress, dry_run: 
     """Run one step between a start and an end progress line; a failure ends it too."""
     doing = _STEP_DOING[name]
     if name == "facts" and not dry_run:
-        doing += " (a long backfill can take minutes)"
+        doing += " (a long backfill can take minutes; progress follows)"
     progress(f"setup: {name}: {doing}...")
     started = time.monotonic()
     outcome = "failed"
@@ -321,7 +322,7 @@ def run(options: SetupOptions, progress: Progress = _silent) -> dict[str, Any]:
             "config", lambda: write_config(options), progress, options.dry_run
         )
         step("signoz", lambda: _signoz(config))
-        step("facts", lambda: _facts(config, options))
+        step("facts", lambda: _facts(config, options, progress))
         step("harnesses", lambda: _harnesses(config, options))
         step("schedule", lambda: _schedule(config, options))
         step("dashboard", lambda: _dashboard(config, options))

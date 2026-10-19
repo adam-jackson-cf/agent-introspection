@@ -79,7 +79,8 @@ agent-introspection setup
 
 It runs each step in order and stops at the first that fails, naming it. Each step
 prints a line to stderr as it starts and ends; `facts` takes the longest, often
-several minutes even on an empty SigNoz (a shorter `--backfill-days` shortens it). At
+several minutes even on an empty SigNoz (a shorter `--backfill-days` shortens it), and
+its backfill prints each table's progress in tenths. At
 the end it prints a summary to stderr (each file it added or changed with its backup,
 the config diff on a dry run, doctor's result, and what to do next) and the JSON report
 to stdout:

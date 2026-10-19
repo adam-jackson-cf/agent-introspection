@@ -1325,13 +1325,24 @@ def install(
     }
 
 
-def backfill(run: SqlRunner, *, days: int, now: datetime | None = None) -> dict[str, Any]:
-    """Copy every retained source row from the last ``days`` days into the facts tables."""
+def backfill(
+    run: SqlRunner,
+    *,
+    days: int,
+    now: datetime | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Copy every retained source row from the last ``days`` days into the facts tables.
+
+    ``progress`` gets a line as each tenth of each table's windows is loaded.
+    """
     end = now or datetime.now(UTC)
     start = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+    windows = backfill_windows(start, end)
     counts = {}
-    for target in _SELECT_FILES:
-        for lower, upper in backfill_windows(start, end):
+    for table, target in enumerate(_SELECT_FILES, 1):
+        reported = 0
+        for done, (lower, upper) in enumerate(windows, 1):
             try:
                 run(backfill_statement(target, lower, upper))
             except FactsError as exc:
@@ -1339,6 +1350,12 @@ def backfill(run: SqlRunner, *, days: int, now: datetime | None = None) -> dict[
                     f"backfill of {target} failed for window {lower:%Y-%m-%d %H:%M:%S}"
                     f" to {upper:%Y-%m-%d %H:%M:%S} UTC (rerun is idempotent): {exc}"
                 ) from exc
+            if progress is not None and done * 10 // len(windows) > reported:
+                reported = done * 10 // len(windows)
+                progress(
+                    f"facts backfill: {target} (table {table} of {len(_SELECT_FILES)}): "
+                    f"{done * 100 // len(windows)}%"
+                )
         counts[target] = int(run(f"SELECT count() FROM {DATABASE}.{target} FINAL").strip())
     return {"start": start.isoformat(), "end": end.isoformat(), "rows": counts}
 

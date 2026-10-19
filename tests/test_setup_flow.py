@@ -47,7 +47,7 @@ class Steps:
         self.calls.append(("facts install", tuple(enabled)))
         return {"enabled": list(enabled)}
 
-    def backfill(self, _run: Any, *, days: int) -> dict[str, Any]:
+    def backfill(self, _run: Any, *, days: int, progress: Any = None) -> dict[str, Any]:
         self.calls.append(("backfill", days))
         return {"rows": {}}
 

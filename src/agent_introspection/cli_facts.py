@@ -43,7 +43,7 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "install": lambda: _install(args, config, run),
         "refresh": lambda: facts.refresh_named(run, args.refresher),
-        "backfill": lambda: facts.backfill(run, days=args.days),
+        "backfill": lambda: facts.backfill(run, days=args.days, progress=diagnostic),
         "findings": lambda: _findings(args, run),
         "sync": lambda: _sync(args, run),
         "classify": lambda: _labels(run, config, days=args.days, limit=args.limit),
