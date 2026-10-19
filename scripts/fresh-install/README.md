@@ -38,8 +38,11 @@ macOS and Linux; CI runs `verify` on Linux for every push and pull request (the
 | ClickHouse | A disposable `clickhouse/clickhouse-server` container on a random loopback port, holding only the two SigNoz tables the facts store reads ([`signoz-stub.sql`](signoz-stub.sql)).                                                                                                                                                                           |
 | Collector  | [`otlp_stub.py`](otlp_stub.py) on a random loopback port. It accepts OTLP/HTTP and writes log records into that ClickHouse, as SigNoz's collector would.                                                                                                                                                                                                    |
 
-Nothing reaches this machine's launchd, systemd, Docker, SigNoz, or harness configs.
-Two exceptions:
+Nothing reaches this machine's launchd, systemd, Docker, or harness configs. The
+network is not contained: the CLI's defaults name a SigNoz on this machine's loopback
+ports, so `verify` always passes the sandbox's addresses, and `agent` refuses to start
+while a SigNoz answers on `127.0.0.1:8123` or `:4318` (`--allow-local-signoz` overrides
+it). Two more exceptions:
 
 - Caches are shared to save time: `uv` and `bun` read and write their usual caches.
 - The sandbox dashboard listens on the fixed port 4173. `verify` skips its dashboard
@@ -49,6 +52,8 @@ The agent session:
 
 - loads no user settings, so none of this machine's hooks or plugins run, and no MCP
   server;
+- inherits no session identifiers or `OTEL_*` settings of the calling session, and
+  runs with Claude Code's telemetry off;
 - has no file-editing, web, or subagent tools;
 - skips Claude Code's snapshot of your own shell, so your `PATH` never comes back.
 
