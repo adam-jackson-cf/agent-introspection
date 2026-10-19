@@ -198,9 +198,13 @@ link_tools() {
 }
 
 write_runner() {
-  local uv_cache bun_cache
+  local uv_cache bun_cache caches=""
   uv_cache=$(uv cache dir 2>/dev/null || true)
-  bun_cache=$(bun pm cache 2>/dev/null | tail -1 || true)
+  # `bun pm cache` needs a package.json; an empty cache variable would make bun cache
+  # into the working directory, so each is set only when found.
+  bun_cache=$(cd "$REPO/dashboard" && bun pm cache 2>/dev/null | tail -1 || true)
+  if [ -n "$uv_cache" ]; then caches="UV_CACHE_DIR=\"$uv_cache\" "; fi
+  if [ -n "$bun_cache" ]; then caches="${caches}BUN_INSTALL_CACHE_DIR=\"$bun_cache\" "; fi
   # Claude Code sources a snapshot of the caller's own shell before each command; in
   # the sandbox it is skipped, so the caller's PATH and functions never come back.
   cat >"$ROOT/state/bashenv" <<'BASHENV'
@@ -220,8 +224,7 @@ exec env -i \\
   HOME="$ROOT/home" USER="\${USER-}" LOGNAME="\${LOGNAME-}" TERM="\${TERM-dumb}" \\
   LANG=en_US.UTF-8 TMPDIR="$ROOT/tmp" SHELL=/bin/bash BASH_ENV="$ROOT/state/bashenv" \\
   PATH="$ROOT/home/.local/bin:$ROOT/fakebin:$ROOT/tools:$SYSTEM_PATH" \\
-  UV_CACHE_DIR="$uv_cache" BUN_INSTALL_CACHE_DIR="$bun_cache" \\
-  FRESH_INSTALL_SANDBOX="$ROOT" \\
+  ${caches}FRESH_INSTALL_SANDBOX="$ROOT" \\
   /bin/bash -c "\$*"
 EOF
   chmod 755 "$ROOT/run"
@@ -267,6 +270,7 @@ cmd_create() {
   mkdir -p "$ROOT/state" "$ROOT/home" "$ROOT/tmp"
   ROOT=$(cd "$ROOT" && pwd)
   echo "$STAMP" >"$ROOT/state/sandbox"
+  (cd "$ROOT" && pwd -P) >"$ROOT/state/root"
   : >"$ROOT/state/calls.log"
   git clone --quiet --no-local "$REPO" "$ROOT/repo"
   git -C "$ROOT/repo" checkout --quiet --detach "$(git -C "$REPO" rev-parse HEAD)"
@@ -419,15 +423,22 @@ SUMMARY
 cmd_agent() {
   ROOT=$(need_root "${1-}")
   shift
-  local model=sonnet budget=5
+  local model=sonnet budget=5 allow_local=false
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --model) model=$2; shift 2 ;;
       --budget) budget=$2; shift 2 ;;
+      --allow-local-signoz) allow_local=true; shift ;;
       *) die "unknown option $1" ;;
     esac
   done
   command -v claude >/dev/null || die "claude is not installed"
+  # The CLI's defaults name a SigNoz on this machine's loopback ports. A session that
+  # leaves out the sandbox's addresses would install into it, so refuse while one answers.
+  if ! $allow_local && { curl -fsS -m 2 http://127.0.0.1:8123/ping >/dev/null 2>&1 ||
+    curl -sS -m 2 -o /dev/null http://127.0.0.1:4318/ 2>/dev/null; }; then
+    die "a SigNoz answers on 127.0.0.1:8123 or :4318; stop it, or pass --allow-local-signoz"
+  fi
   [ -f "$ROOT/state/clickhouse_url" ] || die "agent needs the sandbox ClickHouse"
   local prompt=$ROOT/state/agent-prompt.txt transcript=$ROOT/state/agent-transcript.jsonl
   sed -e "s|{{CLICKHOUSE_URL}}|$(cat "$ROOT/state/clickhouse_url")|g" \
@@ -438,9 +449,17 @@ cmd_agent() {
   # edit files directly. It loads no user settings (so none of this machine's hooks or
   # plugins run, and the prefix wraps only its own commands) and no MCP server, and it
   # starts with no memory of the session that built this branch.
+  # The session inherits nothing of the calling session: no session identifiers, and
+  # no telemetry settings that could send its records to this machine's SigNoz.
+  # Authentication variables are kept.
+  local unset=() name
+  for name in $(env | grep -oE '^(OTEL_[A-Za-z0-9_]*|CLAUDECODE|CLAUDE_CODE_(SESSION_ID|CHILD_SESSION|ENTRYPOINT|ENHANCED_TELEMETRY_BETA|MESSAGING_[A-Za-z0-9_]*))=' | tr -d =); do
+    unset+=(-u "$name")
+  done
   (
     cd "$ROOT/repo"
-    CLAUDE_CODE_SHELL_PREFIX="$ROOT/run" claude -p "$(cat "$prompt")" \
+    env ${unset[@]+"${unset[@]}"} CLAUDE_CODE_ENABLE_TELEMETRY=0 \
+      CLAUDE_CODE_SHELL_PREFIX="$ROOT/run" claude -p "$(cat "$prompt")" \
       --model "$model" --max-budget-usd "$budget" \
       --permission-mode bypassPermissions \
       --setting-sources project,local --strict-mcp-config --no-session-persistence \
@@ -463,23 +482,28 @@ print(result.get("result", "") if result else "no result event; see the transcri
 
 # --- destroy ---------------------------------------------------------------------------
 
+sandbox_process() {
+  # sandbox_process PID PATTERN: whether PID still runs a command naming PATTERN, so a
+  # pid reused since the sandbox started is never signalled.
+  [ "${1:-0}" -gt 0 ] && ps -p "$1" -o command= 2>/dev/null | grep -qF -- "$2"
+}
+
 cmd_destroy() {
   ROOT=$(need_root "${1-}")
+  # Only the directory `create` recorded as its own is ever deleted.
+  [ "$(cat "$ROOT/state/root" 2>/dev/null)" = "$ROOT" ] || die "refusing to delete $ROOT: not created as this sandbox"
   for job in "$ROOT"/state/launchd/* "$ROOT"/state/systemd/*.active; do
     [ -f "$job" ] || continue
     pid=$(cat "$job")
-    [ "${pid:-0}" -gt 0 ] && kill -TERM -- "-$pid" 2>/dev/null || true
+    if sandbox_process "$pid" "$ROOT"; then kill -TERM -- "-$pid" 2>/dev/null || true; fi
   done
   if [ -f "$ROOT/state/collector.pid" ]; then
-    kill "$(cat "$ROOT/state/collector.pid")" 2>/dev/null || true
+    pid=$(cat "$ROOT/state/collector.pid")
+    if sandbox_process "$pid" otlp_stub.py; then kill "$pid" 2>/dev/null || true; fi
   fi
   if [ -f "$ROOT/state/container" ]; then
     docker rm -f "$(cat "$ROOT/state/container")" >/dev/null 2>&1 || true
   fi
-  case "$ROOT" in
-    "$REPO"/.tmp/fresh-install/*) ;;
-    *) [ -f "$ROOT/state/sandbox" ] || die "refusing to delete $ROOT" ;;
-  esac
   rm -rf "$ROOT"
   echo "destroyed $ROOT"
 }
