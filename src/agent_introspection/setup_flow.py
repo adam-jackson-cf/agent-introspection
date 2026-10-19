@@ -4,8 +4,11 @@ The steps run in order, and the first that fails stops the run:
 
 1. ``config``: write the choices given as options into the config file, through the
    line-preserving TOML writer (comments and other keys kept, the file backed up), and
-   check the result loads. Only options that were given are written; everything else
-   keeps its default. An additional machine is refused: it has its own workflow.
+   check the result loads. Retired settings of an older config are removed (a retired
+   ``[dashboard] clickhouse_url`` moves to ``[signoz]``), and an older config that
+   relied on every harness being enabled keeps omp while its plugin is installed. Only
+   options that were given are written; everything else keeps its default. An
+   additional machine is refused: it has its own workflow.
 2. ``signoz``: every preflight check, read-only (the connection, version, columns,
    grants, and producer data).
 3. ``facts``: ``facts install``, the workflow store, then ``facts backfill``.
@@ -34,7 +37,7 @@ import subprocess
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -50,10 +53,12 @@ from agent_introspection import (
 )
 from agent_introspection.config import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_HARNESSES,
     AppConfig,
     ConfigurationError,
     parse_config,
     require_host,
+    retired_paths,
 )
 from agent_introspection.workflow import connect_workflow
 
@@ -123,13 +128,51 @@ def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
     return {table: values for table, values in tables.items() if values}
 
 
+def _upgraded(document: dict[str, Any], options: SetupOptions) -> tuple[SetupOptions, list[str]]:
+    """Return the options with what an older config implies, and a note for each.
+
+    A retired ``[dashboard] clickhouse_url`` moves to ``[signoz] clickhouse_url``, and a
+    config from before omp was opt-in keeps omp while its plugin is installed.
+    """
+    notes: list[str] = []
+    dashboard = document.get("dashboard")
+    signoz = document.get("signoz")
+    moved = dashboard.get("clickhouse_url") if isinstance(dashboard, dict) else None
+    has_url = isinstance(signoz, dict) and "clickhouse_url" in signoz
+    if isinstance(moved, str) and options.clickhouse_url is None and not has_url:
+        options = replace(options, clickhouse_url=moved)
+        notes.append("[dashboard] clickhouse_url moved to [signoz] clickhouse_url")
+    harnesses = document.get("harnesses")
+    unset = not (isinstance(harnesses, dict) and "enabled" in harnesses)
+    if (
+        document
+        and unset
+        and options.harnesses is None
+        and harness_config.omp_plugin_installed(Path.home())
+    ):
+        options = replace(options, harnesses=(*DEFAULT_HARNESSES, "oh-my-pi"))
+        notes.append("omp kept: its plugin is installed, and omp is no longer enabled by default")
+    return options, notes
+
+
 def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
-    """Write the options' settings into the config file; return the config and a report."""
+    """Write the options' settings into the config file; return the config and a report.
+
+    Retired settings of an older config are removed first, so an upgrade reinstalls
+    without editing the file by hand (the change shows in the diff and the backup).
+    """
     # Resolved, so a symlinked config is written through, never replaced.
     path = (options.config_path or DEFAULT_CONFIG_PATH).expanduser().resolve()
     before = path.read_text("utf-8") if path.exists() else ""
     text = before
+    retired: list[tuple[str, ...]] = []
+    notes: list[str] = []
     try:
+        document = tomllib.loads(before)
+        options, notes = _upgraded(document, options)
+        retired = retired_paths(document)
+        if retired:
+            text = config_writers.remove_toml_keys(text, retired)
         for table, values in _settings(options).items():
             text = config_writers.update_table(text, "toml", table, values).text
         config = parse_config(tomllib.loads(text))
@@ -158,6 +201,8 @@ def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
         "backup": str(backup) if backup else None,
         "diff": diff,
         "harnesses": list(config.harnesses_enabled),
+        "retired_removed": [".".join(item) for item in retired],
+        "notes": notes,
     }
     return config, report
 

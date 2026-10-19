@@ -216,8 +216,12 @@ PATH` (the checkout the dashboard is built from, default the current directory).
   command is one shell-quoted string, split into an argv list. An option not given
   leaves its key as it is, so its default applies.
 - The config is written through the line-preserving TOML writer (comments and other
-  keys kept, the file backed up and keeping its permissions), then loaded; a retired
-  key or an additional machine stops the run at `config`.
+  keys kept, the file backed up and keeping its permissions), then loaded; an
+  additional machine stops the run at `config`. Upgrading an older config, it removes
+  retired keys (`[sessions]`, `[dashboard]`, and the docker-mode `[signoz]` keys;
+  `retired_removed` lists them), moves `[dashboard] clickhouse_url` to `[signoz]` when
+  that has none, and keeps omp enabled when `[harnesses] enabled` is unset and omp's
+  plugin is installed (`notes` says so). Other commands still refuse retired keys.
 - Output: `dry_run`, `passed`, `steps` (each step's own result: the config `diff`, the
   facts install and backfill counts, each harness's `configure` result, the schedule,
   the dashboard), and `doctor` (`passed`, `summary`, and every `warn` or `fail`). A

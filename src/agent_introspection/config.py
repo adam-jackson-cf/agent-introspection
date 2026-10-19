@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -361,6 +362,18 @@ def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigurationError(f"{name} must be a TOML table")
     return value
+
+
+def retired_paths(data: Mapping[str, Any]) -> list[tuple[str, ...]]:
+    """Return the key paths of retired settings in a config document, in file order.
+
+    ``setup`` removes them, so an upgrade reinstalls without editing the file by hand.
+    """
+    paths: list[tuple[str, ...]] = [(key,) for key in data if key in _RETIRED_KEYS["configuration"]]
+    signoz = data.get("signoz")
+    if isinstance(signoz, Mapping):
+        paths += [("signoz", key) for key in signoz if key in _RETIRED_KEYS["signoz"]]
+    return paths
 
 
 def _reject_unknown(actual: set[str], allowed: frozenset[str], *, location: str) -> None:

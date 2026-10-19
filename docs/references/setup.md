@@ -85,7 +85,8 @@ goes to stdout at the end:
 1. **config:** writes the options you give into
    `~/.config/agent-introspection/config.toml` (comments and other keys kept, the file
    backed up). Anything not given keeps its default, so a SigNoz from the guided
-   install needs no options.
+   install needs no options. Upgrading, it also removes retired settings and keeps omp
+   when its plugin is installed; the dry run's diff shows each change.
 2. **signoz:** read-only checks of the connection, the ClickHouse version, the SigNoz
    columns, grants, and recent producer data.
 3. **facts:** builds the facts store inside SigNoz's ClickHouse and loads the history

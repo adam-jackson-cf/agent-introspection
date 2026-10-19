@@ -31,7 +31,7 @@ import re
 import shutil
 import tempfile
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from functools import partial
@@ -581,6 +581,45 @@ def update_table(text: str, file_format: str, table: str, values: Values) -> Tab
     if file_format == "json":
         return TableUpdate(_update_json(text, _table_path(table), values))
     return _update_toml(text, _table_path(table), values)
+
+
+def _without(document: dict[str, Any], path: tuple[str, ...]) -> None:
+    node: Any = document
+    for part in path[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+    if isinstance(node, dict):
+        node.pop(path[-1], None)
+
+
+def remove_toml_keys(text: str, paths: Sequence[tuple[str, ...]]) -> str:
+    """Return TOML text without the keys or tables at ``paths``, all else kept.
+
+    Each path names a key (``("signoz", "docker_host")``) or a whole table with its
+    sub-tables (``("sessions",)``). Their lines go; comments and other lines stay.
+
+    Raises
+    ------
+    ConfigFileError
+        When the text does not parse, or a path is written inside an inline table
+        whose other values would have to change too.
+    """
+    intended = _toml_document(text)
+    for path in paths:
+        _without(intended, path)
+    lines = _lines(text)
+    dropped: set[int] = set()
+    for statement in _statements(lines):
+        owner = statement.table if statement.header else (*statement.table, statement.key)
+        if any(owner[: len(path)] == path for path in paths):
+            dropped.update(range(statement.first, statement.last + 1))
+    result = "".join(line for index, line in enumerate(lines) if index not in dropped)
+    try:
+        if tomllib.loads(result) == intended:
+            return result
+    except tomllib.TOMLDecodeError:
+        pass
+    names = ", ".join(".".join(path) for path in paths)
+    raise ConfigFileError(f"cannot remove {names} safely; delete them by hand")
 
 
 def backup(path: Path, now: datetime | None = None) -> Path:
