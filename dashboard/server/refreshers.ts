@@ -13,17 +13,13 @@ const LOADERS = ["load_spans", "sweep_spans", "load_logs", "sweep_logs"];
 /** Record loaders and their hourly sweeps (facts.py) feeding the tables a view's SQL names. */
 const RECORD_LOADERS: Array<[RegExp, string[]]> = [
   [/introspection\.hook_rows\b/, ["load_hook_events", "sweep_hook_events"]],
-  [
-    /introspection\.session_project\b/,
-    ["load_session_projects", "sweep_session_projects"],
-  ],
 ];
 const HISTORY = /_history$/;
 const SWEEP = /^sweep_/;
 
 /**
  * The refreshers whose output a view's queries read: the span and log loaders, the
- * record loaders of the hook and session-project tables the SQL names, each with its
+ * record loaders of the hook tables the SQL names, each with its
  * hourly sweep, plus the history and recent refreshers of each snapshot the SQL names (facts.py
  * `snapshot_refreshers`). Windows older than the snapshots read the live views,
  * which only the loaders feed.

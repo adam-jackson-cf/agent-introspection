@@ -159,3 +159,8 @@ New signal chains (UI step is now selection or reshape only):
 - INTENT-S10 (effort payoff): `effort_payoff` groups by task_type × effort in SQL with `corrected_rate`, `clean_rate`, ordered by type then effort rank.
 
 **Totals:** features 29 signals 11 ui calcs 14 removed since baseline 0 new since baseline 20
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Repeated corrections KPI (INTENT-F06) and Repeated corrections by project table (INTENT-F15) removed, with the `repeated` and `repeated_count` queries.
+- The section Which corrections repeat? is renamed Which tasks were corrected? and holds Recent corrected tasks, which loses its Project column. Its evaluation-workspace exclusion (by project root) goes; headless `codex_exec` stays excluded.

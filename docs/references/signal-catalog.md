@@ -116,12 +116,6 @@ and `try_run_sampling_request` attempts, and Claude Code `api_error` and
 `api_retries_exhausted` logs. `kind` is the span or event name. The Provider view reads
 latency and retry counts from it instead of the raw tables.
 
-### 2.6 `session_project`: one project per session
-
-The latest Git project the attribution scan recorded for a session (see
-[Project Attribution](project-attribution.md)), from `introspection.session_projects`. Session IDs are producer-native UUIDs and join the
-facts without the harness.
-
 <!-- BEGIN GENERATED FROM signal_support.toml -->
 
 ## 3. Producer routes
@@ -213,20 +207,6 @@ Scope: system (not per harness).
 | Codex CLI        | aligned   | `codex.usage`  | —    |
 | Codex exec       | aligned   | `codex.usage`  | —    |
 | Claude Code      | aligned   | `claude.usage` | —    |
-
-#### Project attribution (`pipeline.project_attribution`)
-
-- **Question:** Which share of each harness's tasks has a Git project?
-- **Unit:** %
-- **Formula:** Per harness: 100 × tasks whose session has a Git project / tasks. `facts sync` reads each session's working directory from the harness's own session store (session_stores.toml) and resolves its Git root on this machine. Sessions without a project (non-Git or missing workspace) and tasks whose session no store holds are shown alongside.
-
-| Harness          | Alignment | Route                | Note                                                                                                                 |
-| ---------------- | --------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| omp              | aligned   | `omp.run`            | The `session` record (id, cwd) of `~/.omp/agent/sessions/*/*.jsonl`. Runs that keep no session file have no project. |
-| Codex app-server | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
-| Codex CLI        | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
-| Codex exec       | aligned   | `codex.turn`         | `session_meta` (id, cwd) of the rollout files in each Codex root's `sessions/`.                                      |
-| Claude Code      | aligned   | `claude.interaction` | The first transcript entry with `sessionId` and `cwd` in `~/.claude/projects/*/*.jsonl`.                             |
 
 #### All = Σ harnesses (`pipeline.recombination`)
 
@@ -900,7 +880,7 @@ Scope: system (not per harness).
 
 - **Question:** Which files recur across tasks?
 - **Unit:** tasks
-- **Formula:** Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a project or path under a temporary directory) are excluded.
+- **Formula:** Targets touched in ≥2 tasks, counted across harnesses, with task, day, and failure counts. Evaluation workspaces (a tool call's working directory or failure path under a temporary directory) are excluded.
 
 | Harness          | Alignment | Route               | Note                                                                                                              |
 | ---------------- | --------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -928,7 +908,7 @@ Scope: system (not per harness).
 
 - **Question:** Which repeated failures cross the evidence threshold for intervention?
 - **Unit:** signatures
-- **Formula:** Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a project or path under a temporary directory) are excluded.
+- **Formula:** Failure clusters over the 7 Europe/London calendar days ending on the window end: ≥3 occurrences across ≥2 tasks and ≥2 days, or ≥5 occurrences across ≥3 tasks. Evaluation workspaces (a tool call's working directory or failure path under a temporary directory) are excluded.
 
 | Harness          | Alignment | Route               | Note                                                                                                                                     |
 | ---------------- | --------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -937,20 +917,6 @@ Scope: system (not per harness).
 | Codex CLI        | aligned   | `codex.tool_result` | —                                                                                                                                        |
 | Codex exec       | aligned   | `codex.tool_result` | —                                                                                                                                        |
 | Claude Code      | differs   | `hook.tool_failure` | Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks.                               |
-
-#### Project concentration (`recur.project_concentration`)
-
-- **Question:** Is a repeated failure localized to one project?
-- **Unit:** %
-- **Formula:** Per signature: 100 × occurrences in the top project / occurrences with a project. Project is the Git repository of the session's working directory, from the harness's session store. Evaluation workspaces (a project or path under a temporary directory) are excluded.
-
-| Harness          | Alignment | Route                | Note |
-| ---------------- | --------- | -------------------- | ---- |
-| omp              | aligned   | `omp.execute_tool`   | —    |
-| Codex app-server | aligned   | `codex.tool_result`  | —    |
-| Codex CLI        | aligned   | `codex.tool_result`  | —    |
-| Codex exec       | aligned   | `codex.tool_result`  | —    |
-| Claude Code      | aligned   | `claude.tool_result` | —    |
 
 ### Requests and corrections
 
@@ -1044,7 +1010,7 @@ Scope: system (not per harness).
 
 - **Question:** Which findings and intervention proposals exist, and in what state?
 - **Unit:** records
-- **Formula:** Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) and each repeated correction (project × correction kind) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order.
+- **Formula:** Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order.
 
 Scope: system (not per harness).
 
@@ -1052,15 +1018,7 @@ Scope: system (not per harness).
 
 - **Question:** Did an applied intervention reduce what it targeted?
 - **Unit:** per task
-- **Formula:** For each applied proposal, its structured success metric: tasks with the finding's cluster (or correction) per task over the evaluation window after application, against the baseline window before; validated when the ratio is at most the metric's max_ratio, inconclusive with too few tasks. `facts sync` records the verdict as an immutable proposal event.
-
-Scope: system (not per harness).
-
-#### Uncodified practice recurrence (`intervene.practice_recurrence`)
-
-- **Question:** Which corrections do users keep repeating, so the practice should be codified?
-- **Unit:** findings
-- **Formula:** Repeated-correction findings: in one project, ≥ 2 tasks in ≥ 2 sessions over 7 Europe/London days whose next prompt Jev read as a correction of the same kind (ignored instruction, wrong approach, wrong scope, incomplete, incorrect result).
+- **Formula:** For each applied proposal, its structured success metric: tasks with the finding's cluster per task over the evaluation window after application, against the baseline window before; validated when the ratio is at most the metric's max_ratio, inconclusive with too few tasks. `facts sync` records the verdict as an immutable proposal event.
 
 Scope: system (not per harness).
 
@@ -1099,8 +1057,6 @@ Scope: system (not per harness).
    targets are inferred and say so in their notes.
 10. **Mislabelled rows are strays.** Claude Code sessions exported as `oh-my-pi` and
     Docker build spans under `oh-my-pi` count for neither harness.
-11. **Project attribution is partial.** 54–98% of tasks per harness have a hook
-    project; sessions in non-Git workspaces are rejected by the hooks.
 
 ## 6. Verification
 
@@ -1116,8 +1072,6 @@ The Pipeline view runs these checks for the selected window:
 - **Coverage grid:** per signal × harness, the registry's alignment versus rows on the
   route and on other harnesses' routes: healthy, idle, no events, possible break, not
   emitted, or stray (explained or unexplained).
-- **Project attribution:** attributed share of tasks per harness, hook rejections,
-  and the unsynced inbox backlog.
 
 Each view's totals were reconciled per harness and for All against direct queries on
 the live fact views when it shipped; the results are recorded in the plan.

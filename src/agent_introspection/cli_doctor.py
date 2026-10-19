@@ -9,7 +9,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from agent_introspection import doctor, doctor_harness, facts, producers, schedule, signoz_detect
+from agent_introspection import (
+    dashboard_service,
+    doctor,
+    doctor_harness,
+    facts,
+    producers,
+    schedule,
+    signoz_detect,
+)
 
 
 def _drift_report(
@@ -27,6 +35,7 @@ def default_probes() -> doctor.Probes:
         http_get=doctor.http_get,
         schedule_status=schedule.schedule_status,
         spool_sync_status=schedule.spool_sync_status,
+        dashboard_status=dashboard_service.status,
         detect=signoz_detect.detect,
         drift_report=_drift_report,
         harness=doctor_harness.HarnessProbes(

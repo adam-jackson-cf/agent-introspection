@@ -125,3 +125,8 @@ No old row is removed. New since baseline: RECUR-F16 to F23, RECUR-S05 to S09 (f
 - Evaluation-workspace exclusion (project_root or failure_signature under a temp dir) now applies to `targets`, `target_summary` and `concentration` too; registry formulas for `recur.targets` and `recur.project_concentration` and the measure doc say so. RECUR-S05, RECUR-S06, RECUR-S07, RECUR-S08, RECUR-F11, RECUR-F12, RECUR-F23.
 
 **Totals:** features 23 signals 9 ui calcs 12 removed since baseline 0 new since baseline 18
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Localized signatures KPI (RECUR-F06) and Project concentration table (RECUR-F12) removed; signal `recur.project_concentration` removed from the registry.
+- Evaluation-workspace exclusion reads each tool call's working directory (`c.workdir`) instead of the session's project root, with the failure-signature path match unchanged. A Codex call names a working directory only when its arguments carry one.

@@ -3,12 +3,12 @@ import type { Row } from "../src/contracts";
 const DAY = 86_400_000;
 const CORRECTION_DETECTOR = "facts.repeated_correction";
 /** The datasets the page never sees: inputs of the before/after windows. */
-const DAILY_INPUTS = ["cluster_daily", "correction_daily", "task_daily"];
+const DAILY_INPUTS = ["cluster_daily", "task_daily"];
 
 export type InterventionScope = { harness: string; start: string; end: string };
 
-/** Failure-cluster tasks, labelled/corrected tasks, and all tasks per London day. */
-type DailyFacts = { clusters: Row[]; corrections: Row[]; tasks: Row[] };
+/** Failure-cluster tasks and all tasks per London day. */
+type DailyFacts = { clusters: Row[]; tasks: Row[] };
 
 const strings = (value: unknown): string[] | null =>
   Array.isArray(value) ? value.map(String) : null;
@@ -31,15 +31,13 @@ const between = (from: string, to: string) =>
     (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY,
   );
 
-/** Whether a finding or proposal subject is a repeated correction (else a failure cluster). */
-const isCorrection = (row: Row) =>
-  row.detector === CORRECTION_DETECTOR ||
-  (row.project != null && row.correction_kind != null);
-
-/** Tags a finding or proposal with its subject kind: `correction` or `cluster`. */
+/**
+ * Tags a finding or proposal with its subject kind: `cluster`, or `correction` for a
+ * finding of the retired repeated-correction detector, kept as dormant history.
+ */
 const withKind = (row: Row): Row => ({
   ...row,
-  kind: isCorrection(row) ? "correction" : "cluster",
+  kind: row.detector === CORRECTION_DETECTOR ? "correction" : "cluster",
 });
 
 /**
@@ -84,41 +82,35 @@ function windowCounts(
         (harnesses === null || harnesses.includes(String(row.harness)))
       );
     });
-  const correction = isCorrection(proposal);
-  const ownProject = daily.corrections.filter(
-    (row) => row.project === proposal.project,
+  const matched = total(
+    within(
+      daily.clusters.filter(
+        (row) =>
+          row.tool_family === proposal.tool_family &&
+          row.failure_class === proposal.failure_class,
+      ),
+    ),
+    "tasks",
   );
-  const matched = correction
-    ? total(
-        within(
-          ownProject.filter(
-            (row) => row.correction_kind === proposal.correction_kind,
-          ),
-        ),
-        "corrected",
-      )
-    : total(
-        within(
-          daily.clusters.filter(
-            (row) =>
-              row.tool_family === proposal.tool_family &&
-              row.failure_class === proposal.failure_class,
-          ),
-        ),
-        "tasks",
-      );
-  const tasks = total(within(correction ? ownProject : daily.tasks), "tasks");
+  const tasks = total(within(daily.tasks), "tasks");
   return { matched, tasks, rate: tasks > 0 ? matched / tasks : null };
 }
+
+/** The percentage change from `before` to `after`; NULL when either is missing or `before` is 0. */
+const rateChange = (before: number | null, after: number | null) =>
+  before === null || after === null || before === 0
+    ? null
+    : (100 * (after - before)) / before;
 
 /**
  * The finding's own task rate in equal runs of whole London days before and after
  * the application day, clipped to the selected range, over the metric's
  * harnesses (the finding's when the metric has none): tasks that hit its failure
- * cluster per task, or labelled tasks in its project whose next prompt corrected
- * the agent the same way per labelled task there. The application day itself
+ * cluster per task. The application day itself
  * mixes pre and post events, so neither window counts it. `change_pct` is the
- * rate change, NULL when either rate is missing or the earlier rate is 0.
+ * rate change, NULL when either rate is missing or the earlier rate is 0. A
+ * proposal of the retired repeated-correction detector has no cluster to match,
+ * so its counts and rates are NULL rather than a measured 0.
  */
 export function prePost(
   proposal: Row,
@@ -147,20 +139,20 @@ export function prePost(
     addDays(appliedDay, 1),
     addDays(appliedDay, days),
   );
-  const changed =
-    pre.rate === null || post.rate === null || pre.rate === 0
-      ? null
-      : (100 * (post.rate - pre.rate)) / pre.rate;
+  const tagged = withKind(proposal);
+  const unmeasured = { matched: null, tasks: null, rate: null };
+  const [before, after] =
+    tagged.kind === "cluster" ? [pre, post] : [unmeasured, unmeasured];
   return {
-    ...withKind(proposal),
+    ...tagged,
     days,
-    pre_matched: pre.matched,
-    pre_tasks: pre.tasks,
-    pre_rate: pre.rate,
-    post_matched: post.matched,
-    post_tasks: post.tasks,
-    post_rate: post.rate,
-    change_pct: changed,
+    pre_matched: before.matched,
+    pre_tasks: before.tasks,
+    pre_rate: before.rate,
+    post_matched: after.matched,
+    post_tasks: after.tasks,
+    post_rate: after.rate,
+    change_pct: rateChange(before.rate, after.rate),
     verdict: proposal.verdict ?? null,
     evaluated_ratio: proposal.evaluated_ratio ?? null,
   };
@@ -196,15 +188,13 @@ function kpiRow(
     regressed: verdicts("regressed"),
     inconclusive: verdicts("inconclusive"),
     not_evaluated: applied.filter((row) => row.verdict == null).length,
-    corrections: findings.filter((row) => row.detector === CORRECTION_DETECTOR)
-      .length,
   };
 }
 
 /**
  * Turns the ClickHouse daily facts and the SQLite workflow rows into the page's
  * datasets: harness-scoped findings, proposals and decision history, the KPI row,
- * proposals per tier, repeated-correction findings, and the before/after
+ * proposals per tier, and the before/after
  * comparison of every proposal applied strictly inside the range.
  */
 export function interventionsData(
@@ -224,7 +214,6 @@ export function interventionsData(
   const end = Date.parse(scope.end);
   const daily: DailyFacts = {
     clusters: clickhouse.cluster_daily ?? [],
-    corrections: clickhouse.correction_daily ?? [],
     tasks: clickhouse.task_daily ?? [],
   };
   const comparisons = applied
@@ -244,7 +233,6 @@ export function interventionsData(
     proposal_events: (workflow.proposal_events ?? []).filter((event) =>
       ids.has(event.proposal_id),
     ),
-    corrections: findings.filter((row) => row.detector === CORRECTION_DETECTOR),
     tiers: tierCounts(proposals),
     comparisons,
   };

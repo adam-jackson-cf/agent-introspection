@@ -12,9 +12,7 @@ from agent_introspection import (
     evaluation,
     facts,
     findings,
-    preflight,
     schedule,
-    sessions,
     spool,
 )
 from agent_introspection.cli_common import app_config, diagnostic, open_store
@@ -37,9 +35,6 @@ def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
 def facts_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.facts_command == "schedule":
         return _schedule_command(args)
-    if args.facts_command == "preflight":
-        # Preflight always prints its report: setup errors become failing checks.
-        return preflight.report(lambda: app_config(args), facts.runner)
     config = app_config(args)
     run = facts.runner(config)
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
@@ -49,7 +44,6 @@ def facts_command(args: argparse.Namespace) -> dict[str, Any]:
         "install": lambda: _install(args, config, run),
         "refresh": lambda: facts.refresh_named(run, args.refresher),
         "backfill": lambda: facts.backfill(run, days=args.days),
-        "sessions": lambda: _sessions(config, rescan=args.rescan),
         "findings": lambda: _findings(args, run),
         "sync": lambda: _sync(args, run),
         "classify": lambda: _labels(run, config, days=args.days, limit=args.limit),
@@ -85,8 +79,13 @@ def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 def _labels(
     run: facts.SqlRunner, config: AppConfig, *, days: int = 2, limit: int = 60
 ) -> dict[str, Any]:
-    """Label exported prompts with Jev; Jev being unavailable never fails the sync."""
+    """Label exported prompts with Jev; Jev being unavailable never fails the sync.
+
+    With no key command, labels are off, as ``doctor`` reports them: nothing is read.
+    """
     command = config.labels_openrouter_key_command
+    if command is None:
+        return {"status": "off", "reason": "no [labels] openrouter_key_command (optional)"}
     try:
         return classify.run(run, days=days, limit=limit, key=lambda: classify.api_key(command))
     except classify.JevUnavailableError as exc:
@@ -94,20 +93,13 @@ def _labels(
         return {"status": "skipped", "reason": str(exc)}
 
 
-def _sessions(config: AppConfig, *, rescan: bool = False) -> dict[str, Any]:
-    """Attribute new sessions from the harnesses' session stores into the spool."""
-    stores = sessions.load_stores(config.session_roots)
-    return sessions.resolve(stores=stores, rescan=rescan)
-
-
-_LOADERS = ("load_hook_events", "load_session_projects")
+_LOADER = "load_hook_events"
 
 
 def _load_spooled(run: facts.SqlRunner) -> None:
-    """Run the loaders now, so records the drain just delivered are in their tables."""
-    for name in _LOADERS:
-        run(f"SYSTEM REFRESH VIEW {facts.DATABASE}.{name}")
-        run(f"SYSTEM WAIT VIEW {facts.DATABASE}.{name}")
+    """Run the hook-event loader now, so records the drain just delivered are in its table."""
+    run(f"SYSTEM REFRESH VIEW {facts.DATABASE}.{_LOADER}")
+    run(f"SYSTEM WAIT VIEW {facts.DATABASE}.{_LOADER}")
 
 
 def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
@@ -132,7 +124,6 @@ def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 
 def add_facts_parser(commands: Any) -> None:
     facts_parser = commands.add_parser("facts").add_subparsers(dest="facts_command", required=True)
-    facts_parser.add_parser("preflight", help="read-only checks before facts install")
     verify = facts_parser.add_parser(
         "verify", help="build the store in a scratch database to check every statement"
     )
@@ -151,12 +142,6 @@ def add_facts_parser(commands: Any) -> None:
     backfill = facts_parser.add_parser("backfill")
     backfill.add_argument("--days", type=int, default=90)
     facts_parser.add_parser("status")
-    sessions_parser = facts_parser.add_parser(
-        "sessions", help="attribute sessions from the harnesses' session stores now"
-    )
-    sessions_parser.add_argument(
-        "--rescan", action="store_true", help="re-read every session file, not only new ones"
-    )
     facts_parser.add_parser("findings")
     sync = facts_parser.add_parser("sync")
     sync.add_argument(
@@ -178,10 +163,7 @@ def add_spool_parser(commands: Any) -> None:
     spool_parser = commands.add_parser(
         "spool", help="ship this machine's records to the OTLP route"
     ).add_subparsers(dest="spool_command", required=True)
-    sync = spool_parser.add_parser(
-        "sync", help="attribute new sessions, record spool status, and send the spool"
-    )
-    sync.add_argument("--rescan", action="store_true", help="re-read every session file")
+    spool_parser.add_parser("sync", help="record spool status and send the spool")
     spool_parser.add_parser("status", help="count pending and rejected spool files (read-only)")
 
 
@@ -192,4 +174,4 @@ def spool_command(args: argparse.Namespace) -> dict[str, Any]:
             "rejected": spool.rejected_count(),
             **spool.read_state(),
         }
-    return spool.sync(app_config(args), rescan=args.rescan)
+    return spool.sync(app_config(args))

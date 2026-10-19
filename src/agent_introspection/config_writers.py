@@ -130,12 +130,16 @@ def _json_indent(text: str) -> str | None:
     return None if text.strip() and "\n" not in text.strip() else "  "
 
 
+def render_json(document: Mapping[str, Any], like: str) -> str:
+    """Return ``document`` as JSON in the indentation and final newline of ``like``."""
+    rendered = json.dumps(document, indent=_json_indent(like), ensure_ascii=False)
+    return rendered + ("\n" if like.endswith("\n") or not like else "")
+
+
 def _update_json(text: str, path: tuple[str, ...], values: Values) -> str:
     document = _json_document(text)
     _descend(document, path, "JSON")
-    updated = _with_values(document, path, values)
-    rendered = json.dumps(updated, indent=_json_indent(text), ensure_ascii=False)
-    return rendered + ("\n" if text.endswith("\n") or not text else "")
+    return render_json(_with_values(document, path, values), text)
 
 
 # --- TOML values --------------------------------------------------------------------

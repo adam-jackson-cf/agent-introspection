@@ -81,7 +81,7 @@
     "page": "pipeline",
     "title": "Project attribution",
     "feature": "PIPE-F20",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "pipeline",
@@ -621,7 +621,7 @@
     "page": "recurrence",
     "title": "Localized signatures",
     "feature": "RECUR-F06",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "recurrence",
@@ -651,7 +651,7 @@
     "page": "recurrence",
     "title": "Project concentration",
     "feature": "RECUR-F12",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "intent",
@@ -681,7 +681,7 @@
     "page": "intent",
     "title": "Repeated corrections",
     "feature": "INTENT-F06",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "intent",
@@ -733,7 +733,7 @@
   },
   {
     "page": "intent",
-    "title": "Which corrections repeat?",
+    "title": "Which tasks were corrected?",
     "feature": "INTENT-F15",
     "removed": null
   },
@@ -741,7 +741,7 @@
     "page": "intent",
     "title": "Repeated corrections by project",
     "feature": "INTENT-F15",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "intent",
@@ -777,7 +777,7 @@
     "page": "interventions",
     "title": "Repeated corrections",
     "feature": "INTV-F05",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "interventions",
@@ -819,7 +819,7 @@
     "page": "interventions",
     "title": "Uncodified practice recurrence",
     "feature": "INTV-F12",
-    "removed": null
+    "removed": "DC11"
   },
   {
     "page": "session",

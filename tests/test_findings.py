@@ -3,15 +3,16 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from agent_introspection import evidence, findings
 from agent_introspection.facts import SqlRunner
 from tests.conftest import OpenWorkflow
 
 
-def window(*rows: dict[str, object], corrections: tuple[dict[str, object], ...] = ()) -> SqlRunner:
-    def run(sql: str) -> str:
-        chosen = corrections if sql == findings.CORRECTION_QUERY else rows
-        return "\n".join(json.dumps(row) for row in chosen)
+def window(*rows: dict[str, object]) -> SqlRunner:
+    def run(_sql: str) -> str:
+        return "\n".join(json.dumps(row) for row in rows)
 
     return run
 
@@ -32,21 +33,6 @@ def row(
         "first_seen_ns": 10,
         "last_seen_ns": 20,
         **overrides,
-    }
-
-
-def correction(kind: str, tasks: int, days: int, sessions: int = 2) -> dict[str, object]:
-    return {
-        "project": "demo",
-        "correction_kind": kind,
-        "occurrences": tasks,
-        "tasks": tasks,
-        "days": days,
-        "sessions": sessions,
-        "harnesses": ["claude-code"],
-        "task_types": ["bugfix"],
-        "first_seen_ns": 10,
-        "last_seen_ns": 20,
     }
 
 
@@ -144,67 +130,57 @@ def test_subject_records_the_cluster_and_its_impact(open_workflow: OpenWorkflow)
 def test_the_same_cluster_across_harnesses_is_one_finding() -> None:
     assert findings.fingerprint("shell", "x") == findings.fingerprint("shell", "x")
     assert findings.fingerprint("shell", "x") != findings.fingerprint("read", "x")
-    assert findings.fingerprint("demo", "x", findings.CORRECTION_DETECTOR_ID) != (
+    assert findings.fingerprint("demo", "x", "another.detector") != (
         findings.fingerprint("demo", "x")
     )
 
 
-def test_repeated_corrections_become_findings_of_their_own_detector(
-    open_workflow: OpenWorkflow,
+@pytest.mark.parametrize("detector", ["facts.recurrence", "facts.repeated_correction"])
+def test_findings_from_a_retired_detector_go_dormant(
+    open_workflow: OpenWorkflow, detector: str
 ) -> None:
-    connection = open_workflow(":memory:")
-
-    result = findings.refresh(
-        window(
-            corrections=(correction("ignored_instruction", 3, 2), correction("incomplete", 2, 1))
-        ),
-        connection,
-    )
-
-    assert result["created"] == 2
-    assert result["actionable"] == 1
-    rows = dict(
-        connection.execute(
-            "SELECT json_extract(subject, '$.correction_kind'), detector_id FROM findings"
-        )
-    )
-    assert rows == {
-        "ignored_instruction": findings.CORRECTION_DETECTOR_ID,
-        "incomplete": findings.CORRECTION_DETECTOR_ID,
-    }
-
-
-def test_findings_from_the_retired_detector_go_dormant(open_workflow: OpenWorkflow) -> None:
     connection = open_workflow(":memory:")
     connection.execute(
         "INSERT INTO findings (id, fingerprint, category, trend_state, detector_id, "
         "detector_version, first_seen_ns, last_seen_ns, occurrence_count, "
         "canonical_task_count, local_day_count, entity_version, updated_at, subject) "
-        "VALUES ('old', ?, 'tool_failure_signature', 'actionable', 'facts.recurrence', "
+        "VALUES ('old', ?, 'retired', 'actionable', ?, "
         "1, 1, 2, 3, 2, 2, 1, '2026-09-29', '')",
-        ("a" * 64,),
+        ("a" * 64, detector),
     )
 
     result = findings.refresh(window(), connection)
 
     assert result["dormant"] == 1
+    assert result["actionable"] == 0
     assert connection.execute("SELECT trend_state FROM findings").fetchone() == ("dormant",)
 
 
-def test_evaluation_workspaces_are_excluded() -> None:
-    for query in (findings.WINDOW_QUERY, findings.CORRECTION_QUERY):
-        assert f"NOT match(p.project_root, '{findings.EVALUATION_PATH}')" in query
+def test_evaluation_workspaces_are_excluded_by_workdir_and_failure_path() -> None:
+    assert f"NOT match(c.workdir, '{findings.EVALUATION_PATH}')" in findings.WINDOW_QUERY
+    assert f"NOT match(c.failure_signature, '{findings.EVALUATION_PATH}')" in findings.WINDOW_QUERY
+    assert "(c.harness, c.session_id) NOT IN (SELECT harness, session_id" in findings.WINDOW_QUERY
+    assert "session_project" not in findings.WINDOW_QUERY
+
+
+def test_a_session_is_excluded_only_when_all_its_workdirs_are_temporary() -> None:
+    having = f"HAVING min(match(workdir, '{findings.EVALUATION_PATH}')) = 1"
+    assert having in findings.WINDOW_QUERY
+    assert "workdir != '' GROUP BY harness, session_id" in findings.WINDOW_QUERY
+
+
+def test_the_dashboard_excludes_evaluation_workspaces_as_findings_do() -> None:
+    views = (Path(__file__).parents[1] / "dashboard/server/views.ts").read_text()
+    assert f"String.raw`{findings.EVALUATION_PATH}`" in views
+    assert "HAVING min(match(workdir, '${EVALUATION_PATH}')) = 1" in views
+    assert "WHERE session_id != '' AND workdir != ''" in views
 
 
 def test_detectors_count_only_the_enabled_harnesses() -> None:
     enabled = "IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)"
     assert f"c.harness {enabled}" in findings.WINDOW_QUERY
-    assert f"l.harness {enabled}" in findings.CORRECTION_QUERY
-    cluster = evidence.queries("shell", "exit 1")
-    correction = evidence.correction_queries("example", "ignored")
-    for name, sql in [*cluster.items(), *correction.items()]:
+    for name, sql in evidence.queries("shell", "exit 1").items():
         assert enabled in sql, name
-    assert f"c.harness {enabled}" in cluster["projects"]
 
 
 def test_generic_failure_classes_never_become_actionable(open_workflow: OpenWorkflow) -> None:

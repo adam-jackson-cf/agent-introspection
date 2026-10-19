@@ -148,3 +148,9 @@ Removed since baseline: none found.
 - Findings, Proposals and Approval history figures stay unfiltered by range (current workflow state); the KPI details and the three panel subtitles now say "current state, not the selected range" (`IV:292,298,392,438,490`). Affects INTV-F02, F03, F09, F10, F15, F17.
 - Applied KPI headline still counts every applied proposal; its detail now starts with "N in range" (the comparison table's count) and ends with "N not evaluated", so validated + regressed + inconclusive + not evaluated sum to the headline (`appliedDetail`, `IV:241-247,304`). Affects INTV-F04, S09, S10, C03. Regression test in `Interventions.test.ts`.
   **Totals:** features 25 signals 24 ui calcs 18 removed since baseline 0 new since baseline 11
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Repeated corrections KPI (INTV-F05) and Uncodified practice recurrence table (INTV-F12) removed; signal `intervene.practice_recurrence` removed from the registry. The repeated-correction detector is retired: its findings go dormant and stay listed, labelled project · correction kind.
+- Post-intervention recurrence compares failure clusters only (`correction_daily` removed). An applied proposal of the retired detector shows its task counts with Before, After, and Rate change empty, not a measured 0.
+- The corrections baseline series counts corrected tasks per 100 tasks with a next-prompt label (Intent's corrected rate), over all tasks rather than tasks with a project.

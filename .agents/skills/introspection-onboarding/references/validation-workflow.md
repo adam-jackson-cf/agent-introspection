@@ -12,21 +12,25 @@ labels' key command, and checks secrets for presence only. It prints one JSON ob
 for a per-harness check, `harness`) and exits 30 when any check fails; the report
 still prints.
 
-| Status | Meaning                                                                                                 |
-| ------ | ------------------------------------------------------------------------------------------------------- |
-| `pass` | As expected.                                                                                            |
-| `warn` | Works, but at risk or only partly (for example, a hooks endpoint the scheduled sync cannot see).        |
-| `fail` | A step is missing or wrong: follow `fix`, then rerun `doctor`.                                          |
-| `off`  | An optional feature is not in use (prompt export, prompt labels); turn it on only if the user wants it. |
-| `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).      |
+| Status | Meaning                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `pass` | As expected.                                                                                                                   |
+| `warn` | Works, but at risk or only partly (for example, a hooks endpoint the scheduled sync cannot see).                               |
+| `fail` | A step is missing or wrong: follow `fix`, then rerun `doctor`.                                                                 |
+| `off`  | An optional feature is not in use (prompt export, prompt labels, the dashboard service); turn it on only if the user wants it. |
+| `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).                             |
 
-The checks run in this order: `config`, `signoz` (every `facts preflight` check
-folded into one), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
-enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
-`activity_hooks`, `activity_shim`, `session_store`, and `telemetry` (rows over 24
-hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
-`prompt_labels`, and `dashboard`. Points to know:
+The checks run in this order: `config`, `signoz` (every preflight check folded into
+one, with each failing check's detail), `collector_http`, `collector_grpc`,
+`hooks_endpoint`, and `collector_live` (with `--live`); then, per enabled harness,
+`binary`, `config_files`, `export_settings`, `prompt_export`, `activity_hooks`,
+`activity_shim`, `hook_config`, and `telemetry` (rows over 24 hours);
+`disabled_harnesses`; then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
+`prompt_labels`, `dashboard`, and `dashboard_service`. Points to know:
 
+- `collector_grpc` is `info` when port 4317 is closed: every harness profile exports
+  over OTLP/HTTP, so only an exporter set to OTLP/gRPC by hand needs it. When an
+  enabled harness's export settings are satisfied over gRPC, it warns.
 - An exporter that reaches the local collector by another route (OTLP/gRPC on 4317,
   or OTLP/HTTP on 4318 or the configured port) satisfies the export settings, as it
   does for `harness configure`; `127.0.0.1` and `localhost` both name this machine.
@@ -36,7 +40,7 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
 - Config files checked: the ones `harness configure` writes. A set `CLAUDE_CONFIG_DIR`
   or `CODEX_HOME` names the file even when it does not exist yet, and `config_files`
   then fails as missing. Codex homes: every configured home that is set or exists,
-  plus the parent of each `[sessions.roots] codex` root that holds a `config.toml`.
+  plus every directory the codex profile's `home_globs` matches (Orca's account homes).
 - `prompt_export` reads a file's first prompt-export setting as its switch (Claude
   Code's `OTEL_LOG_USER_PROMPTS`, Codex's `log_user_prompt`). While the switch is not
   on, the check is `off`, whatever the file's other settings hold. It warns when the
@@ -47,9 +51,10 @@ hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
   beside a switch that is on, such as `OTEL_LOG_ASSISTANT_RESPONSES=1` (assistant
   responses exported on purpose), is `info`: its detail names the value, and its fix
   says what `--prompt-export` would write over it. Leave it if the user chose it.
-- A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
-  scheduled sync: set `[hooks] otlp_logs_endpoint` and
-  `[labels] openrouter_key_command` in the config instead.
+- `prompt_labels` reads only `[labels] openrouter_key_command`: a key in the shell or
+  omp's stored credential is never used.
+- `disabled_harnesses` warns when a registry harness left out of `[harnesses] enabled`
+  sent rows this week: the dashboard and findings leave its data out.
 - The dashboard needs ClickHouse's HTTP interface at a local address: a port published
   on loopback (for example with the opt-in
   `scripts/signoz/docker-compose.clickhouse-http.yaml`) or a container name the runtime
@@ -69,10 +74,8 @@ Options:
 
 Beyond `doctor`, check by hand:
 
-- Each changed file has a backup (`harness configure` and `install_activity.py` print
-  their backup paths).
-- The managed copies under `~/.local/lib/agent-introspection/activity-hooks-v1/` match
-  the repo's `scripts/` (`diff -u`).
+- Each changed file has a backup (`harness configure` prints each backup path, for its
+  settings and its hooks).
 - `~/.omp/agent/config.yml` does not list the omp activity extension.
 
 ## Live check
@@ -87,8 +90,6 @@ Beyond `doctor`, check by hand:
      (`agent-introspection spool status` counts both);
    - a probe record (the session's first hook event) is in
      `introspection.hook_events FINAL` with this machine's `host`;
-   - `introspection.session_projects FINAL` has the session with `status = 'attributed'`
-     and its project (or the reason it has none, such as `non_git_workspace`);
    - the prompt event (`user_prompt`, `codex.user_prompt`, `omp.user_prompt`) reached
      SigNoz with text, and `introspection.prompt_labels` has a `labelled` row for it,
      while `introspection.logs` holds no `prompt` key;

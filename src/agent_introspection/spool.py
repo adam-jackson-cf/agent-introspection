@@ -1,11 +1,11 @@
 """The record spool and its one route to the facts store: OTLP/HTTP logs.
 
-Every machine writes its records (activity-hook events, session attribution, spool
-status) as one JSON file each into the spool, ``hooks.INBOX``. ``drain`` ships them
-in batches of at most ``BATCH_SIZE`` to the logs endpoint (``[hooks]
-otlp_logs_endpoint``, else the OTEL environment), where SigNoz keeps them and the
+Every machine writes its records (activity-hook events and spool status) as one JSON
+file each into the spool, ``hooks.INBOX``. ``drain`` ships them in batches of at most
+``BATCH_SIZE`` to the logs endpoint (``AppConfig.otlp_logs_endpoint``: ``[hooks]
+otlp_logs_endpoint``, else the collector's ``/v1/logs``), where SigNoz keeps them and the
 ``facts`` loaders read them back into ClickHouse. ``sync`` is the whole periodic step:
-attribute new sessions, record a status heartbeat, drain.
+record a status heartbeat and drain.
 
 A file leaves the spool only once the collector accepted it. A batch the collector
 reports as rejected (a partial success, or a 400 carrying an OTLP status) moves to
@@ -35,9 +35,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent_introspection import hooks
-from agent_introspection.config import AppConfig, load_config, resolve_otlp_logs_endpoint
+from agent_introspection.config import AppConfig, load_config
 
-SESSION_PROJECT_SCHEMA = "agent-introspection.session-project/1"
 STATUS_SCHEMA = "agent-introspection.spool-status/1"
 SERVICE_NAME = "agent-introspection"
 SCOPE_NAME = "agent-introspection.spool"
@@ -61,12 +60,11 @@ class Family:
 
 FAMILIES: dict[str, Family] = {
     hooks.SCHEMA: Family("hook-event", "agent_introspection.hook_event", "occurred_at"),
-    SESSION_PROJECT_SCHEMA: Family(
-        "session-project", "agent_introspection.session_project", "resolved_at"
-    ),
     STATUS_SCHEMA: Family("spool-status", "agent_introspection.spool_status", "reported_at"),
 }
-_COUNTED = ("hook-event", "session-project")
+_COUNTED = ("hook-event",)
+# Families this release no longer sends; a leftover file is deleted, not quarantined.
+RETIRED_SCHEMAS = frozenset({"agent-introspection.session-project/1"})
 
 
 def host_name() -> str:
@@ -313,6 +311,18 @@ def _read_record(path: Path) -> Record | None:
     return item if isinstance(item, dict) else None
 
 
+def _left_to_quarantine(path: Path) -> bool:
+    """Delete an unreadable file of a retired family; return whether one is left to quarantine."""
+    try:
+        item = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return path.exists()
+    if isinstance(item, dict) and item.get("schema") in RETIRED_SCHEMAS:
+        path.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def _quarantine(paths: list[Path], directory: Path) -> None:
     quarantine = directory / "rejected"
     quarantine.mkdir(exist_ok=True)
@@ -334,7 +344,7 @@ def _ship(
     for path in paths:
         item = _read_record(path)
         if item is None:
-            if path.exists():
+            if _left_to_quarantine(path):
                 invalid.append(path)
         else:
             batch.append((path, item))
@@ -422,20 +432,17 @@ def _prune_heartbeats(directory: Path) -> None:
             path.unlink(missing_ok=True)
 
 
-def hook_endpoint(
-    config: Path | None = None, environ: Mapping[str, str] | None = None
-) -> str | None:
+def hook_endpoint(config: Path | None = None) -> str | None:
     """Return the logs endpoint for the hook path, loading configuration leniently.
 
-    A missing configuration file is fine (the environment fallback applies); an invalid
-    one means no endpoint, so records stay spooled, and its error class is logged.
+    A missing configuration file is fine (the defaults apply); an invalid one means no
+    endpoint, so records stay spooled, and its error class is logged.
     """
     try:
-        configured = load_config(config).hooks_otlp_logs_endpoint
+        return load_config(config).otlp_logs_endpoint
     except Exception as exc:
         hooks.log("spool", type(exc).__name__, "0")
         return None
-    return resolve_otlp_logs_endpoint(configured, environ)
 
 
 # --- Status and sync --------------------------------------------------------------
@@ -473,15 +480,9 @@ def status_record(inbox: Path | None = None, *, now: datetime | None = None) -> 
 def sync(
     config: AppConfig,
     *,
-    rescan: bool = False,
     inbox: Path | None = None,
-    scan_state: Path | None = None,
-    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Attribute new sessions into the spool, record a status heartbeat, and drain.
-
-    Without an endpoint nothing is sent (and no heartbeat is written, which would only
-    pile up), so records wait in the spool until one is configured.
+    """Record a status heartbeat and drain the spool to ``config.otlp_logs_endpoint``.
 
     Ordering invariant: under one drain lock, unsent heartbeats from earlier runs are
     deleted (superseded; the counter is cumulative), records are drained, the status
@@ -493,24 +494,14 @@ def sync(
     drain that ships a batch as the lock changes hands, which the check's GAP_FLOOR
     absorbs. A busy lock skips the heartbeat.
     """
-    from agent_introspection import sessions
-
     directory = _directory(inbox)
-    attributed = sessions.resolve(
-        stores=sessions.load_stores(config.session_roots),
-        state=scan_state,
-        rescan=rescan,
-        inbox=directory,
-    )
-    endpoint = resolve_otlp_logs_endpoint(config.hooks_otlp_logs_endpoint, environ)
-    if endpoint is None:
-        return {"sessions": attributed, "drain": {"skipped": "no_endpoint"}}
+    endpoint = config.otlp_logs_endpoint
     sent = DrainResult()
     directory.mkdir(parents=True, exist_ok=True)
     with _lock(directory) as held:
         if not held:
             sent.busy = True
-            return {"sessions": attributed, "drain": sent.as_dict()}
+            return {"drain": sent.as_dict()}
         _prune_heartbeats(directory)
         deadline = time.monotonic() + DRAIN_BUDGET_SECONDS
         _drain_held(endpoint, directory, sent, lambda: time.monotonic() < deadline, None)
@@ -520,7 +511,6 @@ def sync(
         _ship(endpoint, [beat], directory, state, sent)
         _save_state(directory, state)
     return {
-        "sessions": attributed,
         "status": {key: status[key] for key in ("pending", "rejected")},
         "drain": sent.as_dict(),
     }

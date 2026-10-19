@@ -1,26 +1,23 @@
-# Activity hooks
-
-Activity hooks close dashboard signals a harness's own telemetry lacks (tool argument
-identity, targets, and gate-bypass flags; Claude Code interrupts, steers, reasoning
-tokens, subagents, and failure text; omp approvals, retries, steers, and its prompt
-event). The record contract and derivations are in
-[`docs/references/hook-events.md`](../../../../docs/references/hook-events.md). Project attribution needs no
-hook: the spool sync reads each harness's session store (`session_stores.toml`) and
-sends session-project records over the same OTLP route.
+# Onboarding scripts
 
 ```text
 scripts/
-├── activity-shim.sh             # detaches `agent-introspection hook PRODUCER EVENT`
 ├── agent-introspection-spool-sync.service  # systemd user unit: `spool sync`
 ├── agent-introspection-spool-sync.timer    # runs it every minute (additional machines)
-├── adapters/
-│   ├── claude-code/             # install_activity.py: registers six Claude Code hooks
-│   └── omp/                     # activity.ts: omp extension
 └── signoz/                      # opt-in SigNoz files; see signoz/README.md
     ├── install-signoz.sh        # guided install of a new SigNoz, only when asked
     ├── docker-compose.clickhouse-http.yaml  # ClickHouse HTTP, OTLP, and UI on loopback only
     └── otel-collector-opencode-filter.yaml  # drops opencode's plumbing spans
 ```
+
+## Activity hooks
+
+The activity hooks are not here: they ship in the CLI package
+(`src/agent_introspection/hook_runtime/`), and `agent-introspection harness configure
+<harness>` installs them, copying the runtime to
+`~/.local/lib/agent-introspection/activity-hooks-v1/` so hooks never run a repository
+path. [`docs/references/hook-events.md`](../../../../docs/references/hook-events.md)
+holds the record contract, each harness's hooks, and how they are installed.
 
 ```text
 harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook PRODUCER EVENT (detached)
@@ -28,8 +25,9 @@ harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook 
   ─> OTLP/HTTP logs POST ─> SigNoz ─> load_hook_events ─> introspection.hook_events
 ```
 
-Delivery needs `[hooks] otlp_logs_endpoint` (the collector's OTLP/HTTP logs URL). The
-host machine's scheduled `facts sync` drains the spool; each additional machine runs
+Records go to the collector's OTLP/HTTP logs URL (`/v1/logs` on `[signoz]
+otlp_endpoint`, or on `[machine] export_endpoint` on an additional machine). The host
+machine's scheduled `facts sync` drains the spool; each additional machine runs
 `agent-introspection spool sync` from the systemd user timer here, as the onboarding
 skill's additional machines workflow describes.
 
@@ -44,9 +42,6 @@ skill's additional machines workflow describes.
   and a digit-normalized failure signature.
 - Failures are logged by exception type only to
   `~/.local/share/agent-introspection/hooks.log`.
-- Installed copies live in `~/.local/lib/agent-introspection/activity-hooks-v1/`; hooks
-  never run a repository path.
 
-Codex needs no activity hook: its signals are native. Install commands are in each
-adapter's README and the onboarding skill's harness configuration workflow;
-`agent-introspection doctor` checks the installed hooks and shim.
+Codex needs no activity hook: its signals are native. `agent-introspection doctor`
+checks the installed hooks and shim.

@@ -10,7 +10,6 @@ service_names = ["claude-code"]
 binary = "claude"
 version_args = ["--version"]
 verified_versions = ["2.1.285"]
-session_store = "claude-code"
 hook_adapter = "claude-code"
 sources = ["https://code.claude.com/docs/en/monitoring-usage"]
 
@@ -106,4 +105,3 @@ user_friction = { status = "hook", route = "hook.prompt_submitted", evidence = "
 approvals = { status = "native", route = "claude.tool_decision", lacks = ["guard.sandbox"], evidence = "`tool_decision` logs with `decision` and `source`; Claude Code emits no sandbox outcome and no hook sees one, so Sandbox outcomes is not emitted." }
 delegation = { status = "hook", route = "hook.subagent_start", evidence = "The `SubagentStart` hook, with the parent prompt ID." }
 prompt_text = { status = "native", route = "claude.user_prompt", evidence = "`user_prompt` logs carry the text with `OTEL_LOG_USER_PROMPTS=1`." }
-session_store = { status = "native", evidence = "Transcripts in `~/.claude/projects/*/*.jsonl` (store `claude-code`): the first entry with `sessionId` and `cwd`." }

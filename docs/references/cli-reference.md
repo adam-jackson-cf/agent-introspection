@@ -14,23 +14,20 @@ On an additional machine (`[machine] role = "additional"`, which has no SigNoz),
 command that needs ClickHouse exits 10 with a message saying to run it on the host:
 the `facts` commands except `facts schedule status` and `remove`, the `producers`
 commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
-`facts preflight` reports the same as a failing `connection` check.
 
 ## Facts
 
-| Command                                  | What it does                                                                                                                                                                                                                                                                                                                        | When to use it                                                    |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `facts preflight`                        | Read-only checks of the config, the ClickHouse connection and version, the SigNoz columns the projections read, grants, and recent producer data. Always prints its JSON report (`passed`, `mode`, `checks`): a config that does not load or a connection that cannot be set up is a failing check, and any failing check exits 30. | Before `facts install`; first stop when SigNoz cannot be reached. |
-| `facts verify [--compare]`               | Builds the whole store in a scratch database, then drops it, so a statement ClickHouse rejects fails here. `--compare` instead rebuilds the live snapshots now and checks each against a full read of its view; a mismatch prints every result and exits 30.                                                                        | After an install, or on demand before one.                        |
-| `facts install`                          | Verifies in a scratch database, then creates tables, loaders, views, and snapshots, loads the signal registry and `[harnesses] enabled`, and creates or migrates the workflow store.                                                                                                                                                | First install; after any change under `facts_sql/`.               |
-| `facts refresh <refresher>`              | Refreshes and waits for one named loader or refresher (a name from `facts status`), retrying once (not when still running after 30 min). An unknown name exits 50.                                                                                                                                                                  | Filling one empty table without a full rebuild.                   |
-| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains, including hook events and session attribution.                                                                                                                                                                                                                                               | After a span or log projection change.                            |
-| `facts status`                           | Loader state and per-harness freshness.                                                                                                                                                                                                                                                                                             | Health checks.                                                    |
-| `facts sessions [--rescan]`              | Attributes new sessions from the harness session stores into the spool; `--rescan` forgets the scan state and re-reads every session file and database.                                                                                                                                                                             | After adding a session-store root, or to rebuild attribution.     |
-| `facts findings`                         | Promotes failure clusters and repeated corrections into workflow findings.                                                                                                                                                                                                                                                          | Refreshing findings on demand.                                    |
-| `facts sync [--log]`                     | `spool sync`, then the hook-event and session loaders, prompt labels, findings, and due proposal evaluations. `--log` writes the summary and errors, with a UTC timestamp, to the rotated `~/.local/share/agent-introspection/sync.log` instead of stdout and stderr.                                                               | What the schedule runs every minute, with `--log`.                |
-| `facts classify [--days 2] [--limit 60]` | Labels exported prompts now. The OpenRouter key comes from `OPENROUTER_API_KEY`, else `[labels] openrouter_key_command`, else omp's stored credential; with none, or a key command that prints nothing, labels are skipped with the reason.                                                                                         | On-demand prompt labelling.                                       |
-| `facts schedule install\|remove\|status` | Manages the SigNoz host's job that runs `facts sync --log` every minute: a launchd agent on macOS, a systemd user timer on Linux. Other platforms exit 60.                                                                                                                                                                          | Install, uninstall, or check the schedule.                        |
+| Command                                  | What it does                                                                                                                                                                                                                                                 | When to use it                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| `facts verify [--compare]`               | Builds the whole store in a scratch database, then drops it, so a statement ClickHouse rejects fails here. `--compare` instead rebuilds the live snapshots now and checks each against a full read of its view; a mismatch prints every result and exits 30. | After an install, or on demand before one.          |
+| `facts install`                          | Verifies in a scratch database, then creates tables, loaders, views, and snapshots, loads the signal registry and `[harnesses] enabled`, and creates or migrates the workflow store.                                                                         | First install; after any change under `facts_sql/`. |
+| `facts refresh <refresher>`              | Refreshes and waits for one named loader or refresher (a name from `facts status`), retrying once (not when still running after 30 min). An unknown name exits 50.                                                                                           | Filling one empty table without a full rebuild.     |
+| `facts backfill [--days 90]`             | Re-projects everything SigNoz retains, including hook events.                                                                                                                                                                                                | After a span or log projection change.              |
+| `facts status`                           | Loader state and per-harness freshness.                                                                                                                                                                                                                      | Health checks.                                      |
+| `facts findings`                         | Promotes failure clusters into workflow findings.                                                                                                                                                                                                            | Refreshing findings on demand.                      |
+| `facts sync [--log]`                     | `spool sync`, then the hook-event loader, prompt labels, findings, and due proposal evaluations. `--log` writes the summary and errors, with a UTC timestamp, to the rotated `~/.local/share/agent-introspection/sync.log` instead of stdout and stderr.     | What the schedule runs every minute, with `--log`.  |
+| `facts classify [--days 2] [--limit 60]` | Labels exported prompts now. The OpenRouter key is what `[labels] openrouter_key_command` prints; without that command, or when it prints nothing, labels are skipped with the reason.                                                                       | On-demand prompt labelling.                         |
+| `facts schedule install\|remove\|status` | Manages the SigNoz host's job that runs `facts sync --log` every minute: a launchd agent on macOS, a systemd user timer on Linux. Other platforms exit 60.                                                                                                   | Install, uninstall, or check the schedule.          |
 
 ### Schedule
 
@@ -58,10 +55,9 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 - **Both:** the job runs the `agent-introspection` executable of the environment that
   ran `install`, so run it from the standalone copy. It passes `--config` when one was
   given, and sets only `PATH`: the system directories plus the directories of the
-  docker CLI in docker mode, of the `clickhouse_password_command` and
-  `[labels] openrouter_key_command` executables, and of omp when no key command is
-  set. Variables from your shell, such as
-  `OPENROUTER_API_KEY` or `OTEL_EXPORTER_OTLP_*`, never reach it, and `install` refuses
+  `clickhouse_password_command` and
+  `[labels] openrouter_key_command` executables. Variables from your shell, such as
+  `OTEL_EXPORTER_OTLP_*`, never reach it, and `install` refuses
   `clickhouse_password_env`. A job that fails to start puts back the one it replaced,
   running again only if it was running before: a job you stopped (`launchctl bootout`,
   or `systemctl --user stop` or `disable`) stays stopped, and the error says so.
@@ -74,31 +70,30 @@ commands, `candidates export`, `proposal draft`, and `proposal evaluate`.
 
 ## Spool
 
-| Command                 | What it does                                                                                                                                                                                                                             | When to use it                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `spool sync [--rescan]` | Attributes new sessions into the spool, records a spool-status heartbeat, and sends the spool to `[hooks] otlp_logs_endpoint` (else an OTLP/HTTP `OTEL_EXPORTER_OTLP_*` environment). With no endpoint nothing is sent and records wait. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
-| `spool status`          | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                                                                                      | Checking delivery.                                                                                                   |
-
-The attribution result of `facts sessions`, `spool sync`, and `facts sync` counts
-sessions by status, and lists under `unreadable` (store, database, error) any SQLite
-store database it could not read; the next scan retries it. See
-[Project Attribution](project-attribution.md).
+| Command        | What it does                                                                                                                                                        | When to use it                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `spool sync`   | Records a spool-status heartbeat and sends the spool to the collector's `/v1/logs` (or `[hooks] otlp_logs_endpoint`). Records it cannot send wait for the next run. | Machines without SigNoz run it every minute from the onboarding skill's units; the host runs it inside `facts sync`. |
+| `spool status` | Read-only: pending and rejected spool files, the cumulative `sent_total` per record family, and `last_error_class`.                                                 | Checking delivery.                                                                                                   |
 
 ## Onboarding
 
 These commands identify producers, configure harnesses, and diagnose each install
 step. [Producer Onboarding](producer-onboarding.md) explains the lifecycle they serve.
 
-| Command                                                                             | What it does                                                                                                                                                                                                                                                                                                                                                       | When to use it                                                          |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `signoz detect`                                                                     | Read-only: SigNoz and ClickHouse containers, the local ports a SigNoz publishes, and whether ClickHouse answers on loopback, with notes on the next step. Reads no config, never changes anything, and always exits 0.                                                                                                                                             | First step on a new machine; before the guided SigNoz install.          |
-| `producers discover [--days 7]`                                                     | Lists every `service.name` with spans or logs in SigNoz over the window, classed `registered`, `known_producer`, `internal`, or `unregistered`, with row counts and first and last seen (UTC).                                                                                                                                                                     | Finding what sends telemetry; the first step for an unknown producer.   |
-| `producers profile <service> [--days 7] [--write PATH] [--force]`                   | Explores one service by name: span names, log event names, resource keys, and attribute keys with row counts, never values. Flags content-bearing keys, guesses each capability from its hints, and drafts a candidate profile with its validation, projection, and parity impact. `--write` saves the draft as TOML; `--force` lets it replace a file.            | Exploring and assessing an unknown producer.                            |
-| `producers fingerprint [--days 7] [--save] [service ...]`                           | Records each service's span names, event names, and attribute keys with row counts; the default services are the enabled harnesses. `--save` writes each to `~/.local/share/agent-introspection/fingerprints/<service>.json`.                                                                                                                                      | Saving a baseline after onboarding or an upgrade, for `doctor --drift`. |
-| `harness list [--no-version]`                                                       | Every bundled harness profile: key, title, `status` (`registered` or `candidate`), registry keys, service names, whether this machine enables it (`enabled`, `enabled_keys`), its binary and whether it is on `PATH` (`binary_found`, `binary_path`), the version it prints (`installed_version`, `version_verified`), `verified_versions`, and `hook_adapter`.    | Choosing harnesses.                                                     |
-| `harness configure <key> [--dry-run] [--prompt-export] [--force] [--root PATH ...]` | Writes a registered harness's export settings into its own config files, backing up each changed file first. `--dry-run` reports the changes and writes nothing; `--prompt-export` also writes the opt-in prompt-export settings; `--force` rewrites a setting that already reaches the collector over the other OTLP transport; `--root` adds a config directory. | Switching on a harness's export; run `--dry-run` first.                 |
-| `harness impact <key, service, or profile file>`                                    | Previews strict parity: the signals visible now with `[harnesses] enabled`, those still visible if the producer were enabled too, and each signal it would hide, with the outcome, the capabilities in the way, and the registry's note. Accepts a draft profile file.                                                                                             | Before enabling a producer.                                             |
-| `doctor [--live] [--drift]`                                                         | Read-only checks of every onboarding step, each with a status and a `fix`. `--live` also sends one empty OTLP/HTTP logs request, which stores nothing; `--drift` also compares each enabled harness with its saved fingerprint.                                                                                                                                    | After each install step, and whenever something looks wrong.            |
+| Command                                                                             | What it does                                                                                                                                                                                                                                                                                                                                                                                         | When to use it                                                          |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `signoz detect [--clickhouse-url URL] [--otlp-endpoint URL]`                        | Read-only: SigNoz and ClickHouse containers, the local ports a SigNoz publishes, and whether ClickHouse answers on loopback (or at the addresses given), with notes on the next step. Reads no config, never changes anything, and always exits 0.                                                                                                                                                   | First step on a new machine; before the guided SigNoz install.          |
+| `producers discover [--days 7]`                                                     | Lists every `service.name` with spans or logs in SigNoz over the window, classed `registered`, `known_producer`, `internal`, or `unregistered`, with row counts and first and last seen (UTC).                                                                                                                                                                                                       | Finding what sends telemetry; the first step for an unknown producer.   |
+| `producers profile <service> [--days 7] [--write PATH] [--force]`                   | Explores one service by name: span names, log event names, resource keys, and attribute keys with row counts, never values. Flags content-bearing keys, guesses each capability from its hints, and drafts a candidate profile with its validation, projection, and parity impact. `--write` saves the draft as TOML; `--force` lets it replace a file.                                              | Exploring and assessing an unknown producer.                            |
+| `producers fingerprint [--days 7] [--save] [service ...]`                           | Records each service's span names, event names, and attribute keys with row counts; the default services are the enabled harnesses. `--save` writes each to `~/.local/share/agent-introspection/fingerprints/<service>.json`.                                                                                                                                                                        | Saving a baseline after onboarding or an upgrade, for `doctor --drift`. |
+| `harness list [--no-version]`                                                       | Every bundled harness profile: key, title, `status` (`registered` or `candidate`), registry keys, service names, whether this machine enables it (`enabled`, `enabled_keys`), its binary and whether it is on `PATH` (`binary_found`, `binary_path`), the version it prints (`installed_version`, `version_verified`), `verified_versions`, and `hook_adapter`.                                      | Choosing harnesses.                                                     |
+| `harness configure <key> [--dry-run] [--prompt-export] [--force] [--root PATH ...]` | Writes a registered harness's export settings into its own config files, then installs its activity hooks, backing up each changed file first. `--dry-run` reports the changes and writes nothing; `--prompt-export` also writes the opt-in prompt-export settings; `--force` rewrites a setting that already reaches the collector over the other OTLP transport; `--root` adds a config directory. | Switching on a harness's export; run `--dry-run` first.                 |
+| `harness remove-hooks <key> [--dry-run] [--root DIR]`                               | Takes a harness's activity hooks out (Claude Code's settings entries, the omp plugin link) and keeps its export settings; `--root` reaches the extra roots `configure --root` wrote.                                                                                                                                                                                                                 | Turning the hooks off.                                                  |
+| `harness impact <key, service, or profile file>`                                    | Previews strict parity: the signals visible now with `[harnesses] enabled`, those still visible if the producer were enabled too, and each signal it would hide, with the outcome, the capabilities in the way, and the registry's note. Accepts a draft profile file.                                                                                                                               | Before enabling a producer.                                             |
+| `dashboard install [--repo PATH]`                                                   | Builds the dashboard in a checkout (default: the current directory) and (re)starts its user service on `127.0.0.1:4173`: a launchd agent on macOS, a systemd user service on Linux. Refuses an additional machine, a ClickHouse password, or a path that is not a checkout.                                                                                                                          | First install, and after every update of the checkout.                  |
+| `dashboard status` / `dashboard remove`                                             | Whether the dashboard service is installed and running (read-only); stop it and delete its file.                                                                                                                                                                                                                                                                                                     | Checking or turning off the dashboard.                                  |
+| `doctor [--live] [--drift]`                                                         | Read-only checks of every onboarding step, each with a status and a `fix`. `--live` also sends one empty OTLP/HTTP logs request, which stores nothing; `--drift` also compares each enabled harness with its saved fingerprint.                                                                                                                                                                      | After each install step, and whenever something looks wrong.            |
+| `setup [--dry-run] [options]`                                                       | The whole single-machine install: writes the options into the config, runs the preflight checks, `facts install` and `backfill`, `harness configure` for each enabled harness, `facts schedule install`, `dashboard install`, then `doctor`; stops at the first failing step. Prints each step's start and end to stderr.                                                                            | Installing or reinstalling; run `--dry-run` first.                      |
 
 ### signoz detect
 
@@ -107,6 +102,10 @@ step. [Producer Onboarding](producer-onboarding.md) explains the lifecycle they 
   (whether each of 4317, 4318, 8123, and 8080 accepts connections on `127.0.0.1`),
   `clickhouse_ping` (ClickHouse answered `/ping` on `127.0.0.1:8123`),
   `signoz_present` (such a container runs, or ClickHouse answered), and `notes`.
+- `--clickhouse-url URL` pings that ClickHouse instead of `127.0.0.1:8123`, and
+  `--otlp-endpoint URL` dials that collector; both are the values `setup` takes.
+  `clickhouse_url` names the URL pinged, and `otlp_open` is whether the endpoint
+  accepts connections (null without `--otlp-endpoint`).
 - It probes `127.0.0.1` only, sends `/ping` without a proxy, and gives `docker ps` 10
   seconds. A missing Docker CLI or a daemon that does not answer is a note, not an
   error. See [SigNoz Connection](signoz-connection.md) for what to do next.
@@ -195,12 +194,38 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
   file kept in each root (Codex homes) it is added to the existing roots; for a file
   configured once (Claude Code, omp) it replaces the profile's paths. Both `--root a b`
   and a repeated `--root` work.
-- `next_steps` names the activity-hook install for Claude Code (`install_activity.py`)
-  or omp (`omp plugin link`), and, when something changed, restarting the harness's
-  sessions.
+- **Activity hooks:** after the export settings, `configure` installs the harness's
+  hooks from the CLI package and reports each action under `hooks`: `runtime` (the
+  shim and omp's plugin package copied to
+  `~/.local/lib/agent-introspection/activity-hooks-v1/`), `settings` (Claude Code's
+  hook entries in the settings file it wrote, other tools' entries kept), or `plugin`
+  (omp's `omp plugin link`, which needs omp on `PATH`). A file this run already wrote
+  gets no second backup. `--dry-run` reports them and writes nothing.
+- `next_steps` says to restart the harness's sessions when something changed.
 - `impact` adds `status` and `projection` (a count of each outcome per surface, or under
   the profile key for a candidate). For a producer this machine already enables, it
   adds `already_enabled`, a `note`, and `hidden_now`.
+
+### setup
+
+- Options: `--harness KEY` (repeatable; the whole `[harnesses] enabled` list, default
+  Claude Code and Codex), `--prompt-export`, `--openrouter-key-command "CMD"`,
+  `--clickhouse-url`, `--clickhouse-user`, `--clickhouse-password-command "CMD"`,
+  `--otlp-endpoint`, `--backfill-days N` (default 90), `--no-dashboard`, and `--repo
+PATH` (the checkout the dashboard is built from, default the current directory). A
+  command is one shell-quoted string, split into an argv list. An option not given
+  leaves its key as it is, so its default applies.
+- The config is written through the line-preserving TOML writer (comments and other
+  keys kept, the file backed up and keeping its permissions), then loaded; a retired
+  key or an additional machine stops the run at `config`.
+- Output: `dry_run`, `passed`, `steps` (each step's own result: the config `diff`, the
+  facts install and backfill counts, each harness's `configure` result, the schedule,
+  the dashboard), and `doctor` (`passed`, `summary`, and every `warn` or `fail`). A
+  failing step adds `stopped_at` and `error` and exits 30.
+- `--dry-run` writes nothing: it shows the config diff, runs the read-only preflight
+  against the options given, previews each harness's settings and hooks, and checks the
+  refusals the schedule and dashboard would hit. It passes (exit 0) when the real run
+  would get through every step, and runs no `doctor`. It never installs SigNoz.
 
 ### doctor
 
@@ -209,12 +234,16 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
   Any `fail` exits 30 after the report prints.
 - Statuses: `pass`, `warn`, `fail`, `off` (an optional feature not in use), and
   `info`.
-- Order: `config`; `signoz` (every `facts preflight` check, folded into one);
-  `collector_http`, `collector_grpc`, `hooks_endpoint`, and `collector_live` (with
-  `--live`); for each enabled harness profile `binary`, `config_files`,
+- Order: `config`; `signoz` (every preflight check folded into one, each failing
+  check with its detail);
+  `collector_http`, `collector_grpc` (`info` when closed: the profiles export over
+  OTLP/HTTP), `hooks_endpoint`, and `collector_live` (with `--live`); for each enabled harness profile `binary`, `config_files`,
   `export_settings`, `prompt_export`, `activity_hooks`, `activity_shim`,
-  `session_store`, and `telemetry`; then `spool`, `schedule`, `schedule_legacy`,
-  `schedule_linger` (Linux), `prompt_labels`, and `dashboard`; then `drift` and
+  `hook_config`, and `telemetry`; `disabled_harnesses` (a registry harness left out of `[harnesses]
+enabled` that sent rows this week); then `spool`, `schedule`, `schedule_legacy`,
+  `schedule_linger` (Linux), `prompt_labels`, `dashboard` (the ClickHouse URL it reads),
+  and `dashboard_service` (`off` when not installed, else whether it answers on port
+  4173); then `drift` and
   `drift_unnamed` (with `--drift`).
 - **Additional machine** (`[machine] role = "additional"`): `signoz`, `schedule`,
   `prompt_labels`, `dashboard`, `drift`, and each harness's `telemetry` are `info`,
@@ -228,16 +257,17 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
 - A config that does not load is a failing `config` check, and the rest run on the
   defaults. A check that raises is reported as a failure naming the exception class,
   and the others still run.
-- `--live` posts an empty OTLP/HTTP logs request to the hooks endpoint, else to
-  `{otlp_endpoint}/v1/logs`. Without it, no request carries data.
+- `--live` posts an empty OTLP/HTTP logs request to the logs endpoint records go to.
+  Without it, no request carries data.
 - Config files checked: the ones `harness configure` writes. A file named by a set
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that does not exist fails `config_files` as
-  missing. Codex homes: every configured root that is set or exists, plus the parent of
-  each `[sessions.roots] codex` root that holds a `config.toml`.
-- A hooks endpoint or `OPENROUTER_API_KEY` set only in the shell is invisible to the
-  scheduled sync, so doctor flags it: set `[hooks] otlp_logs_endpoint` and
-  `[labels] openrouter_key_command` instead. Secrets are checked for presence only, and
-  key commands are never run.
+  missing. Codex homes: every configured root that is set or exists, plus every directory
+  the codex profile's `home_globs` matches (Orca's per-account homes).
+- `prompt_labels` reads only `[labels] openrouter_key_command`, the one key source.
+  Secrets are checked for presence only, and key commands are never run.
+- `activity_shim` warns when the installed shim differs from the one the CLI ships:
+  rerun `harness configure` after updating the CLI. `hook_config` warns when the
+  hooks read a config file other than the one doctor checked.
 - When ClickHouse is unreachable, the machine is treated as not the SigNoz host: a
   missing schedule is `info`, and `telemetry` and `drift` report that they were not
   checked.
@@ -269,16 +299,16 @@ otlp_endpoint` (default `http://127.0.0.1:4318`), or on an additional machine
 
 ## Exit codes
 
-| Code | Meaning             | What triggers it                                                                                                                                                                                                                                                                                                                                                                            |
-| ---- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success             | The command finished, and any check it reports passed. `hook` and `signoz detect` always exit 0.                                                                                                                                                                                                                                                                                            |
-| 2    | Usage error         | An unknown command or option, a missing argument, or a `producers` `--days` below 1 (argparse prints the usage).                                                                                                                                                                                                                                                                            |
-| 10   | Configuration error | The config file does not load, or `[harnesses] enabled` names an unknown harness, for every command that reads it except `facts preflight` and `doctor`, which report it as a failing check and exit 30. Before `facts preflight` always printed its report, an invalid config made it exit 10 with a message on stderr. Also a command that needs ClickHouse run on an additional machine. |
-| 30   | Facts error         | ClickHouse cannot be reached or rejects a statement, including the `producers` queries and a refresh still running after 30 minutes. Also any failing check of `facts preflight`, `facts verify`, or `doctor`, after the full report prints.                                                                                                                                                |
-| 40   | Database error      | The workflow store (SQLite) fails.                                                                                                                                                                                                                                                                                                                                                          |
-| 50   | Validation error    | Input the command refuses: an unknown refresher or harness profile, a candidate given to `harness configure`, a `--root` that is not a directory, a config file that cannot be parsed or edited safely, an invalid profile file, a `--write` refusal, a fingerprint service name that cannot be a file name, or an invalid proposal.                                                        |
-| 60   | Conflict            | A state that blocks the command: a proposal that changed while a transition was being written, a `proposal draft` run that fails, `facts schedule` on a platform other than macOS or Linux, a scheduler that refuses the job, a missing executable to schedule, or `clickhouse_password_env` given to `facts schedule install`.                                                             |
-| 70   | Internal error      | Anything unexpected, including a `launchctl` or `systemctl` call that times out after 30 seconds.                                                                                                                                                                                                                                                                                           |
+| Code | Meaning             | What triggers it                                                                                                                                                                                                                                                                                                                     |
+| ---- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Success             | The command finished, and any check it reports passed. `hook` and `signoz detect` always exit 0.                                                                                                                                                                                                                                     |
+| 2    | Usage error         | An unknown command or option, a missing argument, or a `producers` `--days` below 1 (argparse prints the usage).                                                                                                                                                                                                                     |
+| 10   | Configuration error | The config file does not load, or `[harnesses] enabled` names an unknown harness, for every command that reads it except `doctor`, which reports it as a failing check and exits 30.                                                                                                                                                 |
+| 30   | Facts error         | ClickHouse cannot be reached or rejects a statement, including the `producers` queries and a refresh still running after 30 minutes. Also any failing check of `facts verify` or `doctor`, after the full report prints.                                                                                                             |
+| 40   | Database error      | The workflow store (SQLite) fails.                                                                                                                                                                                                                                                                                                   |
+| 50   | Validation error    | Input the command refuses: an unknown refresher or harness profile, a candidate given to `harness configure`, a `--root` that is not a directory, a config file that cannot be parsed or edited safely, an invalid profile file, a `--write` refusal, a fingerprint service name that cannot be a file name, or an invalid proposal. |
+| 60   | Conflict            | A state that blocks the command: a proposal that changed while a transition was being written, a `proposal draft` run that fails, `facts schedule` on a platform other than macOS or Linux, a scheduler that refuses the job, a missing executable to schedule, or `clickhouse_password_env` given to `facts schedule install`.      |
+| 70   | Internal error      | Anything unexpected, including a `launchctl` or `systemctl` call that times out after 30 seconds.                                                                                                                                                                                                                                    |
 
 ## Notes
 

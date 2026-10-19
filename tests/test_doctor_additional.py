@@ -27,7 +27,8 @@ _LEFT_TO_THE_HOST = ("signoz", "schedule", "prompt_labels", "dashboard")
 _NO_CLICKHOUSE = "an additional machine has no ClickHouse; run doctor on the host"
 _HOST_LOGS = f"http://{HOST}:4318/v1/logs"
 _HOOKS_FIX = (
-    f'set [hooks] otlp_logs_endpoint = "{_HOST_LOGS}" (the host\'s collector) in the config'
+    "remove [hooks] otlp_logs_endpoint from the config, so records go to "
+    "[machine] export_endpoint's /v1/logs"
 )
 
 
@@ -57,6 +58,7 @@ def test_an_additional_machine_checks_the_host_collector_and_leaves_signoz_to_th
         "signoz",
         "host_collector",
         "hooks_endpoint",
+        "disabled_harnesses",
         "spool",
         "schedule",
         "spool_sync",
@@ -120,15 +122,14 @@ def test_records_and_exports_that_miss_the_host_are_named(machine: Machine) -> N
     )
 
 
-def test_a_missing_hooks_endpoint_suggests_the_hosts_logs_url(machine: Machine) -> None:
+def test_without_a_hooks_endpoint_records_go_to_the_hosts_logs_url(machine: Machine) -> None:
     machine.config.write_text(
         machine.config.read_text().replace(f'[hooks]\notlp_logs_endpoint = "{_HOST_LOGS}"\n', "")
     )
 
     result = machine.report(live=True)
 
-    hooks = one(result, "hooks_endpoint")
-    assert (hooks["status"], hooks["fix"]) == ("fail", _HOOKS_FIX)
+    assert one(result, "hooks_endpoint")["status"] == "pass"
     assert machine.posted == [(_HOST_LOGS, doctor.EMPTY_LOGS_REQUEST)]
 
 

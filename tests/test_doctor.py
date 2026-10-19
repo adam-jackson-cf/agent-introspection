@@ -9,7 +9,14 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import cli_doctor, config, doctor, facts, producers, signoz_detect
+from agent_introspection import (
+    cli_doctor,
+    config,
+    doctor,
+    facts,
+    producers,
+    signoz_detect,
+)
 from agent_introspection.cli import EXIT_FACTS, main
 from tests.support.doctor_machine import (
     CLAUDE_ENV,
@@ -121,7 +128,7 @@ def _unreachable(_config: config.AppConfig) -> facts.SqlRunner:
     ("present", "fix"),
     [
         (False, "SigNoz seems absent: only if the user asks for a new one, run the onboarding"),
-        (True, "SigNoz is present but the CLI cannot reach its ClickHouse"),
+        (True, "SigNoz is present but its ClickHouse HTTP interface does not answer"),
     ],
 )
 def test_an_unreachable_clickhouse_asks_signoz_detect_what_to_fix(
@@ -165,9 +172,10 @@ def test_failing_preflight_checks_are_named(machine: Machine) -> None:
 
     signoz = one(result, "signoz")
     assert signoz["status"] == "fail"
-    assert signoz["detail"] == "failing facts preflight checks: facts_database_grants"
+    assert signoz["detail"].startswith("failing preflight checks: facts_database_grants: missing ")
+    assert "INSERT" in signoz["detail"]
     assert signoz["failing"] == ["facts_database_grants"]
-    assert "facts preflight" in signoz["fix"]
+    assert "never weaken a check" in signoz["fix"]
     assert one(result, "telemetry", "omp")["status"] == "pass"
 
 
@@ -182,7 +190,10 @@ def test_closed_collector_ports_and_a_missing_hooks_endpoint(machine: Machine) -
     result = machine.report(probes)
 
     assert one(result, "collector_http")["status"] == "fail"
-    assert one(result, "collector_grpc")["status"] == "warn"
+    # The machine's harnesses export over OTLP/gRPC, so a closed 4317 is their route.
+    grpc = one(result, "collector_grpc")
+    assert grpc["status"] == "warn"
+    assert "export over OTLP/gRPC" in grpc["fix"]
     hooks_endpoint = one(result, "hooks_endpoint")
     assert hooks_endpoint["status"] == "fail"
     assert "otlp_logs_endpoint" in hooks_endpoint["fix"]
@@ -216,13 +227,14 @@ def test_a_partly_enabled_profile_counts_only_its_enabled_surfaces(machine: Mach
     codex = one(result, "telemetry", "codex")
     assert codex["status"] == "pass"
     assert set(codex["services"]) == {"codex_exec"}
-    [telemetry] = [sql for sql in machine.executed if "rows_24h" in sql]
-    assert "'codex_exec'" in telemetry
-    assert "'codex-app-server'" not in telemetry
-    assert "'codex_cli_rs'" not in telemetry
+    # Every registry harness is counted, so the surfaces left out are seen sending.
+    disabled = one(result, "disabled_harnesses")
+    assert disabled["status"] == "warn"
+    assert disabled["harnesses"] == ["codex-app-server", "codex_cli_rs"]
+    assert "harness impact" in disabled["fix"]
 
 
-def test_a_hooks_endpoint_from_the_environment_only_warns_and_is_not_printed(
+def test_without_a_hooks_endpoint_records_go_to_the_collectors_logs_url(
     machine: Machine,
 ) -> None:
     machine.config.write_text(
@@ -230,14 +242,16 @@ def test_a_hooks_endpoint_from_the_environment_only_warns_and_is_not_printed(
             '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n', ""
         )
     )
-    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://secret-host.example:4318"}
+    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://elsewhere.example:4318"}
     probes = replace(machine.probes, harness=replace(machine.probes.harness, environ=environ))
 
     hooks_endpoint = one(machine.report(probes), "hooks_endpoint")
 
-    assert hooks_endpoint["status"] == "warn"
-    assert "secret-host" not in json.dumps(hooks_endpoint)
-    unreachable = replace(probes, tcp_open=lambda host, _port: host != "secret-host.example")
+    assert (hooks_endpoint["status"], hooks_endpoint["detail"]) == (
+        "pass",
+        "127.0.0.1:4318 accepts connections",
+    )
+    unreachable = replace(probes, tcp_open=lambda _host, port: port != 4318)
     assert one(machine.report(unreachable), "hooks_endpoint")["status"] == "fail"
 
 
@@ -394,8 +408,9 @@ def test_the_schedule_on_the_signoz_host(
     ("command", "environ", "omp", "expected"),
     [
         (True, {}, None, "pass"),
-        (False, {"OPENROUTER_API_KEY": SECRET}, None, "info"),
-        (False, {}, "/bin/omp", "info"),
+        # Only the key command counts: a shell key or omp's stored credential does not.
+        (False, {"OPENROUTER_API_KEY": SECRET}, None, "off"),
+        (False, {}, "/bin/omp", "off"),
         (False, {}, None, "off"),
     ],
 )
@@ -424,12 +439,12 @@ def test_prompt_labels_check_presence_only(
 @pytest.mark.parametrize(
     ("environ", "answer", "expected", "detail"),
     [
-        ({}, (200, b"Ok.\n"), "pass", "ClickHouse at [dashboard] clickhouse_url answers /ping"),
+        ({}, (200, b"Ok.\n"), "pass", "ClickHouse at [signoz] clickhouse_url answers /ping"),
         (
             {},
             (404, b""),
             "warn",
-            "ClickHouse at [dashboard] clickhouse_url answered /ping with HTTP 404",
+            "ClickHouse at [signoz] clickhouse_url answered /ping with HTTP 404",
         ),
         (
             {"INTROSPECTION_CLICKHOUSE_URL": "http://clickhouse.example:8123"},
@@ -451,6 +466,7 @@ def test_the_dashboard_url_must_be_local_and_answer_ping(
         machine.probes,
         http_get=lambda _url: answer,
         harness=replace(machine.probes.harness, environ=environ),
+        dashboard_status=lambda: {"scheduler": "launchd", "installed": False},
     )
 
     dashboard = one(machine.report(probes), "dashboard")
@@ -459,25 +475,56 @@ def test_the_dashboard_url_must_be_local_and_answer_ping(
     assert "clickhouse.example" not in json.dumps(dashboard)
 
 
-def test_no_dashboard_url_warns_with_the_compose_note(machine: Machine) -> None:
-    machine.config.write_text(
-        machine.config.read_text().replace(
-            '[dashboard]\nclickhouse_url = "http://localhost:8123"\n', ""
-        )
+def test_an_installed_dashboard_service_is_checked_at_the_config_url(machine: Machine) -> None:
+    asked: list[str] = []
+
+    def http_get(url: str) -> tuple[int, bytes]:
+        asked.append(url)
+        return 200, b"Ok.\n"
+
+    probes = replace(
+        machine.probes,
+        http_get=http_get,
+        harness=replace(
+            machine.probes.harness,
+            environ={"INTROSPECTION_CLICKHOUSE_URL": "http://clickhouse.example:8123"},
+        ),
     )
 
+    dashboard = one(machine.report(probes), "dashboard")
+
+    assert dashboard["detail"] == "ClickHouse at [signoz] clickhouse_url answers /ping"
+    assert not any("clickhouse.example" in url for url in asked)
+
+
+def test_a_raising_dashboard_service_probe_keeps_the_url_check(machine: Machine) -> None:
+    def no_systemctl() -> dict[str, Any]:
+        raise FileNotFoundError("systemctl")
+
+    result = machine.report(replace(machine.probes, dashboard_status=no_systemctl))
+
+    assert one(result, "dashboard_service")["status"] == "fail"
+    assert one(result, "dashboard")["status"] == "pass"
+
+
+def test_a_closed_grpc_port_is_info_when_no_harness_exports_over_grpc() -> None:
+    found = [
+        {"name": "collector_grpc", "status": "info", "detail": "closed", "fix": ""},
+        {"name": "export_settings", "status": "pass", "detail": "6 match", "harness": "codex"},
+    ]
+
+    assert doctor._grpc_in_use(found) == found
+
+
+def test_an_unanswered_dashboard_ping_warns_with_the_compose_note(machine: Machine) -> None:
     def timed_out(_url: str) -> tuple[int, bytes]:
         raise TimeoutError
 
-    dashboard = one(machine.report(), "dashboard")
+    dashboard = one(machine.report(replace(machine.probes, http_get=timed_out)), "dashboard")
 
     assert dashboard["status"] == "warn"
+    assert dashboard["detail"].endswith("does not answer /ping (TimeoutError)")
     assert "does not publish port 8123" in dashboard["fix"]
-    machine.config.write_text(
-        machine.config.read_text() + '[dashboard]\nclickhouse_url = "http://localhost:8123"\n'
-    )
-    late = one(machine.report(replace(machine.probes, http_get=timed_out)), "dashboard")
-    assert late["detail"].endswith("does not answer /ping (TimeoutError)")
 
 
 def test_drift_warns_per_drifted_or_unreadable_service_and_unregistered_or_unnamed_producer(
@@ -567,7 +614,8 @@ def test_an_absent_default_config_means_the_defaults(
     result = doctor.report(doctor.Options(inbox=machine.inbox), machine.probes)
 
     assert one(result, "config")["status"] == "info"
-    assert one(result, "hooks_endpoint")["status"] == "fail"
+    # With no config, records go to the local collector's logs URL.
+    assert one(result, "hooks_endpoint")["detail"] == "127.0.0.1:4318 accepts connections"
 
 
 def test_the_command_prints_one_json_report_and_exits_by_its_result(
@@ -609,3 +657,28 @@ def test_the_command_wires_the_probes_that_touch_this_machine(
     probes.drift_report(lambda _sql: "", None, ())
     probes.drift_report(lambda _sql: "", tmp_path, ())
     assert seen == [producers.FINGERPRINT_DIR, tmp_path]
+
+
+@pytest.mark.parametrize(
+    ("status", "port_open", "expected"),
+    [
+        ({"installed": False, "loaded": False}, False, "off"),
+        ({"installed": True, "loaded": False}, False, "warn"),
+        ({"installed": True, "loaded": True}, False, "warn"),
+        ({"installed": True, "loaded": True}, True, "pass"),
+    ],
+)
+def test_doctor_checks_the_dashboard_service_and_its_port(
+    machine: Machine, status: dict[str, bool], port_open: bool, expected: str
+) -> None:
+    probes = replace(
+        machine.probes,
+        dashboard_status=lambda: status,
+        tcp_open=lambda _host, port: port_open or port != 4173,
+    )
+
+    service = one(machine.report(probes), "dashboard_service")
+
+    assert service["status"] == expected
+    if expected != "pass":
+        assert "agent-introspection dashboard install --repo <checkout>" in service["fix"]

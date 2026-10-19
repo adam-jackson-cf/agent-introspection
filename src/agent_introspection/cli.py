@@ -105,11 +105,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         _fail(EXIT_INTERNAL, exc, log)
     _emit(result, log)
-    # A failed preflight, snapshot comparison, or doctor check still prints every result,
+    # A failed snapshot comparison, doctor check, or setup step still prints every result,
     # then exits non-zero.
-    checked = args.command == "doctor" or getattr(args, "facts_command", None) in (
-        "preflight",
-        "verify",
+    checked = args.command in ("doctor", "setup") or (
+        getattr(args, "facts_command", None) == "verify"
     )
     failed = checked and not result["passed"]
     return EXIT_FACTS if failed else 0

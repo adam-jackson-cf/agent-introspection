@@ -106,18 +106,18 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox: Path) -> Path:
     monkeypatch.setattr(schedule, "SPOOL_SYNC_TIMER", units / schedule.SPOOL_SYNC_TIMER.name)
     monkeypatch.setattr(schedule, "BACKUPS", tmp_path / "backups")
     monkeypatch.setattr(schedule, "LINGER", tmp_path / "linger")
-    monkeypatch.setattr(schedule, "_launchctl", _never)
-    monkeypatch.setattr(schedule, "_systemctl", _never)
+    monkeypatch.setattr(schedule, "launchctl", _never)
+    monkeypatch.setattr(schedule, "systemctl", _never)
     (tmp_path / "agent-introspection").write_text("")
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(schedule, "load_config", lambda _config: AppConfig())
-    monkeypatch.setattr(schedule, "_job_path", lambda _config: ["/opt/tools"])
+    monkeypatch.setattr(schedule, "job_path", lambda _config: ["/opt/tools"])
     return tmp_path
 
 
 def _on(monkeypatch: pytest.MonkeyPatch, platform: str, scheduler: Launchd | Systemd) -> None:
     monkeypatch.setattr(sys, "platform", platform)
-    name = "_launchctl" if isinstance(scheduler, Launchd) else "_systemctl"
+    name = "launchctl" if isinstance(scheduler, Launchd) else "systemctl"
     monkeypatch.setattr(schedule, name, scheduler)
 
 
@@ -179,11 +179,10 @@ def test_host_units_do_not_collide_with_the_spool_sync_units_of_other_machines()
     assert not names & {schedule.SERVICE.name, schedule.TIMER.name}
 
 
-def test_scheduled_job_path_follows_the_connection_mode_and_key_source(
+def test_scheduled_job_path_follows_the_password_and_key_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     found = {
-        "docker": "/opt/docker/bin/docker",
         "security": "/usr/bin/security",
         "pass": "/opt/pass/bin/pass",
         "omp": "/opt/omp/bin/omp",
@@ -193,18 +192,18 @@ def test_scheduled_job_path_follows_the_connection_mode_and_key_source(
         clickhouse_url="http://localhost:8123", clickhouse_password_command=("security", "-w")
     )
 
-    # Without a key command, omp's directory serves the stored-credential fallback.
-    assert schedule._job_path(AppConfig()) == ["/opt/docker/bin", "/opt/omp/bin"]
-    assert schedule._job_path(AppConfig(signoz=command)) == ["/usr/bin", "/opt/omp/bin"]
+    # omp's directory is never added: labels read only the configured key command.
+    assert schedule.job_path(AppConfig()) == []
+    assert schedule.job_path(AppConfig(signoz=command)) == ["/usr/bin"]
     keyed = AppConfig(labels_openrouter_key_command=("pass", "show", "openrouter"))
-    assert schedule._job_path(keyed) == ["/opt/docker/bin", "/opt/pass/bin"]
+    assert schedule.job_path(keyed) == ["/opt/pass/bin"]
 
     variable = SigNozConfig(clickhouse_url="http://localhost:8123", clickhouse_password_env="CH")
     with pytest.raises(RuntimeError, match="clickhouse_password_command"):
-        schedule._job_path(AppConfig(signoz=variable))
+        schedule.job_path(AppConfig(signoz=variable))
     missing = AppConfig(labels_openrouter_key_command=("op", "read", "x"))
     with pytest.raises(RuntimeError, match="op not found on PATH"):
-        schedule._job_path(missing)
+        schedule.job_path(missing)
 
 
 def test_password_command_output_is_the_password_and_never_in_errors() -> None:
@@ -564,7 +563,7 @@ def test_systemd_install_that_fails_to_start_restores_and_restarts_the_previous_
         return systemd(*args)
 
     _on(monkeypatch, "linux", systemd)
-    monkeypatch.setattr(schedule, "_systemctl", enable_only_the_old_units)
+    monkeypatch.setattr(schedule, "systemctl", enable_only_the_old_units)
 
     with pytest.raises(RuntimeError, match=r"bad unit; .*\.timer is back in place and active"):
         schedule.schedule_install()
@@ -598,7 +597,7 @@ def test_systemd_install_that_fails_puts_back_a_stopped_timer_stopped(
         return systemd(*args)
 
     _on(monkeypatch, "linux", systemd)
-    monkeypatch.setattr(schedule, "_systemctl", enable_only_the_old_units)
+    monkeypatch.setattr(schedule, "systemctl", enable_only_the_old_units)
 
     with pytest.raises(RuntimeError, match=r"bad unit; .*\.timer is back in place, not active"):
         schedule.schedule_install()

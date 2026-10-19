@@ -7,7 +7,7 @@ import pytest
 
 from agent_introspection import candidates, drafting
 from agent_introspection.drafting import CodexResult, DraftingError, DraftRequest
-from agent_introspection.findings import CORRECTION_DETECTOR_ID, DETECTOR_ID
+from agent_introspection.findings import DETECTOR_ID
 from agent_introspection.review import PROPOSAL_LIMITS, create_review_session
 from tests.conftest import OpenWorkflow
 from tests.test_proposals import proposal_input
@@ -43,16 +43,14 @@ def insert_finding(
 
 
 def facts_runner(
-    root: str = "~/Projects/example", signature_rows: int = 2
+    workdir: str = "~/Projects/example", signature_rows: int = 2
 ) -> tuple[list[str], Any]:
     statements: list[str] = []
 
     def run(sql: str) -> str:
         statements.append(sql)
-        if "AS sessions" in sql:
-            return json.dumps({"project_root": root, "sessions": 4}) + "\n"
-        if "'unattributed'" in sql:
-            return json.dumps({"project": "example", "failures": 5, "tasks": 3}) + "\n"
+        if "GROUP BY workdir" in sql:
+            return json.dumps({"workdir": workdir, "failures": 5, "tasks": 3}) + "\n"
         if "failure_signature AS signature" in sql:
             return "".join(
                 json.dumps({"signature": f"sig-{index}-" + "x" * 400, "failures": 1}) + "\n"
@@ -90,22 +88,23 @@ def test_next_finding_is_the_highest_impact_most_recent_cluster_without_a_propos
     assert finding["subject"]["impact"] == 9
 
 
-def test_candidate_carries_the_finding_evidence_and_most_frequent_project_root(
+def test_candidate_carries_the_finding_evidence_with_its_failure_workdirs(
     tmp_path: Path,
     open_workflow: OpenWorkflow,
 ) -> None:
     connection = store(open_workflow, tmp_path)
-    statements, run = facts_runner()
+    _, run = facts_runner()
 
     exported = candidates.export(connection, run, reserved_model_budget=1000)
 
     candidate = exported["review"]["payload"]["candidates"][0]
     assert candidate["id"] == "c-new"
     assert candidate["finding"]["detector_id"] == DETECTOR_ID
-    assert candidate["project_root"] == "~/Projects/example"
-    assert candidate["evidence"]["projects"][0]["project"] == "example"
+    assert "project_root" not in candidate
+    assert candidate["evidence"]["workdirs"] == [
+        {"workdir": "~/Projects/example", "failures": 5, "tasks": 3}
+    ]
     assert "trimmed" not in candidate["evidence"]
-    assert any("project = 'example'" in sql for sql in statements)
 
 
 def test_oversized_evidence_is_trimmed_to_the_review_input_limit(
@@ -137,7 +136,7 @@ def test_dry_run_prints_the_command_without_reserving_a_session(
     tmp_path: Path, open_workflow: OpenWorkflow
 ) -> None:
     connection = store(open_workflow, tmp_path)
-    _, run = facts_runner(root=str(tmp_path))
+    _, run = facts_runner(workdir=str(tmp_path))
 
     def forbidden(_command: list[str], _prompt: str) -> CodexResult:
         raise AssertionError("dry run must not run codex")
@@ -165,10 +164,22 @@ def test_dry_run_prints_the_command_without_reserving_a_session(
     assert connection.execute("SELECT COUNT(*) FROM model_budget_ledger").fetchone() == (0,)
 
 
-def test_working_directory_falls_back_when_the_project_root_is_missing(tmp_path: Path) -> None:
-    review: dict[str, Any] = {"payload": {"candidates": [{"project_root": str(tmp_path / "gone")}]}}
-    assert drafting.working_directory(review, tmp_path) == tmp_path
-    review = {"payload": {"candidates": [{"project_root": None}]}}
+def workdir_review(*workdirs: str) -> dict[str, Any]:
+    entries = [{"workdir": workdir, "failures": 1, "tasks": 1} for workdir in workdirs]
+    return {"payload": {"candidates": [{"evidence": {"workdirs": entries}}]}}
+
+
+def test_working_directory_is_the_first_failure_workdir_that_exists(tmp_path: Path) -> None:
+    present = tmp_path / "repo"
+    present.mkdir()
+    review = workdir_review(str(tmp_path / "gone"), str(present))
+    assert drafting.working_directory(review, tmp_path / "fallback") == present
+
+
+def test_working_directory_falls_back_without_an_existing_workdir(tmp_path: Path) -> None:
+    assert drafting.working_directory(workdir_review(str(tmp_path / "gone")), tmp_path) == tmp_path
+    assert drafting.working_directory(workdir_review(""), tmp_path) == tmp_path
+    review: dict[str, Any] = {"payload": {"candidates": [{"evidence": {}}]}}
     assert drafting.working_directory(review, tmp_path) == tmp_path
 
 
@@ -234,7 +245,7 @@ def test_draft_imports_the_codex_answer_with_its_thread_and_usage(
         "UPDATE findings SET subject = json_set(subject, '$.harnesses', json('[\"codex_exec\"]'))"
     )
     connection.commit()
-    _, run = facts_runner(root=str(tmp_path))
+    _, run = facts_runner(workdir=str(tmp_path))
     calls: list[list[str]] = []
 
     result = drafting.draft(connection, run, DraftRequest(5000), codex=fake_codex(calls))
@@ -296,35 +307,3 @@ def test_parse_events_requires_a_thread_and_usage() -> None:
     parsed.thread_id = "t"
     with pytest.raises(DraftingError, match="token usage"):
         drafting.provenance(parsed)
-
-
-def test_correction_candidate_uses_its_own_project_root(
-    tmp_path: Path, open_workflow: OpenWorkflow
-) -> None:
-    connection = store(open_workflow, tmp_path)
-    insert_finding(connection, "f-correction", impact=20, last_seen_ns=1)
-    subject = {
-        "project": "corrected-project",
-        "correction_kind": "ignored",
-        "harnesses": ["omp"],
-        "task_types": [],
-        "sessions": 2,
-        "impact": 20,
-    }
-    connection.execute(
-        "UPDATE findings SET detector_id = ?, subject = ? WHERE id = 'f-correction'",
-        (CORRECTION_DETECTOR_ID, json.dumps(subject)),
-    )
-    connection.commit()
-    statements, run = facts_runner()
-
-    exported = candidates.export(connection, run, reserved_model_budget=1000)
-
-    review = exported["review"]
-    assert review["ordered_candidate_ids"] == ["f-correction"]
-    assert any("project = 'corrected-project'" in sql for sql in statements)
-    metric = drafting.output_schema(review)["properties"]["results"]["items"]["properties"][
-        "proposal"
-    ]["properties"]["predicted_success_metric"]["properties"]
-    assert metric["metric"]["enum"] == ["correction_task_rate"]
-    assert metric["harnesses"]["items"]["enum"] == ["omp"]

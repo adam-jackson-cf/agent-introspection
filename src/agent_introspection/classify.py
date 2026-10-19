@@ -18,7 +18,6 @@ until the questions are re-evaluated against it.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import urllib.error
@@ -41,9 +40,6 @@ PROMPT_CHAR_LIMIT = 12_000
 MAX_ATTEMPTS = 3
 WORKERS = 4
 TIMEOUT_SECONDS = 15.0
-# omp's stored OpenRouter credential: the key's last source, after the environment and
-# `[labels] openrouter_key_command`.
-OMP_KEY_COMMAND = ("omp", "token", "openrouter")
 
 TASK_TYPES = {
     "bugfix": "Fix a defect, error, failing test, or broken behaviour.",
@@ -169,24 +165,15 @@ def _command_key(command: Sequence[str], missing: str) -> str:
     return key
 
 
-def api_key(key_command: Sequence[str] | None = None) -> str:
-    """Return the OpenRouter key for Jev.
+def api_key(key_command: Sequence[str] | None) -> str:
+    """Return the OpenRouter key for Jev: the output of ``[labels] openrouter_key_command``.
 
-    The order is OPENROUTER_API_KEY, then the output of ``key_command`` (``[labels]
-    openrouter_key_command``), then omp's stored credential. A configured command that
-    prints no key is an error, never a reason to try omp. The key and the command's
-    output are never logged or put in an error.
+    The one source, which the scheduled sync runs too. The key and the command's output
+    are never logged or put in an error.
     """
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if key:
-        return key
-    if key_command is not None:
-        return _command_key(key_command, "labels.openrouter_key_command printed no OpenRouter key")
-    return _command_key(
-        OMP_KEY_COMMAND,
-        "no OpenRouter key: set OPENROUTER_API_KEY or [labels] openrouter_key_command, "
-        "or log in to omp",
-    )
+    if key_command is None:
+        raise JevUnavailableError("no OpenRouter key: set [labels] openrouter_key_command")
+    return _command_key(key_command, "labels.openrouter_key_command printed no OpenRouter key")
 
 
 def http_poster(body: bytes, key: str) -> dict[str, Any]:
@@ -358,7 +345,7 @@ def run(
     *,
     days: int = 2,
     limit: int = 60,
-    key: KeySource = api_key,
+    key: KeySource,
     post: Poster = http_poster,
 ) -> dict[str, Any]:
     """Label up to ``limit`` unlabelled prompts from the last ``days`` days of SigNoz.

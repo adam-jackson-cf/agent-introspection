@@ -14,8 +14,7 @@ separate explicit user request.
 ## Preconditions
 
 - Facts are healthy and `facts sync` is running (stale facts give stale findings).
-- At least one actionable `facts.failure_cluster` or `facts.repeated_correction`
-  finding without a proposal.
+- At least one actionable `facts.failure_cluster` finding without a proposal.
 
 ## Steps
 
@@ -23,8 +22,8 @@ separate explicit user request.
    has the highest subject `impact` (ties: most recent occurrence), and reserves one
    review session for it. The candidate carries the finding, its 14-day evidence pack
    from the facts (trimmed row by row from the largest lists when the payload would
-   exceed the review input limit, recorded under `evidence.trimmed`), and the root of
-   the project where it happened most.
+   exceed the review input limit, recorded under `evidence.trimmed`), including the
+   working directories its failing calls ran in (`workdirs`, most failures first).
 
 2. **Draft.** `proposal draft` exports that candidate and asks Codex for the proposal in
    one read-only, non-interactive run:
@@ -32,19 +31,19 @@ separate explicit user request.
    ```sh
    codex exec --model gpt-5.5 -c model_reasoning_effort="high" \
      -c otel.exporter="none" -c otel.trace_exporter="none" -c otel.metrics_exporter="none" \
-     --sandbox read-only -C <project root> --json --output-schema <schema> -
+     --sandbox read-only -C <top workdir> --json --output-schema <schema> -
    ```
 
    The prompt asks Codex to root-cause the finding from the evidence, audit the
-   project's established tools first (the three tiers in canonical order), choose
+   established tools of the repository the failures ran in first (the three tiers in canonical order), choose
    exactly one intervention by the deterministic-first rules, and never apply anything.
    Codex's own telemetry export is off, so drafting runs never become facts. The thread
    ID becomes the review's `trace_id`, and the run's input plus output tokens are
    charged against the reserved budget. The answer is imported through the same
    validated transaction as `proposal create`. `--dry-run` prints the envelope,
    command, output schema, and prompt without reserving a session or running Codex.
-   When the project root is unknown or missing locally, Codex runs in the current
-   directory.
+   Codex runs in the first evidence workdir that exists on this machine (`~` is this
+   home), else in the current directory.
 
 3. **Decide.** Record the user's explicit decision:
 
@@ -99,10 +98,8 @@ A proposal's `predicted_success_metric` is structured:
 }
 ```
 
-`cluster_task_rate` (failure clusters) is tasks that hit the cluster per task;
-`correction_task_rate` (repeated corrections) is labelled tasks in the finding's
-project whose next prompt was a correction of the finding's kind, per labelled task
-there. Harnesses must come from the finding, both windows are at least 7 days, and
+`cluster_task_rate` is tasks that hit the finding's failure cluster per task, the one
+metric. Harnesses must come from the finding, both windows are at least 7 days, and
 `max_ratio` is in (0, 1]. Success means the rate over `evaluation_days` after the
 proposal was applied is at most `max_ratio` times the rate over `baseline_days` before
 it.

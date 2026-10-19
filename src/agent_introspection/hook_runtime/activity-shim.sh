@@ -9,6 +9,10 @@
 #
 # The CLI is found at $AGENT_INTROSPECTION_BIN, else on PATH, else at
 # ~/.local/bin/agent-introspection. When none exists the hook does nothing.
+#
+# Unless AGENT_INTROSPECTION_CONFIG is already set, a `config-path` file beside this
+# shim names the config file the CLI reads (`harness configure` writes it for a
+# non-default `--config`).
 
 payload=$(cat) || exit 0
 [ "$#" -eq 2 ] || exit 0
@@ -21,6 +25,11 @@ if [ -z "$bin" ] && [ -n "${HOME-}" ]; then
   bin=$HOME/.local/bin/agent-introspection
 fi
 [ -n "$bin" ] && [ -x "$bin" ] || exit 0
+
+if [ -z "${AGENT_INTROSPECTION_CONFIG-}" ] && [ -r "${0%/*}/config-path" ]; then
+  AGENT_INTROSPECTION_CONFIG=$(cat "${0%/*}/config-path") || AGENT_INTROSPECTION_CONFIG=
+  [ -n "$AGENT_INTROSPECTION_CONFIG" ] && export AGENT_INTROSPECTION_CONFIG
+fi
 
 (
   trap '' HUP

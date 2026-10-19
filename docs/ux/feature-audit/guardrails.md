@@ -132,3 +132,7 @@ Data source note: every query reads the `*_snapshot` tables (`views.ts:11-16`) u
 - The page is renamed Verification and guardrails.
 - New section Does the agent verify its work? (registry signals `guard.verification` and `guard.verification_caught`): Verification runs KPI, runs by kind and harness (fixed kind order, harness registry order), failures caught in the task, and a Where to tune project rules table. Only shell calls that carry the command shape count; earlier hook rows are left out, not read as "no verification". Full gate runs (CI or check-all scripts, pre-commit, `make check`) are a count beside the KPI, not a kind.
 - omp `blocked` tool results (jev-guard policy) are the outcome `policy_blocked`: not a failure and not a guard rejection.
+
+## Project attribution removed (2026-10-17, DC11)
+
+- Where to tune project rules removed. Verification runs by kind keeps its other fields: it gains Caught (the kind failed in a task and a later run passed) and Last seen per kind and harness, and cites `guard.verification_caught`.

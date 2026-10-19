@@ -25,7 +25,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, TypedDict
 
-from agent_introspection import capabilities, facts, hooks, preflight, profiles, sessions, spool
+from agent_introspection import capabilities, facts, hooks, preflight, profiles, spool
 from agent_introspection.capabilities import Capability, CapabilityClaim
 
 SPAN_TABLE = ".".join(preflight.SPAN_TABLE)
@@ -113,9 +113,6 @@ DRAFT_TO_COMPLETE = {
     "binary": "the producer's command",
     "version_args": "the arguments that print its version, such as --version",
     "verified_versions": "the versions the claims were checked on",
-    "session_store": (
-        "a [[store]] name from session_stores.toml, or a [session_store_spec] table instead"
-    ),
 }
 _DRAFT_HEADER = (
     "Draft harness profile written by `agent-introspection producers profile`.",
@@ -503,7 +500,6 @@ def draft_profile(service: str, guesses: Sequence[Mapping[str, Any]], days: int)
         "binary": "",
         "version_args": [],
         "verified_versions": [],
-        "session_store": "",
         "hook_adapter": "",
         "capabilities": {
             str(guess["id"]): {"status": guess["guess"], "evidence": _claim_evidence(guess, days)}
@@ -514,9 +510,8 @@ def draft_profile(service: str, guesses: Sequence[Mapping[str, Any]], days: int)
 
 def check_draft(draft: Mapping[str, Any], registry: facts.Registry) -> dict[str, Any]:
     """Validate a draft with the profile validator; report the first error and what to fill."""
-    stores = {store.name: store for store in sessions.load_stores()}
     try:
-        profiles.parse_profile(draft, registry, stores, "draft")
+        profiles.parse_profile(draft, registry, "draft")
     except profiles.ProfileError as error:
         return {"valid": False, "error": str(error), "to_complete": dict(DRAFT_TO_COMPLETE)}
     return {"valid": True, "error": None, "to_complete": {}}
@@ -533,7 +528,6 @@ def draft_candidate(draft: Mapping[str, Any]) -> profiles.Profile:
         binary=str(draft["binary"]),
         version_args=tuple(draft["version_args"]),
         verified_versions=tuple(draft["verified_versions"]),
-        session_store=str(draft["session_store"]),
         hook_adapter=str(draft["hook_adapter"]),
         capabilities={
             capability: CapabilityClaim(status=claim["status"], evidence=claim["evidence"])

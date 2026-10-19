@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -9,7 +8,6 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -18,7 +16,7 @@ from agent_introspection import command_shape, facts, hooks, spool
 from agent_introspection.cli import main
 from tests.support.otlp_collector import Collector, names, spool_records
 
-SCRIPTS = Path(__file__).parents[1] / ".agents/skills/introspection-onboarding/scripts"
+RUNTIME = Path(__file__).parents[1] / "src/agent_introspection/hook_runtime"
 NOW = datetime(2026, 9, 30, 12, 0, 0, 123456, tzinfo=UTC)
 PROMPT = "please fix the flaky login test, my token=supersecret123 is in .env"
 SESSION = "sess-1"
@@ -538,42 +536,33 @@ def test_a_hook_drains_one_batch_of_the_spool_and_leaves_the_rest(
     assert len(names(inbox)) == 61 - spool.BATCH_SIZE
 
 
-def test_a_hook_without_an_endpoint_only_spools(
+def test_a_hook_without_hooks_config_sends_to_the_collectors_logs_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
 ) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(f'[signoz]\notlp_endpoint = "{collector.base}"\n')
     feed_envelope(monkeypatch)
 
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+    assert hooks.main("claude-code", "PreToolUse", config) == 0
 
-    assert collector.bodies == []
-    assert len(names(inbox)) == 1
-
-
-def test_a_grpc_environment_never_receives_records_and_keeps_them(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
-) -> None:
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
-    feed_envelope(monkeypatch)
-
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
-
-    assert collector.bodies == []
-    assert len(names(inbox)) == 1
-    assert not (inbox / "rejected").exists()
+    assert len(collector.records) == 1
+    assert names(inbox) == set()
 
 
-def test_a_hook_falls_back_to_the_http_environment_endpoint(
+def test_the_otel_environment_never_redirects_records(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
 ) -> None:
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
     feed_envelope(monkeypatch)
 
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, None)) == 0
+    assert (
+        hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, "http://127.0.0.1:9/v1/logs"))
+        == 0
+    )
 
-    assert len(collector.records) == 1
-    assert names(inbox) == set()
+    assert collector.bodies == []
+    assert len(names(inbox)) == 1
 
 
 def test_a_hook_survives_an_unreachable_collector_and_an_invalid_config(
@@ -592,7 +581,7 @@ def test_a_hook_survives_an_unreachable_collector_and_an_invalid_config(
     assert len(names(inbox)) == 2
 
 
-# --- Shim and installers ----------------------------------------------------------
+# --- Shim and omp plugin ----------------------------------------------------------
 
 
 def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -> None:
@@ -601,7 +590,7 @@ def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -
     fake.write_text(f'#!/bin/sh\ncat > "{received}.part"; mv "{received}.part" "{received}"\n')
     fake.chmod(0o755)
     result = subprocess.run(
-        ["/bin/sh", str(SCRIPTS / "activity-shim.sh"), "claude-code", "PreToolUse"],
+        ["/bin/sh", str(RUNTIME / "activity-shim.sh"), "claude-code", "PreToolUse"],
         input='{"session_id": "s"}',
         capture_output=True,
         text=True,
@@ -615,56 +604,6 @@ def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -
             break
         subprocess.run(["sleep", "0.05"], check=True, timeout=10)
     assert received.read_text() == '{"session_id": "s"}'
-
-
-def load_script(relative: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(Path(relative).stem, SCRIPTS / relative)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-ORCA = {
-    "hooks": [
-        {"type": "command", "command": "/bin/sh '/Users/me/.orca/agent-hooks/claude-hook.sh'"}
-    ]
-}
-
-
-def test_claude_installer_is_idempotent_preserves_others_and_removes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    installer = load_script("adapters/claude-code/install_activity.py")
-    settings = tmp_path / "settings.json"
-    original = {
-        "env": {"A": "1"},
-        "hooks": {"PreToolUse": [{"matcher": "*", **ORCA}], "Stop": [ORCA]},
-    }
-    settings.write_text(json.dumps(original, indent=2) + "\n")
-    runtime = tmp_path / "runtime"
-    args = ["--settings", str(settings), "--runtime-dir", str(runtime)]
-
-    assert installer.main([*args, "--dry-run"]) == 0
-    assert "+" in capsys.readouterr().out
-    assert json.loads(settings.read_text()) == original
-
-    installer.main(args)
-    once = settings.read_text()
-    installer.main(args)
-    assert settings.read_text() == once
-    hooks_config = json.loads(once)["hooks"]
-    assert set(hooks_config) >= set(installer.EVENTS)
-    assert hooks_config["PreToolUse"][0] == {"matcher": "*", **ORCA}
-    assert hooks_config["Stop"][0] == ORCA
-    assert sum(installer.is_owned(entry) for entry in hooks_config["PreToolUse"]) == 1
-    assert (runtime / "activity-shim.sh").stat().st_mode & 0o111
-    assert len(list(tmp_path.glob("settings.json.bak-*"))) == 1
-
-    installer.main([*args, "--remove"])
-    assert json.loads(settings.read_text()) == original
-    assert len(list(tmp_path.glob("settings.json.bak-*"))) == 2
 
 
 OMP_PROBE = """
@@ -710,7 +649,7 @@ def test_omp_tool_result_spawns_the_shim_only_for_errors(tmp_path: Path) -> None
     sink = tmp_path / "sink"
     shim.write_text(f'echo "$2" >> {sink}\ncat >> {sink}\necho >> {sink}\n')
     probe = tmp_path / "probe.ts"
-    probe.write_text(OMP_RESULT_PROBE % (SCRIPTS / "adapters/omp/activity.ts"))
+    probe.write_text(OMP_RESULT_PROBE % (RUNTIME / "omp/activity.ts"))
     env = {**os.environ, "AGENT_INTROSPECTION_SHIM": str(shim)}
     subprocess.run(["bun", str(probe)], env=env, capture_output=True, timeout=60, check=True)
 
@@ -729,7 +668,7 @@ def test_omp_prompt_is_exported_only_after_opt_in(
     tmp_path: Path, opt_in: str | None, expected: str
 ) -> None:
     probe = tmp_path / "probe.ts"
-    probe.write_text(OMP_PROBE % (SCRIPTS / "adapters/omp/activity.ts"))
+    probe.write_text(OMP_PROBE % (RUNTIME / "omp/activity.ts"))
     env = {
         **os.environ,
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
@@ -742,38 +681,6 @@ def test_omp_prompt_is_exported_only_after_opt_in(
         ["bun", str(probe)], env=env, capture_output=True, text=True, timeout=60, check=True
     )
     assert result.stdout.strip() == expected
-
-
-def test_claude_installer_writes_through_symlinked_settings(tmp_path: Path) -> None:
-    installer = load_script("adapters/claude-code/install_activity.py")
-    target = tmp_path / "managed" / "settings.json"
-    target.parent.mkdir()
-    target.write_text('{"env": {"A": "1"}}\n')
-    link = tmp_path / "settings.json"
-    link.symlink_to(target)
-
-    installer.main(["--settings", str(link), "--runtime-dir", str(tmp_path / "runtime")])
-
-    assert link.is_symlink()
-    assert link.resolve() == target
-    assert set(json.loads(target.read_text())["hooks"]) >= set(installer.EVENTS)
-
-
-def test_claude_installer_backs_up_a_differing_shim_before_replacing_it(tmp_path: Path) -> None:
-    installer = load_script("adapters/claude-code/install_activity.py")
-    runtime = tmp_path / "runtime"
-    runtime.mkdir()
-    shim = runtime / installer.SHIM
-    shim.write_text("#!/bin/sh\n# user-edited\n")
-
-    installer.install_shim(runtime)
-
-    backups = list(runtime.glob(f"{installer.SHIM}.bak-*"))
-    assert [path.read_text() for path in backups] == ["#!/bin/sh\n# user-edited\n"]
-    assert shim.read_text() != "#!/bin/sh\n# user-edited\n"
-
-    installer.install_shim(runtime)
-    assert len(list(runtime.glob(f"{installer.SHIM}.bak-*"))) == 1
 
 
 def test_every_home_path_in_one_argument_is_redacted() -> None:

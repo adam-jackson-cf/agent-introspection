@@ -20,3 +20,33 @@ jobs:
           bun-version: 1.3.0
       - name: Run quality gates
         run: bash scripts/run-ci-quality-gates.sh
+
+  # The install of this commit on a fresh Linux machine: scripts/fresh-install/sandbox.sh
+  # with a disposable ClickHouse (GitHub's macOS runners have no Docker).
+  fresh-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+      - name: Create the sandbox
+        run: |
+          root=$(bash scripts/fresh-install/sandbox.sh create)
+          echo "SANDBOX_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Verify the install
+        run: bash scripts/fresh-install/sandbox.sh verify "$SANDBOX_ROOT"
+      - name: Keep the sandbox logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-install-logs
+          path: ${{ env.SANDBOX_ROOT }}/state
+          if-no-files-found: ignore
+      - name: Destroy the sandbox
+        if: always() && env.SANDBOX_ROOT != ''
+        run: bash scripts/fresh-install/sandbox.sh destroy "$SANDBOX_ROOT"

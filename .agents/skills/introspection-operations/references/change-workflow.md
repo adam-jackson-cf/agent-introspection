@@ -64,7 +64,7 @@ The generated rule and matrix are in
 ## Add a harness
 
 Start from the onboarding skill's producer onboarding workflow: an assessed profile
-(capabilities with evidence, binary, versions, session store, and settings) and the
+(capabilities with evidence, binary, versions, and settings) and the
 `harness impact` the user accepted. A harness is added in one change, after every
 signal has a route or a recorded reason, or the user has decided which signals to
 exclude (exclusion removes a signal for every harness).
@@ -74,7 +74,8 @@ never edit them by hand. `uv run python scripts/render-measures.py` regenerates
 `dashboard/src/harnesses.generated.ts` (`HARNESSES`, `HARNESS_LABEL`, and the services
 list that `contracts.ts`, `format.ts`, and `pipeline.ts` import) and the docs. The
 projections' service lists (`{services}` in `select_spans.sql` and `select_logs.sql`)
-and the services `facts preflight` checks are filled from the same table when they run.
+and the services doctor's preflight checks read are filled from the same table when they
+run.
 
 What still needs work per producer:
 
@@ -88,11 +89,10 @@ What still needs work per producer:
 - `classify.py`: its prompt event;
 - `dashboard/server/pipeline.ts` (parity recount) and `dashboard/server/views.ts`
   (per-harness branches);
-- project attribution: a `[[store]]` in `session_stores.toml` (JSON Lines or SQLite);
-- activity hooks, when the profile needs them: an adapter under the onboarding skill's
-  `scripts/adapters/`, its producer and events in `hooks.py` and
+- activity hooks, when the profile needs them: an adapter in the CLI package's
+  `hook_runtime/`, its producer and events in `hooks.py` and
   `docs/references/hook-events.md`, the profile's `hook_adapter`, its install step in
-  `harness_config.py`, and its check in `doctor_harness.py`;
+  `hook_install.py`, and its check in `doctor_harness.py`;
 - a colour: `HARNESS_TOKENS` in `dashboard/src/tokens.ts` has slots for three more
   harnesses; a harness beyond that needs a new slot (`dashboard/src/components.test.ts`
   fails without one).
@@ -101,8 +101,7 @@ Then apply and verify as in steps 5 and 6, configure the harness with the onboar
 harness configuration workflow, and save its fingerprint
 (`agent-introspection producers fingerprint --save`).
 
-Never drop `introspection.spans`, `logs`, `session_projects`, `hook_events`, or
-`prompt_labels`: history older than SigNoz's retention and all synced hook and label
+Never drop `introspection.spans`, `logs`, `hook_events`, or `prompt_labels`: history older than SigNoz's retention and all synced hook and label
 history exist only there.
 
 ## Done when

@@ -8,6 +8,7 @@ import { createApp, parseFilters, sqliteWorkflow } from "./server";
 import {
   clickhouse,
   clickhouseUrl,
+  DEFAULT_CLICKHOUSE_URL,
   credentialsFromEnv,
   live,
   SNAPSHOT_DAYS,
@@ -706,7 +707,7 @@ describe("view queries", () => {
           expect(sql).toContain(
             "IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)",
           );
-    expect(VIEW_QUERIES.intent.repeated).toContain(
+    expect(VIEW_QUERIES.intent.recent).toContain(
       "l.harness IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)",
     );
   });
@@ -732,8 +733,6 @@ describe("view queries", () => {
       "effort_payoff",
       "kpi",
       "recent",
-      "repeated",
-      "repeated_count",
       "task_type_mix",
       "task_types",
     ]);
@@ -747,9 +746,8 @@ describe("view queries", () => {
       "countIf(harness != 'codex_exec' AND corrected_next IS NOT NULL)",
     );
     expect(live(intent).kpi).toContain("FROM introspection.task_labels WHERE");
-    expect(intent.repeated).toContain(
-      "NOT match(p.project_root, '(^|\\\\W)(/private)?/(tmp|var/folders)/')",
-    );
+    for (const sql of Object.values(intent))
+      expect(sql).not.toContain("session_project");
   });
 
   test("Claude Code reasoning comes from tasks, and failures cluster across harnesses", () => {
@@ -787,31 +785,32 @@ describe("view queries", () => {
       "if(failure_signature_hash != '', failure_signature_hash, failure_signature) AS signature_key",
     );
     expect(tools).toContain("GROUP BY harness, tool, signature_key");
-    const concentration = VIEW_QUERIES.recurrence.concentration;
-    expect(concentration).toContain("any(signature) AS signature");
-    expect(concentration).toContain("GROUP BY harness, signature_key, project");
-    expect(concentration).toContain("GROUP BY harness, signature_key HAVING");
+  });
+
+  test("evaluation workspaces are excluded by each tool call's working directory", () => {
+    const path = "'(^|\\\\W)(/private)?/(tmp|var/folders)/'";
+    for (const key of ["clusters", "targets", "target_summary", "actionable"])
+      expect(VIEW_QUERIES.recurrence[key]).toContain(
+        `NOT match(c.workdir, ${path})`,
+      );
+    const text = Object.values(VIEW_QUERIES)
+      .flatMap((queries) => Object.values(queries))
+      .join("\n");
+    expect(text).not.toContain("session_project");
+    expect(text).not.toContain("project_root");
   });
 });
 
 describe("ClickHouse address", () => {
   const config = (text: string | undefined) => () => text;
 
-  test("the environment variable wins, then [dashboard], then the http-mode [signoz] URL", () => {
+  test("the environment variable wins, then [signoz] clickhouse_url", () => {
     expect(
       clickhouseUrl(
         { INTROSPECTION_CLICKHOUSE_URL: "http://127.0.0.1:1", HOME: "/h" },
-        config('[dashboard]\nclickhouse_url = "http://127.0.0.1:2"'),
+        config('[signoz]\nclickhouse_url = "http://127.0.0.1:3"'),
       ),
     ).toBe("http://127.0.0.1:1");
-    expect(
-      clickhouseUrl(
-        { HOME: "/h" },
-        config(
-          '[dashboard]\nclickhouse_url = "http://127.0.0.1:2"\n[signoz]\nclickhouse_url = "http://127.0.0.1:3"',
-        ),
-      ),
-    ).toBe("http://127.0.0.1:2");
     expect(
       clickhouseUrl(
         { HOME: "/h" },
@@ -820,15 +819,23 @@ describe("ClickHouse address", () => {
     ).toBe("http://127.0.0.1:3");
   });
 
-  test("no configured address is an error, not an assumed runtime", () => {
+  test("without a configured address it reads the CLI's default", () => {
+    expect(clickhouseUrl({ HOME: "/h" }, config("[harnesses]\n"))).toBe(
+      DEFAULT_CLICKHOUSE_URL,
+    );
+    expect(clickhouseUrl({ HOME: "/h" }, config(undefined))).toBe(
+      "http://127.0.0.1:8123",
+    );
+  });
+
+  test("the retired [dashboard] clickhouse_url is refused, not skipped", () => {
     expect(() =>
       clickhouseUrl(
         { HOME: "/h" },
-        config('[signoz]\nclickhouse_container = "signoz-clickhouse"'),
+        config(
+          '[dashboard]\nclickhouse_url = "http://clickhouse.orb.local:8123"',
+        ),
       ),
-    ).toThrow("INTROSPECTION_CLICKHOUSE_URL");
-    expect(() => clickhouseUrl({ HOME: "/h" }, config(undefined))).toThrow(
-      "/h/.config/agent-introspection/config.toml",
-    );
+    ).toThrow("[dashboard] clickhouse_url is retired");
   });
 });

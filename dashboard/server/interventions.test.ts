@@ -28,11 +28,7 @@ const tasks = ["07", "08", "09", "10", "11", "12", "13"].map((d) => ({
   harness: "codex_exec",
   tasks: 10,
 }));
-const facts = (clusters: Row[], corrections: Row[] = []) => ({
-  clusters,
-  corrections,
-  tasks,
-});
+const facts = (clusters: Row[]) => ({ clusters, tasks });
 const RANGE = ["2026-09-07T00:00:00Z", "2026-09-14T00:00:00Z"] as const;
 
 test("the application day counts in neither window, and the rate change is a column", () => {
@@ -60,11 +56,7 @@ test("rate change is null without a pre rate or when it is zero", () => {
   const none = prePost(proposal, facts([cluster("2026-09-11", 2)]), ...RANGE);
   expect(none.pre_rate).toBe(0);
   expect(none.change_pct).toBeNull();
-  const noTasks = prePost(
-    proposal,
-    { clusters: [], corrections: [], tasks: [] },
-    ...RANGE,
-  );
+  const noTasks = prePost(proposal, { clusters: [], tasks: [] }, ...RANGE);
   expect(noTasks.pre_rate).toBeNull();
   expect(noTasks.change_pct).toBeNull();
 });
@@ -115,41 +107,37 @@ test("a cluster counts only the metric's harnesses and its own cluster", () => {
   expect(result.pre_rate).toBe(2 / 20);
 });
 
-test("a repeated correction compares its kind per labelled task in its project", () => {
-  const correction: Row = {
-    detector: "facts.repeated_correction",
-    project: "repo",
-    correction_kind: "wrong_scope",
-    harnesses: ["claude-code"],
-    applied_at: "2026-09-10T13:00:00Z",
-  };
-  const row = (d: string, kind: string, count: number, project = "repo") => ({
-    day: d,
-    harness: "claude-code",
-    project,
-    correction_kind: kind,
-    tasks: count,
-    corrected: kind === "" ? 0 : count,
-  });
-  const result = prePost(
-    correction,
-    facts(
-      [],
-      [
-        row("2026-09-09", "wrong_scope", 2),
-        row("2026-09-09", "incomplete", 1),
-        row("2026-09-09", "", 7),
-        row("2026-09-09", "wrong_scope", 5, "other"),
-        row("2026-09-11", "", 4),
-      ],
-    ),
-    ...RANGE,
-  );
-  expect(result.pre_matched).toBe(2);
-  expect(result.pre_tasks).toBe(10);
-  expect(result.post_matched).toBe(0);
-  expect(result.post_tasks).toBe(4);
+test("a retired repeated-correction proposal shows no measured rates", () => {
+  const { tool_family: _family, failure_class: _class, ...rest } = proposal;
+  const retired: Row = { ...rest, detector: "facts.repeated_correction" };
+  const result = prePost(retired, facts([cluster("2026-09-08", 1)]), ...RANGE);
   expect(result.kind).toBe("correction");
+  expect([result.pre_matched, result.pre_rate, result.post_rate]).toEqual([
+    null,
+    null,
+    null,
+  ]);
+  expect(result.change_pct).toBeNull();
+  expect([result.pre_tasks, result.post_tasks]).toEqual([null, null]);
+});
+
+test("a dormant repeated-correction finding keeps its kind for its subject label", () => {
+  const data = interventionsData(
+    { task_daily: tasks },
+    {
+      findings: [
+        {
+          detector: "facts.repeated_correction",
+          state: "dormant",
+          harnesses: ["codex_exec"],
+        },
+      ],
+    },
+    { harness: "", start: RANGE[0], end: RANGE[1] },
+  );
+  expect(data.findings![0]!.kind).toBe("correction");
+  expect(data.corrections).toBeUndefined();
+  expect(data.kpis![0]!.corrections).toBeUndefined();
 });
 
 const workflow = {
@@ -193,7 +181,6 @@ const workflow = {
 };
 const clickhouse = {
   cluster_daily: [cluster("2026-09-09", 2)],
-  correction_daily: [],
   task_daily: tasks,
   baseline_daily: [{ day: "2026-09-09", failures_rate: 5 }],
 };
@@ -213,14 +200,12 @@ test("All scope computes KPI counts, verdict parts, tiers, history and compariso
       regressed: 0,
       inconclusive: 0,
       not_evaluated: 1,
-      corrections: 1,
     },
   ]);
   expect(data.tiers).toEqual([
     { tier: "established_tool", proposals: 2 },
     { tier: "not recorded", proposals: 1 },
   ]);
-  expect(data.corrections).toHaveLength(1);
   expect(data.proposal_events).toHaveLength(2);
   expect(data.comparisons).toHaveLength(1);
   expect(data.comparisons![0]!.pre_matched).toBe(2);

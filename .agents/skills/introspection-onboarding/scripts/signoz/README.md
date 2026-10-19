@@ -2,7 +2,7 @@
 
 Opt-in files for the SigNoz on this machine. Agent Introspection never applies them on
 its own and never reconfigures an existing SigNoz: connect to the one you have instead
-(`agent-introspection signoz detect`, then `agent-introspection facts preflight`).
+(`agent-introspection signoz detect`, then `agent-introspection doctor`).
 
 | File                                  | Purpose                                                                           |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -23,7 +23,7 @@ its own and never reconfigures an existing SigNoz: connect to the one you have i
   files are deprecated. foundryctl, the SigNoz image (`--tag`), and the collector image
   are pinned, and foundryctl is checked against a pinned SHA-256. The stack starts with
   the override, so SigNoz listens on `127.0.0.1` only (UI 8080, OTLP 4317 and 4318,
-  ClickHouse HTTP 8123), and the script prints the `[signoz]` settings for http mode.
+  ClickHouse HTTP 8123), where the config's `[signoz]` defaults reach it.
 - `--dir` (default `${XDG_DATA_HOME:-~/.local/share}/agent-introspection/signoz`) holds
   `casting.yaml`, the generated Compose files, and foundryctl. Stop the stack with
   `docker compose -f <dir>/pours/deployment/compose.yaml down`; adding `-v` deletes its

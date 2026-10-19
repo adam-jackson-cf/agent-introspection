@@ -22,7 +22,6 @@ from tests.test_proposals import (
 )
 
 CLUSTER = {"tool_family": "shell", "failure_class": "not_found", "harnesses": ["codex_exec"]}
-CORRECTION = {"project": "example", "correction_kind": "ignored", "harnesses": ["codex_exec"]}
 
 
 def applied_proposal(
@@ -141,22 +140,6 @@ def test_windows_older_than_the_snapshot_read_the_live_views(open_workflow: Open
     assert all("_snapshot" not in sql for sql in statements)
 
 
-def test_correction_findings_use_the_correction_task_rate(open_workflow: OpenWorkflow) -> None:
-    metric = SUCCESS_METRIC | {"metric": "correction_task_rate"}
-    connection, _, applied_at = applied_proposal(open_workflow, CORRECTION, metric)
-    statements, run = facts((20, 6), (20, 2))
-
-    result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
-
-    assert [item["verdict"] for item in result["evaluated"]] == ["validated"]
-    assert all("task_labels_snapshot" in sql for sql in statements)
-    assert all("p.project = 'example'" in sql for sql in statements)
-    assert all("correction_kind_next = 'ignored'" in sql for sql in statements)
-    assert all(
-        "l.harness IN (SELECT harness FROM introspection.harnesses" in sql for sql in statements
-    )
-
-
 def test_cluster_rates_count_only_the_enabled_harnesses(open_workflow: OpenWorkflow) -> None:
     connection, _, applied_at = applied_proposal(open_workflow)
     statements, run = facts((20, 6), (20, 2))
@@ -183,6 +166,29 @@ def test_legacy_free_text_metrics_are_skipped(open_workflow: OpenWorkflow) -> No
     assert result["skipped"] == [
         {"proposal_id": "legacy", "reason": "legacy free-text success metric"}
     ]
+
+
+def test_a_retired_metric_is_skipped_by_name(open_workflow: OpenWorkflow) -> None:
+    connection, _, applied_at = applied_proposal(open_workflow)
+    metric = {
+        "metric": "correction_task_rate",
+        "harnesses": ["codex"],
+        "baseline_days": 14,
+        "evaluation_days": 14,
+        "max_ratio": 0.5,
+    }
+    connection.execute(
+        "INSERT INTO proposals VALUES ('retired', 'finding-1', 'applied', ?, 'a', 'b', 1)",
+        (json.dumps({"predicted_success_metric": metric}),),
+    )
+    connection.commit()
+    _, run = facts((10, 5), (10, 1))
+
+    result = evaluation.evaluate_due(run, connection, applied_at + timedelta(days=15))
+
+    assert {"proposal_id": "retired", "reason": "retired success metric correction_task_rate"} in (
+        result["skipped"]
+    )
 
 
 def test_cluster_query_ignores_matching_failures_after_the_window_end(

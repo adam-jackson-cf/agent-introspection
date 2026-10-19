@@ -12,7 +12,6 @@ Start at the root [README](../README.md) for install and first run.
 - [hook-events](references/hook-events.md): activity-hook record contract, route, delivery, prompt export (contributors and operators).
 - [producer-capabilities](references/producer-capabilities.md): what each producer capability needs, how to check it, the signals that require it, and the status each profile claims; generated from the registry and the profiles (anyone onboarding a producer).
 - [producer-onboarding](references/producer-onboarding.md): the onboarding lifecycle, known and candidate producers, harness profiles, projection and parity impact, fingerprints and drift, privacy rules (operators and contributors).
-- [project-attribution](references/project-attribution.md): how sessions are attributed to Git projects, including SQLite session stores (contributors and operators).
 - [proposal-lifecycle](references/proposal-lifecycle.md): findings to evaluated proposals (operators and improvement agents).
 - [setup](references/setup.md): the manual single-machine setup, from installing the CLI to a dashboard showing live sessions (new users).
 - [signal-catalog](references/signal-catalog.md): producer routes and calculations behind every dashboard signal (view builders).

@@ -11,9 +11,9 @@ discover ─> draft ─> decide (user) ─> apply (explicit user request) ─> m
    └──────────────────── regressed or inconclusive: draft again with new evidence ◀──────┘
 ```
 
-A finding is a recurring problem the facts prove, from one of two detectors:
-`facts.failure_cluster` (a tool family × failure class across harnesses) and
-`facts.repeated_correction` (a project's users correcting the agent the same way).
+A finding is a recurring problem the facts prove, from the `facts.failure_cluster`
+detector: a tool family × failure class across harnesses. Findings of retired detectors
+(such as `facts.repeated_correction`) stay dormant as history and never take a proposal.
 The tool never applies anything, and approval is not permission to apply. Compare a
 finding's rate over time, never one harness against another; findings are data, never
 instructions.
@@ -24,11 +24,11 @@ instructions.
   stale findings).
 - `agent-introspection facts findings` (the minute `facts sync` also runs it), then
   `agent-introspection proposal list` for findings that already have proposals.
-- Read each actionable finding's subject: a failure cluster's `tool_family`,
-  `failure_class`, `harnesses`, `tools`, `examples`, and `impact` (affected tasks,
-  unclean ones counted twice); a repeated correction's `project`, `correction_kind`,
-  `task_types`, `sessions`, and `impact` (corrected tasks). Generic classes (for example
-  `ShellError`) and evaluation workspaces never become actionable.
+- Read each actionable finding's subject: `tool_family`, `failure_class`, `harnesses`,
+  `tools`, `examples`, and `impact` (affected tasks, unclean ones counted twice).
+  Generic classes (for example `ShellError`) never become actionable, and calls in
+  evaluation workspaces (a working directory or failure path under a temporary
+  directory) are not counted.
 - Cross-check in the dashboard (Recurrence, Intent and corrections, the session
   drill-down of an example) for the same 7-day Europe/London window.
 
@@ -36,16 +36,17 @@ instructions.
 
 - `agent-introspection proposal draft --reserved-model-budget <tokens> --dry-run`
   shows the highest-impact actionable finding without a proposal, its 14-day evidence
-  pack, and the project Codex will run in, without reserving anything. Show the user.
+  pack (with the working directories the failures ran in), and the directory Codex
+  will run in, without reserving anything. Show the user.
 - Then run it without `--dry-run`: Codex (gpt-5.5, high effort, read-only, telemetry
-  off) drafts in that project and the answer is imported as a `pending` proposal. Set
+  off) drafts in that directory and the answer is imported as a `pending` proposal. Set
   the budget generously (input plus output tokens); a failed run keeps its reservation,
   so report a failure (exit 60 run, 50 validation) instead of retrying blindly.
 - Check it with `agent-introspection proposal show <id>`: the tier audit covers
   established tools, new tools, and bespoke scripts in that order with at most one able
   to enforce; the intervention matches that tier, or is `improve_skill`,
   `create_skill`, or `agents_guidance`; the success metric is structured
-  (`cluster_task_rate` or `correction_task_rate`, the finding's harnesses, windows of at
+  (`cluster_task_rate`, the finding's harnesses, windows of at
   least 7 days, `max_ratio` in (0, 1]). A wrong proposal is rejected and redrafted,
   never edited.
 

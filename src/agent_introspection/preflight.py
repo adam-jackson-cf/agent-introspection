@@ -1,9 +1,10 @@
 """Read-only checks that a SigNoz ClickHouse can host the facts store.
 
-``facts preflight`` runs these before ``facts install`` against an existing or local
-SigNoz. Nothing is created or written: grants are read with ``SHOW GRANTS``, source
-tables through ``system.columns`` and ``WHERE 0`` probes. A configuration that does
-not load, or a connection that cannot be set up, is reported as a failing check.
+``setup`` runs these before ``facts install``, and ``doctor`` reports them, against an
+existing or local SigNoz. Nothing is created or written: grants are read with ``SHOW
+GRANTS``, source tables through ``system.columns`` and ``WHERE 0`` probes. A
+configuration that does not load, or a connection that cannot be set up, is reported
+as a failing check.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ from agent_introspection.facts import (
 # `facts install` sets no experimental flag, so 24.10 is the minimum.
 MINIMUM_VERSION: Final = (24, 10)
 
-# The SigNoz columns facts_sql/select_spans.sql and select_logs.sql read.
+# The SigNoz columns facts_sql/select_spans.sql, select_logs.sql, and
+# select_hook_events.sql read.
 SPAN_TABLE: Final = ("signoz_traces", "distributed_signoz_index_v3")
 SPAN_COLUMNS: Final = (
     "timestamp",
@@ -56,6 +58,7 @@ LOG_COLUMNS: Final = (
     "attributes_string",
     "attributes_number",
     "attributes_bool",
+    "resources_string",
     "resource",
 )
 
@@ -99,7 +102,7 @@ def _version(run: SqlRunner) -> Check:
 
 
 def _transport(config: AppConfig) -> Check:
-    url = urlsplit(config.signoz.clickhouse_url or "")
+    url = urlsplit(config.signoz.clickhouse_url)
     # The config only accepts local hosts, so this records what the CLI talks to.
     return _check("transport", "pass", f"{url.scheme} to {url.hostname} on this machine")
 
@@ -289,10 +292,8 @@ def _server_checks(run: SqlRunner) -> list[Check]:
 
 
 def _report(config: AppConfig, server_checks: list[Check]) -> dict[str, Any]:
-    checks = [_transport(config)] if config.signoz.mode == "http" else []
-    checks += [*server_checks, _otlp(config)]
+    checks = [_transport(config), *server_checks, _otlp(config)]
     return {
-        "mode": config.signoz.mode,
         "passed": all(check["status"] != "fail" for check in checks),
         "checks": checks,
     }
@@ -308,15 +309,14 @@ def report(
 ) -> dict[str, Any]:
     """Load the configuration, connect, and run every check; never raise a setup error.
 
-    A configuration that does not load fails a ``configuration`` check (``mode`` is
-    then None). A runner that cannot be built, such as a missing ClickHouse password,
-    fails a ``connection`` check, as does a Docker context that is not local.
+    A configuration that does not load fails a ``configuration`` check. A runner that
+    cannot be built, such as a missing ClickHouse password, fails a ``connection``
+    check.
     """
     try:
         config = load()
     except ConfigurationError as exc:
         return {
-            "mode": None,
             "passed": False,
             "checks": [_setup_failure("configuration", exc)],
         }

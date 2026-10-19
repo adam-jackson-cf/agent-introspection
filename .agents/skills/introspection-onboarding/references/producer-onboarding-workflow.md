@@ -86,11 +86,7 @@ Work through the draft against the capability reference, one capability at a tim
    `not_applicable`, or `unverified`) with its `evidence`, and its `route` once a
    registry route reads it. `lacks` names signals a capability is too coarse for.
 3. From the producer's installed docs, types, and config, fill what telemetry cannot
-   show: `binary`, `version_args`, `verified_versions`, and a session store, either
-   `session_store` (a `[[store]]` name in `session_stores.toml`) or an inline
-   `[session_store_spec]`. A store is JSON Lines (one file per session) or SQLite (one
-   database: `format = "sqlite"` and a `query` returning `session_id`, `cwd`, and
-   `started_at`); `session_stores.toml` documents both. `draft_check.to_complete` lists
+   show: `binary`, `version_args`, and `verified_versions`. `draft_check.to_complete` lists
    what is still empty; `harness impact` loads a draft file only once these are set.
 4. When its export settings are known, add `[[config_file]]` and `[[setting]]` entries
    (groups `export` and `prompt_export`), so `harness configure` can write them once it
@@ -118,11 +114,9 @@ Show the user the hidden list. The user decides:
 
 ## Close the gaps and add it
 
-- **Hooks:** a hook or plugin adapter under `scripts/adapters/<producer>/`, with its
-  events in `hooks.py` and `docs/references/hook-events.md`, turns `hook_available`
-  into `hook`.
-- **Session store:** a `[[store]]` entry in `session_stores.toml`; SQLite stores are
-  supported.
+- **Hooks:** a hook or plugin adapter in the CLI package's `hook_runtime/`, installed
+  by `hook_install.py`, with its events in `hooks.py` and
+  `docs/references/hook-events.md`, turns `hook_available` into `hook`.
 - **Registration:** follow the `introspection-operations` change workflow, "Add a
   harness". The profile becomes `registered`, and the registry and dashboard changes
   ship in one change.

@@ -86,7 +86,8 @@ shell, split into finer rows, or changed in presentation. The changes already ma
 
 ## Decided changes
 
-Changes the user has agreed to (2026-09-30 brief and design approval). None of them removes a feature.
+Changes the user has agreed to (DC1–DC10: 2026-09-30 brief and design approval; DC11: 2026-10-16). DC1–DC10
+remove no feature; DC11 removes the features that showed only project attribution.
 
 | ID   | Decision                                                                                                                                         | Effect on features                   |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
@@ -100,8 +101,9 @@ Changes the user has agreed to (2026-09-30 brief and design approval). None of t
 | DC8  | No verdict line, change-against-baseline figures or action hub                                                                                   | No new features of these kinds       |
 | DC9  | Tools: Repeated attempts and Tool loops become one Repeated calls table (grouped by identical call; attempts, longest consecutive run, failures) | Both tables' fields kept, merged     |
 | DC10 | Effort: the daily clean-completion and daily median-duration charts become whole-window interval charts by harness and effort                    | Same measures, over the whole window |
+| DC11 | Project attribution is removed: a figure or panel whose only data is the project goes; a panel with a project column loses the column            | Project-only features removed        |
 
-**No removals are approved.** Moving long tables to their own detail pages (Pipeline coverage, Recurrence lists,
+**No other removals are approved.** Moving long tables to their own detail pages (Pipeline coverage, Recurrence lists,
 Interventions findings, the Session tool-call log) is a proposed relocation that needs the user's approval
 before it is built.
 

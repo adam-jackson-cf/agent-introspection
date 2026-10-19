@@ -23,7 +23,6 @@ import {
   isHarness,
   maybe,
   num,
-  orDash,
   VERIFICATION_LABEL,
 } from "../format";
 
@@ -133,7 +132,13 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
               <RateValue pct={maybe(row.failed_rate)} n={num(row.explicit)} />
             ),
           },
+          { key: "caught", label: "Caught", numeric: true },
           { key: "tasks", label: "Tasks", numeric: true },
+          {
+            key: "last_seen",
+            label: "Last seen (UTC)",
+            render: (row) => String(row.last_seen).slice(0, 16),
+          },
         ]}
         rows={kinds}
         empty={NO_SHAPE}
@@ -177,8 +182,8 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
       <Panel
         title="Verification runs by kind"
         source={["verification_kinds", "gate_runs"]}
-        subtitle="A chained command counts toward each kind it contains, and its outcome applies to all of them"
-        signals={["guard.verification"]}
+        subtitle="A chained command counts toward each kind it contains, and its outcome applies to all of them; caught means the kind failed in a task and a later run of it passed"
+        signals={["guard.verification", "guard.verification_caught"]}
         span={5}
       >
         <VerificationKinds
@@ -218,40 +223,6 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
           ]}
           rows={data.verification_caught ?? []}
           empty="No failed verification with a task in the selected range."
-        />
-      </Panel>
-      <Panel
-        title="Where to tune project rules"
-        source="verification_projects"
-        subtitle="Projects by failed verification runs; caught means the same kind later passed in that task"
-        signals={["guard.verification"]}
-        span={12}
-      >
-        <DataTable
-          columns={[
-            { key: "project", label: "Project" },
-            {
-              key: "kind",
-              label: "Kind",
-              render: (row) =>
-                VERIFICATION_LABEL[String(row.kind)] ?? orDash(row.kind),
-            },
-            {
-              key: "harness",
-              label: "Harness",
-              render: (row) => <HarnessName value={row.harness} />,
-            },
-            { key: "runs", label: "Runs", numeric: true },
-            { key: "failed", label: "Failed", numeric: true },
-            { key: "caught", label: "Caught", numeric: true },
-            {
-              key: "last_seen",
-              label: "Last seen (UTC)",
-              render: (row) => String(row.last_seen).slice(0, 16),
-            },
-          ]}
-          rows={data.verification_projects ?? []}
-          empty="No verification runs with a Git project in the selected range."
         />
       </Panel>
     </Section>

@@ -1,6 +1,6 @@
 ---
 name: "introspection-onboarding"
-description: "Use when installing or reinstalling Agent Introspection, onboarding or re-checking a harness, exploring a producer it does not know yet, adding another machine, or proving capture end to end. Connects to the SigNoz on this desktop (installing a new one only when the user asks), installs the facts store and the scheduled sync, configures each harness's export, hooks, and prompt export (Claude Code, Codex, omp), assesses unknown producers (such as opencode) against the dashboard's capabilities, and diagnoses every step with `agent-introspection doctor`."
+description: "Use when installing or reinstalling Agent Introspection, onboarding or re-checking a harness, exploring a producer it does not know yet, adding another machine, or proving capture end to end. Connects to the SigNoz on this desktop (installing a new one only when the user asks), runs `agent-introspection setup` (config, facts store, each harness's export and activity hooks, the scheduled sync, the dashboard service) for Claude Code and Codex by default and omp on request, assesses unknown producers (such as opencode) against the dashboard's capabilities, and diagnoses every step with `agent-introspection doctor`."
 ---
 
 # Onboarding
@@ -14,11 +14,16 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
   it and `agent-introspection signoz detect` finds none: run
   `scripts/signoz/install-signoz.sh --dry-run` first, then without `--dry-run`.
   Applying the other files in `scripts/signoz/` is the user's decision.
-- Ask how ClickHouse is reached: docker mode (`docker exec` into its container) or
-  http mode (its HTTP interface at a local address). Assume neither.
+- ClickHouse is reached over its HTTP interface at a local address (`[signoz]
+clickhouse_url`, default `http://127.0.0.1:8123`). When `signoz detect` finds it
+  unpublished, publishing it (the opt-in Compose override) is the user's decision.
+- Install with `agent-introspection setup`: ask the user's decisions, run it with
+  `--dry-run` and show the result, then run it after they confirm. Rerun it to
+  reinstall; the single commands it runs are for one step only.
 - Run `agent-introspection doctor` (read-only) first at every step and follow each
   check's `fix`. Never weaken or skip a failing check.
-- Never assume which harnesses to include; ask.
+- Ask which harnesses to include; Claude Code and Codex are the default, omp is
+  opt-in (`setup --harness oh-my-pi`, its registry key).
 - Keep hostnames, addresses, and user names out of skills and docs: ask the user, use
   placeholders.
 - Back up every file before changing it, show the diff first, and keep unrelated hooks
@@ -31,18 +36,19 @@ description: "Use when installing or reinstalling Agent Introspection, onboardin
 
 ## Workflows
 
-- [Setup](references/setup-workflow.md): the single-machine path, from finding SigNoz
-  to the first sync, `doctor`, and validation; also a reinstall.
+- [Setup](references/setup-workflow.md): the single-machine path: install the CLI,
+  find SigNoz, `setup --dry-run`, then `setup`, the first sync, and validation; also a
+  reinstall.
 - [Harness configuration](references/harness-configuration-workflow.md): choose the
-  harnesses, then configure each registered one with `harness configure`, its activity
-  hooks, and opt-in prompt export.
+  harnesses, and configure one on its own with `harness configure` (export settings,
+  activity hooks, opt-in prompt export), such as adding omp later.
 - [Producer onboarding](references/producer-onboarding-workflow.md): identify, explore,
   and assess a producer that is not a harness yet, preview its parity cost with
   `harness impact`, and watch known producers for drift.
 - [Validation](references/validation-workflow.md): `doctor` for configuration, then a
   live session end to end.
 - [Additional machines](references/additional-machines-workflow.md): send another
-  machine's harness telemetry and hook and attribution records to this host's
+  machine's harness telemetry and hook records to this host's
   collector.
 
 Closing a signal gap with a new hook event, or adding a harness, is a code change: see
@@ -50,7 +56,7 @@ the `introspection-operations` change workflow.
 
 ## Output
 
-- Steps run, with evidence (`doctor` and preflight results, install and sync results,
+- Steps run, with evidence (the `setup` report, `doctor` results, sync results,
   validation rows).
 - Files changed, with backup paths, and any step the user must do (for example
   restarting a harness).

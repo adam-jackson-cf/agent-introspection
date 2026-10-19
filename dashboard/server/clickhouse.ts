@@ -48,8 +48,16 @@ function configPath(env: Record<string, string | undefined>): string {
 function configuredUrl(text: string | undefined): unknown {
   if (text === undefined) return undefined;
   const config = Bun.TOML.parse(text) as ConfigDocument;
-  return config.dashboard?.clickhouse_url ?? config.signoz?.clickhouse_url;
+  // The CLI refuses the retired key too; never fall back past it to the default.
+  if (config.dashboard?.clickhouse_url !== undefined)
+    throw new Error(
+      "[dashboard] clickhouse_url is retired: move it to [signoz] clickhouse_url",
+    );
+  return config.signoz?.clickhouse_url;
 }
+
+/** ClickHouse's HTTP interface as the guided SigNoz install publishes it (config.py). */
+export const DEFAULT_CLICKHOUSE_URL = "http://127.0.0.1:8123";
 
 /** Loopback, `localhost`, or a local container name such as OrbStack's `*.orb.local`. */
 export function assertLocalAddress(baseUrl: string): void {
@@ -73,28 +81,23 @@ export function assertLocalAddress(baseUrl: string): void {
 
 /**
  * Where the local SigNoz ClickHouse's HTTP interface is: the
- * `INTROSPECTION_CLICKHOUSE_URL` variable, else `[dashboard] clickhouse_url`, else the
- * http mode's `[signoz] clickhouse_url` in the agent-introspection config
- * (`AGENT_INTROSPECTION_CONFIG`, default `~/.config/agent-introspection/config.toml`).
- * No address is assumed: container runtimes differ in how they expose ClickHouse.
+ * `INTROSPECTION_CLICKHOUSE_URL` variable, else `[signoz] clickhouse_url` in the
+ * agent-introspection config (`AGENT_INTROSPECTION_CONFIG`, default
+ * `~/.config/agent-introspection/config.toml`), else the CLI's default, so the CLI and
+ * the dashboard always read the same ClickHouse.
  */
 export function clickhouseUrl(
   env: Record<string, string | undefined> = process.env,
   readConfig: (path: string) => string | undefined = defaultReadConfig,
 ): string {
   if (env.INTROSPECTION_CLICKHOUSE_URL) return env.INTROSPECTION_CLICKHOUSE_URL;
-  const path = configPath(env);
-  const url = configuredUrl(readConfig(path));
-  if (typeof url === "string" && url !== "") return url;
-  throw new Error(
-    "No ClickHouse address for the dashboard: set INTROSPECTION_CLICKHOUSE_URL or " +
-      `[dashboard] clickhouse_url in ${path}`,
-  );
+  const url = configuredUrl(readConfig(configPath(env)));
+  return typeof url === "string" && url !== "" ? url : DEFAULT_CLICKHOUSE_URL;
 }
 
 type ConfigDocument = {
-  dashboard?: { clickhouse_url?: unknown };
   signoz?: { clickhouse_url?: unknown };
+  dashboard?: { clickhouse_url?: unknown };
 };
 
 /**

@@ -8,9 +8,11 @@ into the harness's own config files through ``config_writers``: only the profile
 managed keys change, each changed file is first backed up to
 ``<file>.bak-<UTC timestamp>``, and a second run changes nothing. A setting whose
 current value already reaches the collector over the other OTLP transport is left
-alone unless forced (``profiles.equivalent_transport``). The output names only managed
-keys, so no other value in those files is ever printed, and shows their values as
-``doctor`` does, without URL credentials or queries. ``harness impact`` previews
+alone unless forced (``profiles.equivalent_transport``). It then installs the
+harness's activity hooks (``hook_install``), which ``harness remove-hooks`` takes out
+again. The output names only managed keys, so no other value in those files is ever
+printed, and shows their values as ``doctor`` does, without URL credentials or
+queries. ``harness impact`` previews
 which dashboard signals enabling a producer would hide (``capabilities.impact``).
 """
 
@@ -25,25 +27,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from agent_introspection import capabilities, config_writers, doctor_harness, facts, profiles
+from agent_introspection import (
+    capabilities,
+    config_writers,
+    doctor_harness,
+    facts,
+    hook_install,
+    profiles,
+)
 from agent_introspection.profiles import ConfigFile, Profile, Setting, SettingValue
 
 # Value parts of a managed setting shown in the output; any other nested key (such as
 # an exporter's headers) is named but never shown.
 _SHOWN_PARTS = frozenset({"otlp-http", "otlp-grpc", "endpoint", "protocol"})
 _NOT_SHOWN = "(not shown)"
-_ADAPTERS = ".agents/skills/introspection-onboarding/scripts/adapters"
-_HOOK_STEPS = {
-    "claude-code": (
-        "Install the Claude Code activity hooks: run "
-        f"`python3 {_ADAPTERS}/claude-code/install_activity.py --dry-run`, then again "
-        "without --dry-run."
-    ),
-    "omp": (
-        "Install the omp activity extension and link it with `omp plugin link`, as "
-        f"{_ADAPTERS}/omp/README.md describes."
-    ),
-}
 
 
 @dataclass(frozen=True)
@@ -59,6 +56,7 @@ class ConfigureOptions:
     prompt_export: bool = False
     force: bool = False
     roots: tuple[str, ...] = ()
+    config_path: Path | None = None
 
 
 class SettingChange(TypedDict):
@@ -86,6 +84,15 @@ class _Plan:
 
     changes: list[SettingChange]
     updates: dict[str, SettingValue]
+
+
+def profile_keys(enabled: Sequence[str]) -> list[str]:
+    """Return the distinct profile keys that ``[harnesses] enabled`` names, in its order.
+
+    A Codex surface (``codex_exec``) and ``codex`` both name the ``codex`` profile.
+    """
+    known = profiles.load_profiles()
+    return list(dict.fromkeys(profiles.resolve(name, known).key for name in enabled))
 
 
 def harness_list(enabled: Sequence[str] | None, *, versions: bool = True) -> dict[str, Any]:
@@ -307,34 +314,22 @@ def _configure_file(
     }
 
 
+def _changed(items: Sequence[Mapping[str, Any]]) -> bool:
+    return any(item.get("action") not in (None, "unchanged") for item in items)
+
+
+def _hooks_changed(hooks: Mapping[str, Any]) -> bool:
+    entries = [*hooks.get("runtime", []), *hooks.get("settings", []), hooks.get("plugin", {})]
+    return _changed(entries)
+
+
 def _next_steps(profile: Profile, changed: bool) -> list[str]:
-    steps: list[str] = []
-    if profile.hook_adapter:
-        steps.append(
-            _HOOK_STEPS.get(
-                profile.hook_adapter,
-                f"Install the {profile.hook_adapter} activity hooks (introspection-onboarding).",
-            )
-        )
-    if changed:
-        steps.append(
-            f"Restart running {profile.title} sessions: they read these settings at start."
-        )
-    return steps
+    if not changed:
+        return []
+    return [f"Restart running {profile.title} sessions: they read these settings at start."]
 
 
-def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -> dict[str, Any]:
-    """Write a registered harness's export settings into its config files.
-
-    ``otlp_endpoint`` is ``AppConfig.collector_endpoint`` (None for the default): ``[signoz]
-    otlp_endpoint``, or ``[machine] export_endpoint`` on an additional machine.
-
-    Raises
-    ------
-    ValueError
-        When the profile is unknown or a candidate, a root is not a directory, or a
-        config file cannot be parsed or changed safely.
-    """
+def _registered(name: str) -> Profile:
     profile = profiles.resolve(name)
     if profile.status != "registered":
         raise ValueError(
@@ -343,13 +338,70 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
             f"<service>` and preview the parity cost with `agent-introspection harness "
             f"impact {profile.key}`"
         )
+    return profile
+
+
+def _settings_files(profile: Profile, roots: Sequence[str]) -> list[Path]:
+    """Return the JSON settings files that hold Claude Code's hooks, one per root."""
+    return [
+        path
+        for config_file in profile.config_files
+        if config_file.format == "json"
+        for path in config_targets(config_file, roots)
+    ]
+
+
+def remove_hooks(name: str, *, dry_run: bool = False, roots: Sequence[str] = ()) -> dict[str, Any]:
+    """Take a registered harness's activity hooks out; its export settings stay."""
+    profile = _registered(name)
+    options = hook_install.HookOptions(home=Path.home(), dry_run=dry_run)
+    hooks = hook_install.remove(profile.hook_adapter, _settings_files(profile, roots), options)
+    return {
+        "harness": profile.key,
+        "dry_run": dry_run,
+        "hooks": hooks,
+        "next_steps": _next_steps(profile, _hooks_changed(hooks)),
+    }
+
+
+def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -> dict[str, Any]:
+    """Write a registered harness's export settings into its config files.
+
+    ``otlp_endpoint`` is ``AppConfig.collector_endpoint`` (None for the default): ``[signoz]
+    otlp_endpoint``, or ``[machine] export_endpoint`` on an additional machine.
+
+    Then it installs the harness's activity hooks, when its profile names a hook adapter.
+
+    Raises
+    ------
+    ValueError
+        When the profile is unknown or a candidate, a root is not a directory, a config
+        file cannot be parsed or changed safely, or a hook cannot be installed.
+    """
+    profile = _registered(name)
     context = profiles.export_context(profile, otlp_endpoint)
+    hook_install.require(profile.hook_adapter)
     files = [
         _configure_file(profile, config_file, path, options, context)
         for config_file in profile.config_files
         for path in config_targets(config_file, options.roots)
     ]
-    changed = any(
+    written = frozenset(Path(item["path"]).resolve() for item in files if item["written"])
+    hooks = (
+        hook_install.install(
+            profile.hook_adapter,
+            _settings_files(profile, options.roots),
+            hook_install.HookOptions(
+                home=Path.home(),
+                dry_run=options.dry_run,
+                backed_up=written,
+                config_path=options.config_path,
+            ),
+        )
+        if profile.hook_adapter
+        else {}
+    )
+    changed = _hooks_changed(hooks) or any(
         change["action"] in ("add", "change") for item in files for change in item["changes"]
     )
     return {
@@ -359,6 +411,7 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
         "force": options.force,
         "otlp_endpoint": context["otlp_endpoint"],
         "files": files,
+        "hooks": hooks,
         "next_steps": _next_steps(profile, changed),
     }
 

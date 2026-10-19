@@ -26,16 +26,8 @@ service_names = ["opencode"]
 binary = "opencode"
 version_args = ["--version"]
 verified_versions = ["1.2.6"]
-session_store = ""
 hook_adapter = ""
 sources = ["https://opencode.ai/docs/plugins/"]
-
-[session_store_spec]
-name = "opencode"
-harnesses = ["opencode"]
-roots = ["~/.local/share/opencode/opencode.db"]
-format = "sqlite"
-query = "SELECT id AS session_id, directory AS cwd, strftime('%Y-%m-%dT%H:%M:%fZ', time_created / 1000.0, 'unixepoch') AS started_at FROM session"
 
 [capabilities]
 export = { status = "native", evidence = "Spans only, no logs, under `service.name` opencode: 220 span names and 17.88M spans in the window." }
@@ -52,4 +44,3 @@ user_friction = { status = "unverified", evidence = "No abort, cancel, interrupt
 approvals = { status = "hook_available", lacks = ["guard.sandbox"], evidence = "`Permission.ask` spans (11,679 in the window) carry no attributes. The `permission.ask` hook receives the request (type, pattern, `sessionID`, `callID`) and sets ask, allow, or deny; the `permission.replied` event carries the user's response. The SDK types have no sandbox concept, so no sandbox outcome." }
 delegation = { status = "hook_available", evidence = "No `task` tool call reached telemetry in the window, though the store holds 9 and 7 child sessions. The plugin `session.created` event carries `info.parentID`, which the newer build's stored events hold on exactly those 7 sessions; a child joins the task that started it through its parent session and the `task` tool call." }
 prompt_text = { status = "hook_available", evidence = "No logs, so no prompt event; the `chat.message` hook receives the user message and its parts, which a plugin could send as a prompt event." }
-session_store = { status = "native", evidence = "SQLite `~/.local/share/opencode/opencode.db`, table `session` (`id`, `directory`, `time_created` in epoch milliseconds); see [session_store_spec]. The spec reads 3,271 sessions, each with an absolute working directory, and holds every telemetry session key." }

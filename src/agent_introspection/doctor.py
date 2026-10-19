@@ -2,11 +2,13 @@
 
 Each check reports ``pass``, ``warn``, ``fail``, ``off`` (an optional feature that is
 not in use), or ``info``, with a ``fix`` for anything that is not a pass; ``passed`` is
-false when any check fails. The checks run in order: the config; SigNoz (``facts
-preflight``, folded into one check); the collector's ports and the hooks endpoint; one
-block per enabled harness (``doctor_harness.py``); the record spool; the schedule;
-the prompt-label key; the dashboard's ClickHouse URL; and, with ``--drift``, each
-enabled producer's telemetry against its saved fingerprint.
+false when any check fails. The checks run in order: the config; SigNoz (every
+``preflight`` check, folded into one, with each failing check's detail); the
+collector's ports and the hooks endpoint; one block per enabled harness
+(``doctor_harness.py``) and any disabled harness that still sends rows; the record
+spool; the schedule; the prompt-label key; the dashboard's ClickHouse URL and its
+service; and, with
+``--drift``, each enabled producer's telemetry against its saved fingerprint.
 
 An additional machine (``[machine] role = "additional"``) has no SigNoz: the checks
 that need the host's SigNoz, ClickHouse, or scheduled sync report ``info`` with the
@@ -21,6 +23,7 @@ the exception class, and the other checks still run.
 
 from __future__ import annotations
 
+import http.client
 import socket
 import time
 import urllib.error
@@ -32,14 +35,22 @@ from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import doctor_harness, facts, hooks, preflight, profiles, sessions, spool
+from agent_introspection import (
+    dashboard_service,
+    doctor_harness,
+    facts,
+    hooks,
+    preflight,
+    profiles,
+    spool,
+)
 from agent_introspection.config import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_OTLP_ENDPOINT,
     AppConfig,
     ConfigurationError,
     is_local_host,
     load_config,
-    resolve_otlp_logs_endpoint,
 )
 from agent_introspection.doctor_harness import Check, check, guarded
 
@@ -50,7 +61,6 @@ HTTP_TIMEOUT_SECONDS: Final = 2
 # A valid OTLP/HTTP logs request with no records: the collector accepts and stores nothing.
 EMPTY_LOGS_REQUEST: Final = b'{"resourceLogs":[]}'
 DASHBOARD_URL_ENV: Final = "INTROSPECTION_CLICKHOUSE_URL"
-OPENROUTER_KEY_ENV: Final = "OPENROUTER_API_KEY"
 _UNREACHABLE: Final = "ClickHouse is unreachable (see the signoz check)"
 _NO_CLICKHOUSE: Final = "an additional machine has no ClickHouse; run doctor on the host"
 _ON_THE_HOST: Final = "run `agent-introspection doctor` on the host"
@@ -61,9 +71,6 @@ _LEFT_TO_THE_HOST: Final = {
     "prompt_labels": "the host's `facts sync` labels prompts with its own key",
     "dashboard": "the dashboard reads the host's ClickHouse",
 }
-_HOOKS_ENDPOINT_FIX: Final = (
-    'set [hooks] otlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs" in the config'
-)
 _SCHEDULE_FIX: Final = "agent-introspection facts schedule install"
 _SPOOL_SYNC_UNITS: Final = (
     "install the onboarding skill's agent-introspection-spool-sync units, as its "
@@ -73,12 +80,12 @@ _LEGACY_FIX: Final = (
     "reinstall the CLI (`uv tool install --force --reinstall .` in the repo), then "
     "`agent-introspection facts schedule install` retires the legacy job"
 )
-_DASHBOARD_FIX: Final = (
-    "set [dashboard] clickhouse_url to ClickHouse's HTTP interface on this machine: "
-    "SigNoz's Compose file does not publish port 8123 by default, so publish it on "
-    "loopback with the opt-in Compose override in the onboarding skill's "
+_CLICKHOUSE_HTTP_FIX: Final = (
+    "point [signoz] clickhouse_url at ClickHouse's HTTP interface on this machine: "
+    "SigNoz does not publish port 8123 by default, so publish it on loopback with the "
+    "opt-in Compose override in the onboarding skill's "
     "scripts/signoz/docker-compose.clickhouse-http.yaml, or use OrbStack's "
-    "http://signoz-clickhouse.orb.local:8123"
+    "http://<clickhouse container>.orb.local:8123"
 )
 # No proxy: a loopback address must never be sent through one.
 _LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -112,7 +119,8 @@ class Probes:
     """Every way the doctor touches the machine, so tests can replace each one.
 
     ``cli_doctor.default_probes`` wires the real ones: ``facts.runner``, the seams
-    below, ``schedule.schedule_status`` and ``schedule.spool_sync_status``,
+    below, ``schedule.schedule_status``, ``schedule.spool_sync_status``,
+    ``dashboard_service.status``,
     ``signoz_detect.detect``, and ``producers.drift_report``.
     """
 
@@ -122,6 +130,7 @@ class Probes:
     http_get: GetProbe
     schedule_status: StatusProbe
     spool_sync_status: StatusProbe
+    dashboard_status: StatusProbe
     detect: StatusProbe
     drift_report: DriftProbe
     harness: doctor_harness.HarnessProbes
@@ -169,6 +178,32 @@ def _address(url: str) -> tuple[str, int]:
     return parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
 
 
+def _grpc_in_use(found: list[Check]) -> list[Check]:
+    """Raise a closed OTLP/gRPC port to a warning when a harness exports over gRPC.
+
+    ``collector_grpc`` is ``info`` when closed, since the profiles export over
+    OTLP/HTTP; an export setting satisfied over gRPC makes that port the harness's route.
+    """
+    users = sorted({
+        str(item.get("harness"))
+        for item in found
+        if item["name"] == "export_settings" and "satisfied (grpc)" in item["detail"]
+    })
+    if not users:
+        return found
+    return [
+        {
+            **item,
+            "status": "warn",
+            "fix": f"{', '.join(users)} export over OTLP/gRPC: publish the collector's port "
+            f"{GRPC_PORT}, or switch their exporter to OTLP/HTTP",
+        }
+        if item["name"] == "collector_grpc" and item["status"] == "info"
+        else item
+        for item in found
+    ]
+
+
 def _not_on_this_machine(name: str) -> Check:
     """Report a check an additional machine leaves to the host, with the reason."""
     reason = _LEFT_TO_THE_HOST[name]
@@ -201,7 +236,7 @@ class _Doctor:
             found += guarded(name, produce)
         if self.options.drift:
             found += guarded("drift", self.drift_checks)
-        return found
+        return _grpc_in_use(found)
 
     def _steps(self) -> tuple[tuple[str, Callable[[], Check | list[Check]]], ...]:
         """Return the checks after ``config``: the host's, or an additional machine's."""
@@ -214,6 +249,7 @@ class _Doctor:
                 ("schedule", self.schedule_checks),
                 ("prompt_labels", self.labels_check),
                 ("dashboard", self.dashboard_check),
+                ("dashboard_service", self.dashboard_service_check),
             )
         return (
             ("signoz", partial(_not_on_this_machine, "signoz")),
@@ -227,7 +263,7 @@ class _Doctor:
 
     def _collector_base(self) -> str:
         """Return the OTLP base URL of the collector this machine's harnesses export to."""
-        return (self.config.collector_endpoint or profiles.DEFAULT_OTLP_ENDPOINT).rstrip("/")
+        return (self.config.collector_endpoint or DEFAULT_OTLP_ENDPOINT).rstrip("/")
 
     # --- Config and SigNoz -----------------------------------------------------------
 
@@ -276,7 +312,7 @@ class _Doctor:
             return check(
                 "signoz",
                 "pass",
-                f"ClickHouse {version} ({result['mode']} mode); every facts preflight check passes",
+                f"ClickHouse {version}; every preflight check passes",
             )
         if self.run is None:
             return check(
@@ -286,11 +322,13 @@ class _Doctor:
                 self._unreachable_fix(),
                 failing=names,
             )
+        details = "; ".join(f"{item['name']}: {item['detail']}" for item in failing)
         return check(
             "signoz",
             "fail",
-            f"failing facts preflight checks: {', '.join(names)}",
-            "run `agent-introspection facts preflight` for each check's detail",
+            f"failing preflight checks: {details}",
+            "fix each failing check at its owner (ClickHouse version, grants, or SigNoz "
+            "columns); never weaken a check",
             failing=names,
         )
 
@@ -304,9 +342,8 @@ class _Doctor:
             )
         if present:
             return (
-                "SigNoz is present but the CLI cannot reach its ClickHouse: compare [signoz] in "
-                "the config (clickhouse_container, docker_context, or clickhouse_url) with "
-                "`agent-introspection signoz detect`"
+                "SigNoz is present but its ClickHouse HTTP interface does not answer: "
+                + _CLICKHOUSE_HTTP_FIX
             )
         return (
             "SigNoz seems absent: only if the user asks for a new one, run the onboarding "
@@ -332,7 +369,7 @@ class _Doctor:
             ]
         checks.append(self.hooks_endpoint_check())
         if self.options.live:
-            checks.append(self.live_check(self._hooks_endpoint() or f"{base}/v1/logs"))
+            checks.append(self.live_check(self.config.otlp_logs_endpoint))
         return checks
 
     def _host_collector_check(self, base: str) -> Check:
@@ -356,36 +393,28 @@ class _Doctor:
         label = "OTLP/gRPC" if grpc else "OTLP/HTTP"
         if self.probes.tcp_open(host, port):
             return check(name, "pass", f"{label} {host}:{port} accepts connections")
+        if grpc:
+            # Every bundled profile exports over OTLP/HTTP; only an exporter the user
+            # set to OTLP/gRPC by hand would need this port.
+            return check(
+                name,
+                "info",
+                f"nothing accepts {label} connections on {host}:{port}; every harness "
+                "profile exports over OTLP/HTTP, so only an OTLP/gRPC exporter set by hand "
+                "needs it",
+                f"only if a harness exports over OTLP/gRPC: publish the collector's port {port}",
+            )
         return check(
             name,
-            "warn" if grpc else "fail",
+            "fail",
             f"nothing accepts {label} connections on {host}:{port}",
             "start the SigNoz collector, or set [signoz] otlp_endpoint to where it listens",
         )
 
-    def _hooks_endpoint(self) -> str | None:
-        # The hook path's own resolution (spool.hook_endpoint) without its log write.
-        return resolve_otlp_logs_endpoint(self.config.hooks_otlp_logs_endpoint, self.environ)
-
-    def _hooks_endpoint_fix(self) -> str:
-        if not self.config.machine.additional:
-            return _HOOKS_ENDPOINT_FIX
-        logs = f"{self._collector_base()}/v1/logs"
-        return f'set [hooks] otlp_logs_endpoint = "{logs}" (the host\'s collector) in the config'
-
     def hooks_endpoint_check(self) -> Check:
-        endpoint = self._hooks_endpoint()
-        if endpoint is None:
-            return check(
-                "hooks_endpoint",
-                "fail",
-                "no hooks endpoint: hook records and session attribution stay in the spool",
-                self._hooks_endpoint_fix(),
-            )
+        endpoint = self.config.otlp_logs_endpoint
         host, port = _address(endpoint)
-        configured = self.config.hooks_otlp_logs_endpoint is not None
-        # An endpoint from the environment is not printed: it is not this tool's setting.
-        where = f"{host}:{port}" if configured else "the OTEL_EXPORTER_OTLP_* environment"
+        where = f"{host}:{port}"
         if not self.probes.tcp_open(host, port):
             return check(
                 "hooks_endpoint",
@@ -400,14 +429,8 @@ class _Doctor:
                 "warn",
                 f"{where} accepts connections but is not the host's collector "
                 f"({_address(base)[0]}): records go to another SigNoz unless both name one machine",
-                self._hooks_endpoint_fix(),
-            )
-        if not configured:
-            return check(
-                "hooks_endpoint",
-                "warn",
-                f"reachable, but set only by {where}, which the scheduled sync does not see",
-                self._hooks_endpoint_fix(),
+                "remove [hooks] otlp_logs_endpoint from the config, so records go to "
+                "[machine] export_endpoint's /v1/logs",
             )
         return check("hooks_endpoint", "pass", f"{where} accepts connections")
 
@@ -436,15 +459,40 @@ class _Doctor:
 
     # --- Harnesses -------------------------------------------------------------------
 
-    def _telemetry(self) -> doctor_harness.Telemetry:
+    def _telemetry(self, registry: facts.Registry) -> doctor_harness.Telemetry:
+        # Every registry harness is counted, so a disabled one that still sends is seen.
         if self.run is None:
             return doctor_harness.Telemetry(skipped=self.no_run)
         try:
             return doctor_harness.Telemetry(
-                counts=doctor_harness.telemetry_counts(self.run, self.enabled)
+                counts=doctor_harness.telemetry_counts(self.run, tuple(registry.harnesses))
             )
         except Exception as exc:
             return doctor_harness.Telemetry(error=type(exc).__name__)
+
+    def _disabled_check(
+        self, registry: facts.Registry, telemetry: doctor_harness.Telemetry
+    ) -> Check:
+        """Warn when a harness this machine does not enable still sent rows this week."""
+        if telemetry.skipped or telemetry.error:
+            return check("disabled_harnesses", "info", "not counted: see the telemetry checks")
+        sending = [
+            harness
+            for harness in registry.harnesses
+            if harness not in self.enabled
+            and telemetry.counts.get(harness, {}).get("last_seen", 0) > 0
+        ]
+        if not sending:
+            return check("disabled_harnesses", "pass", "no harness outside [harnesses] sends rows")
+        return check(
+            "disabled_harnesses",
+            "warn",
+            f"{', '.join(sending)} sent rows in the last {doctor_harness.LAST_SEEN_DAYS} days "
+            "but is not enabled, so the dashboard and findings leave it out",
+            "add it to [harnesses] enabled (preview with `agent-introspection harness impact "
+            "<key>`) and rerun `agent-introspection facts install`, or stop its export",
+            harnesses=sending,
+        )
 
     def harness_checks(self) -> list[Check]:
         registry = facts.load_registry()
@@ -457,18 +505,22 @@ class _Doctor:
             profile.key: profile
             for profile in (profiles.resolve(key, known) for key in self.enabled)
         }
+        telemetry = self._telemetry(registry)
         context = doctor_harness.HarnessContext(
             config=self.config,
             enabled=self.enabled,
-            stores={store.name: store for store in sessions.load_stores(self.config.session_roots)},
-            telemetry=self._telemetry(),
+            telemetry=telemetry,
             probes=self.probes.harness,
             now=time.time(),
+            config_path=self.options.config_path,
         )
         return [
-            item
-            for profile in chosen.values()
-            for item in doctor_harness.harness_checks(profile, context)
+            *(
+                item
+                for profile in chosen.values()
+                for item in doctor_harness.harness_checks(profile, context)
+            ),
+            self._disabled_check(registry, telemetry),
         ]
 
     # --- Spool and schedule ----------------------------------------------------------
@@ -556,9 +608,8 @@ class _Doctor:
                 check(
                     "spool_sync",
                     "info",
-                    f"no spool-sync job is bundled for {status.get('platform')}: session "
-                    "attribution and spool-status records wait until `agent-introspection "
-                    "spool sync` runs",
+                    f"no spool-sync job is bundled for {status.get('platform')}: hook and "
+                    "spool-status records wait until `agent-introspection spool sync` runs",
                     "run `agent-introspection spool sync` every minute from a scheduler you "
                     "set up (launchd on macOS)",
                 ),
@@ -597,56 +648,76 @@ class _Doctor:
             return check(
                 "prompt_labels", "pass", "[labels] openrouter_key_command is set (not run here)"
             )
-        command_fix = "set [labels] openrouter_key_command so the scheduled sync finds the key"
-        if self.environ.get(OPENROUTER_KEY_ENV):
-            return check(
-                "prompt_labels",
-                "info",
-                f"{OPENROUTER_KEY_ENV} is set in this shell; the scheduled sync does not see it",
-                command_fix,
-            )
-        if self.probes.harness.which("omp"):
-            return check(
-                "prompt_labels",
-                "info",
-                "no key configured: labels fall back to omp's stored OpenRouter credential "
-                "(not checked)",
-                command_fix,
-            )
         return check(
             "prompt_labels",
             "off",
             "no OpenRouter key: prompt labels are optional and off",
-            f"to label prompts, set {OPENROUTER_KEY_ENV} or [labels] openrouter_key_command "
-            "(a command that prints the key, such as a Keychain lookup)",
+            "to label prompts, set [labels] openrouter_key_command (a command that prints "
+            "the key, such as a Keychain lookup)",
         )
 
-    def _dashboard_url(self) -> tuple[str | None, str]:
-        if self.environ.get(DASHBOARD_URL_ENV):
+    def _dashboard_url(self) -> tuple[str, str]:
+        """Return the URL the dashboard reads, and where it came from.
+
+        The installed service never sees the shell's environment, so only a dashboard
+        run by hand reads the variable.
+        """
+        if self.environ.get(DASHBOARD_URL_ENV) and not self.probes.dashboard_status().get(
+            "installed"
+        ):
             return self.environ[DASHBOARD_URL_ENV], DASHBOARD_URL_ENV
-        if self.config.dashboard_clickhouse_url is not None:
-            return self.config.dashboard_clickhouse_url, "[dashboard] clickhouse_url"
         return self.config.signoz.clickhouse_url, "[signoz] clickhouse_url"
+
+    def dashboard_service_check(self) -> Check:
+        """Check the dashboard service runs and answers on its port."""
+        install = (
+            "`agent-introspection dashboard install --repo <checkout>` builds it and "
+            "(re)starts the service"
+        )
+        status = self.probes.dashboard_status()
+        if not status.get("installed"):
+            return check(
+                "dashboard_service",
+                "off",
+                "the dashboard is not installed as a service",
+                f"optional: {install}",
+            )
+        if not status.get("loaded"):
+            return check(
+                "dashboard_service",
+                "warn",
+                "the dashboard service is installed but not running",
+                install,
+            )
+        port = dashboard_service.PORT
+        if not self.probes.tcp_open("127.0.0.1", port):
+            return check(
+                "dashboard_service",
+                "warn",
+                f"the dashboard service runs, but nothing answers on 127.0.0.1:{port}",
+                f"read {dashboard_service.LOG}, then {install}",
+            )
+        return check(
+            "dashboard_service", "pass", f"the dashboard answers on http://127.0.0.1:{port}"
+        )
 
     def dashboard_check(self) -> Check:
         url, source = self._dashboard_url()
-        if url is None:
-            return check("dashboard", "warn", "no ClickHouse URL for the dashboard", _DASHBOARD_FIX)
         if not is_local_host(urlsplit(url).hostname or ""):
             return check(
                 "dashboard",
                 "warn",
                 f"the URL in {source} is not on this machine, so the dashboard refuses it",
-                _DASHBOARD_FIX,
+                _CLICKHOUSE_HTTP_FIX,
             )
         try:
             status, body = self.probes.http_get(f"{url.rstrip('/')}/ping")
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             return check(
                 "dashboard",
                 "warn",
                 f"ClickHouse at {source} does not answer /ping ({type(exc).__name__})",
-                _DASHBOARD_FIX,
+                _CLICKHOUSE_HTTP_FIX,
             )
         if status == 200 and body.strip() == b"Ok.":
             return check("dashboard", "pass", f"ClickHouse at {source} answers /ping")
@@ -654,7 +725,7 @@ class _Doctor:
             "dashboard",
             "warn",
             f"ClickHouse at {source} answered /ping with HTTP {status}",
-            _DASHBOARD_FIX,
+            _CLICKHOUSE_HTTP_FIX,
         )
 
     # --- Drift -----------------------------------------------------------------------

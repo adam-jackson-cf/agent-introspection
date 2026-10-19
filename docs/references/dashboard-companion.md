@@ -5,14 +5,22 @@ its views correctly.
 
 ## Server
 
-The companion is an independent Bun package in `dashboard/`. `bun run --cwd dashboard
-build` writes the assets to `dashboard/dist/`; `bun run --cwd dashboard start` serves
-them. The server binds only to `127.0.0.1:4173`.
+The companion is an independent Bun package in `dashboard/`. The server binds only to
+`127.0.0.1:4173`. `agent-introspection dashboard install --repo <checkout>` runs it as
+a user service: it builds the checkout's dashboard (`bun install --frozen-lockfile`,
+then `bun run build`) and starts `bun server.ts` there as a launchd agent kept alive
+(macOS) or a systemd user service restarted on failure (Linux), logging to
+`~/.local/share/agent-introspection/dashboard.log`. The service serves the checkout it
+was installed from, so pulling or switching branches changes it at its next restart;
+rerun `dashboard install` after an update. `dashboard status` and `dashboard remove`
+report and stop it, and `doctor`'s `dashboard_service` check says whether it answers.
+The service cannot run a ClickHouse password command, so a password-protected
+ClickHouse is refused: run the server by hand instead (`bun run --cwd dashboard build`,
+then `bun run --cwd dashboard start` with the credentials below set).
 
-It queries the local SigNoz ClickHouse over HTTP at the address it resolves from
-`INTROSPECTION_CLICKHOUSE_URL`, else `[dashboard] clickhouse_url`, else the http mode's
-`[signoz] clickhouse_url` in the agent-introspection config; with none it refuses to
-start rather than assume a container runtime. It refuses any address that is not local
+It queries the local SigNoz ClickHouse over HTTP at `INTROSPECTION_CLICKHOUSE_URL`,
+else `[signoz] clickhouse_url` in the agent-introspection config, else that key's
+default (`http://127.0.0.1:8123`), so it reads the ClickHouse the CLI does. It refuses any address that is not local
 (loopback, `localhost`, or `*.orb.local`) before sending credentials. The build writes to
 a temporary directory and replaces `dist/` only when every step succeeds.
 Every statement runs with `readonly=2` and the window and harness bound as query
@@ -23,12 +31,11 @@ only `SELECT ON introspection.*`.
 
 | Variable                            | What it sets                                                                    | Default                                                    |
 | ----------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `INTROSPECTION_CLICKHOUSE_URL`      | Local ClickHouse HTTP address; overrides the config.                            | `[dashboard]` or `[signoz]` `clickhouse_url`               |
+| `INTROSPECTION_CLICKHOUSE_URL`      | Local ClickHouse HTTP address; overrides the config.                            | `[signoz] clickhouse_url`, else `http://127.0.0.1:8123`    |
 | `AGENT_INTROSPECTION_CONFIG`        | Config file the address is read from.                                           | `~/.config/agent-introspection/config.toml`                |
 | `INTROSPECTION_CLICKHOUSE_USER`     | Basic-auth user, when the server needs a login.                                 | `default` when only a password is set                      |
 | `INTROSPECTION_CLICKHOUSE_PASSWORD` | Basic-auth password. Supply it from a secret manager, never a file.             | none                                                       |
 | `INTROSPECTION_WORKFLOW_DB`         | Workflow SQLite store the Interventions view reads findings and proposals from. | `~/.local/share/agent-introspection/introspection.sqlite3` |
-| `INTROSPECTION_HOOK_INBOX`          | Activity-hook inbox counted as the Pipeline backlog.                            | `~/.local/share/agent-introspection/hook-inbox`            |
 
 Sources: `dashboard/server.ts`, `dashboard/server/clickhouse.ts`.
 

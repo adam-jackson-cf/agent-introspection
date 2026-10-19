@@ -19,8 +19,6 @@ const A = "introspection.model_call_attempts_snapshot";
 const L = "introspection.task_labels_snapshot";
 /** Activity-hook events with the harness resolved (a view: never FINAL). */
 const H = "introspection.hook_rows";
-/** Session → Git project, resolved from the harness session stores. */
-export const P = "introspection.session_project";
 
 /** Rates over fewer samples than this are shown dimmed beside their n. */
 export const MIN_RATE_N = 20;
@@ -59,13 +57,25 @@ const OPERATION = "trimBoth(concat(tool, ' ', command_head, ' ', command_sub))";
 export const GENERIC_CLASS = String.raw`^(\\w+(Error|Exception)|Traceback \\(most recent call last\\):|Script (failed|error:?))$`;
 const ACTIONABLE = `((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3))
     AND NOT match(failure_class, '${GENERIC_CLASS}')`;
-/** A signature is localized when at least this share of its attributed occurrences share one project. */
-export const LOCALIZED_SHARE = 0.8;
 /**
- * A project root or failure path under a temporary directory marks an evaluation
- * workspace; mirrors findings.EVALUATION_PATH (a ClickHouse string literal).
+ * A tool call's working directory or failure path under a temporary directory marks an
+ * evaluation workspace; mirrors findings.EVALUATION_PATH (a ClickHouse string literal).
  */
 export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`;
+/**
+ * Keeps a tool call out of evaluation workspaces, as findings.outside_evaluation does:
+ * a whole session is excluded when every call that recorded a working directory ran
+ * in one, because a Codex call records a working directory only when its arguments
+ * name one.
+ */
+export const outsideEvaluation = (
+  alias: string,
+) => `NOT match(${alias}.workdir, '${EVALUATION_PATH}')
+        AND NOT match(${alias}.failure_signature, '${EVALUATION_PATH}')
+        AND (${alias}.harness, ${alias}.session_id) NOT IN (SELECT harness, session_id
+            FROM ${C} WHERE session_id != '' AND workdir != ''
+            GROUP BY harness, session_id
+            HAVING min(match(workdir, '${EVALUATION_PATH}')) = 1)`;
 /**
  * Headless Codex exec has no next prompt (registry: not applicable), so it stays
  * out of next-prompt denominators instead of counting as never corrected.
@@ -73,17 +83,16 @@ export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`
 const NEXT_PROMPT = "harness != 'codex_exec'";
 
 /**
- * Attributed tool failures with a failure class, outside evaluation workspaces,
- * as findings.py reads them. `where` bounds the window over `c.ts`.
+ * Tool failures with a failure class, outside evaluation workspaces, as findings.py
+ * reads them. `where` bounds the window over `c.ts`.
  */
 const failures = (
   where: string,
 ) => `SELECT c.harness AS harness, c.tool_family AS tool_family,
         c.failure_class AS failure_class, c.task_id AS task_id, c.ts AS ts, c.tool AS tool
-    FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
+    FROM ${C} AS c
     WHERE ${where} AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
-        AND NOT match(p.project_root, '${EVALUATION_PATH}')
-        AND NOT match(c.failure_signature, '${EVALUATION_PATH}')`;
+        AND ${outsideEvaluation("c")}`;
 
 /**
  * Failure clusters (tool family × failure class), one finished row per cluster
@@ -168,10 +177,6 @@ const TASK_TYPE_ORDER = [
   "docs",
   "continue",
 ];
-/** A repeated correction: a project × correction kind seen in at least this many tasks … */
-export const REPEAT_MIN_TASKS = 2;
-/** … and in at least this many sessions. */
-export const REPEAT_MIN_SESSIONS = 2;
 
 const sqlArray = (items: readonly string[]): string =>
   `[${items.map((item) => `'${item}'`).join(", ")}]`;
@@ -197,22 +202,6 @@ const wilson = (successes: string, n: string): string => {
 /** A verification kind failed in the task and a later run of the same kind succeeded. */
 const caught = (prefix = ""): string =>
   `${prefix}failed > 0 AND arrayExists(t -> t > ${prefix}first_failure, ${prefix}successes)`;
-const KIND_RANK = orderRank(VERIFICATION_KINDS, "kind");
-
-/**
- * Project × correction kind pairs over the selected harnesses, one row each:
- * tasks and sessions are harness-scoped, so sessions count (harness, session).
- */
-const REPEATED_PAIRS = `SELECT p.project AS project, l.correction_kind_next AS correction_kind,
-    arraySort(h -> (indexOf(${sqlArray(HARNESSES)}, h), h), groupUniqArray(l.harness)) AS harnesses,
-    count() AS tasks, uniqExact(l.harness, l.session_id) AS sessions,
-    arraySort(t -> (${orderRank(TASK_TYPE_ORDER, "t")}, t), groupUniqArrayIf(l.task_type, l.task_type != '')) AS task_types,
-    toString(max(l.start_ts)) AS last_seen
-FROM ${L} AS l INNER JOIN ${P} AS p ON p.session_id = l.session_id
-WHERE ${inWindowOf("l", "start_ts")} AND l.harness != 'codex_exec' AND l.corrected_next = 1
-    AND l.correction_kind_next NOT IN ('', 'none')
-    AND p.project != '' AND NOT match(p.project_root, '${EVALUATION_PATH}')
-GROUP BY project, correction_kind`;
 
 /** Seven Europe/London calendar days ending on the window end, over an alias's `ts`. */
 const LONDON_WEEK_OF = (alias: string) =>
@@ -359,7 +348,7 @@ FROM (
     sized AS (
         SELECT *, count() OVER (PARTITION BY harness, task_id, run) AS run_length FROM runs
     )
-SELECT g.harness AS harness, p.project AS project, g.example_session AS example_session, g.tool AS tool,
+SELECT g.harness AS harness, g.example_session AS example_session, g.tool AS tool,
     g.command AS command, g.attempts AS attempts, g.longest_run AS longest_run, g.failed AS failed,
     g.started AS started, g.total_rows AS total_rows
 FROM (
@@ -370,7 +359,7 @@ FROM (
         count() OVER () AS total_rows
     FROM sized GROUP BY harness, task_id, tool, arguments_hash HAVING attempts >= 2
     ORDER BY failed DESC, longest_run DESC, attempts DESC LIMIT 25
-) AS g LEFT JOIN ${P} AS p ON p.session_id = g.example_session
+) AS g
 ORDER BY failed DESC, longest_run DESC, attempts DESC`,
   },
   friction: {
@@ -420,26 +409,25 @@ FROM ops GROUP BY harness, operation ORDER BY failed_ops DESC LIMIT 25`,
 SELECT t.harness AS harness, t.session_id AS session_id, t.task_id AS task_id, t.model AS model,
     t.effort AS effort, toString(t.start_ts) AS started, t.duration_seconds AS duration_seconds,
     t.interrupted AS interrupted, t.steered AS steered, t.errored AS errored, t.quick_follow_up AS quick_follow_up,
-    p.project AS project, l.task_type AS task_type,
+    l.task_type AS task_type,
     f.failing_tool AS failing_tool, f.failure_class AS failure_class, f.failed_calls AS failed_calls
 FROM ${T} AS t
-LEFT JOIN ${P} AS p ON p.session_id = t.session_id
 LEFT JOIN ${L} AS l ON l.harness = t.harness AND l.task_id = t.task_id
 LEFT JOIN failed_calls AS f ON f.harness = t.harness AND f.task_id = t.task_id
 WHERE ${inWindowOf("t", "start_ts")} AND (t.interrupted = 1 OR t.steered = 1 OR t.errored = 1)
 ORDER BY t.start_ts DESC LIMIT 25`,
-    where_to_look: `SELECT p.project AS project, c.failure_class AS failure_class,
-    uniqExact(c.harness, c.task_id) AS tasks, count() AS failures,
-    arraySort(h -> (${harnessRank("h")}, h), groupUniqArray(c.harness)) AS harnesses,
-    toString(max(c.ts)) AS last_seen, count() OVER () AS total_rows
-FROM ${C} AS c INNER JOIN ${P} AS p ON p.session_id = c.session_id
-WHERE (c.harness, c.task_id) IN (
+    where_to_look: `SELECT failure_class,
+    uniqExact(harness, task_id) AS tasks, count() AS failures,
+    arraySort(h -> (${harnessRank("h")}, h), groupUniqArray(harness)) AS harnesses,
+    toString(max(ts)) AS last_seen, count() OVER () AS total_rows
+FROM ${C}
+WHERE (harness, task_id) IN (
         SELECT harness, task_id FROM ${T}
         WHERE ${inWindow("start_ts")} AND (interrupted = 1 OR steered = 1 OR errored = 1)
     )
-    AND c.task_id != '' AND c.outcome = 'failed' AND c.failure_class != ''
-    AND NOT match(c.failure_class, '${GENERIC_CLASS}') AND p.project != ''
-GROUP BY project, failure_class ORDER BY tasks DESC, failures DESC LIMIT 25`,
+    AND task_id != '' AND outcome = 'failed' AND failure_class != ''
+    AND NOT match(failure_class, '${GENERIC_CLASS}')
+GROUP BY failure_class ORDER BY tasks DESC, failures DESC LIMIT 25`,
   },
   guardrails: {
     decisions: `SELECT harness, detail AS decision, source, count() AS n,
@@ -500,13 +488,33 @@ ORDER BY commands DESC, calls DESC LIMIT 25`,
     uniqExactIf(task_id, notEmpty(verification_kinds) AND task_id != '') AS tasks,
     countIf(gate_run = 1) AS gate_runs
 FROM ${C} WHERE ${inWindow("ts")} AND ${VERIFIABLE} GROUP BY ROLLUP(harness) ORDER BY harness`,
-    verification_kinds: `SELECT harness, kind, count() AS runs,
-    countIf(outcome IN ('succeeded', 'failed')) AS explicit, countIf(outcome = 'failed') AS failed,
-    if(explicit > 0, 100 * failed / explicit, NULL) AS failed_rate,
-    uniqExactIf(task_id, task_id != '') AS tasks
-FROM ${C} ARRAY JOIN verification_kinds AS kind
-WHERE ${inWindow("ts")} AND ${VERIFIED}
-GROUP BY harness, kind ORDER BY ${KIND_RANK}, ${harnessRank("harness")}`,
+    /**
+     * Runs per verification kind and harness; `caught` counts the tasks where the kind
+     * failed and a later run of it passed (as `verification_caught`, per kind).
+     */
+    verification_kinds: `WITH ops AS (
+    SELECT harness, task_id, kind, countIf(outcome = 'failed') AS failed,
+        minIf(ts, outcome = 'failed') AS first_failure,
+        groupArrayIf(ts, outcome = 'succeeded') AS successes
+    FROM ${C} ARRAY JOIN verification_kinds AS kind
+    WHERE ${inWindow("ts")} AND ${VERIFIED} AND task_id != '' AND outcome IN ('failed', 'succeeded')
+    GROUP BY harness, task_id, kind HAVING failed > 0
+),
+caught AS (SELECT harness, kind, countIf(${caught()}) AS caught FROM ops GROUP BY harness, kind)
+SELECT r.harness AS harness, r.kind AS kind, r.runs AS runs, r.explicit AS explicit,
+    r.failed AS failed, r.failed_rate AS failed_rate, r.tasks AS tasks,
+    coalesce(k.caught, 0) AS caught, r.last_seen AS last_seen
+FROM (
+    SELECT harness, kind, count() AS runs,
+        countIf(outcome IN ('succeeded', 'failed')) AS explicit, countIf(outcome = 'failed') AS failed,
+        if(explicit > 0, 100 * failed / explicit, NULL) AS failed_rate,
+        uniqExactIf(task_id, task_id != '') AS tasks, toString(max(ts)) AS last_seen
+    FROM ${C} ARRAY JOIN verification_kinds AS kind
+    WHERE ${inWindow("ts")} AND ${VERIFIED}
+    GROUP BY harness, kind
+) AS r
+LEFT JOIN caught AS k ON k.harness = r.harness AND k.kind = r.kind
+ORDER BY ${orderRank(VERIFICATION_KINDS, "r.kind")}, ${harnessRank("r.harness")}`,
     verification_caught: `WITH ops AS (
     SELECT harness, task_id, kind, countIf(outcome = 'failed') AS failed,
         minIf(ts, outcome = 'failed') AS first_failure,
@@ -522,20 +530,6 @@ SELECT harness, count() AS failed_kinds, countIf(${caught()}) AS caught,
         arrayExists(t -> t > first_failure, successes)
     ) AS p50_caught_seconds
 FROM ops GROUP BY ROLLUP(harness) ORDER BY harness`,
-    verification_projects: `WITH ops AS (
-    SELECT harness, session_id, task_id, kind, count() AS runs, countIf(outcome = 'failed') AS failed,
-        minIf(ts, outcome = 'failed') AS first_failure,
-        groupArrayIf(ts, outcome = 'succeeded') AS successes, max(ts) AS last_ts
-    FROM ${C} ARRAY JOIN verification_kinds AS kind
-    WHERE ${inWindow("ts")} AND ${VERIFIED}
-    GROUP BY harness, session_id, task_id, kind
-)
-SELECT p.project AS project, o.kind AS kind, o.harness AS harness, sum(o.runs) AS runs,
-    sum(o.failed) AS failed, countIf(${caught("o.")}) AS caught,
-    toString(max(o.last_ts)) AS last_seen, count() OVER () AS total_rows
-FROM ops AS o INNER JOIN ${P} AS p ON p.session_id = o.session_id
-WHERE p.project != ''
-GROUP BY project, kind, harness ORDER BY failed DESC, runs DESC LIMIT 50`,
     gate_runs: `SELECT harness, count() AS runs, countIf(outcome = 'failed') AS failed
 FROM ${C} WHERE ${inWindow("ts")} AND ${VERIFIABLE} AND gate_run = 1
 GROUP BY harness ORDER BY ${harnessRank("harness")}`,
@@ -614,11 +608,10 @@ GROUP BY harness, model, error_class ORDER BY n DESC LIMIT 25`,
     count() AS calls, countIf(outcome = 'failed') AS failed, count() OVER () AS total_files
 FROM (
     SELECT c.harness AS harness, c.task_id AS task_id, c.ts AS ts, c.outcome AS outcome, target
-    FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
+    FROM ${C} AS c
     ARRAY JOIN c.targets AS target
     WHERE ${inWindowOf("c", "ts")} AND c.task_id != ''
-        AND NOT match(p.project_root, '${EVALUATION_PATH}')
-        AND NOT match(c.failure_signature, '${EVALUATION_PATH}')
+        AND ${outsideEvaluation("c")}
 )
 GROUP BY target HAVING tasks >= 2 ORDER BY tasks DESC, calls DESC LIMIT 30`,
     target_summary: `SELECT uniqExact(target) AS targets, uniqExactIf(target, tasks >= 2) AS recurring
@@ -626,11 +619,10 @@ FROM (
     SELECT target, uniqExact(harness, task_id) AS tasks
     FROM (
         SELECT c.harness AS harness, c.task_id AS task_id, target
-        FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
+        FROM ${C} AS c
         ARRAY JOIN c.targets AS target
         WHERE ${inWindowOf("c", "ts")} AND c.task_id != ''
-            AND NOT match(p.project_root, '${EVALUATION_PATH}')
-            AND NOT match(c.failure_signature, '${EVALUATION_PATH}')
+            AND ${outsideEvaluation("c")}
     ) GROUP BY target
 )`,
     clusters: clusters(inWindowOf("c", "ts"), "tasks >= 2"),
@@ -646,25 +638,6 @@ FROM (
     FROM (${failures(LONDON_WEEK_OF("c"))})
     GROUP BY tool_family, failure_class HAVING ${ACTIONABLE}
 )`,
-    concentration: `SELECT *, top_count >= ${LOCALIZED_SHARE} * attributed AS localized,
-    if(attributed > 0, 100 * top_count / attributed, NULL) AS top_share,
-    count() OVER () AS shown, sum(localized) OVER () AS localized_signatures,
-    if(shown > 0, 100 * localized_signatures / shown, NULL) AS localized_rate
-FROM (
-    SELECT harness, any(signature) AS signature, sum(n) AS occurrences, sumIf(n, project != '') AS attributed,
-        maxIf(n, project != '') AS top_count, argMaxIf(project, n, project != '') AS top_project,
-        uniqExactIf(project, project != '') AS projects, count() OVER () AS total_signatures
-    FROM (
-        SELECT c.harness AS harness, if(c.failure_signature_hash != '', c.failure_signature_hash, c.failure_signature) AS signature_key,
-            any(c.failure_signature) AS signature, p.project AS project, count() AS n
-        FROM ${C} AS c LEFT JOIN ${P} AS p ON p.session_id = c.session_id
-        WHERE ${inWindowOf("c", "ts")} AND c.outcome = 'failed' AND c.failure_signature != ''
-            AND NOT match(p.project_root, '${EVALUATION_PATH}')
-            AND NOT match(c.failure_signature, '${EVALUATION_PATH}')
-        GROUP BY harness, signature_key, project
-    ) GROUP BY harness, signature_key HAVING attributed > 0 AND occurrences >= 3
-    ORDER BY occurrences DESC LIMIT 200
-) ORDER BY occurrences DESC`,
     daily: `SELECT toString(toDate(ts, 'Europe/London')) AS day, harness, count() AS failures,
     uniqExact(tool_family, failure_class) AS clusters
 FROM (${failures(inWindowOf("c", "ts"))})
@@ -720,16 +693,11 @@ GROUP BY correction_kind ORDER BY correction_kind`,
 FROM ${L} WHERE ${inWindow("start_ts")} AND labelled = 1 AND task_type != ''
 GROUP BY task_type, effort
 ORDER BY ${orderRank(TASK_TYPE_ORDER, "task_type")}, task_type, ${orderRank(EFFORT_ORDER, "effort")}, effort`,
-    repeated: `SELECT project, correction_kind, harnesses, tasks, sessions, task_types, last_seen
-FROM (${REPEATED_PAIRS}) ORDER BY tasks DESC, project, correction_kind`,
-    repeated_count: `SELECT countIf(tasks >= ${REPEAT_MIN_TASKS} AND sessions >= ${REPEAT_MIN_SESSIONS}) AS repeated
-FROM (${REPEATED_PAIRS})`,
     recent: `SELECT l.harness AS harness, l.session_id AS session_id, l.task_id AS task_id,
     toString(l.start_ts) AS started, l.task_type AS task_type, l.effort AS effort,
-    l.correction_kind_next AS correction_kind, l.sentiment_next AS sentiment_next, p.project AS project
-FROM ${L} AS l LEFT JOIN ${P} AS p ON p.session_id = l.session_id
+    l.correction_kind_next AS correction_kind, l.sentiment_next AS sentiment_next
+FROM ${L} AS l
 WHERE ${inWindowOf("l", "start_ts")} AND l.harness != 'codex_exec' AND l.corrected_next = 1
-    AND NOT match(p.project_root, '${EVALUATION_PATH}')
 ORDER BY l.start_ts DESC LIMIT 25`,
   },
   interventions: {
@@ -737,18 +705,13 @@ ORDER BY l.start_ts DESC LIMIT 25`,
     count() AS occurrences, uniqExact(task_id) AS tasks
 FROM (${failures(inWindowOf("c", "ts"))})
 GROUP BY day, harness, tool_family, failure_class ORDER BY day`,
-    correction_daily: `SELECT toString(toDate(l.start_ts, 'Europe/London')) AS day, l.harness AS harness,
-    p.project AS project, if(l.corrected_next = 1, l.correction_kind_next, '') AS correction_kind,
-    count() AS tasks, countIf(l.corrected_next = 1) AS corrected
-FROM ${L} AS l INNER JOIN ${P} AS p ON p.session_id = l.session_id
-WHERE ${inWindowOf("l", "start_ts")} AND l.labelled = 1 AND p.project != ''
-GROUP BY day, harness, project, correction_kind ORDER BY day`,
     task_daily: `SELECT toString(toDate(start_ts, 'Europe/London')) AS day, harness, count() AS tasks
 FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day, harness ORDER BY day`,
     /**
      * One row per London day with the recurrence baseline: failure-cluster failures per
-     * 100 attributed tasks and corrections per 100 labelled tasks (rates over that day's
-     * sums, NULL without a denominator). Days are those with tasks or labelled tasks.
+     * 100 tasks and corrected tasks per 100 tasks with a next-prompt label (Intent's
+     * corrected rate; rates over that day's sums, NULL without a denominator). Days are
+     * those with tasks or labelled tasks.
      */
     baseline_daily: `SELECT day, sum(f_n) AS failures, sum(t_n) AS tasks, sum(c_n) AS corrected, sum(l_n) AS labelled,
     if(sum(t_n) > 0, 100 * sum(f_n) / sum(t_n), NULL) AS failures_rate,
@@ -762,10 +725,9 @@ FROM (
         toUInt64(0) AS c_n, toUInt64(0) AS l_n
     FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day
     UNION ALL
-    SELECT toString(toDate(l.start_ts, 'Europe/London')) AS day, toUInt64(0) AS f_n, toUInt64(0) AS t_n,
-        countIf(l.corrected_next = 1) AS c_n, count() AS l_n
-    FROM ${L} AS l INNER JOIN ${P} AS p ON p.session_id = l.session_id
-    WHERE ${inWindowOf("l", "start_ts")} AND l.labelled = 1 AND p.project != '' GROUP BY day
+    SELECT toString(toDate(start_ts, 'Europe/London')) AS day, toUInt64(0) AS f_n, toUInt64(0) AS t_n,
+        ${CORRECTED_N} AS c_n, ${CORRECTED_DEN} AS l_n
+    FROM ${L} WHERE ${inWindow("start_ts")} GROUP BY day
 )
 GROUP BY day HAVING tasks > 0 OR labelled > 0 ORDER BY day`,
   },

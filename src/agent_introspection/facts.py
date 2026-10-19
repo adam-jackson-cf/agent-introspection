@@ -27,7 +27,6 @@ import subprocess
 import time
 import tomllib
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -41,7 +40,6 @@ from agent_introspection.config import (
     AppConfig,
     ConfigurationError,
     SigNozConfig,
-    is_local_host,
     require_host,
 )
 
@@ -83,9 +81,9 @@ class Loader:
     window: str
 
 
-# Hook-event and session-attribution records come from spool exporters on every
-# machine, so their loaders key on `observed_timestamp` (the collector's receive time)
-# alone: a record's own time is the producer's clock and can trail by an outage.
+# Hook-event records come from spool exporters on every machine, so their loaders key
+# on `observed_timestamp` (the collector's receive time) alone: a record's own time is
+# the producer's clock and can trail by an outage.
 _RECORD_LOAD_WINDOW = (
     "observed_timestamp > toUInt64(toUnixTimestamp(now() - INTERVAL 30 MINUTE)) * 1000000000"
 )
@@ -165,20 +163,17 @@ LOADERS = (
         schedule=MINUTE_SCHEDULE,
         window=_RECORD_LOAD_WINDOW,
     ),
-    Loader(
-        name="sweep_session_projects",
-        target="session_projects",
-        select_file="select_session_projects.sql",
-        schedule=sweep_schedule(39),
-        window=_RECORD_SWEEP_WINDOW,
-    ),
-    Loader(
-        name="load_session_projects",
-        target="session_projects",
-        select_file="select_session_projects.sql",
-        schedule=MINUTE_SCHEDULE,
-        window=_RECORD_LOAD_WINDOW,
-    ),
+)
+
+# Objects of the removed project attribution, dropped by every install so an upgraded
+# store keeps no loader selecting into a dropped table. They go after the refreshers
+# that, on an upgraded store, still wait on the old loaders; loaders and the view go
+# before the table.
+RETIRED_OBJECTS = (
+    "DROP VIEW IF EXISTS introspection.sweep_session_projects",
+    "DROP VIEW IF EXISTS introspection.load_session_projects",
+    "DROP VIEW IF EXISTS introspection.session_project",
+    "DROP TABLE IF EXISTS introspection.session_projects",
 )
 
 _BACKFILL_WINDOWS = {
@@ -191,13 +186,11 @@ _BACKFILL_WINDOWS = {
         " AND timestamp < toUInt64(toUnixTimestamp64Nano(toDateTime64('{end}', 9, 'UTC')))"
     ),
     "hook_events": _RECORD_BACKFILL_WINDOW,
-    "session_projects": _RECORD_BACKFILL_WINDOW,
 }
 _SELECT_FILES = {
     "spans": "select_spans.sql",
     "logs": "select_logs.sql",
     "hook_events": "select_hook_events.sql",
-    "session_projects": "select_session_projects.sql",
 }
 
 
@@ -856,6 +849,7 @@ def install_statements(enabled: Sequence[str] | None = None) -> list[str]:
             for name in (*snapshot_refreshers(snapshot), f"refresh_{snapshot.view}")
         ),
         *(f"DROP VIEW IF EXISTS {DATABASE}.{loader.name}" for loader in LOADERS),
+        *RETIRED_OBJECTS,
         *(loader_ddl(loader) for loader in LOADERS),
         *(statement for views_file in VIEW_FILES for statement in view_file_statements(views_file)),
         *route_check_statements(registry),
@@ -891,73 +885,6 @@ def backfill_statements(target: str, start: datetime, end: datetime) -> list[str
     return [
         backfill_statement(target, lower, upper) for lower, upper in backfill_windows(start, end)
     ]
-
-
-def _require_local_docker_context(context: str | None) -> None:
-    """Raise unless the Docker context's daemon endpoint is a local socket or host."""
-    command = ("docker", "context", "inspect", *((context,) if context is not None else ()))
-    try:
-        completed = _run_local_command(command)
-        host = json.loads(completed.stdout)[0]["Endpoints"]["docker"]["Host"]
-    except (OSError, subprocess.TimeoutExpired, ValueError, LookupError, TypeError) as exc:
-        raise ConfigurationError("could not resolve the Docker context endpoint") from exc
-    if not isinstance(host, str):
-        raise ConfigurationError("could not resolve the Docker context endpoint")
-    parsed = urllib.parse.urlsplit(host)
-    if parsed.scheme in ("unix", "npipe") or (
-        parsed.scheme == "tcp" and is_local_host(parsed.hostname or "")
-    ):
-        return
-    raise ConfigurationError(
-        "signoz.docker_context must target a Docker daemon on this machine, "
-        f"not {parsed.scheme}://{parsed.hostname or ''}"
-    )
-
-
-def docker_runner(config: AppConfig) -> SqlRunner:
-    """Return a runner that executes multi-statement SQL through ``clickhouse-client``.
-
-    The first statement batch verifies that the Docker context targets a local daemon.
-    """
-    # Without a configured context, docker uses the current one (`docker context show`).
-    context = config.signoz.docker_context
-    prefix = (
-        "docker",
-        *(("--context", context) if context is not None else ()),
-        "exec",
-        "-i",
-        config.signoz.clickhouse_container,
-        "clickhouse-client",
-        "--multiquery",
-    )
-    verified = False
-
-    def run(sql: str) -> str:
-        nonlocal verified
-        if not verified:
-            _require_local_docker_context(context)
-            verified = True
-        try:
-            completed = subprocess.run(
-                prefix,
-                input=sql,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=_QUERY_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise StatementTimeoutError("ClickHouse statement timed out") from exc
-        if completed.returncode != 0:
-            lines = completed.stderr.strip().splitlines()
-            raise FactsError(
-                next(
-                    (line for line in lines if "DB::Exception" in line), lines[-1] if lines else ""
-                )
-            )
-        return completed.stdout
-
-    return run
 
 
 _QUOTES = frozenset("'\"`")
@@ -1061,8 +988,6 @@ def http_runner(config: AppConfig) -> SqlRunner:
     logged or included in errors.
     """
     signoz = config.signoz
-    if signoz.clickhouse_url is None:
-        raise ConfigurationError("signoz.clickhouse_url is not configured")
     password = clickhouse_password(signoz)
     token = base64.b64encode(f"{signoz.clickhouse_user}:{password}".encode()).decode()
     # wait_end_of_query buffers the result, so a failure mid-query is an HTTP error.
@@ -1094,12 +1019,12 @@ def http_runner(config: AppConfig) -> SqlRunner:
 
 
 def runner(config: AppConfig) -> SqlRunner:
-    """Return the SQL runner for the configured connection mode.
+    """Return the SQL runner over ClickHouse's HTTP interface.
 
     An additional machine has no ClickHouse, so every command that needs one stops here.
     """
     require_host(config, "this command needs SigNoz's ClickHouse")
-    return http_runner(config) if config.signoz.mode == "http" else docker_runner(config)
+    return http_runner(config)
 
 
 def scratch_database_name(now: float | None = None) -> str:

@@ -17,12 +17,10 @@ re-reads the last 3 days by event time. A log whose event is older than 7 days w
 arrives is never loaded. This limit is accepted; `facts backfill` can recover such rows
 by hand.
 
-Hook events and session attribution records (see [Hook Events](hook-events.md))
-are not read from a local inbox: every machine sends them over OTLP to SigNoz, and
-the loaders `load_hook_events` and `load_session_projects` (every minute, selecting by
-`observed_timestamp` over the last 30 minutes) plus their hourly sweeps (last 3 days)
-copy them into `introspection.hook_events` and `introspection.session_projects`. The
-session loader keeps the newest `resolved_at` per session. Consequences:
+Hook events (see [Hook Events](hook-events.md)) are not read from a local inbox:
+every machine sends them over OTLP to SigNoz, and the loader `load_hook_events`
+(every minute, selecting by `observed_timestamp` over the last 30 minutes) plus its
+hourly sweep (last 3 days) copy them into `introspection.hook_events`. Consequences:
 
 - These records sit in SigNoz for its 90-day log retention; a record that arrives more
   than 90 days after it was produced is lost. The facts tables keep what was loaded.
@@ -42,16 +40,11 @@ session loader keeps the newest `resolved_at` per session. Consequences:
 - Readers select these families by `service.name`, `event.name`, and the body's
   `schema`. Older rows under the same service name come from a retired pipeline and are
   never loaded.
-- Session identity is machine independent: `project_id` is keyed on the normalized git
-  remote when there is one (else on the host and path), and is stored. The dashboard
-  and findings still group by project **name**, so one project checked out on two
-  machines merges; switching to `project_id` would change finding fingerprints and is a
-  separate change.
 
 ## Sanitization
 
 Home paths are redacted (`/Users/<name>`, `/home/<name>`, `/root` become `~`) in the
-hook, the attribution record, and the SQL projections. Rows loaded before the home
+hook record and the SQL projections. Rows loaded before the home
 redaction widening (the `HOME_PATH_CUTOFF` constant, currently 2026-10-13 00:00 UTC, in
 `dashboard/server/record-route.ts`, used by the Pipeline view's sanitization query) can
 still hold a Linux home path. They are not rewritten; the sanitization row counts home paths only for rows loaded at or after the cutoff, and the facts store
@@ -111,18 +104,18 @@ snapshot whose upstream failed, and reports all failures together. `facts refres
 <refresher>` fills one table without a full rebuild. Within each
 10-minute period (UTC):
 
-| Minute | Runs                                                                                      |
-| ------ | ----------------------------------------------------------------------------------------- |
-| `:x0`  | the minute loaders only                                                                   |
-| `:x1`  | `usage_events` recent                                                                     |
-| `:x2`  | `task_outcomes` recent                                                                    |
-| `:x3`  | `task_labels` recent (right after `task_outcomes`, which it waits for)                    |
-| `:x4`  | `tool_calls` recent                                                                       |
-| `:x5`  | one `_history` refresher a day, 00:35 to 01:35                                            |
-| `:x6`  | `user_signals` recent                                                                     |
-| `:x7`  | `model_calls` recent                                                                      |
-| `:x8`  | `model_call_attempts` recent                                                              |
-| `:x9`  | one hourly sweep each: `:09` spans, `:19` logs, `:29` hook events, `:39` session projects |
+| Minute | Runs                                                                   |
+| ------ | ---------------------------------------------------------------------- |
+| `:x0`  | the minute loaders only                                                |
+| `:x1`  | `usage_events` recent                                                  |
+| `:x2`  | `task_outcomes` recent                                                 |
+| `:x3`  | `task_labels` recent (right after `task_outcomes`, which it waits for) |
+| `:x4`  | `tool_calls` recent                                                    |
+| `:x5`  | one `_history` refresher a day, 00:35 to 01:35                         |
+| `:x6`  | `user_signals` recent                                                  |
+| `:x7`  | `model_calls` recent                                                   |
+| `:x8`  | `model_call_attempts` recent                                           |
+| `:x9`  | one hourly sweep each: `:09` spans, `:19` logs, `:29` hook events      |
 
 A view that reads another snapshot (`task_labels` on `task_outcomes`) must have a later
 offset, because ClickHouse waits for a dependency only when its offset is earlier in the
@@ -155,8 +148,8 @@ validates it and loads it into `introspection.signal_*` tables; every panel's in
 is rendered from those tables.
 
 Parity is judged over the harnesses this machine uses: config `[harnesses] enabled`
-(registry harness keys, or `codex` for the three Codex surfaces; absent means every
-harness). `facts install` rejects unknown keys and loads the list into
+(registry harness keys, or `codex` for the three Codex surfaces; absent means Claude
+Code and Codex). `facts install` rejects unknown keys and loads the list into
 `introspection.harnesses`. The visibility rule is in the
 [harness support matrix](data-gaps.md#harness-support-matrix). A signal no harness produces is listed under `[[excluded]]`.
 The findings detectors, evidence packs, and evaluations count only enabled harnesses.
@@ -188,9 +181,9 @@ emits is plumbing and is not loaded.
 - SigNoz keeps 90 days of raw traces and logs. The `introspection` tables have no TTL
   and hold history beyond that. Trace history before 2026-09-10 had already expired
   under an earlier 15-day TTL and cannot be recovered.
-- Never drop `hook_events` (the only copy of activity-hook history) or
-  `session_projects` (it keeps attribution for sessions the harnesses have since
-  pruned). `facts install` recreates loaders and views without touching data.
+- Never drop `hook_events` (the only copy of activity-hook history). `facts install`
+  recreates loaders and views without touching data. It drops only the objects of the
+  removed project attribution (`session_projects`, its view, and its two loaders).
 - The `introspection` tables live in the SigNoz ClickHouse volume. Only history older
   than 90 days is irreplaceable; back it up before any SigNoz upgrade or stack
   recreation once the store holds more than 90 days.
@@ -205,12 +198,11 @@ uv run agent-introspection facts status              # loader state and per-harn
 
 `facts sync` (the SigNoz host's scheduled job from `facts schedule install`: a launchd
 agent on macOS, a systemd user timer on Linux) runs in this order:
-`spool sync` (attribution scan into the spool, status record, OTLP drain), then
-`SYSTEM REFRESH VIEW` and `SYSTEM WAIT VIEW` for `load_hook_events` and
-`load_session_projects`, then prompt labels, findings, and evaluations. Additional
-machines without SigNoz run only `agent-introspection spool sync`, from the onboarding
-skill's systemd user timer. `facts backfill` re-projects hook events and session
-attribution from SigNoz with the same family filters.
+`spool sync` (status record and OTLP drain), then `SYSTEM REFRESH VIEW` and
+`SYSTEM WAIT VIEW` for `load_hook_events`, then prompt labels, findings, and
+evaluations. Additional machines without SigNoz run only `agent-introspection spool
+sync`, from the onboarding skill's systemd user timer. `facts backfill` re-projects hook
+events from SigNoz with the same family filter.
 
 ## What To Check
 

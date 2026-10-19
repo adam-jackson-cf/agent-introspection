@@ -18,15 +18,14 @@ harness does not emit it, so the signal is hidden wherever that harness is enabl
 
 ## Harness support matrix
 
-58 per-harness signals across 5 harnesses: 290 cells, 165 aligned (✓), 103 reached by a different route (≈), 8 not applicable by construction (—), 14 not emitted (✗).
+56 per-harness signals across 5 harnesses: 280 cells, 155 aligned (✓), 103 reached by a different route (≈), 8 not applicable by construction (—), 14 not emitted (✗).
 
-Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
+Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means Claude Code and Codex). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
 | View                        | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
 | --------------------------- | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |
 | Pipeline                    | Fact freshness               | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Pipeline                    | Source parity                | ✓   | ✓                | ✓         | ✓          | ✓           |
-| Pipeline                    | Project attribution          | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Cache efficiency            | Input tokens                 | ✓   | ✓                | ✓         | ✓          | ≈           |
 | Cache efficiency            | Cached input                 | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Cache efficiency            | Uncached input               | ✓   | ✓                | ✓         | ✓          | ✓           |
@@ -75,7 +74,6 @@ Parity is judged per machine, over the harnesses it uses (config `[harnesses] en
 | Recurring failures          | Recurring targets            | ≈   | ≈                | ≈         | ≈          | ≈           |
 | Recurring failures          | Recurring failure signatures | ≈   | ✓                | ✓         | ✓          | ≈           |
 | Recurring failures          | Actionable repeats           | ≈   | ✓                | ✓         | ✓          | ≈           |
-| Recurring failures          | Project concentration        | ✓   | ✓                | ✓         | ✓          | ✓           |
 | Requests and corrections    | Labelled tasks               | ≈   | ✓                | ✓         | ✓          | ✓           |
 | Requests and corrections    | Task type                    | ≈   | ✓                | ✓         | ✓          | ✓           |
 | Requests and corrections    | Corrected by the next prompt | ≈   | ✓                | ✓         | —          | ✓           |
@@ -244,13 +242,12 @@ Last verified: 2026-10-01.
 
 These signals are emitted, but not for every row.
 
-| Gap                          | Harnesses             | Extent                                                                                                                                                             | Effect                                                                                                                                                                                                                            |
-| ---------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tool call → task attribution | Codex                 | 93% of app-server, 99.7% of exec, and 54% of CLI tool calls fall inside an exported turn span                                                                      | Task-level tool signals (tasks affected, repeats, loops, recovery, churn, recurrence) undercount Codex CLI. Some CLI turns are never exported as `session_task.turn`.                                                             |
-| Task token usage             | Codex CLI             | TUI turns often omit `codex.turn.token_usage.*`                                                                                                                    | Per-task reasoning and output are below usage totals (55% lower over 30 days).                                                                                                                                                    |
-| Project attribution          | All                   | Of the last 30 days' tasks, 99% Claude Code, 97% Codex exec, 85% Codex CLI, 74% Codex app-server, and 30% omp have a project (2026-10-01, from the session stores) | Tasks whose session no store holds (omp batch runs that keep no session file; Codex sessions Codex has pruned) and sessions whose workspace is gone with no matching remote have no project; the Pipeline view shows each reason. |
-| Reasoning effort             | Claude Code           | `effort` set on nearly every request from 2026-09-28, rarely before                                                                                                | Older Claude Code tasks show `unset`.                                                                                                                                                                                             |
-| Rare user events             | Codex CLI, Codex exec | No `turn/interrupt` in 90 days; exec is headless and cannot be interrupted or steered                                                                              | Interrupt and steer rates are 0 or "no events" there, which is a valid observation, not a break.                                                                                                                                  |
+| Gap                          | Harnesses             | Extent                                                                                        | Effect                                                                                                                                                                |
+| ---------------------------- | --------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool call → task attribution | Codex                 | 93% of app-server, 99.7% of exec, and 54% of CLI tool calls fall inside an exported turn span | Task-level tool signals (tasks affected, repeats, loops, recovery, churn, recurrence) undercount Codex CLI. Some CLI turns are never exported as `session_task.turn`. |
+| Task token usage             | Codex CLI             | TUI turns often omit `codex.turn.token_usage.*`                                               | Per-task reasoning and output are below usage totals (55% lower over 30 days).                                                                                        |
+| Reasoning effort             | Claude Code           | `effort` set on nearly every request from 2026-09-28, rarely before                           | Older Claude Code tasks show `unset`.                                                                                                                                 |
+| Rare user events             | Codex CLI, Codex exec | No `turn/interrupt` in 90 days; exec is headless and cannot be interrupted or steered         | Interrupt and steer rates are 0 or "no events" there, which is a valid observation, not a break.                                                                      |
 
 ## Gaps from the activity hooks
 

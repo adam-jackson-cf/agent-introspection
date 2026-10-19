@@ -2,11 +2,8 @@
 
 For an applied proposal whose evaluation window has elapsed, the finding's task
 rate over ``evaluation_days`` after the ``applied`` event is compared with the same
-rate over ``baseline_days`` before it, counting only the metric's harnesses:
-
-- ``cluster_task_rate``: tasks that hit the finding's failure cluster, per task;
-- ``correction_task_rate``: labelled tasks in the finding's project whose next
-  prompt was a correction of the finding's kind, per labelled task there.
+rate over ``baseline_days`` before it, counting only the metric's harnesses. The
+metric is ``cluster_task_rate``: tasks that hit the finding's failure cluster, per task.
 
 The verdict is appended as one immutable ``evaluated`` proposal event:
 
@@ -36,6 +33,7 @@ from agent_introspection.facts import (
 )
 from agent_introspection.proposals import (
     CLUSTER_TASK_RATE,
+    RETIRED_METRICS,
     ProposalState,
     SuccessMetric,
     append_proposal_event,
@@ -115,26 +113,12 @@ FROM (
 FORMAT JSONEachRow"""
 
 
-def _correction_query(subject: dict[str, Any], names: str, window: Window, now: datetime) -> str:
-    start, end = _literal(window.start), _literal(window.end)
-    kind = sql_string(str(subject["correction_kind"]))
-    return f"""SELECT count() AS tasks,
-    countIf(l.corrected_next = 1 AND l.correction_kind_next = {kind}) AS matched_tasks
-FROM {_table("task_labels", window, now)} AS l
-INNER JOIN {DATABASE}.session_project AS p ON p.session_id = l.session_id
-WHERE p.project = {sql_string(str(subject["project"]))} AND l.labelled = 1
-    AND l.harness IN ({names}) AND {enabled_filter("l.harness")}
-    AND l.start_ts >= {start} AND l.start_ts < {end}
-FORMAT JSONEachRow"""
-
-
 def rate_query(
     metric: SuccessMetric, subject: dict[str, Any], window: Window, now: datetime
 ) -> str:
     """Return the tasks and matching tasks started in ``window`` for the metric's harnesses."""
     names = ", ".join(sql_string(name) for name in metric.harnesses)
-    build = _cluster_query if metric.metric == CLUSTER_TASK_RATE else _correction_query
-    return build(subject, names, window, now)
+    return _cluster_query(subject, names, window, now)
 
 
 def window_rate(
@@ -225,8 +209,13 @@ def evaluate_due(
     skipped: list[dict[str, str]] = []
     rows = connection.execute(DUE_QUERY, (ProposalState.APPLIED, EVENT_TYPE)).fetchall()
     for proposal_id, payload_json, subject_json, applied_text in rows:
-        metric = SuccessMetric.from_payload(json.loads(payload_json))
+        payload_value = json.loads(payload_json)
+        metric = SuccessMetric.from_payload(payload_value)
         subject = json.loads(subject_json) if subject_json else {}
+        stored = payload_value.get("predicted_success_metric")
+        if isinstance(stored, dict) and stored.get("metric") in RETIRED_METRICS:
+            skipped.append(_skip(proposal_id, f"retired success metric {stored['metric']}"))
+            continue
         if metric is None:
             skipped.append(_skip(proposal_id, "legacy free-text success metric"))
             continue

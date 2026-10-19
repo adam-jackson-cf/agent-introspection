@@ -3,9 +3,11 @@
 ``signoz detect`` reports what a SigNoz install would collide with: running containers
 whose name or image mentions SigNoz or ClickHouse, the local ports a SigNoz publishes
 (OTLP gRPC 4317, OTLP/HTTP 4318, ClickHouse HTTP 8123, the SigNoz UI 8080), and whether
-ClickHouse answers ``/ping`` on 127.0.0.1:8123. It never starts, stops, or changes
-anything. A missing Docker CLI or a daemon that does not answer is reported, never
-raised.
+ClickHouse answers ``/ping`` on 127.0.0.1:8123. A SigNoz on other ports is checked at
+the ClickHouse URL and OTLP/HTTP endpoint given instead, the same values ``setup``
+takes; ``setup_refusal`` says why ``setup`` would refuse them as config values. It
+never starts, stops, or changes anything. A missing Docker CLI or a daemon that does
+not answer is reported, never raised.
 """
 
 from __future__ import annotations
@@ -18,6 +20,9 @@ import subprocess
 import urllib.request
 from collections.abc import Sequence
 from typing import Any, Final, cast
+from urllib.parse import urlsplit
+
+from agent_introspection.config import ConfigurationError, parse_config
 
 LOOPBACK: Final = "127.0.0.1"
 CLICKHOUSE_HTTP_PORT: Final = 8123
@@ -77,26 +82,42 @@ def signoz_containers(listing: str) -> list[Container]:
     ]
 
 
-def port_open(port: int) -> bool:
-    """Return whether something accepts TCP connections on 127.0.0.1:``port``."""
+def port_open(port: int, host: str = LOOPBACK) -> bool:
+    """Return whether something accepts TCP connections on ``host``:``port``."""
     try:
-        with socket.create_connection((LOOPBACK, port), timeout=_CONNECT_TIMEOUT_SECONDS):
+        with socket.create_connection((host, port), timeout=_CONNECT_TIMEOUT_SECONDS):
             return True
     except OSError:
         return False
 
 
-def clickhouse_answers() -> bool:
-    """Return whether ClickHouse answers ``GET /ping`` with ``Ok.`` on 127.0.0.1:8123."""
+def default_clickhouse_url() -> str:
+    return f"http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}"
+
+
+def clickhouse_answers(url: str | None = None) -> bool:
+    """Return whether ClickHouse answers ``GET /ping`` with ``Ok.`` at ``url``.
+
+    ``url`` defaults to 127.0.0.1:8123, the default ``[signoz] clickhouse_url``.
+    """
     # No proxy: a loopback address must never be sent through one.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = (url or default_clickhouse_url()).rstrip("/")
     try:
-        with opener.open(
-            f"http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}/ping", timeout=_PING_TIMEOUT_SECONDS
-        ) as response:
+        with opener.open(f"{base}/ping", timeout=_PING_TIMEOUT_SECONDS) as response:
             return cast(bytes, response.read(64)).strip() == b"Ok."
-    except (OSError, http.client.HTTPException):
+    except (OSError, ValueError, http.client.HTTPException):
         return False
+
+
+def endpoint_open(url: str) -> bool:
+    """Return whether something accepts TCP connections at an OTLP/HTTP endpoint URL."""
+    try:
+        parts = urlsplit(url if "://" in url else f"http://{url}")
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return False
+    return port_open(port, parts.hostname or LOOPBACK)
 
 
 def _docker_state() -> tuple[dict[str, Any], list[Container]]:
@@ -121,29 +142,64 @@ def _docker_notes(docker: dict[str, Any]) -> list[str]:
     return []
 
 
-def _clickhouse_notes(containers: list[Container], ping: bool) -> list[str]:
+def setup_refusal(clickhouse_url: str | None, otlp_endpoint: str | None) -> str | None:
+    """Return why ``setup`` would refuse these addresses as config values, or None."""
+    signoz = {
+        key: value
+        for key, value in (("clickhouse_url", clickhouse_url), ("otlp_endpoint", otlp_endpoint))
+        if value
+    }
+    try:
+        parse_config({"signoz": signoz})
+    except ConfigurationError as exc:
+        return str(exc)
+    return None
+
+
+def _clickhouse_notes(containers: list[Container], ping: bool, url: str | None) -> list[str]:
+    if ping and url:
+        return [f"ClickHouse answers at {url}: pass it to `setup` as --clickhouse-url."]
     if ping:
         return [
-            f"ClickHouse answers on http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: http mode can use "
-            f'clickhouse_url = "http://{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}".'
+            f"ClickHouse answers on {default_clickhouse_url()}, the default "
+            "[signoz] clickhouse_url."
+        ]
+    if url:
+        return [
+            f"ClickHouse does not answer /ping at {url}: check the URL, and that it is "
+            "SigNoz's ClickHouse HTTP interface, not its native port."
         ]
     return [
         f"ClickHouse container {container['name']} does not answer on "
-        f"{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: use docker mode "
-        f'(clickhouse_container = "{container["name"]}"), a local name your container '
-        f"runtime resolves (such as OrbStack's {container['name']}.orb.local), or publish its "
-        "HTTP port on loopback with the opt-in Compose override in the onboarding skill's "
-        "scripts/signoz/docker-compose.clickhouse-http.yaml."
+        f"{LOOPBACK}:{CLICKHOUSE_HTTP_PORT}: publish its HTTP port on loopback with the "
+        "opt-in Compose override in the onboarding skill's "
+        "scripts/signoz/docker-compose.clickhouse-http.yaml, or set [signoz] clickhouse_url "
+        f"to a local name your container runtime resolves (such as OrbStack's "
+        f"http://{container['name']}.orb.local:{CLICKHOUSE_HTTP_PORT})."
         for container in containers
         if _CLICKHOUSE_SERVER_IMAGE in container["image"].lower()
     ]
 
 
-def _install_notes(present: bool, ports: dict[str, bool]) -> list[str]:
+def _endpoint_notes(endpoint: str | None, open_: bool | None) -> list[str]:
+    if endpoint is None:
+        return []
+    if open_:
+        return [
+            f"The collector accepts connections at {endpoint}: pass it to `setup` as "
+            "--otlp-endpoint."
+        ]
+    return [
+        f"Nothing accepts connections at {endpoint}: check the collector's OTLP/HTTP "
+        "endpoint (SigNoz's default port is 4318)."
+    ]
+
+
+def _install_notes(present: bool, ports: dict[str, bool], searched: bool) -> list[str]:
     if present:
         return [
             "A SigNoz or ClickHouse is present: connect to it and never reconfigure it "
-            "(`agent-introspection facts preflight` checks it); the guided install refuses."
+            "(`agent-introspection doctor` checks it); the guided install refuses."
         ]
     busy = [port for port, used in ports.items() if used]
     if busy:
@@ -151,31 +207,50 @@ def _install_notes(present: bool, ports: dict[str, bool]) -> list[str]:
             f"Ports in use: {', '.join(busy)}. A new SigNoz needs ports "
             f"{', '.join(ports)} free; the guided install refuses."
         ]
+    elsewhere = (
+        ""
+        if searched
+        else " A SigNoz on other ports is not found this way: rerun with --clickhouse-url "
+        "and --otlp-endpoint."
+    )
     return [
         "No SigNoz or ClickHouse found and every SigNoz port is free: the opt-in guided "
-        f"install ({INSTALL_SCRIPT}) can run."
+        f"install ({INSTALL_SCRIPT}) can run.{elsewhere}"
     ]
 
 
-def detect() -> dict[str, Any]:
+def detect(clickhouse_url: str | None = None, otlp_endpoint: str | None = None) -> dict[str, Any]:
     """Report SigNoz and ClickHouse containers and local ports; change nothing.
 
     ``signoz_present`` is true when a container that mentions SigNoz or ClickHouse is
-    running, or ClickHouse answers on 127.0.0.1:8123.
+    running, or ClickHouse answers ``/ping``: at ``clickhouse_url`` when given, else on
+    127.0.0.1:8123. ``otlp_open`` says whether ``otlp_endpoint`` accepts connections,
+    and is None when no endpoint is given.
     """
     docker, containers = _docker_state()
     ports = {str(port): port_open(port) for port in PORTS}
-    ping = ports[str(CLICKHOUSE_HTTP_PORT)] and clickhouse_answers()
+    if clickhouse_url:
+        ping = clickhouse_answers(clickhouse_url)
+    else:
+        ping = ports[str(CLICKHOUSE_HTTP_PORT)] and clickhouse_answers()
+    otlp_open = endpoint_open(otlp_endpoint) if otlp_endpoint else None
+    refusal = setup_refusal(clickhouse_url, otlp_endpoint)
     present = bool(containers) or ping
     return {
         "docker": docker,
         "containers": containers,
         "ports": ports,
+        "clickhouse_url": clickhouse_url or default_clickhouse_url(),
         "clickhouse_ping": ping,
+        "otlp_endpoint": otlp_endpoint,
+        "otlp_open": otlp_open,
+        "setup_refusal": refusal,
         "signoz_present": present,
         "notes": [
             *_docker_notes(docker),
-            *_clickhouse_notes(containers, ping),
-            *_install_notes(present, ports),
+            *_clickhouse_notes(containers, ping, clickhouse_url),
+            *_endpoint_notes(otlp_endpoint, otlp_open),
+            *([f"`setup` would refuse these addresses: {refusal}"] if refusal else []),
+            *_install_notes(present, ports, bool(clickhouse_url or otlp_endpoint)),
         ],
     }

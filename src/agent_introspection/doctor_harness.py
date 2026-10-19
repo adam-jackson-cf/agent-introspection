@@ -1,13 +1,10 @@
-"""Per-harness ``doctor`` checks: binary, config files, export settings, hooks, sessions.
+"""Per-harness ``doctor`` checks: binary, config files, export settings, hooks, telemetry.
 
 ``doctor`` runs one block of these checks per enabled harness profile (``profiles.py``;
 the ``codex`` profile covers its three surfaces). A profile's config files resolve as
 ``harness configure`` resolves the files it writes (``profiles.config_paths``):
 ``first`` takes the first path whose variables are set, ``each`` every chosen or
-existing root, and a resolved file that does not exist is reported missing. An
-``each`` file is also looked for in the parent of every extra root that config
-``[sessions.roots]`` adds for the profile's session store, because a Codex home keeps
-``sessions/`` beside ``config.toml`` (Orca's per-account homes, for example).
+existing root, and a resolved file that does not exist is reported missing.
 
 Files are read as ``harness configure`` reads them (``config_writers.read_table``).
 Only a profile's managed settings are put into a result, and their values are shown
@@ -24,23 +21,27 @@ import shlex
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
-from agent_introspection import config_writers, facts, preflight, profiles, sessions
-from agent_introspection.config import AppConfig
+from agent_introspection import config_writers, facts, preflight, profiles
+from agent_introspection.config import DEFAULT_CONFIG_PATH, AppConfig
 from agent_introspection.json_types import JsonMapping
 
 STATUSES: Final = ("pass", "warn", "fail", "off", "info")
 VERSION_TIMEOUT_SECONDS: Final = 5
-# Where the activity-hook installers put the shim and the omp plugin, under the home.
+# Where `harness configure` installs the shim and the omp plugin, under the home.
 MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/activity-hooks-v1")
 SHIM: Final = "activity-shim.sh"
+# Beside the shim: the config path the hooks read, written only for a non-default one.
+CONFIG_POINTER: Final = "config-path"
 OMP_PLUGIN_LINK: Final = Path(".omp/plugins/node_modules/agent-introspection-activity")
 OMP_PLUGIN_FILES: Final = ("package.json", "activity.ts")
-# The events the Claude Code installer registers, with their tool-name matchers
-# (introspection-onboarding scripts/adapters/claude-code/install_activity.py).
+# The events `harness configure claude-code` registers, with their tool-name matchers
+# (hook_install.py).
 CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "PreToolUse": "*",
     "PostToolUseFailure": "*",
@@ -49,7 +50,6 @@ CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "StopFailure": None,
     "SubagentStart": None,
 }
-STALE_SESSION_DAYS: Final = 14
 # Rows are counted over a day; the last row is looked for over a week.
 LAST_SEEN_DAYS: Final = 7
 RAISED_FIX: Final = (
@@ -132,10 +132,10 @@ class HarnessContext:
 
     config: AppConfig
     enabled: tuple[str, ...]
-    stores: Mapping[str, sessions.Store]
     telemetry: Telemetry
     probes: HarnessProbes
     now: float
+    config_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -306,23 +306,9 @@ def _unique(paths: Iterable[Path]) -> list[Path]:
     return list(seen.values())
 
 
-def implied_homes(profile: profiles.Profile, config: AppConfig) -> list[Path]:
-    """Return the parents of the extra session roots config adds for the profile's store."""
-    extra = config.session_roots.get(profile.session_store, ())
-    return [directory.parent for root in extra for directory in sessions.expand_root(root)]
-
-
-def config_paths(
-    spec: profiles.ConfigFile, homes: Sequence[Path], probes: HarnessProbes
-) -> list[Path]:
-    """Return the files ``spec`` names, as ``harness configure`` resolves the ones it writes.
-
-    An ``each`` file also counts where it exists in one of ``homes``.
-    """
-    name = Path(spec.paths[0]).name
-    implied = [home / name for home in homes] if spec.roots == "each" else []
-    found = [path for path in implied if path.is_file()]
-    return _unique(profiles.config_paths(spec, probes.environ, probes.home, found))
+def config_paths(spec: profiles.ConfigFile, probes: HarnessProbes) -> list[Path]:
+    """Return the files ``spec`` names, as ``harness configure`` resolves the ones it writes."""
+    return _unique(profiles.config_paths(spec, probes.environ, probes.home, []))
 
 
 def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
@@ -343,11 +329,10 @@ def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
 
 def load_files(profile: profiles.Profile, context: HarnessContext) -> list[LoadedFile]:
     """Resolve and read every config file the profile names."""
-    homes = implied_homes(profile, context.config)
     return [
         load_file(spec, path)
         for spec in profile.config_files
-        for path in config_paths(spec, homes, context.probes)
+        for path in config_paths(spec, context.probes)
     ]
 
 
@@ -662,10 +647,7 @@ def _runs_shim(entries: object, matcher: str | None, command: str) -> bool:
 
 def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
     """Check settings.json runs the managed shim for each activity event."""
-    fix = (
-        "install the hooks with the onboarding skill's "
-        "scripts/adapters/claude-code/install_activity.py (run it with --dry-run first)"
-    )
+    fix = "`agent-introspection harness configure claude-code` (with --dry-run first)"
     settings = next((item for item in files if item.spec.format == "json" and not item.error), None)
     if settings is None:
         return check("activity_hooks", "fail", "no readable settings.json to hold the hooks", fix)
@@ -693,10 +675,7 @@ def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
 def omp_plugin_check(home: Path) -> Check:
     """Check omp's plugin link resolves to the managed plugin directory."""
     managed = home / MANAGED_RUNTIME / "omp"
-    fix = (
-        "follow the onboarding skill's scripts/adapters/omp/README.md: install the plugin "
-        f"files, then `omp plugin link {shell_path(managed, home)}`"
-    )
+    fix = "`agent-introspection harness configure omp` (with --dry-run first)"
     link = home / OMP_PLUGIN_LINK
     if not link.exists():
         problem = "is a broken link" if link.is_symlink() else "does not exist"
@@ -711,65 +690,85 @@ def omp_plugin_check(home: Path) -> Check:
     absent = [name for name in OMP_PLUGIN_FILES if not (managed / name).is_file()]
     if absent:
         return check("activity_hooks", "fail", f"the plugin lacks {', '.join(absent)}", fix)
+    shipped = files("agent_introspection").joinpath("hook_runtime", "omp")
+    stale = [
+        name
+        for name in OMP_PLUGIN_FILES
+        if (managed / name).read_text("utf-8") != shipped.joinpath(name).read_text("utf-8")
+    ]
+    if stale:
+        return check(
+            "activity_hooks",
+            "warn",
+            f"the plugin is out of date: {', '.join(stale)} differ from what this CLI ships",
+            "`agent-introspection harness configure omp` updates it",
+        )
     return check("activity_hooks", "pass", f"the omp plugin links {shown_path(managed, home)}")
 
 
-def shim_check(home: Path) -> Check:
-    """Check the managed shim exists and is executable."""
-    shim = home / MANAGED_RUNTIME / SHIM
-    fix = (
-        "install the onboarding skill's scripts/activity-shim.sh there (mode 0755); "
-        "the Claude Code installer and the omp README both do"
+def pointed_config(config_path: Path | None) -> str | None:
+    """Return the config path the hooks must be pointed at; None for the default file."""
+    if config_path is None:
+        return None
+    selected = config_path.expanduser().resolve(strict=False)
+    return None if selected == DEFAULT_CONFIG_PATH.resolve(strict=False) else str(selected)
+
+
+def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Check:
+    """Check the hooks read the config file doctor checked."""
+    pointer = home / MANAGED_RUNTIME / CONFIG_POINTER
+    read = pointer.read_text("utf-8").strip() if pointer.is_file() else None
+    expected = pointed_config(config_path)
+    if read == expected:
+        shown = read or f"the default {shown_path(DEFAULT_CONFIG_PATH, home)}"
+        return check("hook_config", "pass", f"the hooks read {shown}")
+    selected = f" --config {expected}" if expected else ""
+    return check(
+        "hook_config",
+        "warn",
+        f"the hooks read {read or 'the default config'}, not the one doctor checked",
+        f"`agent-introspection{selected} harness configure {profile_key}` points them at it",
     )
+
+
+def shim_check(home: Path, profile_key: str) -> Check:
+    """Check the managed shim exists, is executable, and is the one this CLI ships."""
+    shim = home / MANAGED_RUNTIME / SHIM
+    fix = f"`agent-introspection harness configure {profile_key}` installs it"
     if not shim.is_file():
         return check("activity_shim", "fail", f"{shown_path(shim, home)} does not exist", fix)
     if not os.access(shim, os.X_OK):
         return check("activity_shim", "fail", f"{shown_path(shim, home)} is not executable", fix)
-    return check("activity_shim", "pass", f"{shown_path(shim, home)} is executable")
+    shipped = files("agent_introspection").joinpath("hook_runtime", SHIM).read_text("utf-8")
+    if shim.read_text("utf-8") != shipped:
+        return check(
+            "activity_shim",
+            "warn",
+            f"{shown_path(shim, home)} differs from the shim this CLI ships",
+            f"`agent-introspection harness configure {profile_key}` updates it",
+        )
+    return check("activity_shim", "pass", f"{shown_path(shim, home)} is executable and current")
 
 
-def hook_checks(profile: profiles.Profile, files: Sequence[LoadedFile], home: Path) -> list[Check]:
-    """Check the activity hooks of a profile with a hook adapter."""
-    if profile.hook_adapter == "claude-code":
-        return [claude_hooks_check(files, home), shim_check(home)]
-    if profile.hook_adapter == "omp":
-        return [omp_plugin_check(home), shim_check(home)]
-    return []
-
-
-# --- Session store -------------------------------------------------------------------
-
-
-def _store_roots(store: sessions.Store) -> list[Path]:
-    if store.format == sessions.StoreFormat.SQLITE:
-        return list(sessions.session_files(store))
-    return [directory for root in store.roots for directory in sessions.expand_root(root)]
-
-
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
-def store_check(profile: profiles.Profile, context: HarnessContext) -> Check:
-    """Check the session store's roots exist and hold a recent session."""
-    store = profile.session_store_spec or context.stores[profile.session_store]
-    fix = (
-        f"use {profile.title} once on this machine, or add where it keeps sessions under "
-        f"[sessions.roots] {store.name} in the config"
-    )
-    roots = _store_roots(store)
-    if not roots:
-        return check("session_store", "warn", f"none of {', '.join(store.roots)} exists", fix)
-    newest = max((_mtime(path) for path in sessions.session_files(store)), default=0.0)
-    if newest <= 0:
-        return check("session_store", "warn", f"{len(roots)} root(s), no session yet", fix)
-    detail = f"{len(roots)} root(s); newest session {age(context.now - newest)} ago"
-    if context.now - newest > STALE_SESSION_DAYS * _DAY_SECONDS:
-        return check("session_store", "warn", f"{detail}, none in {STALE_SESSION_DAYS} days", fix)
-    return check("session_store", "pass", detail)
+def hook_checks(
+    profile: profiles.Profile,
+    files: Sequence[LoadedFile],
+    home: Path,
+    config_path: Path | None = None,
+) -> list[Check]:
+    """Check the activity hooks of a profile with a hook adapter, each isolated."""
+    adapters: dict[str | None, Callable[[], Check]] = {
+        "claude-code": partial(claude_hooks_check, files, home),
+        "omp": partial(omp_plugin_check, home),
+    }
+    hooks = adapters.get(profile.hook_adapter)
+    if hooks is None:
+        return []
+    return [
+        *guarded("activity_hooks", hooks),
+        *guarded("activity_shim", partial(shim_check, home, profile.key)),
+        *guarded("hook_config", partial(pointer_check, home, profile.key, config_path)),
+    ]
 
 
 # --- Telemetry -----------------------------------------------------------------------
@@ -806,7 +805,7 @@ def telemetry_check(profile: profiles.Profile, context: HarnessContext) -> Check
             "telemetry",
             "fail",
             f"the telemetry query raised {telemetry.error}",
-            "run `agent-introspection facts preflight` to check ClickHouse access",
+            "see the signoz check for ClickHouse access",
         )
     empty = {"spans": 0, "logs": 0, "last_seen": 0}
     counts = {
@@ -854,7 +853,9 @@ def harness_checks(profile: profiles.Profile, context: HarnessContext) -> list[C
         *guarded(
             "prompt_export", lambda: prompt_check(profile, files, context), harness=profile.key
         ),
-        *guarded("activity_hooks", lambda: hook_checks(profile, files, home), harness=profile.key),
-        *guarded("session_store", lambda: store_check(profile, context), harness=profile.key),
+        *(
+            {**item, "harness": profile.key}
+            for item in hook_checks(profile, files, home, context.config_path)
+        ),
         *guarded("telemetry", lambda: telemetry_check(profile, context), harness=profile.key),
     ]

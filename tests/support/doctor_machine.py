@@ -9,27 +9,19 @@ version. ``make_additional`` turns it into an additional machine that sends to a
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
 
-from agent_introspection import doctor, doctor_harness, facts, profiles
+from agent_introspection import doctor, doctor_harness, facts, hook_install, profiles
 from tests.test_preflight import fake_clickhouse
 
 SECRET = "sk-sentinel-SECRET-7f3a"
-
-
-INSTALLER = (
-    Path(__file__).resolve().parents[2]
-    / ".agents/skills/introspection-onboarding/scripts/adapters/claude-code/install_activity.py"
-)
 
 
 ENABLED = ("claude-code", "oh-my-pi", "codex")
@@ -80,15 +72,6 @@ OMP_ENV = (
     f"OTEL_EXPORTER_OTLP_HEADERS=authorization={SECRET}\n"
     "AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1\n"
 )
-
-
-def installer() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("install_activity", INSTALLER)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def write(path: Path, text: str) -> Path:
@@ -167,6 +150,7 @@ def fake_probes(machine: Machine) -> doctor.Probes:
             "legacy": None,
         },
         spool_sync_status=lambda: pytest.fail("only an additional machine has a spool-sync timer"),
+        dashboard_status=lambda: {"scheduler": "launchd", "installed": True, "loaded": True},
         detect=lambda: pytest.fail("signoz detect runs only when ClickHouse is unreachable"),
         drift_report=lambda _run, _saved, services: {
             "services": [{"service": service, "status": "unchanged"} for service in services],
@@ -196,37 +180,30 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
     ):
         monkeypatch.delenv(name, raising=False)
     runtime = home / doctor_harness.MANAGED_RUNTIME
-    shim = write(runtime / doctor_harness.SHIM, "#!/bin/sh\nexit 0\n")
+    shim = write(runtime / doctor_harness.SHIM, hook_install.packaged(doctor_harness.SHIM))
     shim.chmod(0o755)
-    write(runtime / "omp/package.json", "{}\n")
-    write(runtime / "omp/activity.ts", "export default {}\n")
+    for name in doctor_harness.OMP_PLUGIN_FILES:
+        write(runtime / "omp" / name, hook_install.packaged(f"omp/{name}"))
     link = home / doctor_harness.OMP_PLUGIN_LINK
     link.parent.mkdir(parents=True)
     link.symlink_to(runtime / "omp")
-    settings = installer().install({"env": dict(CLAUDE_ENV)}, shim)
+    settings = hook_install.with_claude_hooks({"env": dict(CLAUDE_ENV)}, shim)
     write(home / ".claude/settings.json", json.dumps(settings, indent=2))
     write(home / ".omp/.env", OMP_ENV)
     write(home / ".codex/config.toml", CODEX_GRPC)
-    # Orca keeps per-account Codex homes under a path with a space, as on macOS.
-    orca = home / "Library/Application Support/Orca/account-1/home"
+    # Orca keeps per-account Codex homes under a path with a space, as on macOS; the
+    # codex profile's home_globs finds them.
+    orca = home / "Library/Application Support/orca/codex-accounts/account-1/home"
     write(orca / "config.toml", CODEX_HTTP)
-    for session in (
-        home / ".claude/projects/p/s.jsonl",
-        home / ".codex/sessions/2026/10/13/rollout-1.jsonl",
-        home / ".omp/agent/sessions/p/s.jsonl",
-        orca / "sessions/2026/10/13/rollout-2.jsonl",
-    ):
-        write(session, "{}\n")
     config_path = write(
         tmp_path / "config.toml",
         f'[database]\npath = "{tmp_path / "workflow.sqlite3"}"\n'
         f"[harnesses]\nenabled = {json.dumps(list(ENABLED))}\n"
         '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n'
-        '[dashboard]\nclickhouse_url = "http://localhost:8123"\n'
-        '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n'
-        "[sessions.roots]\ncodex = "
-        f"{json.dumps([str(home / 'Library/Application Support/Orca/*/home/sessions')])}\n",
+        '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n',
     )
+    # The hooks read this config, as `harness configure --config` points them.
+    write(runtime / doctor_harness.CONFIG_POINTER, f"{config_path.resolve()}\n")
     built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)
     built.probes = fake_probes(built)
     return built
@@ -302,4 +279,5 @@ def make_additional(machine: Machine) -> None:
         http_get=host_only,
         drift_report=host_only,
         spool_sync_status=lambda: dict(SPOOL_SYNC),
+        dashboard_status=host_only,
     )

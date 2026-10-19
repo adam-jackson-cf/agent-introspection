@@ -320,18 +320,10 @@ def test_profile_guesses_capabilities_from_hints_and_labels_them_guesses() -> No
     ]
     assert guesses["export"]["guess"] == "native"
     assert guesses["session_identity"]["evidence"][0]["name"] == "session.id"
-    assert guesses["session_store"] == {
-        "id": "session_store",
-        "title": "Session store",
-        "guess": "unverified",
-        "evidence": [],
-        "more_evidence": 0,
-    }
     assert "guess" in result["capabilities"]["note"]
     draft = result["draft"]
     assert draft["capabilities"]["tool_calls"]["status"] == "native"
     assert "not verified" in draft["capabilities"]["tool_calls"]["evidence"]
-    assert draft["capabilities"]["session_store"]["status"] == "unverified"
 
 
 def test_guess_evidence_is_capped_most_rows_first() -> None:
@@ -379,11 +371,8 @@ def test_the_draft_needs_completing_before_it_validates() -> None:
 
 
 def _completed(text: str) -> str:
-    return (
-        text
-        .replace('binary = ""', 'binary = "toolbox"')
-        .replace("verified_versions = []", 'verified_versions = ["1.0.0"]')
-        .replace('session_store = ""', 'session_store = "omp"')
+    return text.replace('binary = ""', 'binary = "toolbox"').replace(
+        "verified_versions = []", 'verified_versions = ["1.0.0"]'
     )
 
 
