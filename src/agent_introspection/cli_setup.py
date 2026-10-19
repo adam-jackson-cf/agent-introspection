@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_introspection import setup_flow
+from agent_introspection.cli_common import diagnostic
 
 
 def _argv(text: str) -> tuple[str, ...]:
@@ -26,7 +27,9 @@ def add_setup_parser(commands: Any) -> None:
         "configure each enabled harness (export settings and activity hooks), schedule "
         "the sync, start the dashboard service, and run doctor, stopping at the first "
         "failing step. Every step is idempotent, so a rerun is a reinstall. Options set "
-        "config keys; anything not given keeps its default. Never installs SigNoz.",
+        "config keys; anything not given keeps its default. Never installs SigNoz. "
+        "Prints a line to stderr as each step starts and ends; the JSON report goes to "
+        "stdout.",
     )
     parser.add_argument("--dry-run", action="store_true", help="report each step, change nothing")
     parser.add_argument("--clickhouse-url", help="[signoz] clickhouse_url (default 127.0.0.1:8123)")
@@ -80,4 +83,4 @@ def setup_command(args: argparse.Namespace) -> dict[str, Any]:
         repo=Path(args.repo),
         dry_run=args.dry_run,
     )
-    return setup_flow.run(options)
+    return setup_flow.run(options, progress=diagnostic)

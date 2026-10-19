@@ -190,7 +190,7 @@ def test_closed_collector_ports_and_a_missing_hooks_endpoint(machine: Machine) -
     result = machine.report(probes)
 
     assert one(result, "collector_http")["status"] == "fail"
-    assert one(result, "collector_grpc")["status"] == "warn"
+    assert one(result, "collector_grpc")["status"] == "info"
     hooks_endpoint = one(result, "hooks_endpoint")
     assert hooks_endpoint["status"] == "fail"
     assert "otlp_logs_endpoint" in hooks_endpoint["fix"]

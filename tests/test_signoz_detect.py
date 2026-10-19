@@ -63,8 +63,10 @@ def machine(monkeypatch: pytest.MonkeyPatch) -> Any:
     ) -> None:
         monkeypatch.setattr(signoz_detect, "_docker_cli", lambda: docker)
         monkeypatch.setattr(signoz_detect, "_run_docker", _docker(rows, ps=ps))
-        monkeypatch.setattr(signoz_detect, "port_open", lambda port: port in open_ports)
-        monkeypatch.setattr(signoz_detect, "clickhouse_answers", lambda: ping)
+        monkeypatch.setattr(
+            signoz_detect, "port_open", lambda port, host="127.0.0.1": port in open_ports
+        )
+        monkeypatch.setattr(signoz_detect, "clickhouse_answers", lambda url=None: ping)
 
     return configure
 
@@ -136,6 +138,67 @@ def test_install_notes_follow_the_ports(
     assert expected in " ".join(result["notes"])
 
 
+def test_detect_checks_a_signoz_on_other_ports(machine: Any) -> None:
+    machine(open_ports=(14318,), ping=True)
+
+    result = signoz_detect.detect("http://127.0.0.1:18123", "http://127.0.0.1:14318")
+
+    assert result["clickhouse_url"] == "http://127.0.0.1:18123"
+    assert (result["clickhouse_ping"], result["otlp_open"], result["signoz_present"]) == (
+        True,
+        True,
+        True,
+    )
+    notes = " ".join(result["notes"])
+    assert "--clickhouse-url" in notes
+    assert "--otlp-endpoint" in notes
+
+
+def test_detect_reports_given_addresses_that_do_not_answer(machine: Any) -> None:
+    machine()
+
+    result = signoz_detect.detect("http://127.0.0.1:18123", "127.0.0.1:14318")
+
+    assert (result["clickhouse_ping"], result["otlp_open"], result["signoz_present"]) == (
+        False,
+        False,
+        False,
+    )
+    notes = " ".join(result["notes"])
+    assert "does not answer /ping at http://127.0.0.1:18123" in notes
+    assert "Nothing accepts connections at 127.0.0.1:14318" in notes
+    assert "rerun with --clickhouse-url" not in notes
+
+
+def test_detect_without_addresses_points_at_the_flags(machine: Any) -> None:
+    machine()
+
+    result = signoz_detect.detect()
+
+    assert (result["otlp_endpoint"], result["otlp_open"]) == (None, None)
+    assert "rerun with --clickhouse-url and --otlp-endpoint" in " ".join(result["notes"])
+
+
+def test_signoz_detect_command_passes_the_addresses(
+    machine: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    machine(open_ports=(14318,), ping=True)
+
+    argv = ["signoz", "detect", "--clickhouse-url", "http://127.0.0.1:18123"]
+    assert main([*argv, "--otlp-endpoint", "http://127.0.0.1:14318"]) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert (result["clickhouse_ping"], result["otlp_open"]) == (True, True)
+
+
+def test_endpoint_open_reads_host_and_port() -> None:
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        port = server.getsockname()[1]
+        assert signoz_detect.endpoint_open(f"http://127.0.0.1:{port}/v1/logs") is True
+        assert signoz_detect.endpoint_open(f"127.0.0.1:{port}") is True
+    assert signoz_detect.endpoint_open("http://127.0.0.1:notaport") is False
+
+
 def test_signoz_detect_command_prints_one_json_object(
     machine: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -189,6 +252,8 @@ def ping_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_Ping]]:
 
 def test_clickhouse_answers_only_with_ok(ping_server: type[_Ping]) -> None:
     assert signoz_detect.clickhouse_answers() is True
+    url = f"http://127.0.0.1:{signoz_detect.CLICKHOUSE_HTTP_PORT}/"
+    assert signoz_detect.clickhouse_answers(url) is True
     ping_server.body = b"<html>not ClickHouse</html>"
     assert signoz_detect.clickhouse_answers() is False
 

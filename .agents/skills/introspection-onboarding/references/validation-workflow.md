@@ -27,6 +27,8 @@ enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
 hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
 `prompt_labels`, and `dashboard`. Points to know:
 
+- `collector_grpc` is `info` when port 4317 is closed: every harness profile exports
+  over OTLP/HTTP, so only an exporter set to OTLP/gRPC by hand needs it.
 - An exporter that reaches the local collector by another route (OTLP/gRPC on 4317,
   or OTLP/HTTP on 4318 or the configured port) satisfies the export settings, as it
   does for `harness configure`; `127.0.0.1` and `localhost` both name this machine.

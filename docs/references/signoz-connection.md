@@ -42,7 +42,10 @@ covers them.
    local ports 4317 (OTLP gRPC), 4318 (OTLP/HTTP), 8123 (ClickHouse HTTP), and 8080
    (SigNoz UI) accept connections, and whether ClickHouse answers `/ping` on
    `127.0.0.1:8123`. Its `notes` say what to do next. With a SigNoz present, go to
-   step 3 and connect to it as it is.
+   step 3 and connect to it as it is. For a SigNoz on other ports or another machine,
+   give it `--clickhouse-url` and `--otlp-endpoint`: it pings that ClickHouse and
+   dials that collector instead (`clickhouse_ping`, `otlp_open`), and `setup` takes
+   the same two options.
 
 2. Only when there is no SigNoz and the user asks for one, run the guided install,
    [`install-signoz.sh`](../../.agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh)

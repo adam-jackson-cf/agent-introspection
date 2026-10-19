@@ -60,7 +60,10 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    connect to that one and never change it. When its ClickHouse does not answer on
    `127.0.0.1:8123`, publishing it with the opt-in override (which restarts ClickHouse)
    is the user's decision; a container name the runtime resolves (OrbStack's
-   `*.orb.local`) is the alternative, passed as `--clickhouse-url`.
+   `*.orb.local`) is the alternative, passed as `--clickhouse-url`. When the user
+   says SigNoz runs on other ports or another machine, run
+   `signoz detect --clickhouse-url <url> --otlp-endpoint <url>` with their addresses
+   and pass the same two options to `setup`.
 3. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
    whether the user wants a new one; without that request, stop and say so. Run
    `bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run`,

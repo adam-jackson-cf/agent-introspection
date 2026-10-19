@@ -44,7 +44,14 @@ agent-introspection signoz detect
 ```
 
 It only reads: it lists SigNoz and ClickHouse containers, which SigNoz ports are open,
-and what to do next. If you have none, the guided install sets one up on loopback,
+and what to do next. It looks at SigNoz's default ports; for a SigNoz on other ports,
+give it the addresses, then pass the same two options to `setup` in step 3:
+
+```bash
+agent-introspection signoz detect --clickhouse-url http://127.0.0.1:18123 --otlp-endpoint http://127.0.0.1:14318
+```
+
+If you have none, the guided install sets one up on loopback,
 where every config default reaches it:
 
 ```bash
@@ -70,7 +77,10 @@ agent-introspection setup --dry-run
 agent-introspection setup
 ```
 
-It runs each step in order and stops at the first that fails, naming it:
+It runs each step in order and stops at the first that fails, naming it. Each step
+prints a line to stderr as it starts and ends; `facts` takes the longest, often
+minutes on a busy SigNoz (a shorter `--backfill-days` shortens it). The JSON report
+goes to stdout at the end:
 
 1. **config:** writes the options you give into
    `~/.config/agent-introspection/config.toml` (comments and other keys kept, the file

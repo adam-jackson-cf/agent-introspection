@@ -226,6 +226,36 @@ def test_no_dashboard_skips_the_service(steps: Steps, tmp_path: Path) -> None:
     assert "dashboard" not in steps.names()
 
 
+def test_each_step_is_announced_as_it_starts_and_ends(steps: Steps, tmp_path: Path) -> None:
+    lines: list[str] = []
+
+    setup_flow.run(options(tmp_path), progress=lines.append)
+
+    started = [line.split(":")[1].strip() for line in lines if line.endswith("...")]
+    assert started == [
+        "config",
+        "signoz",
+        "facts",
+        "harnesses",
+        "schedule",
+        "dashboard",
+        "doctor",
+    ]
+    assert len(lines) == 2 * len(started)
+    assert "a long backfill can take minutes" in lines[4]
+    assert lines[1].startswith("setup: config: done in ")
+
+
+def test_a_failing_step_is_announced_as_failed(steps: Steps, tmp_path: Path) -> None:
+    steps.preflight_passed = False
+    lines: list[str] = []
+
+    setup_flow.run(options(tmp_path, dry_run=True), progress=lines.append)
+
+    assert lines[-1].startswith("setup: signoz: failed in ")
+    assert not any("backfill" in line for line in lines)
+
+
 def test_the_command_passes_its_options_and_exits_non_zero_when_a_step_fails(
     steps: Steps, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -242,7 +272,9 @@ def test_the_command_passes_its_options_and_exits_non_zero_when_a_step_fails(
     ]
 
     assert main(argv) == 0
-    assert json.loads(capsys.readouterr().out)["passed"] is True
+    printed = capsys.readouterr()
+    assert json.loads(printed.out)["passed"] is True
+    assert "setup: doctor: done in " in printed.err
     assert load_config(config).labels_openrouter_key_command == (
         "security",
         "find-generic-password",

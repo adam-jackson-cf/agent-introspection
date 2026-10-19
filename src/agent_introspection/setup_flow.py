@@ -15,7 +15,9 @@ The steps run in order, and the first that fails stops the run:
 6. ``dashboard``: the dashboard service, built from the checkout (unless skipped).
 7. ``doctor``: every check, as ``agent-introspection doctor`` reports it.
 
-Every step is idempotent, so a rerun is a reinstall. ``dry_run`` reports what each step
+Every step is idempotent, so a rerun is a reinstall. ``progress`` hears one line as each
+step starts and ends (the CLI prints them to stderr), since ``facts`` alone can take
+minutes on a busy SigNoz. ``dry_run`` reports what each step
 would do and changes nothing: the config diff, the read-only preflight against the
 options given, each harness's planned changes, and the refusals the schedule and
 dashboard would hit. It passes when the real run would get through every step; it
@@ -29,6 +31,7 @@ from __future__ import annotations
 import difflib
 import sqlite3
 import subprocess
+import time
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -55,6 +58,19 @@ from agent_introspection.config import (
 from agent_introspection.workflow import connect_workflow
 
 DEFAULT_BACKFILL_DAYS: Final = 90
+
+type Progress = Callable[[str], None]
+
+# What each step does, as the progress line names it while it runs.
+_STEP_DOING: Final = {
+    "config": "writing the config",
+    "signoz": "checking SigNoz",
+    "facts": "installing the facts store and backfilling",
+    "harnesses": "configuring the harnesses",
+    "schedule": "scheduling the sync",
+    "dashboard": "building and starting the dashboard",
+    "doctor": "running doctor",
+}
 
 
 @dataclass(frozen=True)
@@ -209,6 +225,26 @@ def _doctor(options: SetupOptions) -> dict[str, Any]:
     }
 
 
+def _silent(_line: str) -> None:
+    return
+
+
+def _announced[T](name: str, run: Callable[[], T], progress: Progress, dry_run: bool) -> T:
+    """Run one step between a start and an end progress line; a failure ends it too."""
+    doing = _STEP_DOING[name]
+    if name == "facts" and not dry_run:
+        doing += " (a long backfill can take minutes)"
+    progress(f"setup: {name}: {doing}...")
+    started = time.monotonic()
+    outcome = "failed"
+    try:
+        result = run()
+        outcome = "done"
+        return result
+    finally:
+        progress(f"setup: {name}: {outcome} in {time.monotonic() - started:.1f}s")
+
+
 def _step(name: str, run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     try:
         return run()
@@ -225,16 +261,22 @@ def _step(name: str, run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise SetupError(name, f"{type(exc).__name__}: {exc}") from None
 
 
-def run(options: SetupOptions) -> dict[str, Any]:
+def run(options: SetupOptions, progress: Progress = _silent) -> dict[str, Any]:
     """Run every step in order; stop at the first that fails and report how far it got."""
     steps: dict[str, Any] = {}
+
+    def step(name: str, produce: Callable[[], dict[str, Any]]) -> None:
+        steps[name] = _announced(name, lambda: _step(name, produce), progress, options.dry_run)
+
     try:
-        config, steps["config"] = write_config(options)
-        steps["signoz"] = _step("signoz", lambda: _signoz(config))
-        steps["facts"] = _step("facts", lambda: _facts(config, options))
-        steps["harnesses"] = _step("harnesses", lambda: _harnesses(config, options))
-        steps["schedule"] = _step("schedule", lambda: _schedule(config, options))
-        steps["dashboard"] = _step("dashboard", lambda: _dashboard(config, options))
+        config, steps["config"] = _announced(
+            "config", lambda: write_config(options), progress, options.dry_run
+        )
+        step("signoz", lambda: _signoz(config))
+        step("facts", lambda: _facts(config, options))
+        step("harnesses", lambda: _harnesses(config, options))
+        step("schedule", lambda: _schedule(config, options))
+        step("dashboard", lambda: _dashboard(config, options))
     except SetupError as exc:
         return {
             "dry_run": options.dry_run,
@@ -245,7 +287,7 @@ def run(options: SetupOptions) -> dict[str, Any]:
         }
     if options.dry_run:
         return {"dry_run": True, "passed": True, "steps": steps}
-    checked = _doctor(options)
+    checked = _announced("doctor", lambda: _doctor(options), progress, dry_run=False)
     return {
         "dry_run": options.dry_run,
         "passed": checked["passed"],

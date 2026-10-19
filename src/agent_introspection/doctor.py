@@ -364,9 +364,20 @@ class _Doctor:
         label = "OTLP/gRPC" if grpc else "OTLP/HTTP"
         if self.probes.tcp_open(host, port):
             return check(name, "pass", f"{label} {host}:{port} accepts connections")
+        if grpc:
+            # Every bundled profile exports over OTLP/HTTP; only an exporter the user
+            # set to OTLP/gRPC by hand would need this port.
+            return check(
+                name,
+                "info",
+                f"nothing accepts {label} connections on {host}:{port}; every harness "
+                "profile exports over OTLP/HTTP, so only an OTLP/gRPC exporter set by hand "
+                "needs it",
+                f"only if a harness exports over OTLP/gRPC: publish the collector's port {port}",
+            )
         return check(
             name,
-            "warn" if grpc else "fail",
+            "fail",
             f"nothing accepts {label} connections on {host}:{port}",
             "start the SigNoz collector, or set [signoz] otlp_endpoint to where it listens",
         )
