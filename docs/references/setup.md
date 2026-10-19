@@ -79,9 +79,10 @@ agent-introspection setup
 
 It runs each step in order and stops at the first that fails, naming it. Each step
 prints a line to stderr as it starts and ends; `facts` takes the longest, often
-minutes on a busy SigNoz (a shorter `--backfill-days` shortens it). At the end it
-prints a summary to stderr (each file it added or changed with its backup, doctor's
-result, and what to do next) and the JSON report to stdout:
+several minutes even on an empty SigNoz (a shorter `--backfill-days` shortens it). At
+the end it prints a summary to stderr (each file it added or changed with its backup,
+the config diff on a dry run, doctor's result, and what to do next) and the JSON report
+to stdout:
 
 1. **config:** writes the options you give into
    `~/.config/agent-introspection/config.toml` (comments and other keys kept, the file

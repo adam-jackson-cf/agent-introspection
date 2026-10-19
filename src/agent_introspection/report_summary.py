@@ -101,9 +101,11 @@ def setup_lines(report: Mapping[str, Any]) -> list[str]:
     dry_run = bool(report.get("dry_run"))
     files = _file_lines(report, dry_run)
     if dry_run:
+        diff = str(report.get("steps", {}).get("config", {}).get("diff") or "")
         return [
             "setup --dry-run: every step can run; nothing was changed.",
             *(["files:", *files] if files else ["files: none would change"]),
+            *(["config diff:", *diff.splitlines()] if diff else []),
             "Rerun without --dry-run to apply.",
         ]
     lines = ["setup: every step ran.", *(["files:", *files] if files else ["files: none changed"])]

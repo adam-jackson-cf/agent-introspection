@@ -104,7 +104,9 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.
 7. **Setup.** After the user confirms, `agent-introspection setup <options>`: config,
-   preflight, `facts install` and `facts backfill`, `harness configure` for each
+   preflight, `facts install` and `facts backfill` (often several minutes, even on an
+   empty SigNoz, so run `setup` with a long timeout or in the background and wait for
+   its `done`), `harness configure` for each
    enabled harness, `facts schedule install`, `dashboard install`, then `doctor`. It
    stops at the first failing step and names it (`stopped_at`, exit 30); fix that step
    and rerun, since every step is idempotent. If a reinstall drops a stored attribute,

@@ -36,7 +36,7 @@ def _setup(dry_run: bool) -> dict[str, Any]:
         "dry_run": dry_run,
         "passed": True,
         "steps": {
-            "config": {"path": "/c.toml", "action": "add", "backup": None},
+            "config": {"path": "/c.toml", "action": "add", "backup": None, "diff": "+[signoz]\n"},
             "harnesses": {
                 "claude-code": {
                     "files": [
@@ -65,6 +65,8 @@ def test_a_dry_run_lists_each_file_it_would_write_and_whether_it_is_backed_up() 
         "files:",
         "  would add /c.toml (new file)",
         "  would change /s.json (backed up first)",
+        "config diff:",
+        "+[signoz]",
         "Rerun without --dry-run to apply.",
     ]
 

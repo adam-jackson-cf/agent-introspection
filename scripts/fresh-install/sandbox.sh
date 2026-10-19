@@ -511,7 +511,8 @@ for line in open(sys.argv[1]):
         event = json.loads(line)
     except ValueError:
         continue
-    if event.get("type") == "result":
+    # The first result is the report; later ones answer background-task notices.
+    if event.get("type") == "result" and result is None:
         result = event
 print(result.get("result", "") if result else "no result event; see the transcript")
 ' "$transcript" | tee "$ROOT/state/agent-report.md"

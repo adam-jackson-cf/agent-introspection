@@ -17,7 +17,8 @@ explicit request.
 ## Quick Install
 
 Prerequisites: macOS or Linux, Python 3.12+ with [`uv`](https://docs.astral.sh/uv/),
-[Bun](https://bun.sh), and `~/.local/bin` on your `PATH`. An existing self-hosted SigNoz
+[Bun](https://bun.sh), and `~/.local/bin` on your `PATH` (`uv tool update-shell` adds
+it). An existing self-hosted SigNoz
 is optional; the onboarding skill can install one, which needs Docker with Compose
 2.24.4+.
 
