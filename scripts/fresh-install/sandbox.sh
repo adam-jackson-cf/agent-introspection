@@ -246,7 +246,11 @@ start_clickhouse() {
   docker exec -i "$name" clickhouse-client --multiquery <"$HERE/signoz-stub.sql"
   echo "$CLICKHOUSE_URL" >"$ROOT/state/clickhouse_url"
   OTLP_PORT=$(free_port)
-  nohup python3 -I "$HERE/otlp_stub.py" "$OTLP_PORT" "$CLICKHOUSE_URL" "$ROOT/state" \
+  # uv's own Python serves the stub: a Homebrew Python started over SSH has been seen to
+  # accept no loopback connections on macOS, so the collector looked down.
+  local python
+  python=$(uv python find 3.12 2>/dev/null || command -v python3)
+  nohup "$python" -I "$HERE/otlp_stub.py" "$OTLP_PORT" "$CLICKHOUSE_URL" "$ROOT/state" \
     >"$ROOT/state/collector.log" 2>&1 &
   echo $! >"$ROOT/state/collector.pid"
   echo "http://127.0.0.1:$OTLP_PORT" >"$ROOT/state/otlp_endpoint"
