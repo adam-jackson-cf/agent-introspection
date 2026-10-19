@@ -21,6 +21,13 @@ bash scripts/fresh-install/sandbox.sh run "$root" 'agent-introspection doctor'
 bash scripts/fresh-install/sandbox.sh destroy "$root"
 ```
 
+Without Docker here, `create --docker-ssh USER@HOST` runs the ClickHouse container on
+another Mac's Docker: it forwards that machine's `/var/run/docker.sock` and the
+container's port over SSH (key-based, non-interactive), so the sandbox, its CLI, and
+any agent session still run here. Use it to run `agent` on a machine where no SigNoz
+listens on the default ports while the other machine keeps its own running. `destroy`
+removes the container and closes both forwards.
+
 Run `verify` and `agent` on separate sandboxes: each expects a machine where nothing
 has been installed yet. Commit first, because the sandbox clones `HEAD`. It runs on
 macOS and Linux; CI runs `verify` on Linux for every push and pull request (the
