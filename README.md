@@ -17,7 +17,8 @@ explicit request.
 ## Quick Install
 
 Prerequisites: macOS or Linux, Python 3.12+ with [`uv`](https://docs.astral.sh/uv/),
-[Bun](https://bun.sh), and `~/.local/bin` on your `PATH`. An existing self-hosted SigNoz
+[Bun](https://bun.sh), and `~/.local/bin` on your `PATH` (`uv tool update-shell` adds
+it). An existing self-hosted SigNoz
 is optional; the onboarding skill can install one, which needs Docker with Compose
 2.24.4+.
 
@@ -29,6 +30,12 @@ agent-introspection signoz detect       # find the SigNoz on this machine
 agent-introspection setup --dry-run     # preview every step
 agent-introspection setup               # config, facts, harnesses, sync, dashboard, doctor
 ```
+
+SigNoz on other ports than its defaults (ClickHouse HTTP 8123, OTLP/HTTP 4318)? Add
+`--clickhouse-url <url> --otlp-endpoint <url>` to both `signoz detect` and `setup`.
+`setup` and `doctor` print their JSON report to stdout and a short summary to stderr:
+the files changed (with backups), each check that is not a pass with its fix, and the
+next steps.
 
 `setup` writes the config, builds the facts store, configures Claude Code and Codex
 (export settings and activity hooks; for omp too, pass

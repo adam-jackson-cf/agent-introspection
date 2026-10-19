@@ -63,7 +63,9 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    `*.orb.local`) is the alternative, passed as `--clickhouse-url`. When the user
    says SigNoz runs on other ports of this machine, run
    `signoz detect --clickhouse-url <url> --otlp-endpoint <url>` with their addresses
-   and pass the same two options to `setup`.
+   and pass the same two options to `setup`. `ports` still covers only the default
+   ports, so with those options the given addresses' `clickhouse_ping` and `otlp_open`
+   are what count.
 3. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
    whether the user wants a new one; without that request, stop and say so. Run
    `bash .agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh --dry-run`,
@@ -95,13 +97,16 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 5. **Preview.** `agent-introspection setup <options> --dry-run`, and show the user: the
    config diff, the read-only preflight (it stops there on a failing check, naming it
    with its detail; fix each at its owner and never weaken a check), each harness's
-   planned settings and hooks. A dry run that passes means the real run will get
+   planned settings and hooks. Its stderr summary lists each file it would add (new)
+   or change (backed up first). A dry run that passes means the real run will get
    through every step; it runs no `doctor`.
 6. **Workflow store** (only for a reinstall that changes finding identities): copy
    `~/.local/share/agent-introspection/introspection.sqlite3` to
    `introspection.sqlite3.pre-<date>`. Rows are immutable; retired findings go dormant.
 7. **Setup.** After the user confirms, `agent-introspection setup <options>`: config,
-   preflight, `facts install` and `facts backfill`, `harness configure` for each
+   preflight, `facts install` and `facts backfill` (often several minutes, even on an
+   empty SigNoz, so run `setup` with a long timeout or in the background and wait for
+   its `done`), `harness configure` for each
    enabled harness, `facts schedule install`, `dashboard install`, then `doctor`. It
    stops at the first failing step and names it (`stopped_at`, exit 30); fix that step
    and rerun, since every step is idempotent. If a reinstall drops a stored attribute,
@@ -117,12 +122,16 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
      lingering is on: install and status report `linger` but never enable it, so ask
      the user to run `loginctl enable-linger "$USER"`.
    - Any other platform is refused.
+     Its stderr summary lists each file it added or changed with its backup (a file
+     that did not exist gets none), every doctor check that is not a pass with its fix,
+     and the next steps; the JSON report on stdout holds the detail.
 8. **Restart** running sessions of each configured harness: they read their settings
-   at start.
+   at start. `pgrep -fl claude`, `pgrep -fl codex`, and `pgrep -fl omp` list them;
+   ask the user to restart each rather than killing it.
 9. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
    and `evaluations` report no error. `labels` is `off` without a key command (labels
-   are optional), and never `skipped` when one is set. Hook records reach `hook_events` through SigNoz, so allow a minute before
-   checking them.
+   are optional), and never `skipped` when one is set. Hook records reach
+   `hook_events` through SigNoz, so allow a minute before checking them.
 10. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
     `warn`, `off`, or `info` has a reason the user accepts.
 11. **Validate.** The [validation workflow](validation-workflow.md), then the
