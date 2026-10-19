@@ -2,6 +2,7 @@
 # Test the install of the committed HEAD on a fresh machine, without touching this one.
 #
 #   sandbox.sh create  [--root DIR] [--no-clickhouse]   build a sandbox, print its root
+#                      [--docker-ssh USER@HOST]          ClickHouse on another Mac's Docker
 #   sandbox.sh run     ROOT COMMAND...                   run one command inside it
 #   sandbox.sh verify  ROOT                              the scripted install, checked
 #   sandbox.sh agent   ROOT [--model M] [--budget USD]   a fresh Claude Code session
@@ -230,14 +231,44 @@ EOF
   chmod 755 "$ROOT/run"
 }
 
+tunnel() {
+  # tunnel NAME FORWARD: keep an SSH forward to the --docker-ssh host open in the
+  # background, recording its pid for destroy.
+  nohup ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+    -L "$2" "$DOCKER_SSH" >"$ROOT/state/$1-tunnel.log" 2>&1 &
+  echo $! >"$ROOT/state/$1-tunnel.pid"
+}
+
+remote_docker() {
+  # Docker on another machine, for a machine without its own: its socket is forwarded
+  # here, so every docker command below reaches it. Only the sandbox's container runs
+  # there; its ClickHouse port is forwarded back to this machine's loopback.
+  local socket="/tmp/ai-fi-$STAMP.sock"
+  tunnel docker "$socket:/var/run/docker.sock"
+  echo "unix://$socket" >"$ROOT/state/docker_host"
+  export DOCKER_HOST="unix://$socket"
+  for _ in $(seq 20); do
+    docker info >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  die "Docker on $DOCKER_SSH did not answer through the forwarded socket; see $ROOT/state/docker-tunnel.log"
+}
+
 start_clickhouse() {
-  local name="ai-fresh-install-${STAMP}" address
+  local name="ai-fresh-install-${STAMP}" address port
+  if [ -n "$DOCKER_SSH" ]; then remote_docker; fi
   docker info >/dev/null 2>&1 || die "Docker is not running (start Docker Desktop or OrbStack), or pass --no-clickhouse"
   docker run -d --name "$name" -p 127.0.0.1::8123 -e CLICKHOUSE_SKIP_USER_SETUP=1 \
     --label dev.agent-introspection.fresh-install="$ROOT" "$CLICKHOUSE_IMAGE" >/dev/null
   echo "$name" >"$ROOT/state/container"
   address=$(docker port "$name" 8123/tcp | head -1)
-  CLICKHOUSE_URL="http://127.0.0.1:${address##*:}"
+  port=${address##*:}
+  if [ -n "$DOCKER_SSH" ]; then
+    local remote=$port
+    port=$(free_port)
+    tunnel clickhouse "127.0.0.1:$port:127.0.0.1:$remote"
+  fi
+  CLICKHOUSE_URL="http://127.0.0.1:$port"
   for _ in $(seq 60); do
     curl -fsS "$CLICKHOUSE_URL/ping" >/dev/null 2>&1 && break
     sleep 1
@@ -258,12 +289,14 @@ start_clickhouse() {
 
 cmd_create() {
   local clickhouse=true
+  DOCKER_SSH=""
   STAMP=$(date +%Y%m%d-%H%M%S)
   ROOT="$REPO/.tmp/fresh-install/$STAMP"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --root) ROOT=$2; shift 2 ;;
       --no-clickhouse) clickhouse=false; shift ;;
+      --docker-ssh) DOCKER_SSH=$2; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
   done
@@ -505,9 +538,16 @@ cmd_destroy() {
     pid=$(cat "$ROOT/state/collector.pid")
     if sandbox_process "$pid" otlp_stub.py; then kill "$pid" 2>/dev/null || true; fi
   fi
+  if [ -f "$ROOT/state/docker_host" ]; then export DOCKER_HOST; DOCKER_HOST=$(cat "$ROOT/state/docker_host"); fi
   if [ -f "$ROOT/state/container" ]; then
     docker rm -f "$(cat "$ROOT/state/container")" >/dev/null 2>&1 || true
   fi
+  for tunnel_pid in "$ROOT"/state/*-tunnel.pid; do
+    [ -f "$tunnel_pid" ] || continue
+    pid=$(cat "$tunnel_pid")
+    if sandbox_process "$pid" "ssh -N"; then kill "$pid" 2>/dev/null || true; fi
+  done
+  if [ -f "$ROOT/state/docker_host" ]; then rm -f "$(sed 's|^unix://||' "$ROOT/state/docker_host")"; fi
   rm -rf "$ROOT"
   echo "destroyed $ROOT"
 }
