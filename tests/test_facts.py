@@ -660,9 +660,20 @@ def test_backfill_reports_final_row_counts() -> None:
         executed.append(sql)
         return "7\n" if sql.startswith("SELECT count()") else ""
 
-    result = facts.backfill(run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC))
+    lines: list[str] = []
+    result = facts.backfill(
+        run, days=1, now=datetime(2026, 9, 28, 6, tzinfo=UTC), progress=lines.append
+    )
 
     assert result["rows"] == {"spans": 7, "logs": 7, "hook_events": 7}
+    # Five windows: each one completes another tenth or more, so each is reported.
+    assert lines[:3] == [
+        "facts backfill: spans (table 1 of 3): 20%",
+        "facts backfill: spans (table 1 of 3): 40%",
+        "facts backfill: spans (table 1 of 3): 60%",
+    ]
+    assert lines[-1] == "facts backfill: hook_events (table 3 of 3): 100%"
+    assert len(lines) == 3 * 5
     assert result["start"] == "2026-09-27T00:00:00+00:00"
     assert sum(sql.startswith("INSERT INTO") for sql in executed) == 3 * 5
     inserted = {sql.split("\n")[0] for sql in executed if sql.startswith("INSERT INTO")}
