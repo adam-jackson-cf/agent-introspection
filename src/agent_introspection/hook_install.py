@@ -116,10 +116,15 @@ def _point_config(options: HookOptions) -> dict[str, Any]:
     return {"path": str(target), "action": action, "backup": None}
 
 
-def install_runtime(options: HookOptions) -> list[dict[str, Any]]:
-    """Copy the shim and omp's plugin package in, and point the shim at the config."""
+def runtime_files(adapter: str) -> tuple[tuple[str, int], ...]:
+    """Return the runtime files a hook adapter needs: the shim, and for omp its plugin."""
+    return tuple(item for item in RUNTIME_FILES if adapter == "omp" or "/" not in item[0])
+
+
+def install_runtime(options: HookOptions, adapter: str) -> list[dict[str, Any]]:
+    """Copy the shim (and for omp its plugin package) in, and point the shim at the config."""
     return [
-        *(_install_file(name, mode, options) for name, mode in RUNTIME_FILES),
+        *(_install_file(name, mode, options) for name, mode in runtime_files(adapter)),
         _point_config(options),
     ]
 
@@ -207,8 +212,9 @@ def write_claude_hooks(path: Path, options: HookOptions, *, remove: bool = False
     shim = options.home / MANAGED_RUNTIME / SHIM
     updated = without_claude_hooks(settings) if remove else with_claude_hooks(settings, shim)
     after = config_writers.render_json(updated, before or "") if updated or before else ""
+    events = [] if remove else list(CLAUDE_HOOK_EVENTS)
     if after == (before or ""):
-        return {"path": str(path), "action": "unchanged", "backup": None}
+        return {"path": str(path), "action": "unchanged", "backup": None, "events": events}
     backup: Path | None = None
     if not options.dry_run:
         mode = path.stat().st_mode & 0o777 if before is not None else config_writers.NEW_FILE_MODE
@@ -216,7 +222,12 @@ def write_claude_hooks(path: Path, options: HookOptions, *, remove: bool = False
         backup = config_writers.backup(path) if fresh else None
         config_writers.atomic_write(path, after, mode)
     action = "remove" if remove else ("add" if before is None else "change")
-    return {"path": str(path), "action": action, "backup": str(backup) if backup else None}
+    return {
+        "path": str(path),
+        "action": action,
+        "backup": str(backup) if backup else None,
+        "events": events,
+    }
 
 
 # --- omp -----------------------------------------------------------------------------
@@ -277,7 +288,7 @@ def install(adapter: str, settings: Sequence[Path], options: HookOptions) -> dic
     root.
     """
     require(adapter)
-    result: dict[str, Any] = {"runtime": install_runtime(options)}
+    result: dict[str, Any] = {"runtime": install_runtime(options, adapter)}
     if adapter == "claude-code":
         if not settings:
             raise HookInstallError("no Claude Code settings file to hold the hooks")

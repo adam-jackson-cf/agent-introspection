@@ -197,9 +197,15 @@ def _endpoint_notes(endpoint: str | None, open_: bool | None) -> list[str]:
 
 def _install_notes(present: bool, ports: dict[str, bool], searched: bool) -> list[str]:
     if present:
+        scope = (
+            " `ports` covers only SigNoz's default ports on 127.0.0.1, so closed ones there "
+            "are expected for a SigNoz at the addresses given."
+            if searched
+            else ""
+        )
         return [
             "A SigNoz or ClickHouse is present: connect to it and never reconfigure it "
-            "(`agent-introspection doctor` checks it); the guided install refuses."
+            f"(`agent-introspection doctor` checks it); the guided install refuses.{scope}"
         ]
     busy = [port for port, used in ports.items() if used]
     if busy:

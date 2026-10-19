@@ -15,9 +15,11 @@ from agent_introspection import (
     doctor_harness,
     facts,
     producers,
+    report_summary,
     schedule,
     signoz_detect,
 )
+from agent_introspection.cli_common import diagnostic
 
 
 def _drift_report(
@@ -52,6 +54,9 @@ def add_doctor_parser(commands: Any) -> None:
         "doctor",
         help="read-only checks of SigNoz, the collector, each enabled harness, the spool, "
         "the schedule, prompt labels, and the dashboard",
+        description="Run read-only checks of SigNoz, the collector, each enabled harness, the "
+        "spool, the schedule, prompt labels, and the dashboard. The JSON report goes to "
+        "stdout; a summary of every check that is not a pass, with its fix, goes to stderr.",
     )
     parser.add_argument(
         "--live",
@@ -71,4 +76,7 @@ def doctor_command(args: argparse.Namespace) -> dict[str, Any]:
         live=args.live,
         drift=args.drift,
     )
-    return doctor.report(options, default_probes())
+    report = doctor.report(options, default_probes())
+    for line in report_summary.doctor_lines(report):
+        diagnostic(line)
+    return report

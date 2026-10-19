@@ -152,6 +152,7 @@ def test_detect_checks_a_signoz_on_other_ports(machine: Any) -> None:
     notes = " ".join(result["notes"])
     assert "--clickhouse-url" in notes
     assert "--otlp-endpoint" in notes
+    assert "`ports` covers only SigNoz's default ports" in notes
 
 
 def test_detect_reports_given_addresses_that_do_not_answer(machine: Any) -> None:

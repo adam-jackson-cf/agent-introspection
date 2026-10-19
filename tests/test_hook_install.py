@@ -25,11 +25,11 @@ def test_the_runtime_is_copied_from_the_package_with_modes_and_backups(tmp_path:
     shim.parent.mkdir(parents=True)
     shim.write_text("#!/bin/sh\n# user-edited\n")
 
-    planned = hook_install.install_runtime(HookOptions(home=tmp_path, dry_run=True))
+    planned = hook_install.install_runtime(HookOptions(home=tmp_path, dry_run=True), "omp")
     assert [item["action"] for item in planned] == ["change", "add", "add", "unchanged"]
     assert shim.read_text() == "#!/bin/sh\n# user-edited\n"
 
-    installed = hook_install.install_runtime(HookOptions(home=tmp_path))
+    installed = hook_install.install_runtime(HookOptions(home=tmp_path), "omp")
 
     assert shim.read_text() == hook_install.packaged(doctor_harness.SHIM)
     assert shim.stat().st_mode & 0o777 == 0o755
@@ -37,8 +37,16 @@ def test_the_runtime_is_copied_from_the_package_with_modes_and_backups(tmp_path:
     backups = list(runtime.glob(f"{doctor_harness.SHIM}.bak-*"))
     assert [path.read_text() for path in backups] == ["#!/bin/sh\n# user-edited\n"]
     assert installed[0]["backup"] == str(backups[0])
-    again = hook_install.install_runtime(HookOptions(home=tmp_path))
+    again = hook_install.install_runtime(HookOptions(home=tmp_path), "omp")
     assert {item["action"] for item in again} == {"unchanged"}
+
+
+def test_claude_code_gets_the_shim_without_omps_plugin_files(tmp_path: Path) -> None:
+    installed = hook_install.install_runtime(HookOptions(home=tmp_path), "claude-code")
+
+    runtime = tmp_path / doctor_harness.MANAGED_RUNTIME
+    assert [Path(item["path"]).name for item in installed[:-1]] == [doctor_harness.SHIM]
+    assert not (runtime / "omp").exists()
 
 
 def test_claude_hooks_are_idempotent_keep_other_tools_and_remove_cleanly(tmp_path: Path) -> None:
@@ -51,6 +59,7 @@ def test_claude_hooks_are_idempotent_keep_other_tools_and_remove_cleanly(tmp_pat
 
     preview = hook_install.write_claude_hooks(settings, HookOptions(home=tmp_path, dry_run=True))
     assert preview["action"] == "change"
+    assert preview["events"] == list(doctor_harness.CLAUDE_HOOK_EVENTS)
     assert json.loads(settings.read_text()) == original
 
     hook_install.write_claude_hooks(settings, HookOptions(home=tmp_path))
@@ -100,7 +109,7 @@ def test_omp_links_the_managed_plugin_once_and_uninstalls_it(fake_omp: FakeOmp) 
     home = Path.home()
     omp = fake_omp
     run = HookOptions(home=home)
-    hook_install.install_runtime(run)
+    hook_install.install_runtime(run, "omp")
 
     assert hook_install.link_omp_plugin(HookOptions(home=home, dry_run=True)) == {
         "plugin": "agent-introspection-activity",
@@ -139,12 +148,7 @@ def test_configure_installs_the_hooks_and_doctor_then_passes_them(
 
     result = harness_config.configure("claude-code", None, harness_config.ConfigureOptions())
 
-    assert [item["action"] for item in result["hooks"]["runtime"]] == [
-        "add",
-        "add",
-        "add",
-        "unchanged",
-    ]
+    assert [item["action"] for item in result["hooks"]["runtime"]] == ["add", "unchanged"]
     settings = json.loads((tmp_path / ".claude/settings.json").read_text())
     assert set(settings["hooks"]) == set(doctor_harness.CLAUDE_HOOK_EVENTS)
     assert settings["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
@@ -159,7 +163,7 @@ def test_configure_installs_the_hooks_and_doctor_then_passes_them(
 
 
 def test_a_stale_shim_warns_with_the_command_that_updates_it(tmp_path: Path) -> None:
-    hook_install.install_runtime(HookOptions(home=tmp_path))
+    hook_install.install_runtime(HookOptions(home=tmp_path), "omp")
     shim = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM
     shim.write_text(shim.read_text() + "# older\n")
 
@@ -215,7 +219,7 @@ def test_a_selected_config_is_pointed_at_and_the_default_removes_the_pointer(
     pointer = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.CONFIG_POINTER
     selected = tmp_path / "custom.toml"
 
-    hook_install.install_runtime(HookOptions(home=tmp_path, config_path=selected))
+    hook_install.install_runtime(HookOptions(home=tmp_path, config_path=selected), "claude-code")
 
     assert pointer.read_text() == f"{selected.resolve()}\n"
     assert doctor_harness.pointer_check(tmp_path, "omp", selected)["status"] == "pass"
@@ -225,13 +229,15 @@ def test_a_selected_config_is_pointed_at_and_the_default_removes_the_pointer(
         "`agent-introspection harness configure omp` points them at it",
     )
     default = HookOptions(home=tmp_path, config_path=config.DEFAULT_CONFIG_PATH)
-    assert hook_install.install_runtime(default)[-1]["action"] == "remove"
+    assert hook_install.install_runtime(default, "claude-code")[-1]["action"] == "remove"
     assert not pointer.exists()
     assert doctor_harness.pointer_check(tmp_path, "omp", None)["status"] == "pass"
 
 
 def test_the_shim_exports_the_pointed_config_unless_one_is_set(tmp_path: Path) -> None:
-    hook_install.install_runtime(HookOptions(home=tmp_path, config_path=tmp_path / "c.toml"))
+    hook_install.install_runtime(
+        HookOptions(home=tmp_path, config_path=tmp_path / "c.toml"), "claude-code"
+    )
     shim = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM
     seen = tmp_path / "seen"
     fake = tmp_path / "bin/agent-introspection"
