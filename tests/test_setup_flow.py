@@ -49,6 +49,8 @@ class Steps:
 
     def backfill(self, _run: Any, *, days: int, progress: Any = None) -> dict[str, Any]:
         self.calls.append(("backfill", days))
+        if progress is not None:
+            progress("facts backfill: spans (table 1 of 3): 100%")
         return {"rows": {}}
 
     def configure(self, key: str, endpoint: Any, options: Any) -> dict[str, Any]:
@@ -288,8 +290,11 @@ def test_each_step_is_announced_as_it_starts_and_ends(steps: Steps, tmp_path: Pa
         "dashboard",
         "doctor",
     ]
-    assert len(lines) == 2 * len(started)
+    # The backfill's progress comes between the facts step's start and end.
+    assert len(lines) == 2 * len(started) + 1
     assert "a long backfill can take minutes" in lines[4]
+    assert lines[5] == "facts backfill: spans (table 1 of 3): 100%"
+    assert lines[6].startswith("setup: facts: done in ")
     assert lines[1].startswith("setup: config: done in ")
 
 
