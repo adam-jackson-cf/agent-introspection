@@ -27,15 +27,19 @@ Rules:
 When you are done (installed, or blocked), finish with a report in exactly this form:
 
 ## Result
+
 Installed: yes / no / partly, and the final `agent-introspection doctor` summary.
 
 ## Steps
+
 Each command you ran, in order, one line each, with its outcome.
 
 ## Friction
+
 Every place the docs were wrong, unclear, missing a step, or contradicted the tool's
 output, with the doc path and what you expected versus what happened. Most important
 first. Write "none" if there was none.
 
 ## Suggestions
+
 Concrete changes to the docs or the tool that would have made this smoother.

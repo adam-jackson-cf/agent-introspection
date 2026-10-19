@@ -90,8 +90,88 @@ if args[:1] == ["bootstrap"]:
     (jobs / job["Label"]).write_text(str(pid))
 sys.exit(0)
 LAUNCHD
+  # systemd, for the sandbox on Linux: `systemctl --user` with the same split. A
+  # service with `[Install]` (the dashboard) really starts from its unit file, unquoted
+  # as systemd would; a timer (the sync) is only recorded as enabled and active.
+  cat >"$ROOT/fakebin/systemd.py" <<'SYSTEMD'
+import os, shlex, signal, subprocess, sys
+from pathlib import Path
+
+home = Path(os.environ["HOME"])
+units = home / ".config/systemd/user"
+state = Path(os.environ["FRESH_INSTALL_SANDBOX"]) / "state/systemd"
+state.mkdir(parents=True, exist_ok=True)
+args = [arg for arg in sys.argv[1:] if arg != "--user"]
+verb, names = (args[0] if args else ""), [a for a in args[1:] if not a.startswith("--")]
+now = "--now" in args
+
+
+def unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value.replace("%%", "%")
+
+
+def unit(name: str) -> dict[str, list[str]]:
+    keys: dict[str, list[str]] = {}
+    for line in (units / name).read_text().splitlines():
+        if "=" in line and not line.startswith(("[", "#")):
+            key, value = line.split("=", 1)
+            keys.setdefault(key, []).append(value)
+    return keys
+
+
+def stop(name: str) -> None:
+    marker = state / f"{name}.active"
+    if marker.exists():
+        pid = int(marker.read_text() or 0)
+        if pid:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        marker.unlink()
+
+
+def start(name: str) -> None:
+    stop(name)
+    pid = 0
+    if name.endswith(".service"):
+        keys = unit(name)
+        env = {"HOME": str(home)}
+        for item in keys.get("Environment", []):
+            key, value = unquote(item).split("=", 1)
+            env[key] = value
+        command = [word.replace("$$", "$").replace("%%", "%") for word in shlex.split(keys["ExecStart"][0])]
+        log = open(state / f"{name}.log", "ab")
+        pid = subprocess.Popen(
+            command, cwd=keys["WorkingDirectory"][0].replace("%%", "%"), env=env,
+            stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+        ).pid
+    (state / f"{name}.active").write_text(str(pid))
+
+
+for name in names:
+    if verb in ("start", "restart") or (verb == "enable" and now):
+        start(name)
+    if verb in ("stop",) or (verb == "disable" and now):
+        stop(name)
+    if verb == "enable":
+        (state / f"{name}.enabled").touch()
+    if verb == "disable":
+        (state / f"{name}.enabled").unlink(missing_ok=True)
+    if verb == "is-active":
+        active = (state / f"{name}.active").exists()
+        print("active" if active else "inactive")
+        sys.exit(0 if active else 3)
+    if verb == "is-enabled":
+        enabled = (state / f"{name}.enabled").exists()
+        print("enabled" if enabled else "disabled")
+        sys.exit(0 if enabled else 1)
+sys.exit(0)
+SYSTEMD
   write_fake launchctl "exec python3 -I \"$ROOT/fakebin/launchd.py\" \"\$@\""
-  write_fake systemctl 'case "$2" in is-active) echo inactive; exit 3 ;; esac; exit 0'
+  write_fake systemctl "exec python3 -I \"$ROOT/fakebin/systemd.py\" \"\$@\""
   write_fake docker 'echo "docker is disabled in the fresh-install sandbox" >&2; exit 1'
   write_fake claude 'case "$1" in --version) echo "2.1.285 (Claude Code)"; exit 0 ;; esac
 echo "claude is a stand-in in the fresh-install sandbox" >&2; exit 1'
@@ -289,8 +369,13 @@ cmd_verify() {
   check "claude-code hooks registered" grep -q activity-shim.sh "$home/.claude/settings.json"
   check "codex export configured" grep -q otel "$home/.codex/config.toml"
   check "shim installed executable" test -x "$home/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh"
-  check "sync job bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.sync" "$ROOT/state/calls.log"
-  check "dashboard service bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.dashboard" "$ROOT/state/calls.log"
+  if [ "$(uname -s)" = Darwin ]; then
+    check "sync job bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.sync" "$ROOT/state/calls.log"
+    check "dashboard service bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.dashboard" "$ROOT/state/calls.log"
+  else
+    check "sync timer enabled (fake systemd)" test -f "$ROOT/state/systemd/agent-introspection-sync.timer.enabled"
+    check "dashboard service started (fake systemd)" test -f "$ROOT/state/systemd/agent-introspection-dashboard.service.active"
+  fi
   check "dashboard built in the clone" test -f "$ROOT/repo/dashboard/dist/index.html"
   check "facts store created in ClickHouse" clickhouse_count introspection.hook_events
   if $dashboard_port_free; then
@@ -343,10 +428,10 @@ cmd_agent() {
   done
   command -v claude >/dev/null || die "claude is not installed"
   [ -f "$ROOT/state/clickhouse_url" ] || die "agent needs the sandbox ClickHouse"
-  local prompt=$ROOT/state/agent-prompt.md transcript=$ROOT/state/agent-transcript.jsonl
+  local prompt=$ROOT/state/agent-prompt.txt transcript=$ROOT/state/agent-transcript.jsonl
   sed -e "s|{{CLICKHOUSE_URL}}|$(cat "$ROOT/state/clickhouse_url")|g" \
     -e "s|{{OTLP_ENDPOINT}}|$(cat "$ROOT/state/otlp_endpoint")|g" \
-    "$HERE/agent-prompt.md" >"$prompt"
+    "$HERE/agent-prompt.txt" >"$prompt"
   echo "agent: a fresh Claude Code session installs from $ROOT/repo; transcript: $transcript"
   # Every Bash command the session runs goes through the sandbox runner, and it cannot
   # edit files directly. It loads no user settings (so none of this machine's hooks or
@@ -379,7 +464,7 @@ print(result.get("result", "") if result else "no result event; see the transcri
 
 cmd_destroy() {
   ROOT=$(need_root "${1-}")
-  for job in "$ROOT"/state/launchd/*; do
+  for job in "$ROOT"/state/launchd/* "$ROOT"/state/systemd/*.active; do
     [ -f "$job" ] || continue
     pid=$(cat "$job")
     [ "${pid:-0}" -gt 0 ] && kill -TERM -- "-$pid" 2>/dev/null || true
