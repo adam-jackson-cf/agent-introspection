@@ -174,27 +174,74 @@ def test_an_existing_config_keeps_its_comments_and_gets_a_backup(
     ]
 
 
-@pytest.mark.parametrize(
-    ("existing", "message"),
-    [
-        ('[sessions.roots]\ncodex = ["~/x"]\n', "sessions retired; delete them"),
-        (
-            '[machine]\nrole = "additional"\nexport_endpoint = "http://host.local:4318"\n',
-            'which this additional machine ([machine] role = "additional") does not have',
-        ),
-    ],
-)
-def test_a_retired_key_or_an_additional_machine_stops_at_the_config(
-    steps: Steps, tmp_path: Path, existing: str, message: str
-) -> None:
+def test_an_additional_machine_stops_at_the_config(steps: Steps, tmp_path: Path) -> None:
+    existing = '[machine]\nrole = "additional"\nexport_endpoint = "http://host.local:4318"\n'
     (tmp_path / "config.toml").write_text(existing)
 
     result = setup_flow.run(options(tmp_path))
 
     assert result["stopped_at"] == "config"
-    assert message in result["error"]
+    assert 'which this additional machine ([machine] role = "additional")' in result["error"]
     assert steps.names() == []
     assert (tmp_path / "config.toml").read_text() == existing
+
+
+OLD_CONFIG = """# mine
+[signoz]
+docker_context = "orbstack"  # retired
+clickhouse_container = "ch"
+
+[sessions.roots]
+codex = ["~/x"]
+
+[dashboard]
+clickhouse_url = "http://clickhouse.orb.local:8123"
+
+[harnesses]
+enabled = ["claude-code"]
+"""
+
+
+def test_an_upgrade_removes_retired_settings_and_moves_the_dashboard_url(
+    steps: Steps, tmp_path: Path
+) -> None:
+    (tmp_path / "config.toml").write_text(OLD_CONFIG)
+
+    dry = setup_flow.run(options(tmp_path, dry_run=True))
+    assert dry["passed"] is True
+    assert (tmp_path / "config.toml").read_text() == OLD_CONFIG
+    result = setup_flow.run(options(tmp_path))
+
+    report = result["steps"]["config"]
+    assert report["retired_removed"] == [
+        "sessions",
+        "dashboard",
+        "signoz.docker_context",
+        "signoz.clickhouse_container",
+    ]
+    assert report["notes"] == ["[dashboard] clickhouse_url moved to [signoz] clickhouse_url"]
+    assert report["backup"] is not None
+    config = load_config(tmp_path / "config.toml")
+    assert config.signoz.clickhouse_url == "http://clickhouse.orb.local:8123"
+    assert config.harnesses_enabled == ("claude-code",)
+    assert "# mine" in (tmp_path / "config.toml").read_text()
+
+
+@pytest.mark.parametrize("plugin", [True, False], ids=["omp-plugin", "no-plugin"])
+def test_an_older_config_keeps_omp_while_its_plugin_is_installed(
+    steps: Steps, tmp_path: Path, plugin: bool
+) -> None:
+    (tmp_path / "config.toml").write_text("[database]\n")
+    if plugin:
+        link = Path.home() / ".omp/plugins/node_modules/agent-introspection-activity"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(tmp_path)
+
+    result = setup_flow.run(options(tmp_path))
+
+    expected = ("claude-code", "codex", "oh-my-pi") if plugin else ("claude-code", "codex")
+    assert load_config(tmp_path / "config.toml").harnesses_enabled == expected
+    assert bool(result["steps"]["config"]["notes"]) is plugin
 
 
 def test_a_new_config_path_is_written_even_with_nothing_to_set(

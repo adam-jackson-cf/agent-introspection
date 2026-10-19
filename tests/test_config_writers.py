@@ -317,3 +317,27 @@ def test_backup_and_atomic_write_keep_the_original_and_its_mode(tmp_path: Path) 
     assert path.read_text() == "after"
     assert path.stat().st_mode & 0o777 == 0o640
     assert sorted(item.name for item in tmp_path.iterdir()) == ["settings.json", copy.name]
+
+
+def test_remove_toml_keys_drops_keys_and_tables_and_keeps_the_rest() -> None:
+    text = (
+        '# top\n[signoz]\nclickhouse_url = "http://127.0.0.1:8123"  # kept\n'
+        'docker_host = "unix:///x"\n\n[sessions.roots]\ncodex = ["~/x"]\n\n'
+        '[harnesses]\nenabled = ["codex"]\n'
+    )
+
+    result = config_writers.remove_toml_keys(text, [("signoz", "docker_host"), ("sessions",)])
+
+    assert tomllib.loads(result) == {
+        "signoz": {"clickhouse_url": "http://127.0.0.1:8123"},
+        "harnesses": {"enabled": ["codex"]},
+    }
+    assert "# top" in result
+    assert "# kept" in result
+
+
+def test_remove_toml_keys_refuses_a_key_inside_an_inline_table() -> None:
+    text = 'signoz = { docker_host = "x", clickhouse_url = "http://127.0.0.1:8123" }\n'
+
+    with pytest.raises(ConfigFileError, match="delete them by hand"):
+        config_writers.remove_toml_keys(text, [("signoz", "docker_host")])

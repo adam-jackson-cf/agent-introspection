@@ -86,6 +86,11 @@ class _Plan:
     updates: dict[str, SettingValue]
 
 
+def omp_plugin_installed(home: Path) -> bool:
+    """Return whether omp's activity plugin is linked into this home's omp."""
+    return (home / doctor_harness.OMP_PLUGIN_LINK).is_symlink()
+
+
 def profile_keys(enabled: Sequence[str]) -> list[str]:
     """Return the distinct profile keys that ``[harnesses] enabled`` names, in its order.
 
