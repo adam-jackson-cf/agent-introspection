@@ -5,8 +5,9 @@ whose name or image mentions SigNoz or ClickHouse, the local ports a SigNoz publ
 (OTLP gRPC 4317, OTLP/HTTP 4318, ClickHouse HTTP 8123, the SigNoz UI 8080), and whether
 ClickHouse answers ``/ping`` on 127.0.0.1:8123. A SigNoz on other ports is checked at
 the ClickHouse URL and OTLP/HTTP endpoint given instead, the same values ``setup``
-takes. It never starts, stops, or changes anything. A missing Docker CLI or a daemon
-that does not answer is reported, never raised.
+takes; ``setup_refusal`` says why ``setup`` would refuse them as config values. It
+never starts, stops, or changes anything. A missing Docker CLI or a daemon that does
+not answer is reported, never raised.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
+
+from agent_introspection.config import ConfigurationError, parse_config
 
 LOOPBACK: Final = "127.0.0.1"
 CLICKHOUSE_HTTP_PORT: Final = 8123
@@ -111,7 +114,7 @@ def endpoint_open(url: str) -> bool:
     """Return whether something accepts TCP connections at an OTLP/HTTP endpoint URL."""
     try:
         parts = urlsplit(url if "://" in url else f"http://{url}")
-        port = parts.port or 80
+        port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError:
         return False
     return port_open(port, parts.hostname or LOOPBACK)
@@ -137,6 +140,20 @@ def _docker_notes(docker: dict[str, Any]) -> list[str]:
             "container checks were skipped."
         ]
     return []
+
+
+def setup_refusal(clickhouse_url: str | None, otlp_endpoint: str | None) -> str | None:
+    """Return why ``setup`` would refuse these addresses as config values, or None."""
+    signoz = {
+        key: value
+        for key, value in (("clickhouse_url", clickhouse_url), ("otlp_endpoint", otlp_endpoint))
+        if value
+    }
+    try:
+        parse_config({"signoz": signoz})
+    except ConfigurationError as exc:
+        return str(exc)
+    return None
 
 
 def _clickhouse_notes(containers: list[Container], ping: bool, url: str | None) -> list[str]:
@@ -193,8 +210,8 @@ def _install_notes(present: bool, ports: dict[str, bool], searched: bool) -> lis
     elsewhere = (
         ""
         if searched
-        else " A SigNoz on other ports or another machine is not found this way: rerun "
-        "with --clickhouse-url and --otlp-endpoint."
+        else " A SigNoz on other ports is not found this way: rerun with --clickhouse-url "
+        "and --otlp-endpoint."
     )
     return [
         "No SigNoz or ClickHouse found and every SigNoz port is free: the opt-in guided "
@@ -217,6 +234,7 @@ def detect(clickhouse_url: str | None = None, otlp_endpoint: str | None = None) 
     else:
         ping = ports[str(CLICKHOUSE_HTTP_PORT)] and clickhouse_answers()
     otlp_open = endpoint_open(otlp_endpoint) if otlp_endpoint else None
+    refusal = setup_refusal(clickhouse_url, otlp_endpoint)
     present = bool(containers) or ping
     return {
         "docker": docker,
@@ -226,11 +244,13 @@ def detect(clickhouse_url: str | None = None, otlp_endpoint: str | None = None) 
         "clickhouse_ping": ping,
         "otlp_endpoint": otlp_endpoint,
         "otlp_open": otlp_open,
+        "setup_refusal": refusal,
         "signoz_present": present,
         "notes": [
             *_docker_notes(docker),
             *_clickhouse_notes(containers, ping, clickhouse_url),
             *_endpoint_notes(otlp_endpoint, otlp_open),
+            *([f"`setup` would refuse these addresses: {refusal}"] if refusal else []),
             *_install_notes(present, ports, bool(clickhouse_url or otlp_endpoint)),
         ],
     }

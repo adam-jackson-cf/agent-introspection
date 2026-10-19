@@ -79,8 +79,13 @@ def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 def _labels(
     run: facts.SqlRunner, config: AppConfig, *, days: int = 2, limit: int = 60
 ) -> dict[str, Any]:
-    """Label exported prompts with Jev; Jev being unavailable never fails the sync."""
+    """Label exported prompts with Jev; Jev being unavailable never fails the sync.
+
+    With no key command, labels are off, as ``doctor`` reports them: nothing is read.
+    """
     command = config.labels_openrouter_key_command
+    if command is None:
+        return {"status": "off", "reason": "no [labels] openrouter_key_command (optional)"}
     try:
         return classify.run(run, days=days, limit=limit, key=lambda: classify.api_key(command))
     except classify.JevUnavailableError as exc:

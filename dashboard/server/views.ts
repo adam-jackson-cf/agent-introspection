@@ -64,15 +64,18 @@ const ACTIONABLE = `((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurre
 export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`;
 /**
  * Keeps a tool call out of evaluation workspaces, as findings.outside_evaluation does:
- * a whole session is excluded once any of its calls ran in one, because a Codex call
- * records a working directory only when its arguments name one.
+ * a whole session is excluded when every call that recorded a working directory ran
+ * in one, because a Codex call records a working directory only when its arguments
+ * name one.
  */
-const outsideEvaluation = (
+export const outsideEvaluation = (
   alias: string,
 ) => `NOT match(${alias}.workdir, '${EVALUATION_PATH}')
         AND NOT match(${alias}.failure_signature, '${EVALUATION_PATH}')
         AND (${alias}.harness, ${alias}.session_id) NOT IN (SELECT harness, session_id
-            FROM ${C} WHERE session_id != '' AND match(workdir, '${EVALUATION_PATH}'))`;
+            FROM ${C} WHERE session_id != '' AND workdir != ''
+            GROUP BY harness, session_id
+            HAVING min(match(workdir, '${EVALUATION_PATH}')) = 1)`;
 /**
  * Headless Codex exec has no next prompt (registry: not applicable), so it stays
  * out of next-prompt denominators instead of counting as never corrected.

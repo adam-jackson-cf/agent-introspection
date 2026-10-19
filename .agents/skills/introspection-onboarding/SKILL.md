@@ -23,7 +23,7 @@ clickhouse_url`, default `http://127.0.0.1:8123`). When `signoz detect` finds it
 - Run `agent-introspection doctor` (read-only) first at every step and follow each
   check's `fix`. Never weaken or skip a failing check.
 - Ask which harnesses to include; Claude Code and Codex are the default, omp is
-  opt-in.
+  opt-in (`setup --harness oh-my-pi`, its registry key).
 - Keep hostnames, addresses, and user names out of skills and docs: ask the user, use
   placeholders.
 - Back up every file before changing it, show the diff first, and keep unrelated hooks

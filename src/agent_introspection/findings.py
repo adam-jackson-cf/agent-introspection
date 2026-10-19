@@ -57,15 +57,18 @@ EVALUATION_PATH = r"(^|\\W)(/private)?/(tmp|var/folders)/"
 def outside_evaluation(alias: str = "c.") -> str:
     """Return the condition that keeps a tool call out of evaluation workspaces.
 
-    A whole session is excluded once any of its calls ran in one, because a Codex call
-    records a working directory only when its arguments name one.
+    A whole session is excluded when every call that recorded a working directory ran
+    in one, because a Codex call records a working directory only when its arguments
+    name one; one call in a temporary directory never hides a session that works
+    elsewhere.
     """
     return (
         f"NOT match({alias}workdir, '{EVALUATION_PATH}')"
         f" AND NOT match({alias}failure_signature, '{EVALUATION_PATH}')"
         f" AND ({alias}harness, {alias}session_id) NOT IN (SELECT harness, session_id"
         f" FROM {DATABASE}.tool_calls_snapshot"
-        f" WHERE session_id != '' AND match(workdir, '{EVALUATION_PATH}'))"
+        " WHERE session_id != '' AND workdir != '' GROUP BY harness, session_id"
+        f" HAVING min(match(workdir, '{EVALUATION_PATH}')) = 1)"
     )
 
 

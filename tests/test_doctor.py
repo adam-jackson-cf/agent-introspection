@@ -190,7 +190,10 @@ def test_closed_collector_ports_and_a_missing_hooks_endpoint(machine: Machine) -
     result = machine.report(probes)
 
     assert one(result, "collector_http")["status"] == "fail"
-    assert one(result, "collector_grpc")["status"] == "info"
+    # The machine's harnesses export over OTLP/gRPC, so a closed 4317 is their route.
+    grpc = one(result, "collector_grpc")
+    assert grpc["status"] == "warn"
+    assert "export over OTLP/gRPC" in grpc["fix"]
     hooks_endpoint = one(result, "hooks_endpoint")
     assert hooks_endpoint["status"] == "fail"
     assert "otlp_logs_endpoint" in hooks_endpoint["fix"]
@@ -463,12 +466,54 @@ def test_the_dashboard_url_must_be_local_and_answer_ping(
         machine.probes,
         http_get=lambda _url: answer,
         harness=replace(machine.probes.harness, environ=environ),
+        dashboard_status=lambda: {"scheduler": "launchd", "installed": False},
     )
 
     dashboard = one(machine.report(probes), "dashboard")
 
     assert (dashboard["status"], dashboard["detail"]) == (expected, detail)
     assert "clickhouse.example" not in json.dumps(dashboard)
+
+
+def test_an_installed_dashboard_service_is_checked_at_the_config_url(machine: Machine) -> None:
+    asked: list[str] = []
+
+    def http_get(url: str) -> tuple[int, bytes]:
+        asked.append(url)
+        return 200, b"Ok.\n"
+
+    probes = replace(
+        machine.probes,
+        http_get=http_get,
+        harness=replace(
+            machine.probes.harness,
+            environ={"INTROSPECTION_CLICKHOUSE_URL": "http://clickhouse.example:8123"},
+        ),
+    )
+
+    dashboard = one(machine.report(probes), "dashboard")
+
+    assert dashboard["detail"] == "ClickHouse at [signoz] clickhouse_url answers /ping"
+    assert not any("clickhouse.example" in url for url in asked)
+
+
+def test_a_raising_dashboard_service_probe_keeps_the_url_check(machine: Machine) -> None:
+    def no_systemctl() -> dict[str, Any]:
+        raise FileNotFoundError("systemctl")
+
+    result = machine.report(replace(machine.probes, dashboard_status=no_systemctl))
+
+    assert one(result, "dashboard_service")["status"] == "fail"
+    assert one(result, "dashboard")["status"] == "pass"
+
+
+def test_a_closed_grpc_port_is_info_when_no_harness_exports_over_grpc() -> None:
+    found = [
+        {"name": "collector_grpc", "status": "info", "detail": "closed", "fix": ""},
+        {"name": "export_settings", "status": "pass", "detail": "6 match", "harness": "codex"},
+    ]
+
+    assert doctor._grpc_in_use(found) == found
 
 
 def test_an_unanswered_dashboard_ping_warns_with_the_compose_note(machine: Machine) -> None:

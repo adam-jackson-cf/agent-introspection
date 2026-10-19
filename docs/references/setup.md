@@ -18,7 +18,7 @@ checks everything and prints a `fix` for each `fail` or `warn`.
 | macOS or Linux                                           | The sync and the dashboard run as launchd agents (macOS) or systemd user units (Linux) |
 | Python 3.12+ and [`uv`](https://docs.astral.sh/uv/)      | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                                     |
 | [Bun](https://bun.sh), for the dashboard                 | `curl -fsSL https://bun.sh/install \| bash`                                            |
-| Docker with Compose 2.24.4+                              | Docker Desktop or OrbStack (macOS), Docker Engine (Linux)                              |
+| Docker with Compose 2.24.4+, only for step 2's install   | Docker Desktop or OrbStack (macOS), Docker Engine (Linux)                              |
 | A self-hosted SigNoz on this machine (ClickHouse 24.10+) | Use the one you have, or install one in step 2                                         |
 | `~/.local/bin` on your `PATH`                            | Where `uv tool install` puts the `agent-introspection` command                         |
 

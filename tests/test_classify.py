@@ -245,3 +245,11 @@ def test_labels_resolve_the_key_with_the_configured_command(
     labels = cli_facts._labels(FakeClickHouse(), config, days=5, limit=7)
     assert labels == {"key": "k", "days": 5, "limit": 7}
     assert asked == [("security", "-w")]
+
+
+def test_labels_are_off_without_a_key_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(classify, "run", lambda *_args, **_kwargs: pytest.fail("ran"))
+
+    labels = cli_facts._labels(FakeClickHouse(), parse_config({}))
+
+    assert labels["status"] == "off"

@@ -17,8 +17,9 @@ explicit request.
 ## Quick Install
 
 Prerequisites: macOS or Linux, Python 3.12+ with [`uv`](https://docs.astral.sh/uv/),
-[Bun](https://bun.sh), Docker with Compose 2.24.4+, and `~/.local/bin` on your `PATH`.
-An existing self-hosted SigNoz is optional; the onboarding skill can install one.
+[Bun](https://bun.sh), and `~/.local/bin` on your `PATH`. An existing self-hosted SigNoz
+is optional; the onboarding skill can install one, which needs Docker with Compose
+2.24.4+.
 
 ```bash
 git clone https://github.com/adam-jackson-cf/agent-introspection.git

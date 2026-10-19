@@ -262,19 +262,26 @@ def _backup_path(path: Path) -> Path:
     return BACKUPS / f"{path.name}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
 
+def check(loaded: AppConfig) -> tuple[str, Path, tuple[str, ...]]:
+    """Refuse what ``schedule_install`` would refuse; return what it would install.
+
+    The scheduler, the ``agent-introspection`` executable, and the job's PATH.
+    """
+    scheduler = platform_scheduler()
+    require_host(loaded, "the scheduled `facts sync` needs SigNoz's ClickHouse")
+    executable = Path(sys.executable).with_name("agent-introspection")
+    if not executable.exists():
+        raise RuntimeError(f"{executable} not found; cannot schedule a missing executable")
+    return scheduler, executable, (*job_path(loaded), *SYSTEM_PATH)
+
+
 def schedule_install(config: Path | None = None) -> dict[str, Any]:
     """Write and start the job that runs `facts sync` every minute.
 
     A job that fails to start restores and restarts the job it replaced. An additional
     machine is refused: it has no ClickHouse for ``facts sync``.
     """
-    scheduler = platform_scheduler()
-    loaded = load_config(config)
-    require_host(loaded, "the scheduled `facts sync` needs SigNoz's ClickHouse")
-    executable = Path(sys.executable).with_name("agent-introspection")
-    if not executable.exists():
-        raise RuntimeError(f"{executable} not found; cannot schedule a missing executable")
-    path_dirs = (*job_path(loaded), *SYSTEM_PATH)
+    scheduler, executable, path_dirs = check(load_config(config))
     if scheduler == "launchd":
         return _install_launchd(executable, path_dirs, config)
     return _install_systemd(executable, path_dirs, config)

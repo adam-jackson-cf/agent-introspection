@@ -436,3 +436,26 @@ def test_install_rejects_bad_arguments(tmp_path: Path, args: list[str]) -> None:
     assert result.returncode == 2
     assert "Plan" not in result.stdout
     assert docker_commands == []
+
+
+def test_detect_says_when_setup_would_refuse_the_addresses(machine: Any) -> None:
+    machine(open_ports=(4317,), ping=True)
+
+    result = signoz_detect.detect("http://10.0.0.5:8123", "http://127.0.0.1:4317")
+
+    assert "must point at this machine" in result["setup_refusal"]
+    assert "`setup` would refuse these addresses" in " ".join(result["notes"])
+
+
+def test_endpoint_open_defaults_https_to_443(monkeypatch: pytest.MonkeyPatch) -> None:
+    dialled: list[tuple[str, int]] = []
+
+    def port_open(port: int, host: str = "") -> bool:
+        dialled.append((host, port))
+        return True
+
+    monkeypatch.setattr(signoz_detect, "port_open", port_open)
+
+    signoz_detect.endpoint_open("https://collector.local")
+
+    assert dialled == [("collector.local", 443)]

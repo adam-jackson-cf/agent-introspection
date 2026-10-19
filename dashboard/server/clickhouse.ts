@@ -48,6 +48,11 @@ function configPath(env: Record<string, string | undefined>): string {
 function configuredUrl(text: string | undefined): unknown {
   if (text === undefined) return undefined;
   const config = Bun.TOML.parse(text) as ConfigDocument;
+  // The CLI refuses the retired key too; never fall back past it to the default.
+  if (config.dashboard?.clickhouse_url !== undefined)
+    throw new Error(
+      "[dashboard] clickhouse_url is retired: move it to [signoz] clickhouse_url",
+    );
   return config.signoz?.clickhouse_url;
 }
 
@@ -90,7 +95,10 @@ export function clickhouseUrl(
   return typeof url === "string" && url !== "" ? url : DEFAULT_CLICKHOUSE_URL;
 }
 
-type ConfigDocument = { signoz?: { clickhouse_url?: unknown } };
+type ConfigDocument = {
+  signoz?: { clickhouse_url?: unknown };
+  dashboard?: { clickhouse_url?: unknown };
+};
 
 /**
  * ClickHouse HTTP client for the local SigNoz ClickHouse, with basic-auth

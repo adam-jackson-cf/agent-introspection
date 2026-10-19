@@ -15,6 +15,7 @@ from agent_introspection.config import (
     MachineConfig,
     MachineRole,
     SigNozConfig,
+    parse_config,
 )
 
 REPO = Path(__file__).parents[1]
@@ -180,3 +181,14 @@ def test_remove_stops_and_deletes_the_service(
     assert not dashboard_service.SERVICE.exists()
     name = dashboard_service.SERVICE.name
     assert recorder.scheduler == [("disable", "--now", name), ("daemon-reload",)]
+
+
+def test_the_systemd_unit_escapes_an_awkward_checkout_path(tmp_path: Path) -> None:
+    directory = tmp_path / 'a b/50% $x"q'
+    bun = tmp_path / "bin $HOME/bun"
+
+    unit = dashboard_service.service_unit(parse_config({}), directory, bun)
+
+    lines = dict(line.split("=", 1) for line in unit.splitlines() if "=" in line)
+    assert lines["WorkingDirectory"] == str(directory).replace("%", "%%")
+    assert lines["ExecStart"] == f'"{str(bun).replace("$", "$$")}" server.ts'

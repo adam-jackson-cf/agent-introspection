@@ -62,7 +62,7 @@ const BASELINE_SERIES = [
   },
   {
     key: "corrected_rate",
-    label: "Corrections per 100 labelled tasks",
+    label: "Corrections per 100 tasks with a next prompt",
     color: SERIES[1]!,
   },
 ];

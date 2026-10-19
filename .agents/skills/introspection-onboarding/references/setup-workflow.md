@@ -61,7 +61,7 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
    `127.0.0.1:8123`, publishing it with the opt-in override (which restarts ClickHouse)
    is the user's decision; a container name the runtime resolves (OrbStack's
    `*.orb.local`) is the alternative, passed as `--clickhouse-url`. When the user
-   says SigNoz runs on other ports or another machine, run
+   says SigNoz runs on other ports of this machine, run
    `signoz detect --clickhouse-url <url> --otlp-endpoint <url>` with their addresses
    and pass the same two options to `setup`.
 3. **Install SigNoz (only when the user asks).** When `signoz detect` finds none, ask
@@ -120,8 +120,8 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 8. **Restart** running sessions of each configured harness: they read their settings
    at start.
 9. **First sync.** `agent-introspection facts sync`: `spool`, `labels`, `findings`,
-   and `evaluations` report no error, and `labels` is not `skipped` when a key command
-   is set. Hook records reach `hook_events` through SigNoz, so allow a minute before
+   and `evaluations` report no error. `labels` is `off` without a key command (labels
+   are optional), and never `skipped` when one is set. Hook records reach `hook_events` through SigNoz, so allow a minute before
    checking them.
 10. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
     `warn`, `off`, or `info` has a reason the user accepts.

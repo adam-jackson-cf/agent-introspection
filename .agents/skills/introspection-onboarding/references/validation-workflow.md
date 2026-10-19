@@ -12,23 +12,25 @@ labels' key command, and checks secrets for presence only. It prints one JSON ob
 for a per-harness check, `harness`) and exits 30 when any check fails; the report
 still prints.
 
-| Status | Meaning                                                                                                 |
-| ------ | ------------------------------------------------------------------------------------------------------- |
-| `pass` | As expected.                                                                                            |
-| `warn` | Works, but at risk or only partly (for example, a hooks endpoint the scheduled sync cannot see).        |
-| `fail` | A step is missing or wrong: follow `fix`, then rerun `doctor`.                                          |
-| `off`  | An optional feature is not in use (prompt export, prompt labels); turn it on only if the user wants it. |
-| `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).      |
+| Status | Meaning                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `pass` | As expected.                                                                                                                   |
+| `warn` | Works, but at risk or only partly (for example, a hooks endpoint the scheduled sync cannot see).                               |
+| `fail` | A step is missing or wrong: follow `fix`, then rerun `doctor`.                                                                 |
+| `off`  | An optional feature is not in use (prompt export, prompt labels, the dashboard service); turn it on only if the user wants it. |
+| `info` | Nothing to fix here, for the record (for example, a harness version newer than the verified ones).                             |
 
 The checks run in this order: `config`, `signoz` (every preflight check folded into
-one, with each failing check's detail), `collector_http`, `collector_grpc`, and `hooks_endpoint`; then, per
-enabled harness, `binary`, `config_files`, `export_settings`, `prompt_export`,
-`activity_hooks`, `activity_shim`, and `telemetry` (rows over 24
-hours); then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
-`prompt_labels`, and `dashboard`. Points to know:
+one, with each failing check's detail), `collector_http`, `collector_grpc`,
+`hooks_endpoint`, and `collector_live` (with `--live`); then, per enabled harness,
+`binary`, `config_files`, `export_settings`, `prompt_export`, `activity_hooks`,
+`activity_shim`, `hook_config`, and `telemetry` (rows over 24 hours);
+`disabled_harnesses`; then `spool`, `schedule`, `schedule_legacy`, `schedule_linger`,
+`prompt_labels`, `dashboard`, and `dashboard_service`. Points to know:
 
 - `collector_grpc` is `info` when port 4317 is closed: every harness profile exports
-  over OTLP/HTTP, so only an exporter set to OTLP/gRPC by hand needs it.
+  over OTLP/HTTP, so only an exporter set to OTLP/gRPC by hand needs it. When an
+  enabled harness's export settings are satisfied over gRPC, it warns.
 - An exporter that reaches the local collector by another route (OTLP/gRPC on 4317,
   or OTLP/HTTP on 4318 or the configured port) satisfies the export settings, as it
   does for `harness configure`; `127.0.0.1` and `localhost` both name this machine.
@@ -74,8 +76,6 @@ Beyond `doctor`, check by hand:
 
 - Each changed file has a backup (`harness configure` prints each backup path, for its
   settings and its hooks).
-- The managed copies under `~/.local/lib/agent-introspection/activity-hooks-v1/` match
-  the repo's `scripts/` (`diff -u`).
 - `~/.omp/agent/config.yml` does not list the omp activity extension.
 
 ## Live check

@@ -827,4 +827,15 @@ describe("ClickHouse address", () => {
       "http://127.0.0.1:8123",
     );
   });
+
+  test("the retired [dashboard] clickhouse_url is refused, not skipped", () => {
+    expect(() =>
+      clickhouseUrl(
+        { HOME: "/h" },
+        config(
+          '[dashboard]\nclickhouse_url = "http://clickhouse.orb.local:8123"',
+        ),
+      ),
+    ).toThrow("[dashboard] clickhouse_url is retired");
+  });
 });

@@ -21,6 +21,7 @@ import shlex
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Final, cast
@@ -755,13 +756,19 @@ def hook_checks(
     home: Path,
     config_path: Path | None = None,
 ) -> list[Check]:
-    """Check the activity hooks of a profile with a hook adapter."""
-    runtime = [shim_check(home, profile.key), pointer_check(home, profile.key, config_path)]
-    if profile.hook_adapter == "claude-code":
-        return [claude_hooks_check(files, home), *runtime]
-    if profile.hook_adapter == "omp":
-        return [omp_plugin_check(home), *runtime]
-    return []
+    """Check the activity hooks of a profile with a hook adapter, each isolated."""
+    adapters: dict[str | None, Callable[[], Check]] = {
+        "claude-code": partial(claude_hooks_check, files, home),
+        "omp": partial(omp_plugin_check, home),
+    }
+    hooks = adapters.get(profile.hook_adapter)
+    if hooks is None:
+        return []
+    return [
+        *guarded("activity_hooks", hooks),
+        *guarded("activity_shim", partial(shim_check, home, profile.key)),
+        *guarded("hook_config", partial(pointer_check, home, profile.key, config_path)),
+    ]
 
 
 # --- Telemetry -----------------------------------------------------------------------
@@ -846,10 +853,9 @@ def harness_checks(profile: profiles.Profile, context: HarnessContext) -> list[C
         *guarded(
             "prompt_export", lambda: prompt_check(profile, files, context), harness=profile.key
         ),
-        *guarded(
-            "activity_hooks",
-            lambda: hook_checks(profile, files, home, context.config_path),
-            harness=profile.key,
+        *(
+            {**item, "harness": profile.key}
+            for item in hook_checks(profile, files, home, context.config_path)
         ),
         *guarded("telemetry", lambda: telemetry_check(profile, context), harness=profile.key),
     ]

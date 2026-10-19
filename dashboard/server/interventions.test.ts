@@ -118,7 +118,7 @@ test("a retired repeated-correction proposal shows no measured rates", () => {
     null,
   ]);
   expect(result.change_pct).toBeNull();
-  expect(result.pre_tasks).toBe(20);
+  expect([result.pre_tasks, result.post_tasks]).toEqual([null, null]);
 });
 
 test("a dormant repeated-correction finding keeps its kind for its subject label", () => {

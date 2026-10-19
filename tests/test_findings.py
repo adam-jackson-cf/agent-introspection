@@ -163,6 +163,19 @@ def test_evaluation_workspaces_are_excluded_by_workdir_and_failure_path() -> Non
     assert "session_project" not in findings.WINDOW_QUERY
 
 
+def test_a_session_is_excluded_only_when_all_its_workdirs_are_temporary() -> None:
+    having = f"HAVING min(match(workdir, '{findings.EVALUATION_PATH}')) = 1"
+    assert having in findings.WINDOW_QUERY
+    assert "workdir != '' GROUP BY harness, session_id" in findings.WINDOW_QUERY
+
+
+def test_the_dashboard_excludes_evaluation_workspaces_as_findings_do() -> None:
+    views = (Path(__file__).parents[1] / "dashboard/server/views.ts").read_text()
+    assert f"String.raw`{findings.EVALUATION_PATH}`" in views
+    assert "HAVING min(match(workdir, '${EVALUATION_PATH}')) = 1" in views
+    assert "WHERE session_id != '' AND workdir != ''" in views
+
+
 def test_detectors_count_only_the_enabled_harnesses() -> None:
     enabled = "IN (SELECT harness FROM introspection.harnesses WHERE enabled = 1)"
     assert f"c.harness {enabled}" in findings.WINDOW_QUERY

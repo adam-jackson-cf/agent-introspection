@@ -175,7 +175,8 @@ def config_paths(
     chose, in every other whose directory exists, and in every directory a
     ``home_globs`` pattern matches. ``extras`` are more files of the same name in
     directories named by ``--root``: they replace a ``first`` file's path and join the
-    ``each`` ones. With nothing chosen, the first remaining path is.
+    ``each`` ones. With nothing chosen and no ``extras``, the first remaining path is,
+    even when ``home_globs`` match: a matched home never stands in for the default one.
     """
     candidates = [
         (raw, path)
@@ -188,7 +189,8 @@ def config_paths(
     chosen = [
         path for raw, path in candidates if _PATH_VARIABLE.search(raw) or path.parent.is_dir()
     ]
-    return [*chosen, *_glob_homes(config_file, home), *extras] or first
+    base = chosen or ([] if extras else first)
+    return [*base, *_glob_homes(config_file, home), *extras]
 
 
 def _glob_homes(config_file: ConfigFile, home: Path) -> list[Path]:

@@ -45,7 +45,8 @@ def add_setup_parser(commands: Any) -> None:
         action="append",
         default=None,
         metavar="KEY",
-        help="a harness to enable, repeatable (default: claude-code and codex; omp is oh-my-pi)",
+        help="a harness to enable, repeatable (default: claude-code and codex; omp's key is "
+        "oh-my-pi)",
     )
     parser.add_argument(
         "--prompt-export",

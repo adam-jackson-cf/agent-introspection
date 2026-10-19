@@ -6,7 +6,8 @@ false when any check fails. The checks run in order: the config; SigNoz (every
 ``preflight`` check, folded into one, with each failing check's detail); the
 collector's ports and the hooks endpoint; one block per enabled harness
 (``doctor_harness.py``) and any disabled harness that still sends rows; the record
-spool; the schedule; the prompt-label key; the dashboard's ClickHouse URL; and, with
+spool; the schedule; the prompt-label key; the dashboard's ClickHouse URL and its
+service; and, with
 ``--drift``, each enabled producer's telemetry against its saved fingerprint.
 
 An additional machine (``[machine] role = "additional"``) has no SigNoz: the checks
@@ -22,6 +23,7 @@ the exception class, and the other checks still run.
 
 from __future__ import annotations
 
+import http.client
 import socket
 import time
 import urllib.error
@@ -176,6 +178,32 @@ def _address(url: str) -> tuple[str, int]:
     return parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
 
 
+def _grpc_in_use(found: list[Check]) -> list[Check]:
+    """Raise a closed OTLP/gRPC port to a warning when a harness exports over gRPC.
+
+    ``collector_grpc`` is ``info`` when closed, since the profiles export over
+    OTLP/HTTP; an export setting satisfied over gRPC makes that port the harness's route.
+    """
+    users = sorted({
+        str(item.get("harness"))
+        for item in found
+        if item["name"] == "export_settings" and "satisfied (grpc)" in item["detail"]
+    })
+    if not users:
+        return found
+    return [
+        {
+            **item,
+            "status": "warn",
+            "fix": f"{', '.join(users)} export over OTLP/gRPC: publish the collector's port "
+            f"{GRPC_PORT}, or switch their exporter to OTLP/HTTP",
+        }
+        if item["name"] == "collector_grpc" and item["status"] == "info"
+        else item
+        for item in found
+    ]
+
+
 def _not_on_this_machine(name: str) -> Check:
     """Report a check an additional machine leaves to the host, with the reason."""
     reason = _LEFT_TO_THE_HOST[name]
@@ -208,7 +236,7 @@ class _Doctor:
             found += guarded(name, produce)
         if self.options.drift:
             found += guarded("drift", self.drift_checks)
-        return found
+        return _grpc_in_use(found)
 
     def _steps(self) -> tuple[tuple[str, Callable[[], Check | list[Check]]], ...]:
         """Return the checks after ``config``: the host's, or an additional machine's."""
@@ -220,7 +248,8 @@ class _Doctor:
                 ("spool", self.spool_check),
                 ("schedule", self.schedule_checks),
                 ("prompt_labels", self.labels_check),
-                ("dashboard", self.dashboard_checks),
+                ("dashboard", self.dashboard_check),
+                ("dashboard_service", self.dashboard_service_check),
             )
         return (
             ("signoz", partial(_not_on_this_machine, "signoz")),
@@ -628,12 +657,16 @@ class _Doctor:
         )
 
     def _dashboard_url(self) -> tuple[str, str]:
-        if self.environ.get(DASHBOARD_URL_ENV):
+        """Return the URL the dashboard reads, and where it came from.
+
+        The installed service never sees the shell's environment, so only a dashboard
+        run by hand reads the variable.
+        """
+        if self.environ.get(DASHBOARD_URL_ENV) and not self.probes.dashboard_status().get(
+            "installed"
+        ):
             return self.environ[DASHBOARD_URL_ENV], DASHBOARD_URL_ENV
         return self.config.signoz.clickhouse_url, "[signoz] clickhouse_url"
-
-    def dashboard_checks(self) -> list[Check]:
-        return [self.dashboard_check(), self.dashboard_service_check()]
 
     def dashboard_service_check(self) -> Check:
         """Check the dashboard service runs and answers on its port."""
@@ -679,7 +712,7 @@ class _Doctor:
             )
         try:
             status, body = self.probes.http_get(f"{url.rstrip('/')}/ping")
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             return check(
                 "dashboard",
                 "warn",

@@ -414,6 +414,16 @@ def test_home_globs_add_every_matching_codex_home(tmp_path: Path) -> None:
     ]
 
 
+def test_home_globs_never_replace_the_default_codex_home(tmp_path: Path) -> None:
+    spec = next(item for item in profiles.resolve("codex").config_files if item.id == "config")
+    orca = tmp_path / "Library/Application Support/orca/codex-accounts/a/home"
+    orca.mkdir(parents=True)
+
+    found = profiles.config_paths(spec, {}, tmp_path)
+
+    assert found == [tmp_path / ".codex/config.toml", orca / "config.toml"]
+
+
 def test_home_globs_need_a_file_kept_in_each_root() -> None:
     document = copy.deepcopy(_document("omp"))
     document["config_file"][0]["home_globs"] = ["~/x/*"]

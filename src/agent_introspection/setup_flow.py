@@ -125,7 +125,8 @@ def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
 
 def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
     """Write the options' settings into the config file; return the config and a report."""
-    path = (options.config_path or DEFAULT_CONFIG_PATH).expanduser()
+    # Resolved, so a symlinked config is written through, never replaced.
+    path = (options.config_path or DEFAULT_CONFIG_PATH).expanduser().resolve()
     before = path.read_text("utf-8") if path.exists() else ""
     text = before
     try:
@@ -133,6 +134,9 @@ def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
             text = config_writers.update_table(text, "toml", table, values).text
         config = parse_config(tomllib.loads(text))
         require_host(config, "setup installs the SigNoz host's facts store and schedule")
+        # The facts registry knows fewer keys than the harness profiles (omp is
+        # `oh-my-pi`): refuse here, before a dry run passes and a real one stops at facts.
+        facts.enabled_harnesses(facts.load_registry(), config.harnesses_enabled)
     except (config_writers.ConfigFileError, tomllib.TOMLDecodeError, ConfigurationError) as exc:
         raise SetupError("config", f"{path}: {exc}") from None
     # A missing file is always written: the later steps load it from this path.
@@ -193,8 +197,7 @@ def _harnesses(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
 
 def _schedule(config: AppConfig, options: SetupOptions) -> dict[str, Any]:
     if options.dry_run:
-        schedule.platform_scheduler()
-        schedule.job_path(config)
+        schedule.check(config)
         return {"planned": "facts schedule install"}
     return schedule.schedule_install(options.config_path)
 

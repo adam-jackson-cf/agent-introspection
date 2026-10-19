@@ -110,7 +110,7 @@ const rateChange = (before: number | null, after: number | null) =>
  * mixes pre and post events, so neither window counts it. `change_pct` is the
  * rate change, NULL when either rate is missing or the earlier rate is 0. A
  * proposal of the retired repeated-correction detector has no cluster to match,
- * so its matched counts and rates are NULL rather than a measured 0.
+ * so its counts and rates are NULL rather than a measured 0.
  */
 export function prePost(
   proposal: Row,
@@ -140,18 +140,19 @@ export function prePost(
     addDays(appliedDay, days),
   );
   const tagged = withKind(proposal);
-  const measured = tagged.kind === "cluster";
-  const changed = measured ? rateChange(pre.rate, post.rate) : null;
+  const unmeasured = { matched: null, tasks: null, rate: null };
+  const [before, after] =
+    tagged.kind === "cluster" ? [pre, post] : [unmeasured, unmeasured];
   return {
     ...tagged,
     days,
-    pre_matched: measured ? pre.matched : null,
-    pre_tasks: pre.tasks,
-    pre_rate: measured ? pre.rate : null,
-    post_matched: measured ? post.matched : null,
-    post_tasks: post.tasks,
-    post_rate: measured ? post.rate : null,
-    change_pct: changed,
+    pre_matched: before.matched,
+    pre_tasks: before.tasks,
+    pre_rate: before.rate,
+    post_matched: after.matched,
+    post_tasks: after.tasks,
+    post_rate: after.rate,
+    change_pct: rateChange(before.rate, after.rate),
     verdict: proposal.verdict ?? null,
     evaluated_ratio: proposal.evaluated_ratio ?? null,
   };

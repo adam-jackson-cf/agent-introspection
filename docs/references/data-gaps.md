@@ -20,7 +20,7 @@ harness does not emit it, so the signal is hidden wherever that harness is enabl
 
 56 per-harness signals across 5 harnesses: 280 cells, 155 aligned (✓), 103 reached by a different route (≈), 8 not applicable by construction (—), 14 not emitted (✗).
 
-Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means every harness). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
+Parity is judged per machine, over the harnesses it uses (config `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`; absent means Claude Code and Codex). A signal is shown when every enabled harness reaches it (✓, ≈, or —). When an enabled harness does not emit it (✗), the signal is hidden on that machine, and the Pipeline view lists it with the reason; it is never shown as zero. A machine using only Claude Code and omp, for example, shows Output throughput, which Codex cannot produce.
 
 | View                        | Signal                       | omp | Codex app-server | Codex CLI | Codex exec | Claude Code |
 | --------------------------- | ---------------------------- | --- | ---------------- | --------- | ---------- | ----------- |

@@ -286,3 +286,26 @@ def test_the_command_passes_its_options_and_exits_non_zero_when_a_step_fails(
     steps.preflight_passed = False
     assert main(argv) == EXIT_FACTS
     assert json.loads(capsys.readouterr().out)["stopped_at"] == "signoz"
+
+
+def test_an_unknown_harness_key_stops_both_runs_at_the_config(steps: Steps, tmp_path: Path) -> None:
+    for dry_run in (True, False):
+        result = setup_flow.run(options(tmp_path, harnesses=("omp",), dry_run=dry_run))
+
+        assert (result["stopped_at"], result["passed"]) == ("config", False)
+        assert "unknown harness omp" in result["error"]
+    assert not (tmp_path / "config.toml").exists()
+    assert steps.names() == []
+
+
+def test_a_symlinked_config_is_written_through(steps: Steps, tmp_path: Path) -> None:
+    target = tmp_path / "dotfiles/config.toml"
+    target.parent.mkdir()
+    target.write_text("# kept\n")
+    link = tmp_path / "config.toml"
+    link.symlink_to(target)
+
+    setup_flow.run(options(tmp_path, backfill_days=1))
+
+    assert link.is_symlink()
+    assert "# kept" in target.read_text()
