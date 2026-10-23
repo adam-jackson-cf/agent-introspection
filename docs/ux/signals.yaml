@@ -1,0 +1,4098 @@
+# agreed: 2026-10-22 (Step 4 STOP); derived from build (adjust, audit-only) from the before.default captures; forms are the current rendered forms (Step 5)
+version: 1
+data_mode: source-present
+source:
+  kind: api
+  path: dashboard/server.ts (/api/view, /api/session, /api/registry)
+  schema: dashboard/src/contracts.ts
+app_wide:
+  - skip-link
+  - nav
+  - topbar
+  - refresh
+pages:
+  pipeline:
+    route: /pipeline?range=7
+    signals:
+      - id: pipeline-filters
+        question: Q1.1
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: pipeline-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: pipeline-legend
+        question: Q1.1
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: pipeline-kpi-loaders
+        question: Q1.1
+        kind: figure
+        form: figure
+        unit: pipeline check
+        scope: Loaders and snapshots
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Loaders and snapshots'
+      - id: pipeline-kpi-loaders-links
+        question: Q1.1
+        kind: link
+        zoom: L3
+        scope: Loaders and snapshots links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-kpi-max-lag
+        question: Q1.1
+        kind: figure
+        form: figure
+        unit: pipeline check
+        scope: Max fact lag
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Max fact lag'
+      - id: pipeline-kpi-max-lag-links
+        question: Q1.1
+        kind: link
+        zoom: L3
+        scope: Max fact lag links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-kpi-coverage
+        question: Q1.1
+        kind: figure
+        form: figure
+        unit: pipeline check
+        scope: Coverage
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Coverage'
+      - id: pipeline-kpi-coverage-links
+        question: Q1.1
+        kind: link
+        zoom: L3
+        scope: Coverage links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-kpi-parity
+        question: Q1.1
+        kind: figure
+        form: figure
+        unit: pipeline check
+        scope: Source parity
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Source parity'
+      - id: pipeline-kpi-parity-links
+        question: Q1.1
+        kind: link
+        zoom: L3
+        scope: Source parity links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-kpi-sanitization
+        question: Q1.1
+        kind: figure
+        form: figure
+        unit: pipeline check
+        scope: Sanitization
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Sanitization'
+      - id: pipeline-kpi-sanitization-links
+        question: Q1.1
+        kind: link
+        zoom: L3
+        scope: Sanitization links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-loader-refresh
+        question: Q1.2
+        kind: figure
+        form: figure
+        unit: loader, host, source
+        scope: Loader and snapshot refresh
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Loader and snapshot refresh'
+      - id: pipeline-loader-refresh-columns
+        question: Q1.2
+        kind: column
+        fields:
+          - View
+          - Status
+          - Last success (UTC)
+          - Age
+          - Rows written
+          - Error
+        zoom: L2
+        scope: Loader and snapshot refresh table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Loader and snapshot refresh' rows
+      - id: pipeline-loader-refresh-links
+        question: Q1.2
+        kind: link
+        zoom: L3
+        scope: Loader and snapshot refresh links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-hook-spool
+        question: Q1.2
+        kind: figure
+        form: figure
+        unit: loader, host, source
+        scope: Hook spool by host
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Hook spool by host'
+      - id: pipeline-hook-spool-columns
+        question: Q1.2
+        kind: column
+        fields:
+          - Host
+          - State
+          - Pending
+          - Rejected
+          - Oldest pending
+          - Hooks received / sent (24h)
+          - Delivery
+          - Last error
+          - CLI version
+          - Reported
+        zoom: L2
+        scope: Hook spool by host table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Hook spool by host' rows
+      - id: pipeline-hook-spool-links
+        question: Q1.2
+        kind: link
+        zoom: L3
+        scope: Hook spool by host links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-freshness-by-harness
+        question: Q1.2
+        kind: figure
+        form: figure
+        unit: loader, host, source
+        scope: Freshness by harness
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Freshness by harness'
+      - id: pipeline-freshness-by-harness-columns
+        question: Q1.2
+        kind: column
+        fields:
+          - Harness
+          - Source
+          - SigNoz latest
+          - Fact lag
+          - Last activity
+        zoom: L2
+        scope: Freshness by harness table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Freshness by harness' rows
+      - id: pipeline-freshness-by-harness-links
+        question: Q1.2
+        kind: link
+        zoom: L3
+        scope: Freshness by harness links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-fact-rows-per-day
+        question: Q1.6
+        kind: figure
+        form: day-bars
+        unit: fact row per day
+        scope: Fact rows per day
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Fact rows per day'
+      - id: pipeline-fact-rows-per-day-columns
+        question: Q1.6
+        kind: column
+        fields:
+          - Day
+          - omp
+          - Codex app-server
+          - Codex CLI
+          - Codex exec
+          - Claude Code
+        zoom: L2
+        scope: Fact rows per day table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Fact rows per day' rows
+      - id: pipeline-fact-rows-per-day-links
+        question: Q1.6
+        kind: link
+        zoom: L3
+        scope: Fact rows per day links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-coverage-by-view
+        question: Q1.4
+        kind: figure
+        form: table
+        unit: signal × harness cell
+        scope: Coverage by view
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Coverage by view'
+          probe:
+            failed: 0
+            total: 2
+      - id: pipeline-coverage-by-view-columns
+        question: Q1.4
+        kind: column
+        fields:
+          - View
+          - Healthy
+          - Unexplained
+        zoom: L2
+        scope: Coverage by view table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Coverage by view' rows
+      - id: pipeline-coverage-by-view-links
+        question: Q1.4
+        kind: link
+        zoom: L3
+        scope: Coverage by view links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-source-parity
+        question: Q1.3
+        kind: figure
+        form: table
+        unit: harness, fact measure
+        scope: Source parity
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Source parity'
+          probe:
+            failed: 1
+            total: 5
+      - id: pipeline-source-parity-columns
+        question: Q1.3
+        kind: column
+        fields:
+          - Harness
+          - Raw ops
+          - Fact ops
+          - Raw input
+          - Fact input
+          - Match
+        zoom: L2
+        scope: Source parity table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Source parity' rows
+      - id: pipeline-source-parity-links
+        question: Q1.3
+        kind: link
+        zoom: L3
+        scope: Source parity links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-all-equals-sum
+        question: Q1.3
+        kind: figure
+        form: table
+        unit: harness, fact measure
+        scope: All = Σ harnesses
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'All = Σ harnesses'
+          probe:
+            failed: 0
+            total: 15
+      - id: pipeline-all-equals-sum-columns
+        question: Q1.3
+        kind: column
+        fields:
+          - Fact
+          - Measure
+          - All
+          - Σ harnesses
+          - Match
+        zoom: L2
+        scope: All = Σ harnesses table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'All = Σ harnesses' rows
+      - id: pipeline-all-equals-sum-links
+        question: Q1.3
+        kind: link
+        zoom: L3
+        scope: All = Σ harnesses links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-sanitization
+        question: Q1.5
+        kind: figure
+        form: table
+        unit: stored table
+        scope: Sanitization
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Sanitization'
+      - id: pipeline-sanitization-columns
+        question: Q1.5
+        kind: column
+        fields:
+          - Table
+          - Rows
+          - Dropped keys
+          - Text > 160
+          - Home paths
+        zoom: L2
+        scope: Sanitization table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Sanitization' rows
+      - id: pipeline-sanitization-links
+        question: Q1.5
+        kind: link
+        zoom: L3
+        scope: Sanitization links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-stray-unrouted
+        question: Q1.7
+        kind: figure
+        form: figure
+        unit: row, signal
+        scope: Stray and unrouted rows
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Stray and unrouted rows'
+      - id: pipeline-stray-unrouted-columns
+        question: Q1.7
+        kind: column
+        fields:
+          - Harness
+          - Source
+          - Explanation
+          - Span or event
+          - Rows
+        zoom: L2
+        scope: Stray and unrouted rows table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Stray and unrouted rows' rows
+      - id: pipeline-stray-unrouted-links
+        question: Q1.7
+        kind: link
+        zoom: L3
+        scope: Stray and unrouted rows links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-excluded-signals
+        question: Q1.7
+        kind: figure
+        form: figure
+        unit: row, signal
+        scope: Excluded signals
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Excluded signals'
+      - id: pipeline-excluded-signals-columns
+        question: Q1.7
+        kind: column
+        fields:
+          - Signal
+          - View
+          - Missing for
+          - Reason
+        zoom: L2
+        scope: Excluded signals table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Excluded signals' rows
+      - id: pipeline-excluded-signals-links
+        question: Q1.7
+        kind: link
+        zoom: L3
+        scope: Excluded signals links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-hidden-signals
+        question: Q1.7
+        kind: figure
+        form: figure
+        unit: row, signal
+        scope: Signals hidden on this machine
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Signals hidden on this machine'
+      - id: pipeline-hidden-signals-columns
+        question: Q1.7
+        kind: column
+        fields:
+          - Signal
+          - View
+          - Not emitted by
+          - Why
+        zoom: L2
+        scope: Signals hidden on this machine table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Signals hidden on this machine' rows
+      - id: pipeline-hidden-signals-links
+        question: Q1.7
+        kind: link
+        zoom: L3
+        scope: Signals hidden on this machine links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-health-trend
+        question: Q1.8
+        kind: figure
+        form: trend-line
+        unit: pipeline check
+        scope: previous-window pipeline check results
+        zoom: L1
+        scale_note: as its question
+        tags:
+          - target
+        data:
+          status: derivable
+          owner: dashboard/server
+          computed_by: dashboard/server/pipeline.ts
+      - id: pipeline-check-map
+        question: Q1.1
+        kind: primary-visual
+        form: chip
+        unit: pipeline check
+        scope: harness × pipeline check status (loader, freshness, parity, coverage, sanitization)
+        zoom: L1
+        scale_note: as its question
+        tags:
+          - target
+        data:
+          status: available
+          owner: dashboard/server
+          field: harness × pipeline check status (loader, freshness, parity, coverage, sanitization)
+  pipeline-coverage:
+    route: /pipeline/coverage?range=7
+    signals:
+      - id: pipeline-coverage-filters
+        question: Q1.4
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: pipeline-coverage-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: pipeline-coverage-coverage-by-view
+        question: Q1.4
+        kind: figure
+        form: table
+        unit: signal × harness cell
+        scope: Coverage by view
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Coverage by view'
+          probe:
+            failed: 0
+            total: 2
+      - id: pipeline-coverage-coverage-by-view-columns
+        question: Q1.4
+        kind: column
+        fields:
+          - View
+          - Healthy
+          - Unexplained
+        zoom: L2
+        scope: Coverage by view table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Coverage by view' rows
+      - id: pipeline-coverage-coverage-by-view-links
+        question: Q1.4
+        kind: link
+        zoom: L3
+        scope: Coverage by view links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-coverage-coverage-grid
+        question: Q1.4
+        kind: primary-visual
+        form: table
+        unit: signal × harness cell
+        scope: Coverage grid
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=pipeline · panel 'Coverage grid'
+          probe:
+            failed: 3
+            total: 274
+      - id: pipeline-coverage-coverage-grid-columns
+        question: Q1.4
+        kind: column
+        fields:
+          - Signal
+          - omp
+          - Codex app-server
+          - Codex CLI
+          - Codex exec
+          - Claude Code
+        zoom: L2
+        scope: Coverage grid table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Coverage grid' rows
+      - id: pipeline-coverage-coverage-grid-links
+        question: Q1.4
+        kind: link
+        zoom: L3
+        scope: Coverage grid links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: pipeline-coverage-stray-unrouted-lists
+        question: Q1.7
+        kind: figure
+        form: table
+        unit: row, signal
+        scope: unrouted, excluded and hidden-signal lists (today on Pipeline)
+        zoom: L1
+        scale_note: as its question
+        tags:
+          - target
+        data:
+          status: available
+          owner: dashboard/server
+          field: unrouted, excluded and hidden-signal lists (today on Pipeline)
+  provider:
+    route: /provider?range=7
+    signals:
+      - id: provider-filters
+        question: Q2.11
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: provider-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: provider-legend
+        question: Q2.11
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: provider-kpi-model-calls
+        question: Q2.11
+        kind: figure
+        form: figure
+        unit: model call
+        scope: Model calls
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Model calls'
+      - id: provider-kpi-model-calls-links
+        question: Q2.11
+        kind: link
+        zoom: L3
+        scope: Model calls links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-kpi-call-error-rate
+        question: Q2.11
+        kind: primary-visual
+        form: figure
+        unit: model call
+        scope: Call error rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Call error rate'
+      - id: provider-kpi-call-error-rate-links
+        question: Q2.11
+        kind: link
+        zoom: L3
+        scope: Call error rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-kpi-retries
+        question: Q2.11
+        kind: figure
+        form: figure
+        unit: model call
+        scope: Retries
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Retries'
+      - id: provider-kpi-retries-links
+        question: Q2.11
+        kind: link
+        zoom: L3
+        scope: Retries links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-kpi-unknown-outcomes
+        question: Q2.11
+        kind: figure
+        form: figure
+        unit: model call
+        scope: Unknown outcomes
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Unknown outcomes'
+      - id: provider-kpi-unknown-outcomes-links
+        question: Q2.11
+        kind: link
+        zoom: L3
+        scope: Unknown outcomes links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-daily-error-rate
+        question: Q2.12
+        kind: figure
+        form: trend-line
+        unit: call per day
+        scope: Daily call error rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Daily call error rate'
+      - id: provider-daily-error-rate-columns
+        question: Q2.12
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily call error rate table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily call error rate' rows
+      - id: provider-daily-error-rate-links
+        question: Q2.12
+        kind: link
+        zoom: L3
+        scope: Daily call error rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-daily-ttft
+        question: Q2.12
+        kind: figure
+        form: trend-line
+        unit: call per day
+        scope: Daily median time to first token
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Daily median time to first token'
+      - id: provider-daily-ttft-columns
+        question: Q2.12
+        kind: column
+        fields:
+          - Day
+          - omp (s)
+          - Codex app-server (s)
+          - Codex CLI (s)
+          - Codex exec (s)
+          - Claude Code (s)
+        zoom: L2
+        scope: Daily median time to first token table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily median time to first token' rows
+      - id: provider-daily-ttft-links
+        question: Q2.12
+        kind: link
+        zoom: L3
+        scope: Daily median time to first token links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-latency-by-model
+        question: Q2.13
+        kind: figure
+        form: table
+        unit: model
+        scope: Latency and time to first token by model
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Latency and time to first token by model'
+      - id: provider-latency-by-model-columns
+        question: Q2.13
+        kind: column
+        fields:
+          - Harness
+          - Model
+          - Calls
+          - P50 latency
+          - P95 latency
+          - P50 TTFT
+          - P95 TTFT
+        zoom: L2
+        scope: Latency and time to first token by model table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Latency and time to first token by model' rows
+      - id: provider-latency-by-model-links
+        question: Q2.13
+        kind: link
+        zoom: L3
+        scope: Latency and time to first token by model links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-errors-by-class
+        question: Q2.14
+        kind: figure
+        form: table
+        unit: error class
+        scope: Call errors by class
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Call errors by class'
+      - id: provider-errors-by-class-columns
+        question: Q2.14
+        kind: column
+        fields:
+          - Harness
+          - Model
+          - Class
+          - Calls
+          - Last seen (UTC)
+        zoom: L2
+        scope: Call errors by class table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Call errors by class' rows
+      - id: provider-errors-by-class-links
+        question: Q2.14
+        kind: link
+        zoom: L3
+        scope: Call errors by class links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: provider-retries
+        question: Q2.14
+        kind: figure
+        form: table
+        unit: error class
+        scope: Retries
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=provider · panel 'Retries'
+      - id: provider-retries-columns
+        question: Q2.14
+        kind: column
+        fields:
+          - Harness
+          - Extra attempts
+          - Measured as
+        zoom: L2
+        scope: Retries table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Retries' rows
+      - id: provider-retries-links
+        question: Q2.14
+        kind: link
+        zoom: L3
+        scope: Retries links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  cache:
+    route: /cache?range=7
+    signals:
+      - id: cache-filters
+        question: Q2.1
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: cache-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: cache-legend
+        question: Q2.1
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: cache-kpi-input-tokens
+        question: Q2.1
+        kind: figure
+        form: figure
+        unit: token
+        scope: Input tokens
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Input tokens'
+      - id: cache-kpi-input-tokens-links
+        question: Q2.1
+        kind: link
+        zoom: L3
+        scope: Input tokens links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-kpi-cache-utilization
+        question: Q2.1
+        kind: primary-visual
+        form: figure
+        unit: token
+        scope: Input cache utilization
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Input cache utilization'
+      - id: cache-kpi-cache-utilization-links
+        question: Q2.1
+        kind: link
+        zoom: L3
+        scope: Input cache utilization links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-kpi-uncached-input
+        question: Q2.1
+        kind: figure
+        form: figure
+        unit: token
+        scope: Uncached input
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Uncached input'
+      - id: cache-kpi-uncached-input-links
+        question: Q2.1
+        kind: link
+        zoom: L3
+        scope: Uncached input links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-kpi-output-tokens
+        question: Q2.1
+        kind: figure
+        form: figure
+        unit: token
+        scope: Output tokens
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Output tokens'
+      - id: cache-kpi-output-tokens-links
+        question: Q2.1
+        kind: link
+        zoom: L3
+        scope: Output tokens links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-daily-tokens
+        question: Q2.2
+        kind: figure
+        form: day-bars
+        unit: token per day
+        scope: Daily token consumption
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Daily token consumption'
+      - id: cache-daily-tokens-columns
+        question: Q2.2
+        kind: column
+        fields:
+          - Day
+          - Uncached input
+          - Cached input
+          - Output
+        zoom: L2
+        scope: Daily token consumption table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily token consumption' rows
+      - id: cache-daily-tokens-links
+        question: Q2.2
+        kind: link
+        zoom: L3
+        scope: Daily token consumption links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-daily-cache-utilization
+        question: Q2.2
+        kind: figure
+        form: trend-line
+        unit: token per day
+        scope: Daily input cache utilization
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Daily input cache utilization'
+      - id: cache-daily-cache-utilization-columns
+        question: Q2.2
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily input cache utilization table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily input cache utilization' rows
+      - id: cache-daily-cache-utilization-links
+        question: Q2.2
+        kind: link
+        zoom: L3
+        scope: Daily input cache utilization links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-by-harness
+        question: Q2.3
+        kind: figure
+        form: table
+        unit: harness, model
+        scope: By harness
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'By harness'
+      - id: cache-by-harness-columns
+        question: Q2.3
+        kind: column
+        fields:
+          - Harness
+          - Input
+          - Cached
+          - Utilization
+          - Uncached
+          - Output
+          - Operations
+          - Sessions
+        zoom: L2
+        scope: By harness table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'By harness' rows
+      - id: cache-by-harness-links
+        question: Q2.3
+        kind: link
+        zoom: L3
+        scope: By harness links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-by-model
+        question: Q2.3
+        kind: figure
+        form: table
+        unit: harness, model
+        scope: By model
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'By model'
+      - id: cache-by-model-columns
+        question: Q2.3
+        kind: column
+        fields:
+          - Harness
+          - Provider
+          - Model
+          - Operations
+          - Input
+          - Utilization
+          - Uncached
+          - Output
+        zoom: L2
+        scope: By model table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'By model' rows
+      - id: cache-by-model-links
+        question: Q2.3
+        kind: link
+        zoom: L3
+        scope: By model links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: cache-top-uncached-sessions
+        question: Q2.4
+        kind: figure
+        form: table
+        unit: session
+        scope: Sessions with the most uncached input
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=cache · panel 'Sessions with the most uncached input'
+      - id: cache-top-uncached-sessions-columns
+        question: Q2.4
+        kind: column
+        fields:
+          - Harness
+          - Session
+          - Models
+          - Uncached
+          - Utilization
+          - Output
+          - Operations
+          - Last seen (UTC)
+        zoom: L2
+        scope: Sessions with the most uncached input table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Sessions with the most uncached input' rows
+      - id: cache-top-uncached-sessions-links
+        question: Q2.4
+        kind: link
+        zoom: L3
+        scope: Sessions with the most uncached input links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  effort:
+    route: /effort?range=7
+    signals:
+      - id: effort-filters
+        question: Q2.5
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: effort-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: effort-legend
+        question: Q2.5
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: effort-kpi-reasoning-tokens
+        question: Q2.6
+        kind: figure
+        form: figure
+        unit: token, task
+        scope: Reasoning tokens
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Reasoning tokens'
+      - id: effort-kpi-reasoning-tokens-links
+        question: Q2.6
+        kind: link
+        zoom: L3
+        scope: Reasoning tokens links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-kpi-reasoning-share
+        question: Q2.6
+        kind: figure
+        form: figure
+        unit: token, task
+        scope: Reasoning share of output
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Reasoning share of output'
+      - id: effort-kpi-reasoning-share-links
+        question: Q2.6
+        kind: link
+        zoom: L3
+        scope: Reasoning share of output links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-kpi-tasks
+        question: Q2.6
+        kind: figure
+        form: figure
+        unit: token, task
+        scope: Tasks
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Tasks'
+      - id: effort-kpi-tasks-links
+        question: Q2.6
+        kind: link
+        zoom: L3
+        scope: Tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-kpi-heavy-share
+        question: Q2.6
+        kind: figure
+        form: figure
+        unit: token, task
+        scope: Heavy-effort task share
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Heavy-effort task share'
+      - id: effort-kpi-heavy-share-links
+        question: Q2.6
+        kind: link
+        zoom: L3
+        scope: Heavy-effort task share links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-daily-reasoning
+        question: Q2.7
+        kind: figure
+        form: day-bars
+        unit: token, task per day
+        scope: Daily reasoning tokens by effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Daily reasoning tokens by effort'
+      - id: effort-daily-reasoning-columns
+        question: Q2.7
+        kind: column
+        fields:
+          - Day
+          - low
+          - medium
+          - high
+          - xhigh
+          - mixed
+          - unset
+        zoom: L2
+        scope: Daily reasoning tokens by effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily reasoning tokens by effort' rows
+      - id: effort-daily-reasoning-links
+        question: Q2.7
+        kind: link
+        zoom: L3
+        scope: Daily reasoning tokens by effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-daily-effort-mix
+        question: Q2.7
+        kind: figure
+        form: day-bars
+        unit: token, task per day
+        scope: Daily task mix by effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Daily task mix by effort'
+      - id: effort-daily-effort-mix-columns
+        question: Q2.7
+        kind: column
+        fields:
+          - Day
+          - low
+          - medium
+          - high
+          - xhigh
+          - mixed
+        zoom: L2
+        scope: Daily task mix by effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily task mix by effort' rows
+      - id: effort-daily-effort-mix-links
+        question: Q2.7
+        kind: link
+        zoom: L3
+        scope: Daily task mix by effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-clean-by-effort
+        question: Q2.8
+        kind: figure
+        form: dot-whisker
+        unit: effort level
+        scope: Clean completion by effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Clean completion by effort'
+          probe:
+            failed: 0
+            total: 1
+      - id: effort-clean-by-effort-columns
+        question: Q2.8
+        kind: column
+        fields:
+          - Harness
+          - Effort
+          - n
+          - Value
+          - Low
+          - High
+        zoom: L2
+        scope: Clean completion by effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Clean completion by effort' rows
+      - id: effort-clean-by-effort-links
+        question: Q2.8
+        kind: link
+        zoom: L3
+        scope: Clean completion by effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-duration-by-effort
+        question: Q2.8
+        kind: figure
+        form: dot-whisker
+        unit: effort level
+        scope: Task duration by effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Task duration by effort'
+      - id: effort-duration-by-effort-columns
+        question: Q2.8
+        kind: column
+        fields:
+          - Harness
+          - Effort
+          - n
+          - Value
+          - Low
+          - High
+        zoom: L2
+        scope: Task duration by effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Task duration by effort' rows
+      - id: effort-duration-by-effort-links
+        question: Q2.8
+        kind: link
+        zoom: L3
+        scope: Task duration by effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-outcomes-by-effort
+        question: Q2.5
+        kind: primary-visual
+        form: table
+        unit: effort level
+        scope: Task outcomes by reasoning effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Task outcomes by reasoning effort'
+      - id: effort-outcomes-by-effort-columns
+        question: Q2.5
+        kind: column
+        fields:
+          - Harness
+          - Effort
+          - Tasks
+          - Clean
+          - Interrupted
+          - Follow-up
+          - Errored
+          - P50 time
+          - P90 time
+          - Steps / task
+          - Delegations / task
+          - Reasoning / task
+          - Reasoning share
+        zoom: L2
+        scope: Task outcomes by reasoning effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Task outcomes by reasoning effort' rows
+      - id: effort-outcomes-by-effort-links
+        question: Q2.5
+        kind: link
+        zoom: L3
+        scope: Task outcomes by reasoning effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-spend-by-effort
+        question: Q2.5
+        kind: figure
+        form: table
+        unit: effort level
+        scope: Reasoning spend by effort
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Reasoning spend by effort'
+      - id: effort-spend-by-effort-columns
+        question: Q2.5
+        kind: column
+        fields:
+          - Harness
+          - Effort
+          - Calls
+          - Reasoning
+          - Of all reasoning
+          - Per call
+          - Share of output
+        zoom: L2
+        scope: Reasoning spend by effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Reasoning spend by effort' rows
+      - id: effort-spend-by-effort-links
+        question: Q2.5
+        kind: link
+        zoom: L3
+        scope: Reasoning spend by effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-model-by-effort
+        question: Q2.9
+        kind: figure
+        form: table
+        unit: model × effort
+        scope: Model × effort
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Model × effort'
+      - id: effort-model-by-effort-columns
+        question: Q2.9
+        kind: column
+        fields:
+          - Harness
+          - Model
+          - Effort
+          - Tasks
+          - Clean
+          - P50 time
+          - Steps
+          - Reasoning / step
+        zoom: L2
+        scope: Model × effort table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Model × effort' rows
+      - id: effort-model-by-effort-links
+        question: Q2.9
+        kind: link
+        zoom: L3
+        scope: Model × effort links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: effort-top-reasoning-tasks
+        question: Q2.10
+        kind: figure
+        form: table
+        unit: task
+        scope: Top 25 tasks by reasoning tokens
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=effort · panel 'Top 25 tasks by reasoning tokens'
+      - id: effort-top-reasoning-tasks-columns
+        question: Q2.10
+        kind: column
+        fields:
+          - Harness
+          - Session
+          - Model
+          - Effort
+          - Started (UTC)
+          - Duration
+          - Steps
+          - Reasoning
+          - Output
+          - Clean
+        zoom: L2
+        scope: Top 25 tasks by reasoning tokens table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Top 25 tasks by reasoning tokens' rows
+      - id: effort-top-reasoning-tasks-links
+        question: Q2.10
+        kind: link
+        zoom: L3
+        scope: Top 25 tasks by reasoning tokens links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  tools:
+    route: /tools?range=7
+    signals:
+      - id: tools-filters
+        question: Q3.1
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: tools-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: tools-legend
+        question: Q3.1
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: tools-kpi-tool-calls
+        question: Q3.2
+        kind: figure
+        form: figure
+        unit: tool call, task
+        scope: Tool calls
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Tool calls'
+      - id: tools-kpi-tool-calls-links
+        question: Q3.2
+        kind: link
+        zoom: L3
+        scope: Tool calls links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-kpi-failure-rate
+        question: Q3.2
+        kind: figure
+        form: figure
+        unit: tool call, task
+        scope: Tool failure rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Tool failure rate'
+      - id: tools-kpi-failure-rate-links
+        question: Q3.2
+        kind: link
+        zoom: L3
+        scope: Tool failure rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-kpi-tasks-affected
+        question: Q3.2
+        kind: figure
+        form: figure
+        unit: tool call, task
+        scope: Tasks affected by failures
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Tasks affected by failures'
+      - id: tools-kpi-tasks-affected-links
+        question: Q3.2
+        kind: link
+        zoom: L3
+        scope: Tasks affected by failures links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-kpi-repeats
+        question: Q3.2
+        kind: figure
+        form: figure
+        unit: tool call, task
+        scope: Tasks with repeated attempts
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Tasks with repeated attempts'
+      - id: tools-kpi-repeats-links
+        question: Q3.2
+        kind: link
+        zoom: L3
+        scope: Tasks with repeated attempts links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-daily-failure-rate
+        question: Q3.3
+        kind: figure
+        form: trend-line
+        unit: call per day
+        scope: Daily tool failure rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Daily tool failure rate'
+      - id: tools-daily-failure-rate-columns
+        question: Q3.3
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily tool failure rate table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily tool failure rate' rows
+      - id: tools-daily-failure-rate-links
+        question: Q3.3
+        kind: link
+        zoom: L3
+        scope: Daily tool failure rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-daily-tool-calls
+        question: Q3.3
+        kind: figure
+        form: day-bars
+        unit: call per day
+        scope: Daily tool calls
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Daily tool calls'
+      - id: tools-daily-tool-calls-columns
+        question: Q3.3
+        kind: column
+        fields:
+          - Day
+          - omp
+          - Codex app-server
+          - Codex CLI
+          - Codex exec
+          - Claude Code
+        zoom: L2
+        scope: Daily tool calls table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily tool calls' rows
+      - id: tools-daily-tool-calls-links
+        question: Q3.3
+        kind: link
+        zoom: L3
+        scope: Daily tool calls links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-failures-by-tool
+        question: Q3.1
+        kind: primary-visual
+        form: table
+        unit: tool, signature
+        scope: Failures by tool
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Failures by tool'
+      - id: tools-failures-by-tool-columns
+        question: Q3.1
+        kind: column
+        fields:
+          - Harness
+          - Tool
+          - Calls
+          - Failed
+          - Rate
+          - Failed tasks
+        zoom: L2
+        scope: Failures by tool table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Failures by tool' rows
+      - id: tools-failures-by-tool-links
+        question: Q3.1
+        kind: link
+        zoom: L3
+        scope: Failures by tool links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-failure-signatures
+        question: Q3.1
+        kind: figure
+        form: table
+        unit: tool, signature
+        scope: Failure signatures
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Failure signatures'
+      - id: tools-failure-signatures-columns
+        question: Q3.1
+        kind: column
+        fields:
+          - Harness
+          - Tool
+          - Signature
+          - Count
+          - Tasks
+          - Example
+        zoom: L2
+        scope: Failure signatures table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Failure signatures' rows
+      - id: tools-failure-signatures-links
+        question: Q3.1
+        kind: link
+        zoom: L3
+        scope: Failure signatures links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: tools-repeated-calls
+        question: Q3.4
+        kind: figure
+        form: table
+        unit: repeated call
+        scope: Repeated calls
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=tools · panel 'Repeated calls'
+      - id: tools-repeated-calls-columns
+        question: Q3.4
+        kind: column
+        fields:
+          - Harness
+          - Session
+          - Tool
+          - Command
+          - Attempts
+          - Longest run
+          - Failed
+          - Started (UTC)
+        zoom: L2
+        scope: Repeated calls table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Repeated calls' rows
+      - id: tools-repeated-calls-links
+        question: Q3.4
+        kind: link
+        zoom: L3
+        scope: Repeated calls links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  friction:
+    route: /friction?range=7
+    signals:
+      - id: friction-filters
+        question: Q3.5
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: friction-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: friction-legend
+        question: Q3.5
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: friction-kpi-clean-completion
+        question: Q3.5
+        kind: primary-visual
+        form: figure
+        unit: task
+        scope: Clean completion
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Clean completion'
+          probe:
+            failed: 0
+            total: 1
+      - id: friction-kpi-clean-completion-links
+        question: Q3.5
+        kind: link
+        zoom: L3
+        scope: Clean completion links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-kpi-interrupted
+        question: Q3.5
+        kind: figure
+        form: figure
+        unit: task
+        scope: Interrupted tasks
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Interrupted tasks'
+          probe:
+            failed: 0
+            total: 3
+      - id: friction-kpi-interrupted-links
+        question: Q3.5
+        kind: link
+        zoom: L3
+        scope: Interrupted tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-kpi-quick-follow-up
+        question: Q3.5
+        kind: figure
+        form: figure
+        unit: task
+        scope: Quick follow-up
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Quick follow-up'
+          probe:
+            failed: 0
+            total: 1
+      - id: friction-kpi-quick-follow-up-links
+        question: Q3.5
+        kind: link
+        zoom: L3
+        scope: Quick follow-up links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-kpi-recovery
+        question: Q3.7
+        kind: figure
+        form: figure
+        unit: harness
+        scope: Recovery after failure
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Recovery after failure'
+      - id: friction-kpi-recovery-links
+        question: Q3.7
+        kind: link
+        zoom: L3
+        scope: Recovery after failure links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-daily-clean
+        question: Q3.6
+        kind: figure
+        form: trend-line
+        unit: task per day
+        scope: Daily clean completion
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Daily clean completion'
+          probe:
+            failed: 0
+            total: 1
+      - id: friction-daily-clean-columns
+        question: Q3.6
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily clean completion table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily clean completion' rows
+      - id: friction-daily-clean-links
+        question: Q3.6
+        kind: link
+        zoom: L3
+        scope: Daily clean completion links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-daily-interrupt-steer
+        question: Q3.6
+        kind: figure
+        form: trend-line
+        unit: task per day
+        scope: Daily interrupt and steer signals
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Daily interrupt and steer signals'
+          probe:
+            failed: 0
+            total: 2
+      - id: friction-daily-interrupt-steer-columns
+        question: Q3.6
+        kind: column
+        fields:
+          - Day
+          - Interrupts
+          - Steers
+        zoom: L2
+        scope: Daily interrupt and steer signals table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily interrupt and steer signals' rows
+      - id: friction-daily-interrupt-steer-links
+        question: Q3.6
+        kind: link
+        zoom: L3
+        scope: Daily interrupt and steer signals links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-components-by-harness
+        question: Q3.7
+        kind: figure
+        form: table
+        unit: harness
+        scope: Friction components by harness
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Friction components by harness'
+      - id: friction-components-by-harness-columns
+        question: Q3.7
+        kind: column
+        fields:
+          - Harness
+          - Tasks
+          - Observes
+          - Clean
+          - Interrupted
+          - Steered
+          - Errored
+          - Follow-up
+        zoom: L2
+        scope: Friction components by harness table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Friction components by harness' rows
+      - id: friction-components-by-harness-links
+        question: Q3.7
+        kind: link
+        zoom: L3
+        scope: Friction components by harness links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-recovery-by-harness
+        question: Q3.7
+        kind: figure
+        form: table
+        unit: harness
+        scope: Recovery by harness
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Recovery by harness'
+      - id: friction-recovery-by-harness-columns
+        question: Q3.7
+        kind: column
+        fields:
+          - Harness
+          - Failed ops
+          - Recovered
+          - Rate
+          - P50 to recover
+        zoom: L2
+        scope: Recovery by harness table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Recovery by harness' rows
+      - id: friction-recovery-by-harness-links
+        question: Q3.7
+        kind: link
+        zoom: L3
+        scope: Recovery by harness links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-failing-operations
+        question: Q3.8
+        kind: figure
+        form: table
+        unit: operation, failure class
+        scope: Operations that fail most
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Operations that fail most'
+      - id: friction-failing-operations-columns
+        question: Q3.8
+        kind: column
+        fields:
+          - Harness
+          - Operation
+          - Failed
+          - Recovered
+        zoom: L2
+        scope: Operations that fail most table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Operations that fail most' rows
+      - id: friction-failing-operations-links
+        question: Q3.8
+        kind: link
+        zoom: L3
+        scope: Operations that fail most links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-failure-classes
+        question: Q3.8
+        kind: figure
+        form: table
+        unit: operation, failure class
+        scope: Failure classes in friction tasks
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Failure classes in friction tasks'
+      - id: friction-failure-classes-columns
+        question: Q3.8
+        kind: column
+        fields:
+          - Failure class
+          - Tasks
+          - Failures
+          - Harnesses
+          - Last seen (UTC)
+        zoom: L2
+        scope: Failure classes in friction tasks table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Failure classes in friction tasks' rows
+      - id: friction-failure-classes-links
+        question: Q3.8
+        kind: link
+        zoom: L3
+        scope: Failure classes in friction tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: friction-latest-friction-tasks
+        question: Q3.9
+        kind: figure
+        form: table
+        unit: task
+        scope: Latest interrupted, steered, or errored tasks
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=friction · panel 'Latest interrupted, steered, or errored tasks'
+      - id: friction-latest-friction-tasks-columns
+        question: Q3.9
+        kind: column
+        fields:
+          - Harness
+          - Type
+          - Session
+          - Model
+          - Effort
+          - Failing tool
+          - Failure class
+          - Started (UTC)
+          - Duration
+          - Interrupted
+          - Steered
+          - Errored
+          - Follow-up
+        zoom: L2
+        scope: Latest interrupted, steered, or errored tasks table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Latest interrupted, steered, or errored tasks' rows
+      - id: friction-latest-friction-tasks-links
+        question: Q3.9
+        kind: link
+        zoom: L3
+        scope: Latest interrupted, steered, or errored tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  guardrails:
+    route: /guardrails?range=7
+    signals:
+      - id: guardrails-filters
+        question: Q3.10
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: guardrails-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: guardrails-legend
+        question: Q3.10
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: guardrails-kpi-rejected
+        question: Q3.10
+        kind: primary-visual
+        form: figure
+        unit: tool call, command
+        scope: Rejected tool calls
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Rejected tool calls'
+      - id: guardrails-kpi-rejected-links
+        question: Q3.10
+        kind: link
+        zoom: L3
+        scope: Rejected tool calls links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-kpi-approvals
+        question: Q3.10
+        kind: figure
+        form: figure
+        unit: tool call, command
+        scope: Approval decisions
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Approval decisions'
+      - id: guardrails-kpi-approvals-links
+        question: Q3.10
+        kind: link
+        zoom: L3
+        scope: Approval decisions links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-kpi-gate-bypass
+        question: Q3.10
+        kind: figure
+        form: figure
+        unit: tool call, command
+        scope: Quality-gate bypass
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Quality-gate bypass'
+      - id: guardrails-kpi-gate-bypass-links
+        question: Q3.10
+        kind: link
+        zoom: L3
+        scope: Quality-gate bypass links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-kpi-command-churn
+        question: Q3.10
+        kind: figure
+        form: figure
+        unit: tool call, command
+        scope: Command churn
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Command churn'
+      - id: guardrails-kpi-command-churn-links
+        question: Q3.10
+        kind: link
+        zoom: L3
+        scope: Command churn links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-daily-rejection-rate
+        question: Q3.11
+        kind: figure
+        form: trend-line
+        unit: call per day
+        scope: Daily rejection rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Daily rejection rate'
+      - id: guardrails-daily-rejection-rate-columns
+        question: Q3.11
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily rejection rate table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily rejection rate' rows
+      - id: guardrails-daily-rejection-rate-links
+        question: Q3.11
+        kind: link
+        zoom: L3
+        scope: Daily rejection rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-verification-runs
+        question: Q3.12
+        kind: figure
+        form: figure
+        unit: verification run
+        scope: Verification runs
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Verification runs'
+      - id: guardrails-verification-runs-links
+        question: Q3.12
+        kind: link
+        zoom: L3
+        scope: Verification runs links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-verification-by-kind
+        question: Q3.12
+        kind: figure
+        form: bar-list
+        unit: verification run
+        scope: Verification runs by kind
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Verification runs by kind'
+      - id: guardrails-verification-by-kind-columns
+        question: Q3.12
+        kind: column
+        fields:
+          - Kind
+          - Harness
+          - Runs
+          - Failed
+          - Failed rate
+          - Caught
+          - Tasks
+          - Last seen (UTC)
+        zoom: L2
+        scope: Verification runs by kind table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Verification runs by kind' rows
+      - id: guardrails-verification-by-kind-links
+        question: Q3.12
+        kind: link
+        zoom: L3
+        scope: Verification runs by kind links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-failures-caught
+        question: Q3.12
+        kind: figure
+        form: table
+        unit: verification run
+        scope: Failures caught in the task
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Failures caught in the task'
+      - id: guardrails-failures-caught-columns
+        question: Q3.12
+        kind: column
+        fields:
+          - Harness
+          - Failed kinds
+          - Caught
+          - Rate
+          - P50 to catch
+        zoom: L2
+        scope: Failures caught in the task table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Failures caught in the task' rows
+      - id: guardrails-failures-caught-links
+        question: Q3.12
+        kind: link
+        zoom: L3
+        scope: Failures caught in the task links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-approvals-by-source
+        question: Q3.13
+        kind: figure
+        form: bar-list
+        unit: approval source
+        scope: Approval decisions by source
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Approval decisions by source'
+      - id: guardrails-approvals-by-source-columns
+        question: Q3.13
+        kind: column
+        fields:
+          - Harness
+          - Decision
+          - Source
+          - Decisions
+        zoom: L2
+        scope: Approval decisions by source table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Approval decisions by source' rows
+      - id: guardrails-approvals-by-source-links
+        question: Q3.13
+        kind: link
+        zoom: L3
+        scope: Approval decisions by source links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-bypass-commands
+        question: Q3.14
+        kind: figure
+        form: table
+        unit: command
+        scope: Quality-gate bypass commands
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Quality-gate bypass commands'
+      - id: guardrails-bypass-commands-columns
+        question: Q3.14
+        kind: column
+        fields:
+          - At (UTC)
+          - Harness
+          - Session
+          - Command
+          - Outcome
+        zoom: L2
+        scope: Quality-gate bypass commands table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Quality-gate bypass commands' rows
+      - id: guardrails-bypass-commands-links
+        question: Q3.14
+        kind: link
+        zoom: L3
+        scope: Quality-gate bypass commands links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: guardrails-command-churn
+        question: Q3.14
+        kind: figure
+        form: table
+        unit: command
+        scope: Command churn
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=guardrails · panel 'Command churn'
+      - id: guardrails-command-churn-columns
+        question: Q3.14
+        kind: column
+        fields:
+          - Harness
+          - Session
+          - File
+          - Commands
+          - Calls
+          - Failed
+        zoom: L2
+        scope: Command churn table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Command churn' rows
+      - id: guardrails-command-churn-links
+        question: Q3.14
+        kind: link
+        zoom: L3
+        scope: Command churn links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  recurrence:
+    route: /recurrence?range=7
+    signals:
+      - id: recurrence-filters
+        question: Q4.1
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: recurrence-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: recurrence-legend
+        question: Q4.1
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: recurrence-kpi-actionable
+        question: Q4.1
+        kind: figure
+        form: figure
+        unit: failure cluster
+        scope: Actionable repeats
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Actionable repeats'
+      - id: recurrence-kpi-actionable-links
+        question: Q4.1
+        kind: link
+        zoom: L3
+        scope: Actionable repeats links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-kpi-clusters
+        question: Q4.2
+        kind: figure
+        form: figure
+        unit: cluster, file target
+        scope: Recurring failure clusters
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Recurring failure clusters'
+      - id: recurrence-kpi-clusters-links
+        question: Q4.2
+        kind: link
+        zoom: L3
+        scope: Recurring failure clusters links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-kpi-targets
+        question: Q4.2
+        kind: figure
+        form: figure
+        unit: cluster, file target
+        scope: Recurring targets
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Recurring targets'
+      - id: recurrence-kpi-targets-links
+        question: Q4.2
+        kind: link
+        zoom: L3
+        scope: Recurring targets links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-daily-classed-failures
+        question: Q4.3
+        kind: figure
+        form: day-bars
+        unit: failure per day
+        scope: Daily tool failures with a failure class
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Daily tool failures with a failure class'
+      - id: recurrence-daily-classed-failures-columns
+        question: Q4.3
+        kind: column
+        fields:
+          - Day
+          - omp
+          - Codex app-server
+          - Codex CLI
+          - Codex exec
+          - Claude Code
+        zoom: L2
+        scope: Daily tool failures with a failure class table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily tool failures with a failure class' rows
+      - id: recurrence-daily-classed-failures-links
+        question: Q4.3
+        kind: link
+        zoom: L3
+        scope: Daily tool failures with a failure class links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-actionable-repeats
+        question: Q4.1
+        kind: primary-visual
+        form: table
+        unit: failure cluster
+        scope: Actionable repeats
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Actionable repeats'
+      - id: recurrence-actionable-repeats-columns
+        question: Q4.1
+        kind: column
+        fields:
+          - Tool family
+          - Failure class
+          - Harnesses (count)
+          - Tools
+          - Count
+          - Tasks
+          - Days
+          - Last seen (UTC)
+        zoom: L2
+        scope: Actionable repeats table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Actionable repeats' rows
+      - id: recurrence-actionable-repeats-links
+        question: Q4.1
+        kind: link
+        zoom: L3
+        scope: Actionable repeats links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-failure-clusters
+        question: Q4.2
+        kind: figure
+        form: table
+        unit: cluster, file target
+        scope: Recurring failure clusters
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Recurring failure clusters'
+      - id: recurrence-failure-clusters-columns
+        question: Q4.2
+        kind: column
+        fields:
+          - Tool family
+          - Failure class
+          - Harnesses (count)
+          - Tools
+          - Count
+          - Tasks
+          - Days
+          - Last seen (UTC)
+        zoom: L2
+        scope: Recurring failure clusters table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Recurring failure clusters' rows
+      - id: recurrence-failure-clusters-links
+        question: Q4.2
+        kind: link
+        zoom: L3
+        scope: Recurring failure clusters links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-recurring-targets
+        question: Q4.2
+        kind: figure
+        form: table
+        unit: cluster, file target
+        scope: Recurring targets
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=recurrence · panel 'Recurring targets'
+      - id: recurrence-recurring-targets-columns
+        question: Q4.2
+        kind: column
+        fields:
+          - File
+          - Harnesses
+          - Tasks
+          - Days
+          - Calls
+          - Failed
+        zoom: L2
+        scope: Recurring targets table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Recurring targets' rows
+      - id: recurrence-recurring-targets-links
+        question: Q4.2
+        kind: link
+        zoom: L3
+        scope: Recurring targets links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: recurrence-post-intervention-recurrence
+        question: Q5.1
+        kind: figure
+        form: side-by-side-bars
+        unit: applied intervention
+        scope: intervene.post_recurrence (today on Findings and fixes)
+        zoom: L1
+        scale_note: as its question
+        tags:
+          - target
+        data:
+          status: available
+          owner: dashboard/server
+          field: intervene.post_recurrence (today on Findings and fixes)
+  intent:
+    route: /intent?range=7
+    signals:
+      - id: intent-filters
+        question: Q4.4
+        kind: control
+        form: filter-bar
+        unit: time range, harness
+        scope: time range and harness applied to every panel
+        zoom: L1
+        scale_note: fixed set of controls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: filters (start, end, harness)
+      - id: intent-timings
+        kind: panel
+        orphan: true
+        tags:
+          - derived from build
+        scope: query timing badge (registry, route counts, SQL ms); answers no question
+      - id: intent-legend
+        question: Q4.4
+        kind: key
+        form: key
+        unit: harness
+        scope: harness colour key above each section
+        zoom: L1
+        scale_note: one swatch per enabled harness (5, fixed)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: registry harnesses
+      - id: intent-kpi-labelled
+        question: Q4.4
+        kind: figure
+        form: figure
+        unit: labelled task
+        scope: Labelled tasks
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Labelled tasks'
+      - id: intent-kpi-labelled-links
+        question: Q4.4
+        kind: link
+        zoom: L3
+        scope: Labelled tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-kpi-corrected
+        question: Q4.4
+        kind: figure
+        form: figure
+        unit: labelled task
+        scope: Corrected by the next prompt
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Corrected by the next prompt'
+          probe:
+            failed: 0
+            total: 1
+      - id: intent-kpi-corrected-links
+        question: Q4.4
+        kind: link
+        zoom: L3
+        scope: Corrected by the next prompt links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-kpi-frustrated
+        question: Q4.6
+        kind: figure
+        form: figure
+        unit: correction kind
+        scope: Frustrated follow-ups
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Frustrated follow-ups'
+          probe:
+            failed: 0
+            total: 1
+      - id: intent-kpi-frustrated-links
+        question: Q4.6
+        kind: link
+        zoom: L3
+        scope: Frustrated follow-ups links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-daily-corrected
+        question: Q4.5
+        kind: figure
+        form: trend-line
+        unit: task per day
+        scope: Daily corrected-by-next-prompt rate
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Daily corrected-by-next-prompt rate'
+      - id: intent-daily-corrected-columns
+        question: Q4.5
+        kind: column
+        fields:
+          - Day
+          - omp %
+          - Codex app-server %
+          - Codex CLI %
+          - Codex exec %
+          - Claude Code %
+        zoom: L2
+        scope: Daily corrected-by-next-prompt rate table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Daily corrected-by-next-prompt rate' rows
+      - id: intent-daily-corrected-links
+        question: Q4.5
+        kind: link
+        zoom: L3
+        scope: Daily corrected-by-next-prompt rate links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-task-type-mix
+        question: Q4.4
+        kind: primary-visual
+        form: bar-list
+        unit: labelled task
+        scope: Task type mix
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Task type mix'
+      - id: intent-task-type-mix-columns
+        question: Q4.4
+        kind: column
+        fields:
+          - Harness
+          - Task type
+          - Tasks
+        zoom: L2
+        scope: Task type mix table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Task type mix' rows
+      - id: intent-task-type-mix-links
+        question: Q4.4
+        kind: link
+        zoom: L3
+        scope: Task type mix links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-correction-kinds
+        question: Q4.6
+        kind: figure
+        form: bar-list
+        unit: correction kind
+        scope: Correction kinds
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Correction kinds'
+          probe:
+            failed: 0
+            total: 1
+      - id: intent-correction-kinds-columns
+        question: Q4.6
+        kind: column
+        fields:
+          - Harness
+          - Correction
+          - Tasks
+        zoom: L2
+        scope: Correction kinds table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Correction kinds' rows
+      - id: intent-correction-kinds-links
+        question: Q4.6
+        kind: link
+        zoom: L3
+        scope: Correction kinds links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-by-harness
+        question: Q4.6
+        kind: figure
+        form: table
+        unit: correction kind
+        scope: By harness
+        zoom: L1
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'By harness'
+      - id: intent-by-harness-columns
+        question: Q4.6
+        kind: column
+        fields:
+          - Harness
+          - Tasks
+          - Labelled
+          - Labelled share
+          - Corrected next
+          - Frustrated next
+        zoom: L2
+        scope: By harness table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'By harness' rows
+      - id: intent-by-harness-links
+        question: Q4.6
+        kind: link
+        zoom: L3
+        scope: By harness links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-effort-payoff
+        question: Q4.7
+        kind: figure
+        form: table
+        unit: task type × effort
+        scope: Effort payoff by task type
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Effort payoff by task type'
+      - id: intent-effort-payoff-columns
+        question: Q4.7
+        kind: column
+        fields:
+          - Task type
+          - Effort
+          - Tasks
+          - Corrected next
+          - Clean completion
+        zoom: L2
+        scope: Effort payoff by task type table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Effort payoff by task type' rows
+      - id: intent-effort-payoff-links
+        question: Q4.7
+        kind: link
+        zoom: L3
+        scope: Effort payoff by task type links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: intent-recent-corrected
+        question: Q4.8
+        kind: figure
+        form: table
+        unit: task
+        scope: Recent corrected tasks
+        zoom: L2
+        scale_note: from the 7-day capture; see jobs.md scale
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/view?view=intent · panel 'Recent corrected tasks'
+      - id: intent-recent-corrected-columns
+        question: Q4.8
+        kind: column
+        fields:
+          - Harness
+          - Session
+          - Started (UTC)
+          - Task type
+          - Effort
+          - Correction
+          - Next sentiment
+        zoom: L2
+        scope: Recent corrected tasks table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: panel 'Recent corrected tasks' rows
+      - id: intent-recent-corrected-links
+        question: Q4.8
+        kind: link
+        zoom: L3
+        scope: Recent corrected tasks links (detail pages, other views)
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+  glossary:
+    route: /glossary
+    signals:
+      - id: glossary-entries
+        question: Q6.1
+        kind: primary-visual
+        form: table
+        unit: signal
+        scope: one entry per signal
+        zoom: L1
+        scale_note: ~70 signals now; grouped by view, 10x stays a long reference page
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/registry signals
+      - id: glossary-entries-columns
+        question: Q6.1
+        kind: column
+        fields:
+          - Harness
+          - Alignment
+          - Route
+          - Note
+        zoom: L1
+        scope: per-harness support table of each entry
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/registry support
+  session:
+    route: /session?range=7&harness=claude-code&session=77aa7183-f38b-4fd5-9d67-36abb7a40335
+    signals:
+      - id: session-tasks
+        question: Q6.2
+        kind: primary-visual
+        form: table
+        unit: session
+        scope: Tasks
+        zoom: L1
+        scale_note: one session; rows grow with its tasks and calls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/session · section 'Tasks'
+      - id: session-tasks-columns
+        question: Q6.2
+        kind: column
+        fields:
+          - Started (UTC)
+          - Model
+          - Effort
+          - Task type
+          - Duration
+          - Steps
+          - Reasoning
+          - Interrupted
+          - Steered
+          - Errored
+          - Follow-up
+          - Clean
+          - Corrected next
+          - Friction observed
+        zoom: L1
+        scope: Tasks table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: section 'Tasks' rows
+      - id: session-model-usage
+        question: Q6.2
+        kind: figure
+        form: table
+        unit: session
+        scope: Model usage and calls
+        zoom: L1
+        scale_note: one session; rows grow with its tasks and calls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/session · section 'Model usage and calls'
+      - id: session-model-usage-columns
+        question: Q6.2
+        kind: column
+        fields:
+          - Model
+          - Effort
+          - Operations
+          - Input
+          - Cached
+          - Output
+          - Reasoning
+          - Outcome
+          - Error
+          - Calls
+          - TTFT p50
+        zoom: L1
+        scope: Model usage and calls table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: section 'Model usage and calls' rows
+      - id: session-tool-calls
+        question: Q6.2
+        kind: figure
+        form: table
+        unit: session
+        scope: Tool calls
+        zoom: L1
+        scale_note: one session; rows grow with its tasks and calls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/session · section 'Tool calls'
+      - id: session-tool-calls-columns
+        question: Q6.2
+        kind: column
+        fields:
+          - At (UTC)
+          - Tool
+          - Outcome
+          - Command
+          - Exit
+          - Failure signature
+          - Targets
+        zoom: L1
+        scope: Tool calls table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: section 'Tool calls' rows
+      - id: session-tool-calls-links
+        question: Q6.2
+        kind: link
+        zoom: L3
+        scope: Tool calls links
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: row link targets
+      - id: session-signals
+        question: Q6.2
+        kind: figure
+        form: table
+        unit: session
+        scope: User and policy signals
+        zoom: L1
+        scale_note: one session; rows grow with its tasks and calls
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: /api/session · section 'User and policy signals'
+      - id: session-signals-columns
+        question: Q6.2
+        kind: column
+        fields:
+          - At (UTC)
+          - Signal
+          - Detail
+          - Source
+          - Tool
+        zoom: L1
+        scope: User and policy signals table columns
+        tags:
+          - derived from build
+        data:
+          status: available
+          owner: dashboard/server
+          field: section 'User and policy signals' rows

@@ -1,0 +1,691 @@
+format: flat-v2
+id: ui-page
+version: core-5.dashboard-4.none
+layers:
+  core:
+    id: core
+    version: 5
+  pack:
+    id: dashboard
+    version: 4
+  style: none
+style: none
+derived_from:
+  assets/rules/global-rules.md: a44f2d0a049ba79a782afe3d6a00ae334b9789e56fe74710dae2d399ca2a964f
+  assets/packs/dashboard/rules.md: 19d500f54098de108c680214a17424e7311dbf58a188478e4de025c868add90a
+bands:
+  ship: 90
+  revise: 75
+  redesign: 0
+cap_on_block: 59
+exceptions_hash: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+waivers: []
+expired_waivers: []
+items:
+  - id: G01a
+    layer: core
+    rule: G01
+    statement: Every element whose snapshot `candidate` is `panel`, `figure`, `column`, `control`, `action` or `mark` carries a `q` (DOM `data-q`, or the overlay in the before phase) that is a signal id in `signals.yaml` for this page. An untagged page fails.
+    method: detector
+    produced_by: signals_check
+    check: default
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --page <page> --snapshot <default snapshot> --check default; in the before phase add --overlay docs/ux/audit-tags.json. Fail with one finding per element whose snapshot candidate is panel, figure, column, control, action or mark and whose q (own or inherited) is absent or not a signal id of this page in signals.yaml or in its top-level app_wide list; an element inside a data-role="key" container, or an action whose data-role is explain, inherits the nearest tagged ancestor's q; an untagged page therefore fails
+    evidence: selector
+    blocking: true
+  - id: G01c
+    layer: core
+    rule: G01
+    statement: "Zero rendered elements map to a signal marked `orphan: true`."
+    method: detector
+    produced_by: signals_check
+    check: orphans
+    procedure: "python3 $DWU/scripts/signals_check.py docs/ux --page <page> --snapshot <default snapshot> --check orphans; fail with one finding per rendered element whose q is a signal marked orphan: true"
+    evidence: selector
+    blocking: false
+  - id: G01b
+    layer: core
+    rule: G01
+    statement: "Every signal with `data.status` `available`, `derivable` or `proposed` renders at least one element with its id: an L1 signal in snap `default`, an L2 signal in `default` or in any declared state capture (`open`, `filter-<id>`, `land-<id>`) of the same phase."
+    method: detector
+    produced_by: signals_check
+    check: coverage
+    procedure: "python3 $DWU/scripts/signals_check.py docs/ux --page <page> --snapshot <default snapshot> --check coverage [--captures <dir>]; fail with one finding per signal of this page with data.status available, derivable or proposed that no rendered element carries as q: an L1 signal is looked for in default, an L2 signal in default and in every declared state capture of the same phase (the sibling captures of the snapshot, or --captures); the evidence names the capture that rendered each L2 id"
+    evidence: file-line
+    blocking: false
+  - id: G02a
+    layer: core
+    rule: G02
+    statement: No text node matching `\b\d+ of \d+\b` sits in the same panel as a mark group whose count equals its second number.
+    method: detector
+    produced_by: dom_checks
+    check: restate
+    procedure: python3 $DWU/scripts/dom_checks.py restate <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G02b
+    layer: core
+    rule: G02
+    statement: No sentence of ≥ 6 words appears twice among L1 text nodes.
+    method: detector
+    produced_by: dom_checks
+    check: restate
+    procedure: python3 $DWU/scripts/dom_checks.py restate <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G03a
+    layer: core
+    rule: G03
+    statement: '`labels_check.py` reports zero bare codes (`\b[A-Z]{1,2}\d{1,2}\b`), snake_case tokens, UUIDs or hashes ≥ 12 hex chars in rendered text outside `data-kind="id"`.'
+    method: detector
+    produced_by: labels_check
+    check: codes
+    procedure: python3 $DWU/scripts/labels_check.py docs/ux --page <page> --snapshot <default snapshot> --check codes; first remove every catalogue label and short (case-insensitive, whole phrase) from the text; a remaining catalogue key is raw unless it is, case-insensitive, a whole word of its own label; also fail with one finding per bare code, snake_case token, UUID or hash match outside data-kind="id" elements
+    evidence: selector
+    blocking: false
+  - id: G03b
+    layer: core
+    rule: G03
+    statement: In every panel with marks, the set of `data-state` values on marks equals the set of key entries in that panel.
+    method: detector
+    produced_by: dom_checks
+    check: key_sync
+    procedure: python3 $DWU/scripts/dom_checks.py key_sync <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G03c
+    layer: core
+    rule: G03
+    statement: Every key element is a descendant of the panel whose marks it keys (shares its `data-q` ancestor).
+    method: detector
+    produced_by: dom_checks
+    check: key_sync
+    procedure: python3 $DWU/scripts/dom_checks.py key_sync <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G04a
+    layer: core
+    rule: G04
+    statement: The main content's bounding box in snap `open` equals its box in snap `default` (±1 px).
+    method: detector
+    produced_by: dom_checks
+    check: overlay
+    procedure: python3 $DWU/scripts/dom_checks.py overlay <snapshot> --ux docs/ux --json on snapshot state(s) default, open; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+    applies_when: "state_exists: open"
+  - id: G05a
+    layer: core
+    rule: G05
+    statement: "No two sibling zones with equal top share a row unless the archetype marks both `fills_width: false` as a pair and the shorter box height ≥ 60 % of the taller (measured on the `default` snapshot `rect`)."
+    method: detector
+    produced_by: dom_checks
+    check: rows
+    procedure: python3 $DWU/scripts/dom_checks.py rows <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G05b
+    layer: core
+    rule: G05
+    statement: "Every zone sharing a row fills ≥ 90 % of its column and is paired with its neighbour by `fills_width: false` in the archetype; every table and chart fills ≥ 95 % of its container width."
+    method: detector
+    produced_by: dom_checks
+    check: rows
+    procedure: python3 $DWU/scripts/dom_checks.py rows <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G05c
+    layer: core
+    rule: G05
+    statement: In snaps `1440` and `1024`, `scroll_width` ≤ the viewport width.
+    method: detector
+    produced_by: dom_checks
+    check: rows
+    procedure: python3 $DWU/scripts/dom_checks.py rows <snapshot> --ux docs/ux --json on snapshot state(s) 1440, 1024; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G06a
+    layer: core
+    rule: G06
+    statement: No filter control group contains more than 8 sibling toggle buttons.
+    method: detector
+    produced_by: dom_checks
+    check: scale
+    procedure: python3 $DWU/scripts/dom_checks.py scale <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G06b
+    layer: core
+    rule: G06
+    statement: Every list or table with more than 50 rows has paging, a fold ("show the other N") or virtualised rows.
+    method: detector
+    produced_by: dom_checks
+    check: scale
+    procedure: python3 $DWU/scripts/dom_checks.py scale <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G06c
+    layer: core
+    rule: G06
+    statement: Every signal of form matrix, table, list or bars has a non-empty `scale_note`.
+    method: detector
+    produced_by: signals_check
+    check: scale
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --page <page> --check scale; fail with one finding per signal of form matrix, table, list or bars whose scale_note is empty
+    evidence: file-line
+    blocking: false
+  - id: G07a
+    layer: core
+    rule: G07
+    statement: In snap `default` zero folds, expanded rows or drawers are open other than the primary visual.
+    method: detector
+    produced_by: dom_checks
+    check: collapsed
+    procedure: python3 $DWU/scripts/dom_checks.py collapsed <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G08a
+    layer: core
+    rule: G08
+    statement: For every row of the page's deep-link table (pages.md, the target section; the current section in phase before) whose `Filters set` names a filter of a list page, snap `land-<source>` exists and the first integer of the `count_target` element's text in the landing equals the first integer of the `count_source` element's text in `default`; a row whose target is an item page (`Filters set` is none, empty, or `<key> = <one item>` with `count_target` `-`) is exempt from the count. A link whose visible text starts with an integer followed by a noun or carries `data-role="count"` and is not a source in the table fails as `summary link not in the deep-link table`.
+    method: detector
+    produced_by: dom_checks
+    check: deeplink
+    procedure: python3 $DWU/scripts/dom_checks.py deeplink <snapshot> --ux docs/ux --json on snapshot state(s) default and land-<source> for each table row that sets a list filter (item rows need no landing capture); pass when the statement holds for every row and link, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G09a
+    layer: core
+    rule: G09
+    statement: Every subtitle's rendered height ≤ 1.6 × its font size at the reference width.
+    method: detector
+    produced_by: dom_checks
+    check: text
+    procedure: python3 $DWU/scripts/dom_checks.py text <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G09b
+    layer: core
+    rule: G09
+    statement: No `h1`, `h2`, `h3` or tab label text contains a digit or a status word from `semantics.yaml`.
+    method: detector
+    produced_by: dom_checks
+    check: text
+    procedure: python3 $DWU/scripts/dom_checks.py text <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G09c
+    layer: core
+    rule: G09
+    statement: Every subtitle states how to read its panel (names a unit, a direction, or a comparison) and contains no count and no status word.
+    method: judged
+    produced_by: judged
+    procedure: Judged at the before moment and at page done by two fresh-context assessors using assets/templates/judge-prompt.md. Evidence is the screenshot region of each subtitle. Answer pass when the subtitle names a unit, a direction or a comparison and contains no digit and no status word of semantics.yaml; otherwise fail
+    evidence: region
+    blocking: false
+  - id: G10a
+    layer: core
+    rule: G10
+    statement: For each like-minded page pair, every shared control id sits in the same slot (`title-row`, `panel-head`, `drawer-top`, `filter-bar`) and the same ordinal within the slot.
+    method: detector
+    produced_by: dom_checks
+    check: compare
+    procedure: python3 $DWU/scripts/dom_checks.py pair <this page's default snapshot> <like-minded page's default snapshot> --json for each like-minded page (`compare` is an alias of `pair`); pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G10b
+    layer: core
+    rule: G10
+    statement: "The filter bar's child order is: controls, `Clear`, extras, count, (i)."
+    method: detector
+    produced_by: dom_checks
+    check: filterbar
+    procedure: python3 $DWU/scripts/dom_checks.py filterbar <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G11a
+    layer: core
+    rule: G11
+    statement: The console sidecar for snap `default` holds zero errors.
+    method: detector
+    produced_by: dom_checks
+    check: load
+    procedure: python3 $DWU/scripts/dom_checks.py load <snapshot> --console <same stem>.console.json --ux docs/ux --page <page> --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: file-line
+    blocking: true
+  - id: G11b
+    layer: core
+    rule: G11
+    statement: The element `data-zone` of the archetype's primary visual has width and height > 0 in snap `default`.
+    method: detector
+    produced_by: dom_checks
+    check: load
+    procedure: python3 $DWU/scripts/dom_checks.py load <snapshot> --console <same stem>.console.json --ux docs/ux --page <page> --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: true
+  - id: G12a
+    layer: core
+    rule: G12
+    statement: Zero `div[onclick]`, zero `[role=button]` that are not `<button>`, zero entity marks without an `href`.
+    method: detector
+    produced_by: dom_checks
+    check: affordance
+    procedure: python3 $DWU/scripts/dom_checks.py affordance <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G12b
+    layer: core
+    rule: G12
+    statement: "A `:focus-visible` rule exists for `a`, `button`, `[tabindex]`, and every interactive element has `cursor: pointer`."
+    method: detector
+    produced_by: dom_checks
+    check: affordance
+    procedure: python3 $DWU/scripts/dom_checks.py affordance <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: file-line
+    blocking: false
+  - id: G13a
+    layer: core
+    rule: G13
+    statement: Every element whose signal kind is `figure-strip` is ≤ 64 px tall.
+    method: detector
+    produced_by: dom_checks
+    check: strip
+    procedure: python3 $DWU/scripts/dom_checks.py strip <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G13b
+    layer: core
+    rule: G13
+    statement: The primary visual's box height ≥ 60% of (fold − its top) in snap `default`.
+    method: detector
+    produced_by: dom_checks
+    check: strip
+    procedure: python3 $DWU/scripts/dom_checks.py strip <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G14a
+    layer: core
+    rule: G14
+    statement: Every `data-state` value on the page is a `state` in `semantics.yaml`.
+    method: detector
+    produced_by: dom_checks
+    check: semantics
+    procedure: python3 $DWU/scripts/dom_checks.py semantics <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: true
+  - id: G14b
+    layer: core
+    rule: G14
+    statement: A computed `backgroundColor`, `fill`, `stroke` or border colour equal to `{colors.status-<tone>}` appears only on elements whose own or nearest-ancestor `data-state` maps to that tone in `semantics.yaml`; a computed text `color` equal to a tone is checked only on an element that carries `data-state`, is a `mark` candidate, has `data-role` `verdict` or `chip`, or whose own text is a status word or scale word of `semantics.yaml` (at most three words); other text is not a status use. A tone whose value equals a neutral text token of DESIGN.md (`text`, `text-muted`, `text-faint`, `on-surface`) is reported once as `tone-collision` in the evidence and its text matches are skipped.
+    method: detector
+    produced_by: dom_checks
+    check: semantics
+    procedure: python3 $DWU/scripts/dom_checks.py semantics <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector; the evidence of a pass lists each tone-collision
+    evidence: selector
+    blocking: true
+  - id: G14c
+    layer: core
+    rule: G14
+    statement: "`contrast_check.py` passes on `docs/ux/DESIGN.md` (text 4.5:1, marks 3:1, pairwise series ΔE); recorded by `score_rubric.py record` with `file-line` evidence into the report file."
+    method: detector
+    produced_by: tools
+    check: contrast
+    procedure: python3 $DWU/scripts/contrast_check.py docs/ux/DESIGN.md --json; text 4.5:1, marks 3:1, pairwise series colour difference; record the result with python3 $DWU/scripts/score_rubric.py record <results.json> --rubric docs/ux/rubrics/ui-page.yaml --page <page> G14c pass|fail <DESIGN.md:line>
+    evidence: file-line
+    blocking: false
+  - id: G14d
+    layer: core
+    rule: G14
+    statement: Every mark carrying `data-entity` has fill or colour equal to `semantics.yaml categorical.bindings[entity]`, or `series-other` with a visible label when unbound; bindings are append-only.
+    method: detector
+    produced_by: dom_checks
+    check: series
+    procedure: python3 $DWU/scripts/dom_checks.py series <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G15a
+    layer: core
+    rule: G15
+    statement: Every rendered label and heading is sentence case (no word of ≥ 3 letters in all caps outside `data-kind="id"`).
+    method: detector
+    produced_by: labels_check
+    check: case
+    procedure: python3 $DWU/scripts/labels_check.py docs/ux --page <page> --snapshot <default snapshot> --check case; fail with one finding per label or heading word of 3 or more letters in capitals outside data-kind="id" elements; an all-caps token is exempt when it is immediately followed by .<ext> (a file name), is in the built-in list UTC, GMT, ID, URL, URI, API, JSON, CSV, HTML, CSS, SQL, CPU, GPU, RAM, PDF, PNG, SVG, UUID, HTTP, HTTPS, or is in labels.yaml rules.acronyms
+    evidence: selector
+    blocking: false
+  - id: G15b
+    layer: core
+    rule: G15
+    statement: Every `data-kind="id"` element is ≤ 12 characters of visible text and has a copy control.
+    method: detector
+    produced_by: labels_check
+    check: ids
+    procedure: python3 $DWU/scripts/labels_check.py docs/ux --page <page> --snapshot <default snapshot> --check ids; fail with one finding per data-kind="id" element longer than 12 visible characters or without a copy control
+    evidence: selector
+    blocking: false
+  - id: G16a
+    layer: core
+    rule: G16
+    statement: No table cell holds more than 40 characters or a line break.
+    method: detector
+    produced_by: dom_checks
+    check: table
+    procedure: python3 $DWU/scripts/dom_checks.py table <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G16b
+    layer: core
+    rule: G16
+    statement: Every `<table>` renders a signal whose question shape is `lookup` or `act`, or a signal whose `form` is `matrix` or `strip` and whose body holds at least one `[data-state]` mark.
+    method: detector
+    produced_by: signals_check
+    check: chart-fill
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --page <page> --snapshot <default snapshot> --check chart-fill; fail with one finding per table whose rendered signal has a question shape other than lookup or act and is not a matrix or strip form whose body holds at least one [data-state] mark
+    evidence: file-line
+    blocking: false
+  - id: G17a
+    layer: core
+    rule: G17
+    statement: 'At most three areas of focus have visible content above the first fold in snap `default`. An area is a `data-zone` element, counting the head zone when it holds an element of signal kind `verdict`, excluding `filters`/`nav`, excluding a zone whose rendered height is 64 px or less, excluding the archetype''s act band (zone attribute `band: act` in `archetypes.json`; without a pack, `data-role="act-band"`), and counting a declared pair (archetype `pairs`, or two zones whose boxes overlap vertically) as one area.'
+    method: detector
+    produced_by: dom_checks
+    check: focus
+    procedure: python3 $DWU/scripts/dom_checks.py focus <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when at most three areas of focus remain after the exclusions and the pair merge in the statement, otherwise fail with one finding on the fourth area
+    evidence: selector
+    blocking: false
+  - id: G17b
+    layer: core
+    rule: G17
+    statement: The first answer element (verdict or primary visual) has top < fold and at most one filter-bar row above it (zero or one passes; two or more fail).
+    method: detector
+    produced_by: dom_checks
+    check: focus
+    procedure: python3 $DWU/scripts/dom_checks.py focus <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G18a
+    layer: core
+    rule: G18
+    statement: Zero empty panels, zero elements with placeholder classes, zero zero-height charts in snap `default`.
+    method: detector
+    produced_by: dom_checks
+    check: spacing
+    procedure: python3 $DWU/scripts/dom_checks.py spacing <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector; svg elements with no renderable child (only defs, title, desc, metadata, style or symbol) are not charts
+    evidence: selector
+    blocking: false
+  - id: G18b
+    layer: core
+    rule: G18
+    statement: Every row of marks has a computed gap > 0 and every `data-zone` has top padding ≥ `{spacing.sm}`.
+    method: detector
+    produced_by: dom_checks
+    check: spacing
+    procedure: python3 $DWU/scripts/dom_checks.py spacing <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: G19a
+    layer: core
+    rule: G19
+    statement: Every row of the feature inventory is present on the page or has a recorded new home or a user-requested deletion.
+    method: judged
+    produced_by: judged
+    procedure: Judged at page done (phase after) by two fresh-context assessors using assets/templates/judge-prompt.md. Evidence is the feature-inventory.md line. Answer pass for a row when the page renders the feature, the row records a new home, or the row records a user-requested deletion; fail otherwise
+    evidence: file-line
+    blocking: false
+    blocking_when:
+      mode:
+        - adjust
+        - change
+    applies_when: phase == after
+  - id: G20a
+    layer: core
+    rule: G20
+    statement: The set of files changed is within the pages, components and artifacts the request names or the blueprint lists (the request text is in the evidence pack).
+    method: judged
+    produced_by: judged
+    procedure: Judged at page done (phase after) by two fresh-context assessors using assets/templates/judge-prompt.md. Evidence is the changed-file list. Answer pass when every changed file is a page, component or artifact named in the request text or listed in the blueprint; fail otherwise
+    evidence: file-line
+    blocking: false
+    applies_when: phase == after
+  - id: G21a
+    layer: core
+    rule: G21
+    statement: "`colour_usage.py <ui_source> --allow <tokens> --strict` reports zero colour literals and `dom_checks.py literals <ui_source> --allow <tokens>` zero font-family or spacing literals in page CSS/JS."
+    method: detector
+    produced_by: tools
+    check: literals
+    procedure: "python3 $DWU/scripts/colour_usage.py <ui_source> --allow <tokens> --strict and python3 $DWU/scripts/dom_checks.py literals <ui_source> --allow <tokens>; in .js, .ts, .html and framework files a named colour counts only inside a CSS value context (a <style> block, a style attribute value, a .style.<prop> assignment, a { <colorProp>: '<value>' } object entry, or an svg fill= or stroke= attribute), prose in a template literal outside those contexts is ignored, and hex and colour-function literals count everywhere outside the token file; pass only when both report zero literals; record the result with score_rubric.py record <results.json> --rubric docs/ux/rubrics/ui-page.yaml --page <page> G21a pass|fail <file:line>"
+    evidence: file-line
+    blocking: false
+  - id: G21b
+    layer: core
+    rule: G21
+    statement: All number-formatting calls (`toFixed`, `Intl.NumberFormat`, `%` formatting) live in `project.yaml.format_module`.
+    method: detector
+    produced_by: dom_checks
+    check: formatters
+    procedure: python3 $DWU/scripts/dom_checks.py formatters <snapshot> --ux docs/ux --json on the source files; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: file-line
+    blocking: false
+  - id: G21c
+    layer: core
+    rule: G21
+    statement: The token file at `tokens.path` equals the re-exported `docs/ux/DESIGN.md` (`style_check.py verify`); when `tokens.format` is `existing`, every contract token maps to a variable of the app's token file with an equal value (`style_check.py map-check`).
+    method: detector
+    produced_by: style_check
+    check: verify
+    procedure: python3 $DWU/scripts/style_check.py verify docs/ux/DESIGN.md --project docs/ux/project.yaml re-exports the token file and diffs it with the file at tokens.path; when tokens.format is existing the same command runs the map-check and passes when every contract token maps to an app variable with an equal value
+    evidence: file-line
+    blocking: false
+  - id: G22a
+    layer: core
+    rule: G22
+    statement: Every bar, gauge or progress element has a track element and an `aria-label` or key entry naming unit and scale.
+    method: detector
+    produced_by: dom_checks
+    check: bars
+    procedure: python3 $DWU/scripts/dom_checks.py bars <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector; an svg rect is a bar only when its class or data-role names bar or track, or its aspect ratio is 2 or more (or 0.5 or less) and its svg is not inside an element carrying data-state, data-shape, data-role="key" or a key signal; square status marks and key swatches are not bars
+    evidence: selector
+    blocking: false
+  - id: G23a
+    layer: core
+    rule: G23
+    statement: "`jobs.md` gives every page exactly one primary question, no two pages share one, and nav order equals the flow order in `pages.md`."
+    method: detector
+    produced_by: signals_check
+    check: pagemap
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --check pagemap; fail when a page has zero or two primary questions in jobs.md, two pages share one, or the nav order differs from the flow order in pages.md
+    evidence: file-line
+    applies_when: page_role != guard
+    blocking: false
+  - id: G24a
+    layer: core
+    rule: G24
+    statement: Every `th` in a data table has a sort control and the active sort shows a direction glyph.
+    method: detector
+    produced_by: dom_checks
+    check: table
+    procedure: python3 $DWU/scripts/dom_checks.py table <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D01a
+    layer: pack
+    rule: D01
+    statement: An element with signal kind `verdict` whose text comes from the data source (or fixture) renders above the fold, before any table or control group other than the page filter bar.
+    method: detector
+    produced_by: dom_checks
+    check: answer
+    procedure: python3 $DWU/scripts/dom_checks.py answer <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: true
+  - id: D01b
+    layer: pack
+    rule: D01
+    statement: The verdict text contains a word from a `semantics.yaml` scale and is not of the form `all N shown`.
+    method: detector
+    produced_by: dom_checks
+    check: answer
+    procedure: python3 $DWU/scripts/dom_checks.py answer <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D02a
+    layer: pack
+    rule: D02
+    statement: The page's `data-zone` ids equal its archetype's zone ids, in the archetype's order.
+    method: detector
+    produced_by: dom_checks
+    check: zones
+    procedure: python3 $DWU/scripts/dom_checks.py zones <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D03a
+    layer: pack
+    rule: D03
+    statement: "`pages.md` unit of rows equals the `unit` of the page's primary signal."
+    method: detector
+    produced_by: signals_check
+    check: unit
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --page <page> --check unit; fail when the unit of rows in pages.md differs from the unit of the page primary signal in signals.yaml
+    evidence: file-line
+    blocking: false
+    applies_when: page_role != guard
+  - id: D04a
+    layer: pack
+    rule: D04
+    statement: Within the functions reachable from the page's render entries (`project.yaml` `pages.<name>.render`; the whole `ui_source` when there is none, and the evidence says `unscoped`), page code contains zero arithmetic over data fields outside `scaling_allowlist` (an entry with `contains` exempts only the lines of its function holding that text, for a count of the page's own UI state such as selected filter values or the rows below its own paging cut, never a business count), zero `.filter().length` or `.reduce(` counts, and zero template literals whose `${}` expression computes a count (arithmetic, `.length`, `.filter(`, `.reduce(` or a number-format call on a field that is not a `*_text`, `*_label` or `*_sentence` field) beside words. A single data field scaled by constants or layout variables into a `style`, `width`, `height`, `x`, `y`, `cx` or `r` value, and a `${}` that prints a `*_text`, `*_label` or `*_sentence` field, are not findings.
+    method: detector
+    produced_by: dom_checks
+    check: compute
+    procedure: python3 $DWU/scripts/dom_checks.py compute <snapshot> --ux docs/ux --page <page> --json on the source files; the render entries come from project.yaml pages.<page>.render and reachability follows references to module-scope functions inside ui_source, and a name the reaching function declares itself (const, let, var or a parameter) is local and never followed; findings are attributed to the innermost function holding the line, braces inside strings and template literals never count; pass when the statement holds, otherwise fail with one finding per violating line; the pass evidence counts the allowlisted lines
+    evidence: file-line
+    blocking: false
+  - id: D05a
+    layer: pack
+    rule: D05
+    statement: Every figure with a `comparator` renders a baseline element and a trend mark with a `data-state` of improved/regressed/stable.
+    method: detector
+    produced_by: dom_checks
+    check: figures
+    procedure: python3 $DWU/scripts/dom_checks.py figures <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D06a
+    layer: pack
+    rule: D06
+    statement: Every figure's caption names the selection it is scoped to or the pool it is drawn from.
+    method: judged
+    produced_by: judged
+    procedure: Judged at the before moment and at page done by two fresh-context assessors using assets/templates/judge-prompt.md. Evidence is the screenshot region of each figure caption. Answer pass for a figure when its caption names the selection it is scoped to or the pool it is drawn from; fail otherwise
+    evidence: region
+    blocking: false
+  - id: D07a
+    layer: pack
+    rule: D07
+    statement: In snap `open` the drawer contains zero `table` elements and zero lists of more than 10 rows.
+    method: detector
+    produced_by: dom_checks
+    check: drawer
+    procedure: python3 $DWU/scripts/dom_checks.py drawer <snapshot> --ux docs/ux --json on snapshot state(s) open; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+    applies_when: "state_exists: open"
+  - id: D08a
+    layer: pack
+    rule: D08
+    statement: No page in `signals.yaml` has only `status`-shape signals whose unit is another page's unit.
+    method: detector
+    produced_by: signals_check
+    check: glyphlayer
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --check glyphlayer; fail with one finding per page whose signals are all of status shape and have the unit of another page
+    evidence: file-line
+    blocking: false
+  - id: D09a
+    layer: pack
+    rule: D09
+    statement: Every mark's shape class matches the `shape` for its `data-state` in `semantics.yaml`, on this page and every like-minded page.
+    method: detector
+    produced_by: dom_checks
+    check: semantics
+    procedure: python3 $DWU/scripts/dom_checks.py semantics <snapshot> --ux docs/ux --json on snapshot state(s) default of this page and of each like-minded page; a mark's shape is its `data-shape` (in phase `before` with the audit overlay, the overlay entry's `shape`); pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D09b
+    layer: pack
+    rule: D09
+    statement: Within one zone and parent, all marks of one `data-shape` have equal width and height (±1 px); marks of shape `bar` are compared by height only.
+    method: detector
+    produced_by: dom_checks
+    check: semantics
+    procedure: python3 $DWU/scripts/dom_checks.py semantics <snapshot> --ux docs/ux --json on snapshot state(s) default; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D10a
+    layer: pack
+    rule: D10
+    statement: Every signal's `form` equals the form `presentation.md` gives for its question shape, and no pie, donut or radial gauge form is used.
+    method: detector
+    produced_by: signals_check
+    check: form
+    procedure: "python3 $DWU/scripts/signals_check.py docs/ux --page <page> --check form (artifacts only: no capture is opened); in phase before every row is scored, derived rows included, and each finding is tagged `baseline`; fail with one finding per signal whose form differs from the form presentation.md gives for its question shape, and per signal whose form is pie, donut or radial gauge"
+    evidence: file-line
+    blocking: false
+  - id: D11a
+    layer: pack
+    rule: D11
+    statement: Every control in the page filter bar is referenced by every panel's `scope`; filter changes alter the URL (snap `land-<filter>` URL differs from `default`).
+    method: detector
+    produced_by: dom_checks
+    check: filters
+    procedure: python3 $DWU/scripts/dom_checks.py filters <snapshot> --ux docs/ux --json on snapshot state(s) default, land-<filter>; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+  - id: D12a
+    layer: pack
+    rule: D12
+    statement: No nav item routes to a page whose archetype requires a selected item.
+    method: detector
+    produced_by: signals_check
+    check: pagemap
+    procedure: python3 $DWU/scripts/signals_check.py docs/ux --check pagemap; fail with one finding per nav item whose route is a page of an archetype that requires a selected item
+    evidence: file-line
+    blocking: false
+  - id: D13a
+    layer: pack
+    rule: D13
+    statement: For every signal that declares `data.probe` (failed and total counts, or a command printing them), the share of `failed`-token marks among the status marks that carry that signal's id (own or inherited `q`) equals the probe's share within one mark; marks of shape `bar`, trend marks and marks inside a key (`data-role="key"` or an ancestor whose signal kind is `key`) are excluded. `project.yaml` `data_probe` (or the fixture counts) is the default probe for the page's `primary-visual` signal only. A page with no probed signal whose source reports failures fails with `no probe`.
+    method: detector
+    produced_by: dom_checks
+    check: semantics
+    procedure: python3 $DWU/scripts/dom_checks.py semantics <snapshot> --ux docs/ux --page <page> --json on snapshot state(s) default; compare each probed signal's failed marks with its probe; pass when the statement holds, otherwise fail with one finding per signal whose share is off by more than one mark, or one `no probe` finding
+    evidence: selector
+    blocking: false
+  - id: D14a
+    layer: pack
+    rule: D14
+    statement: In snap `empty` the page renders the shared empty-state element and zero placeholder boxes or zero-height charts.
+    method: detector
+    produced_by: dom_checks
+    check: spacing
+    procedure: python3 $DWU/scripts/dom_checks.py spacing <snapshot> --ux docs/ux --json on snapshot state(s) empty; svg elements with no renderable child (only defs, title, desc, metadata, style or symbol, or hidden with no box) are not charts; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+    applies_when: "state_exists: empty"
+  - id: D15a
+    layer: pack
+    rule: D15
+    statement: Every link's visible text or `aria-label` names the kind of target it opens.
+    method: judged
+    produced_by: judged
+    procedure: Judged at the before moment and at page done by two fresh-context assessors using assets/templates/judge-prompt.md. Evidence is the screenshot region of the link. Answer pass for a link when its visible text or aria-label names the kind of target it opens (page, drawer, filter or external); fail otherwise
+    evidence: region
+    blocking: false
+  - id: D15b
+    layer: pack
+    rule: D15
+    statement: A drawer has no two actions with the same `href`.
+    method: detector
+    produced_by: dom_checks
+    check: drawer
+    procedure: python3 $DWU/scripts/dom_checks.py drawer <snapshot> --ux docs/ux --json on snapshot state(s) open; pass when the statement holds for every element, otherwise fail with one finding per violating selector
+    evidence: selector
+    blocking: false
+    applies_when: "state_exists: open"

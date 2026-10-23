@@ -1,0 +1,1590 @@
+# derived from build (Step 5, adjust audit-only); not agreed. Labels for raw codes are proposals: the UI renders these codes raw today.
+version: 1
+rules:
+  case: sentence
+  max_short_words: 4
+  ids:
+    show: abbreviated
+    copy: true
+  acronyms:
+    - TTFT
+    - CLI
+    - MCP
+    - SSE
+terms:
+  - source: oh-my-pi
+    label: omp
+    explain: Harness (agent producer) name.
+    kind: code
+    copied_from: dashboard/src/harnesses.generated.ts:15
+    tags:
+      - derived from build
+    short: omp
+  - source: codex-app-server
+    label: Codex app-server
+    explain: Harness (agent producer) name.
+    kind: code
+    copied_from: dashboard/src/harnesses.generated.ts:15
+    tags:
+      - derived from build
+    short: Codex app-server
+  - source: codex_cli_rs
+    label: Codex CLI
+    explain: Harness (agent producer) name.
+    kind: code
+    copied_from: dashboard/src/harnesses.generated.ts:15
+    tags:
+      - derived from build
+    short: Codex CLI
+  - source: codex_exec
+    label: Codex exec
+    explain: Harness (agent producer) name.
+    kind: code
+    copied_from: dashboard/src/harnesses.generated.ts:15
+    tags:
+      - derived from build
+    short: Codex exec
+  - source: claude-code
+    label: Claude Code
+    explain: Harness (agent producer) name.
+    kind: code
+    copied_from: dashboard/src/harnesses.generated.ts:15
+    tags:
+      - derived from build
+    short: Claude Code
+  - source: unit_test
+    label: Unit tests
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Unit tests
+  - source: integration_e2e
+    label: Integration and end-to-end
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Integration and end-to-end
+  - source: smoke
+    label: Smoke tests
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Smoke tests
+  - source: lint_format
+    label: Lint and format
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Lint and format
+  - source: typecheck
+    label: Type check
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Type check
+  - source: ci_remote
+    label: Remote CI
+    explain: Verification kind classified from a shell command.
+    kind: code
+    copied_from: dashboard/src/format.ts:48
+    tags:
+      - derived from build
+    short: Remote CI
+  - source: low
+    label: Low
+    short: Low
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: medium
+    label: Medium
+    short: Medium
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: high
+    label: High
+    short: High
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: xhigh
+    label: Extra high
+    short: Extra high
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: mixed
+    label: Mixed
+    short: Mixed
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: unset
+    label: Provider default
+    short: Provider default
+    explain: Reasoning effort level requested for a task.
+    kind: code
+    copied_from: dashboard/src/format.ts:25
+    tags:
+      - derived from build
+  - source: healthy
+    label: Healthy
+    short: Healthy
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: no events
+    label: No events
+    short: No events
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: idle
+    label: Idle
+    short: Idle
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: not applicable
+    label: Not applicable
+    short: Not applicable
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: stray (explained)
+    label: Stray (explained)
+    short: Stray (explained)
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: possible break
+    label: Possible break
+    short: Possible break
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: stray (unexplained)
+    label: Stray (unexplained)
+    short: Stray (unexplained)
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: not in use
+    label: Not in use
+    short: Not in use
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: not in use, rows present
+    label: Not in use, rows present
+    short: Not in use, rows
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/views/PipelineCoverage.tsx:6
+    tags:
+      - derived from build
+  - source: aligned
+    label: Aligned
+    short: Aligned
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/contracts.ts:44
+    tags:
+      - derived from build
+  - source: differs
+    label: Differs
+    short: Differs
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/contracts.ts:44
+    tags:
+      - derived from build
+  - source: not emitted
+    label: Not emitted
+    short: Not emitted
+    explain: Coverage or alignment state word.
+    kind: code
+    copied_from: dashboard/src/contracts.ts:44
+    tags:
+      - derived from build
+  - source: api_request
+    label: Api request
+    short: Api request
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: api_request_body
+    label: Api request body
+    short: Api request body
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: api_response_body
+    label: Api response body
+    short: Api response body
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: api_retries_exhausted
+    label: Api retries exhausted
+    short: Api retries exhausted
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: applies_when
+    label: Applies when
+    short: Applies when
+    explain: A raw producer or data code rendered as text. Rendered raw today on tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: apply_patch
+    label: Apply patch
+    short: Apply patch
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary, tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: approved_with_amendment
+    label: Approved with amendment
+    short: Approved with amendment
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: assistant_response
+    label: Assistant response
+    short: Assistant response
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: at_mention
+    label: At mention
+    short: At mention
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: auto_retry_end
+    label: Auto retry end
+    short: Auto retry end
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: auto_retry_start
+    label: Auto retry start
+    short: Auto retry start
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: before_agent_start
+    label: Before agent start
+    short: Before agent start
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: cache_creation_input
+    label: Cache creation input
+    short: Cache creation input
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: cache_creation_tokens
+    label: Cache creation tokens
+    short: Cache creation tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: cache_read_tokens
+    label: Cache read tokens
+    short: Cache read tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: cache_write_token_count
+    label: Cache write token count
+    short: Cache write token count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary, pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: cached_input
+    label: Cached input
+    short: Cached input
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: cached_token_count
+    label: Cached token count
+    short: Cached token count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.interaction
+    label: Claude interaction
+    short: Claude interaction
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.llm_request
+    label: Claude llm request
+    short: Claude llm request
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.tool_decision
+    label: Claude tool decision
+    short: Claude tool decision
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.tool_result
+    label: Claude tool result
+    short: Claude tool result
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.usage
+    label: Claude usage
+    short: Claude usage
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude.user_prompt
+    label: Claude user prompt
+    short: Claude user prompt
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude_code.interaction
+    label: Claude code interaction
+    short: Claude code interaction
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude_code.llm_request
+    label: Claude code llm request
+    short: Claude code llm request
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude_code.tool
+    label: Claude code tool
+    short: Claude code tool
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude_code.tool.blocked_on_user
+    label: Claude code tool blocked on user
+    short: Claude code tool blocked
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: claude_code.tool.execution
+    label: Claude code tool execution
+    short: Claude code tool execution
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: clean_completion
+    label: Clean completion
+    short: Clean completion
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: clean_den
+    label: Clean den
+    short: Clean den
+    explain: A numerator or denominator in All = Σ harnesses (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: clean_n
+    label: Clean n
+    short: Clean n
+    explain: A numerator or denominator in All = Σ harnesses (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.agent_communication
+    label: Codex agent communication
+    short: Codex agent communication
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.agent_response
+    label: Codex agent response
+    short: Codex agent response
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.agent_spawn
+    label: Codex agent spawn
+    short: Codex agent spawn
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.api_request
+    label: Codex api request
+    short: Codex api request
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.conversation_starts
+    label: Codex conversation starts
+    short: Codex conversation starts
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.interrupt
+    label: Codex interrupt
+    short: Codex interrupt
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.response_completed
+    label: Codex response completed
+    short: Codex response completed
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.sampling
+    label: Codex sampling
+    short: Codex sampling
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.sandbox_outcome
+    label: Codex sandbox outcome
+    short: Codex sandbox outcome
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.sse_event
+    label: Codex sse event
+    short: Codex sse event
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.startup_phase
+    label: Codex startup phase
+    short: Codex startup phase
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.steer
+    label: Codex steer
+    short: Codex steer
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.tool_decision
+    label: Codex tool decision
+    short: Codex tool decision
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.tool_result
+    label: Codex tool result
+    short: Codex tool result
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.try_sampling
+    label: Codex try sampling
+    short: Codex try sampling
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.turn
+    label: Codex turn
+    short: Codex turn
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.turn.reasoning_effort
+    label: Codex turn reasoning effort
+    short: Codex turn reasoning effort
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.turn.token_usage.reasoning_output_tokens
+    label: Codex turn token usage reasoning output tokens
+    short: Codex turn token usage
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.turn_ttft
+    label: Codex turn ttft
+    short: Codex turn ttft
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.usage
+    label: Codex usage
+    short: Codex usage
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.user_prompt
+    label: Codex user prompt
+    short: Codex user prompt
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.websocket_connect
+    label: Codex websocket connect
+    short: Codex websocket connect
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex.websocket_request
+    label: Codex websocket request
+    short: Codex websocket request
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: codex_cli_rs
+    label: Codex cli rs
+    short: Codex cli rs
+    explain: A raw producer or data code rendered as text. Rendered raw today on recurrence.
+    kind: code
+    tags:
+      - derived from build
+  - source: collaborationwait_agent
+    label: Collaborationwait agent
+    short: Collaborationwait agent
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: conversation.id
+    label: Conversation id
+    short: Conversation id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: error.message
+    label: Error message
+    short: Error message
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: error.type
+    label: Error type
+    short: Error type
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: error_type
+    label: Error type
+    short: Error type
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: event.kind
+    label: Event kind
+    short: Event kind
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: exec_command
+    label: Exec command
+    short: Exec command
+    explain: A raw producer or data code rendered as text. Rendered raw today on friction, recurrence, tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: execute_tool
+    label: Execute tool
+    short: Execute tool
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: factory_x_loops
+    label: Factory x loops
+    short: Factory x loops
+    explain: A raw producer or data code rendered as text. Rendered raw today on recurrence, tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: file_path
+    label: File path
+    short: File path
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: follow_up
+    label: Follow up
+    short: Follow up
+    explain: A raw producer or data code rendered as text. Rendered raw today on friction.
+    kind: code
+    tags:
+      - derived from build
+  - source: friction_observed
+    label: Friction observed
+    short: Friction observed
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gate_bypass
+    label: Gate bypass
+    short: Gate bypass
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.conversation.id
+    label: Gen ai conversation id
+    short: Gen ai conversation id
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.operation.name
+    label: Gen ai operation name
+    short: Gen ai operation name
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.request.model
+    label: Gen ai request model
+    short: Gen ai request model
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.response.finish_reasons
+    label: Gen ai response finish reasons
+    short: Gen ai response finish
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.response.model
+    label: Gen ai response model
+    short: Gen ai response model
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.response.time_to_first_chunk
+    label: Gen ai response time to first chunk
+    short: Gen ai response time
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.usage.cache_creation.input_tokens
+    label: Gen ai usage cache creation input tokens
+    short: Gen ai usage cache
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.usage.cache_read.input_tokens
+    label: Gen ai usage cache read input tokens
+    short: Gen ai usage cache
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.usage.input_tokens
+    label: Gen ai usage input tokens
+    short: Gen ai usage input
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.usage.output_tokens
+    label: Gen ai usage output tokens
+    short: Gen ai usage output
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: gen_ai.usage.reasoning.output_tokens
+    label: Gen ai usage reasoning output tokens
+    short: Gen ai usage reasoning
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: get_goal
+    label: Get goal
+    short: Get goal
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: get_usa
+    label: Get usa
+    short: Get usa
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: handle_responses
+    label: Handle responses
+    short: Handle responses
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.approval
+    label: Hook approval
+    short: Hook approval
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.prompt_submitted
+    label: Hook prompt submitted
+    short: Hook prompt submitted
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.retry
+    label: Hook retry
+    short: Hook retry
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.steer
+    label: Hook steer
+    short: Hook steer
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.subagent_start
+    label: Hook subagent start
+    short: Hook subagent start
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.tool_call
+    label: Hook tool call
+    short: Hook tool call
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.tool_failure
+    label: Hook tool failure
+    short: Hook tool failure
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook.turn_stop
+    label: Hook turn stop
+    short: Hook turn stop
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook_events
+    label: Hook events
+    short: Hook events
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook_execution_complete
+    label: Hook execution complete
+    short: Hook execution complete
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook_execution_start
+    label: Hook execution start
+    short: Hook execution start
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: hook_registered
+    label: Hook registered
+    short: Hook registered
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: http_429
+    label: Http 429
+    short: Http 429
+    explain: A raw producer or data code rendered as text. Rendered raw today on provider.
+    kind: code
+    tags:
+      - derived from build
+  - source: input_token_count
+    label: Input token count
+    short: Input token count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: input_tokens
+    label: Input tokens
+    short: Input tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: interrupted_den
+    label: Interrupted den
+    short: Interrupted den
+    explain: A numerator or denominator in All = Σ harnesses (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: interrupted_n
+    label: Interrupted n
+    short: Interrupted n
+    explain: A numerator or denominator in All = Σ harnesses (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: invoke_agent
+    label: Invoke agent
+    short: Invoke agent
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: json.decoder
+    label: Json decoder
+    short: Json decoder
+    explain: A raw producer or data code rendered as text. Rendered raw today on friction, recurrence, tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: load_hook_events
+    label: Load hook events
+    short: Load hook events
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: load_logs
+    label: Load logs
+    short: Load logs
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: load_session_projects
+    label: Load session projects
+    short: Load session projects
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: load_spans
+    label: Load spans
+    short: Load spans
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: log_user_prompt
+    label: Log user prompt
+    short: Log user prompt
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: managed_settings_resolved
+    label: Managed settings resolved
+    short: Managed settings resolved
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: mcp_tool
+    label: Mcp tool
+    short: Mcp tool
+    explain: A raw producer or data code rendered as text. Rendered raw today on tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: model_reasoning_effort
+    label: Model reasoning effort
+    short: Model reasoning effort
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: model_steps
+    label: Model steps
+    short: Model steps
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: omp.chat
+    label: Omp chat
+    short: Omp chat
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: omp.execute_tool
+    label: Omp execute tool
+    short: Omp execute tool
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: omp.run
+    label: Omp run
+    short: Omp run
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: omp.subagent
+    label: Omp subagent
+    short: Omp subagent
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: omp.user_prompt
+    label: Omp user prompt
+    short: Omp user prompt
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary, pipeline-coverage.
+    kind: code
+    tags:
+      - derived from build
+  - source: output_token_count
+    label: Output token count
+    short: Output token count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: output_tokens
+    label: Output tokens
+    short: Output tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: pi.gen_ai.request.reasoning.effort
+    label: Pi gen ai request reasoning effort
+    short: Pi gen ai request
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: pi.gen_ai.tool.status
+    label: Pi gen ai tool status
+    short: Pi gen ai tool
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: plugin_loaded
+    label: Plugin loaded
+    short: Plugin loaded
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: policy_blocked
+    label: Policy blocked
+    short: Policy blocked
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: prompt_labels
+    label: Prompt labels
+    short: Prompt labels
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: prompt_submitted
+    label: Prompt submitted
+    short: Prompt submitted
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: quick_follow_up
+    label: Quick follow up
+    short: Quick follow up
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: reasoning_token_count
+    label: Reasoning token count
+    short: Reasoning token count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: reasoning_tokens
+    label: Reasoning tokens
+    short: Reasoning tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_model_call_attempts_history
+    label: Refresh model call attempts history
+    short: Refresh model call attempts
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_model_call_attempts_recent
+    label: Refresh model call attempts recent
+    short: Refresh model call attempts
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_model_calls_history
+    label: Refresh model calls history
+    short: Refresh model calls history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_model_calls_recent
+    label: Refresh model calls recent
+    short: Refresh model calls recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_task_labels_history
+    label: Refresh task labels history
+    short: Refresh task labels history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_task_labels_recent
+    label: Refresh task labels recent
+    short: Refresh task labels recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_task_outcomes_history
+    label: Refresh task outcomes history
+    short: Refresh task outcomes history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_task_outcomes_recent
+    label: Refresh task outcomes recent
+    short: Refresh task outcomes recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_tool_calls_history
+    label: Refresh tool calls history
+    short: Refresh tool calls history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_tool_calls_recent
+    label: Refresh tool calls recent
+    short: Refresh tool calls recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_usage_events_history
+    label: Refresh usage events history
+    short: Refresh usage events history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_usage_events_recent
+    label: Refresh usage events recent
+    short: Refresh usage events recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_user_signals_history
+    label: Refresh user signals history
+    short: Refresh user signals history
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: refresh_user_signals_recent
+    label: Refresh user signals recent
+    short: Refresh user signals recent
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: response.completed
+    label: Response completed
+    short: Response completed
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: run_sampling_request
+    label: Run sampling request
+    short: Run sampling request
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: sender_thread_id
+    label: Sender thread id
+    short: Sender thread id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: service.name
+    label: Service name
+    short: Service name
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: session.id
+    label: Session id
+    short: Session id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: session_id
+    label: Session id
+    short: Session id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: session_meta
+    label: Session meta
+    short: Session meta
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: session_task.run
+    label: Session task run
+    short: Session task run
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: session_task.turn
+    label: Session task turn
+    short: Session task turn
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: signoz_hook_logs
+    label: Signoz hook logs
+    short: Signoz hook logs
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: signoz_logs
+    label: Signoz logs
+    short: Signoz logs
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: signoz_traces
+    label: Signoz traces
+    short: Signoz traces
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: skill_activated
+    label: Skill activated
+    short: Skill activated
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: spawn_agent
+    label: Spawn agent
+    short: Spawn agent
+    explain: A raw producer or data code rendered as text. Rendered raw today on tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: stop_reason.aborted.count
+    label: Stop reason aborted count
+    short: Stop reason aborted count
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: subagent_completed
+    label: Subagent completed
+    short: Subagent completed
+    explain: A raw producer or data code rendered as text. Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: subagent_start
+    label: Subagent start
+    short: Subagent start
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: sweep_hook_events
+    label: Sweep hook events
+    short: Sweep hook events
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: sweep_logs
+    label: Sweep logs
+    short: Sweep logs
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: sweep_session_projects
+    label: Sweep session projects
+    short: Sweep session projects
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: sweep_spans
+    label: Sweep spans
+    short: Sweep spans
+    explain: Shown in Loader and snapshot refresh (Pipeline). Rendered raw today on pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: system.view_refreshes
+    label: System view refreshes
+    short: System view refreshes
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: task_outcomes
+    label: Task outcomes
+    short: Task outcomes
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: thinking_tokens
+    label: Thinking tokens
+    short: Thinking tokens
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_approval_resolved
+    label: Tool approval resolved
+    short: Tool approval resolved
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_call
+    label: Tool call
+    short: Tool call
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_calls
+    label: Tool calls
+    short: Tool calls
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_decision
+    label: Tool decision
+    short: Tool decision
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_failure
+    label: Tool failure
+    short: Tool failure
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_input
+    label: Tool input
+    short: Tool input
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_result
+    label: Tool result
+    short: Tool result
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: tool_use_id
+    label: Tool use id
+    short: Tool use id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: try_run_sampling_request
+    label: Try run sampling request
+    short: Try run sampling request
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: ttft_ms
+    label: Ttft ms
+    short: Ttft ms
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: turn.id
+    label: Turn id
+    short: Turn id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: turn_id
+    label: Turn id
+    short: Turn id
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: turn_stop
+    label: Turn stop
+    short: Turn stop
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: usage_events
+    label: Usage events
+    short: Usage events
+    explain: A table in the facts store, shown in Sanitization and Glossary. Rendered raw today on glossary, pipeline.
+    kind: code
+    tags:
+      - derived from build
+  - source: user_prompt
+    label: User prompt
+    short: User prompt
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: user_reject
+    label: User reject
+    short: User reject
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary, guardrails.
+    kind: code
+    tags:
+      - derived from build
+  - source: user_temporary
+    label: User temporary
+    short: User temporary
+    explain: A raw producer or data code rendered as text. Rendered raw today on guardrails.
+    kind: code
+    tags:
+      - derived from build
+  - source: verification_kinds
+    label: Verification kinds
+    short: Verification kinds
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: wait_agent
+    label: Wait agent
+    short: Wait agent
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: wait_threads
+    label: Wait threads
+    short: Wait threads
+    explain: A raw producer or data code rendered as text. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: write_stdin
+    label: Write stdin
+    short: Write stdin
+    explain: A raw producer or data code rendered as text. Rendered raw today on friction, glossary, recurrence, tools.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.arguments_hash
+    label: X arguments hash
+    short: X arguments hash
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.exit_code
+    label: X exit code
+    short: X exit code
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.failure_signature
+    label: X failure signature
+    short: X failure signature
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.gate_bypass
+    label: X gate bypass
+    short: X gate bypass
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.targets
+    label: X targets
+    short: X targets
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build
+  - source: x.verification_kinds
+    label: X verification kinds
+    short: X verification kinds
+    explain: A producer event or attribute name, shown in Coverage grid and Glossary. Rendered raw today on glossary.
+    kind: code
+    tags:
+      - derived from build

@@ -1,0 +1,164 @@
+version: 2
+app_root: .
+ui_source: dashboard/src
+scope: {
+    pages:
+      [
+        pipeline,
+        pipeline-coverage,
+        provider,
+        cache,
+        effort,
+        tools,
+        friction,
+        guardrails,
+        recurrence,
+        intent,
+        glossary,
+        session,
+      ],
+  } # all pages (Step 1 STOP); interventions dropped at the Step 2 STOP, kept as a removal candidate
+# The repository's own command is `bun run --cwd dashboard start` (127.0.0.1:4173), but this machine's ClickHouse is on another host,
+# so captures serve the worktree's built front end (`bun run --cwd dashboard build`) and forward /api/* to the deployed dashboard.
+run:
+  {
+    command: "python3 -B <skill_copy>/../tools/proxy.py dashboard/dist https://adams-macbook-pro.tailf3b31b.ts.net:8444 4174",
+    background: true,
+    ready_url: "http://127.0.0.1:4174/pipeline",
+    pid: "56450",
+  }
+base_url: "http://127.0.0.1:4174"
+pages:
+  pipeline:
+    {
+      route: "/pipeline?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Pipeline.tsx, function: Pipeline }],
+    }
+  pipeline-coverage:
+    {
+      route: "/pipeline/coverage?range=7",
+      ready_selector: "main.main",
+      render:
+        [
+          {
+            file: dashboard/src/views/PipelineCoverage.tsx,
+            function: PipelineCoverage,
+          },
+        ],
+    }
+  provider:
+    {
+      route: "/provider?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Provider.tsx, function: Provider }],
+    }
+  cache:
+    {
+      route: "/cache?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Cache.tsx, function: Cache }],
+    }
+  effort:
+    {
+      route: "/effort?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Effort.tsx, function: Effort }],
+    }
+  tools:
+    {
+      route: "/tools?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Tools.tsx, function: Tools }],
+    }
+  friction:
+    {
+      route: "/friction?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Friction.tsx, function: Friction }],
+    }
+  guardrails:
+    {
+      route: "/guardrails?range=7",
+      ready_selector: "main.main",
+      render:
+        [{ file: dashboard/src/views/Guardrails.tsx, function: Guardrails }],
+    }
+  recurrence:
+    {
+      route: "/recurrence?range=7",
+      ready_selector: "main.main",
+      render:
+        [{ file: dashboard/src/views/Recurrence.tsx, function: Recurrence }],
+    }
+  intent:
+    {
+      route: "/intent?range=7",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Intent.tsx, function: Intent }],
+    }
+  interventions:
+    {
+      route: "/interventions?range=7",
+      ready_selector: "main.main",
+      render:
+        [
+          {
+            file: dashboard/src/views/Interventions.tsx,
+            function: Interventions,
+          },
+        ],
+    }
+  glossary:
+    {
+      route: "/glossary",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Glossary.tsx, function: Glossary }],
+    }
+  session:
+    {
+      route: "/session?range=7&harness=claude-code&session=77aa7183-f38b-4fd5-9d67-36abb7a40335",
+      ready_selector: "main.main",
+      render: [{ file: dashboard/src/views/Session.tsx, function: Session }],
+    }
+viewport: { width: 1920, height: 1080, fold: 960, also: [1440, 1024] }
+pack: { id: dashboard, version: 4 }
+style: { id: project }
+browser:
+  {
+    facility: "Playwright for Python driving Google Chrome headless (scratchpad tools/capture.py)",
+    can:
+      [
+        open,
+        evaluate,
+        console,
+        screenshot,
+        emulate-color-scheme,
+        emulate-reduced-motion,
+      ],
+    screenshot_to_file: true,
+  }
+tokens: { path: dashboard/src/tokens.css, format: existing }
+tools: { npx_designmd: pass, subagent: pass }
+skill_copy: /private/tmp/claude-501/-Users-adamjackson-Projects-inflight-factory-x-loops-factory-x-loops/5a640801-f5f5-4668-9312-b2c9a99c334c/scratchpad/dwu
+artifacts:
+  jobs: { class: agreed, agreed: 2026-10-22 } # jobs at STOP 1; questions and page map at STOP 2
+  signals: { class: agreed, agreed: 2026-10-22 }
+  labels: { class: derivable }
+  semantics: { class: derivable }
+  pages: { class: agreed, agreed: 2026-10-22 }
+  design_md: { class: derivable }
+  feature_inventory: { class: derivable } # docs/ux/feature-inventory.md written at the baseline (derived from build)
+data: { owner: dashboard/server }
+data_probe: { failed: 0, total: 0 } # no page-level failed share: each mark-bearing signal declares its own data.probe in signals.yaml
+data_for_capture:
+  {
+    kind: frozen,
+    how: "proxy (scratchpad tools/proxy.py) forwards /api to the deployed dashboard and replays the first answer per URL; browser clock fixed at 2026-10-22T13:46:00Z (Playwright page.clock.set_fixed_time); range=7 URL parameter; sanitized facts (no prompt, command or output text)",
+    redact: [],
+  }
+console_ignore: []
+format_module: dashboard/src/format.ts
+scaling_allowlist: []
+start_commit: 1ce96fda9763c5d92042252ae337dc51ddefed35
+exceptions: []

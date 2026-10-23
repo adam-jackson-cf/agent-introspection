@@ -1,0 +1,178 @@
+version: 1
+# derived from build (Step 5, adjust audit-only), not agreed. Rows are the states the UI renders today, from
+# dashboard/src/views/PipelineCoverage.tsx:6-16 (STATE_MARK), dashboard/src/contracts.ts:39-48 (alignment) and docs/ux/DESIGN.md colours.
+# Tokens name this app's own DESIGN.md colours (style: project); a correction is proposed where a rendered colour breaks the
+# skill's colour meanings (red failed, green passed, amber waiting or odd, blue information, grey unmeasured).
+status:
+  - state: healthy
+    word: healthy
+    token: "{colors.status-healthy}"
+    shape: check # ✓ glyph in a chip
+    meaning: the route has rows and no unexplained rows elsewhere; on parity and All = Σ, the two counts match
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: no-events
+    word: no events
+    token: "{colors.status-no-events}"
+    shape: ring # ○
+    meaning: no rows; the route only has rows when a rare event happens
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: idle
+    word: idle
+    token: "{colors.status-idle}"
+    shape: ring # ○, the same glyph as no events
+    meaning: no rows because the harness produced nothing in the window
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+    note: "idle and no events share colour and the ○ glyph, so the two states are told apart only by the word; give idle its own shape (for example a dash) before the build"
+  - state: not-applicable
+    word: not applicable
+    token: "{colors.status-not-emitted}"
+    shape: dot # ·
+    meaning: the harness does not produce this signal, and no rows exist
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: stray-explained
+    word: stray (explained)
+    token: "{colors.status-stray-explained}"
+    shape: approx # ≈
+    meaning: rows on another harness's route that a registered stray explains
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: possible-break
+    word: possible break
+    token: "{colors.status-possible-break}"
+    shape: bang # !
+    meaning: the harness is active and should have rows on this route, but has none; on parity, the counts differ
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+    correction:
+      {
+        from_token: "{colors.status-possible-break}",
+        to_token: "{colors.status-stray-unexplained}",
+        reason: "orange is a sixth tone outside the five colour meanings; a missing route on an active harness is a failure, so it takes the failed red, told apart from stray (unexplained) by its ! shape",
+      }
+  - state: stray-unexplained
+    word: stray (unexplained)
+    token: "{colors.status-stray-unexplained}"
+    shape: cross # ✕
+    meaning: rows on a route that no registered stray explains
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: not-in-use
+    word: not in use
+    token: "{colors.status-not-emitted}"
+    shape: dash # –
+    meaning: this machine does not enable the harness
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+  - state: not-in-use-rows-present
+    word: not in use, rows present
+    token: "{colors.status-stray-explained}"
+    shape: bang # !, the same glyph as possible break
+    meaning: the harness is not enabled here, but its route still has rows
+    allowed_uses: [mark, status chip]
+    tags: [derived from build]
+    note: "shares the ! shape with possible break, so shape alone cannot tell them apart; give it its own shape"
+  - state: aligned
+    word: aligned
+    token: "{colors.status-alignment-aligned}"
+    shape: none
+    meaning: the harness reaches the signal the registry's way
+    allowed_uses: [glossary alignment word]
+    tags: [derived from build]
+  - state: differs
+    word: differs
+    token: "{colors.status-alignment-differs}"
+    shape: none
+    meaning: the harness reaches the signal another way, explained in the note
+    allowed_uses: [glossary alignment word]
+    tags: [derived from build]
+    note: "amber marks a differing but valid route as a warning; it is information, so blue would follow the colour meanings, and the word has no shape"
+  - state: not-emitted
+    word: not emitted
+    token: "{colors.status-alignment-not-emitted}"
+    shape: none
+    meaning: the harness has no route for the signal; the signal is hidden where the harness is enabled
+    allowed_uses: [glossary alignment word]
+    tags: [derived from build]
+scales:
+  coverage:
+    [
+      healthy,
+      no events,
+      idle,
+      not applicable,
+      stray (explained),
+      possible break,
+      stray (unexplained),
+      not in use,
+      not in use,
+      rows present,
+    ]
+  alignment: [aligned, differs, not emitted]
+  match: [healthy, possible break] # source parity and All = Σ harnesses reuse two coverage words for a match check
+  effort: [low, medium, high, xhigh, mixed, unset] # ordinal ramp seq-effort-1..4; mixed and unset set apart
+categorical:
+  tokens:
+    [
+      "{colors.cat-1}",
+      "{colors.cat-2}",
+      "{colors.cat-3}",
+      "{colors.cat-4}",
+      "{colors.cat-5}",
+      "{colors.cat-6}",
+    ]
+  other: "{colors.other}"
+  never_for: state
+  bindings: # harness identity, docs/ux/DESIGN.md "Harness identity" and dashboard/src/format.ts
+    oh-my-pi: "{colors.cat-1}"
+    codex-app-server: "{colors.cat-2}"
+    codex_cli_rs: "{colors.cat-3}"
+    codex_exec: "{colors.cat-4}"
+    claude-code: "{colors.cat-5}"
+  ordinal:
+    effort:
+      {
+        low: "{colors.seq-effort-1}",
+        medium: "{colors.seq-effort-2}",
+        high: "{colors.seq-effort-3}",
+        xhigh: "{colors.seq-effort-4}",
+        mixed: "{colors.effort-mixed}",
+        unset: "{colors.other}",
+      }
+trend: {
+    improved: "{colors.status-healthy}",
+    regressed: "{colors.status-stray-unexplained}",
+    stable: "{colors.status-no-events}",
+    shape: dot,
+  } # no trend marks are rendered today
+panel_keys: # key entries per panel, from the marks each panel can show; split by type
+  pipeline-coverage-coverage-grid:
+    {
+      states:
+        [
+          healthy,
+          no events,
+          idle,
+          not applicable,
+          stray (explained),
+          possible break,
+          stray (unexplained),
+          not in use,
+          "not in use, rows present",
+        ],
+      entities: harnesses,
+    }
+  pipeline-coverage-coverage-by-view: { states: [no events, not applicable] }
+  pipeline-coverage-by-view: { states: [no events, not applicable] }
+  pipeline-source-parity:
+    { states: [healthy, possible break], entities: harnesses }
+  pipeline-all-equals-sum: { states: [healthy, possible break] }
+  pipeline-fact-rows-per-day: { entities: harnesses }
+  effort-daily-reasoning: { ordinal: effort }
+  effort-daily-effort-mix: { ordinal: effort }
+  effort-clean-by-effort: { ordinal: effort }
+  effort-duration-by-effort: { ordinal: effort }
+  every-harness-series-panel: { entities: harnesses } # every daily chart and per-harness table on the other pages
