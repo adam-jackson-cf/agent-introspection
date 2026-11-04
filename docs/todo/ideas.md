@@ -1,0 +1,8 @@
+# Ideas
+
+- test health view:  - these are agent trace though?
+  - volume
+  - coverage
+  - speed of execution
+  - types (unit, integration, slow seam etc)
+  - parity with ci
