@@ -24,11 +24,11 @@ hypothesis is still untested, because no draft has ever been produced.
 
 `proposal draft` on `mac-cf2` never reaches the model:
 
-| Attempt | Launched from | Failure |
-| --- | --- | --- |
-| 1 | `/tmp` | `codex exec`: `Not inside a trusted directory` (exit 60) |
-| 2 | `~/Projects` | Same. Codex accepts only a git repo; a `trust_level = "trusted"` entry does not count. |
-| 3 | an empty scratch git repo | `400: The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account` |
+| Attempt | Launched from             | Failure                                                                                |
+| ------- | ------------------------- | -------------------------------------------------------------------------------------- |
+| 1       | `/tmp`                    | `codex exec`: `Not inside a trusted directory` (exit 60)                               |
+| 2       | `~/Projects`              | Same. Codex accepts only a git repo; a `trust_level = "trusted"` entry does not count. |
+| 3       | an empty scratch git repo | `400: The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account`    |
 
 Causes in this repository:
 
@@ -65,11 +65,11 @@ most failures.
 Three agents root-caused the top three findings from the facts store and the real
 repositories, without seeing a draft:
 
-| Finding (impact) | Diagnosis | Worth fixing | Recommended fix |
-| --- | --- | --- | --- |
-| omp search `Path not found: <path>` (30), `aa244d7b` | Harmless exploration: 52 failed calls (0.16% of omp calls), the next call almost always succeeds, and the unclean rate equals the omp baseline (30% vs 30%). | No | Detector change only |
-| omp read `Path '…' not found` (20), `346f3294` | Mixed: about 40% are line-range syntax errors on files that exist (`file:44:70` instead of `:44-70`, from Claude models); the rest is exploration. | Low priority | Optional omp `tool_call` hook that rewrites `:N:M` to `:N-M` |
-| Codex `Failed to initialize cache` (17), `aeee7e41` | Sandbox config: `~/.cache/uv` was not writable in Codex's `workspace-write` sandbox. 13 of 17 tasks are enaible slow-seam test runs. | Yes | Applied as S1 (below) |
+| Finding (impact)                                     | Diagnosis                                                                                                                                                    | Worth fixing | Recommended fix                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------ |
+| omp search `Path not found: <path>` (30), `aa244d7b` | Harmless exploration: 52 failed calls (0.16% of omp calls), the next call almost always succeeds, and the unclean rate equals the omp baseline (30% vs 30%). | No           | Detector change only                                         |
+| omp read `Path '…' not found` (20), `346f3294`       | Mixed: about 40% are line-range syntax errors on files that exist (`file:44:70` instead of `:44-70`, from Claude models); the rest is exploration.           | Low priority | Optional omp `tool_call` hook that rewrites `:N:M` to `:N-M` |
+| Codex `Failed to initialize cache` (17), `aeee7e41`  | Sandbox config: `~/.cache/uv` was not writable in Codex's `workspace-write` sandbox. 13 of 17 tasks are enaible slow-seam test runs.                         | Yes          | Applied as S1 (below)                                        |
 
 Loop defects the judges found (inferred from code and data, not yet fixed):
 
