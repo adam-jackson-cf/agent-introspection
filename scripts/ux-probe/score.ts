@@ -29,12 +29,13 @@ if (!dir || pages.length === 0) {
   console.error("usage: bun scripts/ux-probe/score.ts <dir> <page...>");
   process.exit(2);
 }
+const answerIds = rubric.criteria.flatMap((c) => c.checks.map((k) => k.id));
 for (const page of pages) {
   const name = page.replaceAll("/", "-");
   const probed = readJson<{ checks: Record<string, Check> }>(`${dir}/${name}.checks.json`);
   const inspected = readJson<Record<string, Check>>(`${dir}/${name}.inspect.json`);
   const results = { ...probed.checks, ...inspected };
-  const missing = rubric.criteria.flatMap((c) => c.checks.map((k) => k.id)).filter((id) => !results[id]);
+  const missing = answerIds.filter((id) => !results[id]);
   if (missing.length) throw new Error(`${name}: no answer for ${missing.join(", ")}`);
   const scores = Object.fromEntries(rubric.criteria.map((c) => [c.id, criterionScore(c.checks, results)]));
   const out = `${dir}/${name}.scores.json`;

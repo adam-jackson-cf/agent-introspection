@@ -161,8 +161,8 @@ dashboard format and build checks, plus the repository-owned checkers in `script
   environment reads in analyzer-like code go through a function in `environment_seams`.
 - Code integrity: `check-code-integrity.py` fails on any comment or docstring in an
   owned file (tool directives such as `noqa`, `shellcheck`, `@ts-expect-error`,
-  `oxlint-disable`, `prettier-ignore` and `markdownlint` are exempt), on placeholder
-  bodies, and on product mocks. `static` runs `--all`; `--staged` and `--base <ref>`
+  `oxlint-disable`, `prettier-ignore` and `markdownlint` are exempt), on Python
+  placeholder bodies, and on product mocks. `static` runs `--all`; `--staged` and `--base <ref>`
   judge added lines only. Each mode takes a git pathspec after `--`.
 - Structure: `check-structure.py` judges tiers, placement, naming, `PREFIX.candidates`
   and `RENAME.residue`. With no arguments it judges branch additions and renames against
@@ -179,7 +179,10 @@ dashboard format and build checks, plus the repository-owned checkers in `script
   `check-test-hooks.py`, `check-test-subprocess-timeouts.py`, `check-test-growth.py`,
   `check-coverage-ratchet.py` and `check-identity-artefacts.py` (the files listed in
   `[identity_artefacts]`). `check-test-budget.py` runs in `hook` mode after T1.
-- TypeScript: `check-typescript-limits.ts` beside oxlint.
+- TypeScript: `check-typescript-limits.ts` beside oxlint. It also fails a tracked
+  function, method or variable-bound arrow whose body is empty or only throws a
+  "not implemented" or "TODO" error. Constructors, abstract methods, overloads,
+  `declare` signatures and inline callbacks are exempt.
 
 Script layout: command scripts directly under `scripts/` use kebab-case names, and
 importable helper modules live in `scripts/lib/` with snake-case names. Tests are flat

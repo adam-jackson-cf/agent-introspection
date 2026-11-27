@@ -1118,7 +1118,7 @@ rule = "NAME.test-files"
 [[claim]]
 id = "code-integrity"
 rules = ["CODE.no-comments", "CODE.no-placeholder-bodies", "CODE.no-product-mocks"]
-control = ["scripts/check-code-integrity.py", "scripts/run-ci-quality-gates.sh", "proofs.toml"]
+control = ["scripts/check-code-integrity.py", "scripts/check-typescript-limits.ts", "scripts/run-ci-quality-gates.sh", "proofs.toml"]
 
 [[claim.enforced_by]]
 point = "hook"
@@ -1142,6 +1142,13 @@ rule = "CODE.no-comments"
 command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "code_integrity", "{fixture}"]
 passing = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/passing.py"
 violating = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/violating.py"
+expect = "CODE.no-placeholder-bodies"
+rule = "CODE.no-placeholder-bodies"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "typescript_limits", "{fixture}"]
+passing = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/passing.ts"
+violating = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/violating.ts"
 expect = "CODE.no-placeholder-bodies"
 rule = "CODE.no-placeholder-bodies"
 
