@@ -31,7 +31,10 @@ removes the container and closes both forwards.
 Run `verify` and `agent` on separate sandboxes: each expects a machine where nothing
 has been installed yet. Commit first, because the sandbox clones `HEAD`. It runs on
 macOS and Linux; CI runs `verify` on Linux for every push and pull request (the
-`fresh-install` job), since GitHub's macOS runners have no Docker.
+`fresh-install` job, `bash scripts/run-ci-quality-gates.sh install`), since GitHub's
+macOS runners have no Docker. That mode also runs `agent-introspection facts verify`
+from the checkout against the sandbox ClickHouse, so every facts SQL statement builds
+in a scratch database there; the logs of every step print when any fails.
 
 ## What the sandbox is
 

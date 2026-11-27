@@ -406,9 +406,15 @@ run_t3() {
 }
 
 run_install() {
-  local root log status=0
+  local root log clickhouse_url facts_config status=0
   root="$(bash scripts/fresh-install/sandbox.sh create)"
   bash scripts/fresh-install/sandbox.sh verify "$root" || status=$?
+  clickhouse_url="$(cat "$root/state/clickhouse_url")"
+  facts_config="$root/state/facts-verify.toml"
+  printf '[signoz]\nclickhouse_url = "%s"\n' "$clickhouse_url" >"$facts_config"
+  mkdir -p "$root/state/verify"
+  uv run agent-introspection --config "$facts_config" facts verify >"$root/state/verify/facts-verify.log" 2>&1 \
+    || status=$?
   if ((status)); then
     for log in "$root"/state/verify/*; do
       if [[ -f "$log" ]]; then
