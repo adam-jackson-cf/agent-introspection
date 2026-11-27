@@ -1,0 +1,23 @@
+{
+ "schema": 1,
+ "tier": "t1",
+ "framework": "pytest",
+ "started_at": 100,
+ "wall_seconds": 2,
+ "cases": [
+  {
+   "id": "tests/test_case.py::test_case_number_0",
+   "outcome": "passed",
+   "reason": "",
+   "seconds": 0.1,
+   "reruns": 0
+  },
+  {
+   "id": "tests/test_case.py::test_case_number_1",
+   "outcome": "passed",
+   "reason": "",
+   "seconds": 0.2,
+   "reruns": 0
+  }
+ ]
+}

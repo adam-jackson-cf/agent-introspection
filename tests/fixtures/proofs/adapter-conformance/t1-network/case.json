@@ -1,0 +1,7 @@
+{
+ "id": "t1-network",
+ "rule": "TEST.t1-isolation",
+ "evidence": "run-report",
+ "situation": "a T1 test opens a network connection",
+ "expect": "finding"
+}

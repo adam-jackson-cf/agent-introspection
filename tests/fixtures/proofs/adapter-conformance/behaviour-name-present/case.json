@@ -1,0 +1,7 @@
+{
+ "id": "behaviour-name-present",
+ "rule": "TEST.growth.justified",
+ "evidence": "static-cases",
+ "situation": "each test function has a descriptive behavior name; one name covers all parameter rows",
+ "expect": "clean"
+}

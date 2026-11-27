@@ -1,0 +1,7 @@
+{
+ "id": "user-data-temporary-home",
+ "rule": "TEST.user-data-guard",
+ "evidence": "run-report",
+ "situation": "a test writes under its temporary directory and the redirected home",
+ "expect": "clean"
+}

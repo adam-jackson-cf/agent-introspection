@@ -1,0 +1,7 @@
+{
+ "id": "t1-process",
+ "rule": "TEST.t1-isolation",
+ "evidence": "run-report",
+ "situation": "a T1 test starts a process",
+ "expect": "finding"
+}

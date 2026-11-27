@@ -1,0 +1,10 @@
+{
+ "id": "runtime-skip-recorded",
+ "rule": "TEST.no-evasion",
+ "evidence": "run-report",
+ "situation": "a test skips at runtime; the normalised record keeps the outcome and reason for the shared report check",
+ "expect": {
+  "outcome": "skipped",
+  "reason": "waiting on vendor fix"
+ }
+}

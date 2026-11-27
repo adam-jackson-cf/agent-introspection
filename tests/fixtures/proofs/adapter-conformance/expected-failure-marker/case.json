@@ -1,0 +1,7 @@
+{
+ "id": "expected-failure-marker",
+ "rule": "TEST.no-evasion",
+ "evidence": "source",
+ "situation": "a test is marked as an expected failure",
+ "expect": "finding"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "expected-failure-recorded",
+ "rule": "TEST.no-evasion",
+ "evidence": "run-report",
+ "situation": "an expected failure is normalised as xfail with its reason",
+ "expect": {
+  "outcome": "xfail",
+  "reason": "known defect"
+ }
+}
