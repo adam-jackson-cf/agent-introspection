@@ -97,6 +97,12 @@ uv run python scripts/validate-rule-coverage.py --root . \
   --ledger docs/guardrails/coverage-ledger.json
 ```
 
+Test tiers: untagged tests are T1 and `pytest.mark.boundary` files are T2. Files marked
+`pytest.mark.live`, and dashboard tests in files named `*.live.ts`, are T3: they need
+the local SigNoz ClickHouse, so neither the hook nor CI runs them. Run them by hand with
+`bash scripts/run-ci-quality-gates.sh t3` on a SigNoz host, or start the Live tests
+workflow (`.github/workflows/live-tests.yml`) on a self-hosted runner labelled `signoz`.
+
 ## What To Check
 
 - `scripts/run-ci-quality-gates.sh` exits zero.

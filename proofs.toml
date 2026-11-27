@@ -887,6 +887,11 @@ file = ".github/workflows/ci-quality-gates.yml"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
+[[claim.enforced_by]]
+point = "later"
+file = ".github/workflows/live-tests.yml"
+ref = "scripts/run-ci-quality-gates.sh t3"
+
 [[claim.canary]]
 command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_tiers", "{fixture}"]
 passing = "tests/fixtures/proofs/tests.tiers/passing"
@@ -1242,7 +1247,6 @@ large_module_fanout_max = 3
 "src/agent_introspection/cli.py" = ["_configured_path"]
 "src/agent_introspection/dashboard_api.py" = ["_url_override"]
 "src/agent_introspection/facts.py" = ["_environment_value"]
-"tests/test_command_shape_parity.py" = ["_live_clickhouse_requested"]
 
 [structure]
 base_ref = "origin/main"
@@ -1507,6 +1511,7 @@ test_file_patterns = [
   "dashboard/*.test.ts",
   "dashboard/**/*.test.ts",
   "dashboard/**/*.test.tsx",
+  "dashboard/**/*.live.ts",
 ]
 test_like_patterns = ["**/test*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
 test_marker_tokens = ["jest", "pytest", "test", "testing", "tests", "vitest"]
