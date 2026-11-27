@@ -1805,6 +1805,7 @@ entry = [
 ".github/" = "ci"
 ".markdownlint-cli2.jsonc" = "tooling"
 ".pre-commit-config.yaml" = "ci"
+"HANDOFF.md" = "docs"
 "config.example.toml" = "package"
 "dashboard/" = "dashboard"
 "docs/" = "docs"
