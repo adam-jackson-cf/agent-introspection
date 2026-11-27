@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 import yaml
+
 from lib.bun_lock import BunLockError, read_bun_lock
 
 _REQUIREMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")

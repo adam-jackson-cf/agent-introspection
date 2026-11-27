@@ -1,1 +1,0 @@
-EMPTY: dict[str, int] = {}

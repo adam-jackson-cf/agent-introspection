@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -52,15 +51,10 @@ def settings_module() -> ModuleType:
     return _load_settings_module()
 
 
-def _repository_table() -> dict[str, Any]:
-    with (REPO_ROOT / "proofs.toml").open("rb") as handle:
-        table: dict[str, Any] = tomllib.load(handle)["python_quality"]
-    return table
-
-
 @pytest.fixture
-def table() -> dict[str, Any]:
-    return _repository_table()
+def table(settings_module: ModuleType) -> dict[str, Any]:
+    composed: dict[str, Any] = settings_module.composed_table(REPO_ROOT)
+    return composed
 
 
 def test_repository_settings_parse_with_every_key(settings_module: ModuleType) -> None:

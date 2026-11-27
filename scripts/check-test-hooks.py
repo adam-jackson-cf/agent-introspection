@@ -60,16 +60,16 @@ def load_scope(root: Path) -> Scope:
     support = string(layout_table, "support_dir", "layout")
     fixtures = string(layout_table, "fixtures_dir", "layout")
     support_files = strings(layout_table, "support_files", "layout")
-    markers = frozenset(token.lower() for token in strings(layout_table, "test_marker_tokens", "layout"))
+    markers = frozenset(
+        token.lower() for token in strings(layout_table, "test_marker_tokens", "layout")
+    )
     test_root = support.rsplit("/", 1)[0]
 
     def is_test(path: str) -> bool:
         return bool(matches(path, [*patterns, *support_files]) or under(path, test_root))
 
     listed = [path for path in tracked_files(root, REFERENCE_PATTERNS) if not under(path, fixtures)]
-    production = [
-        path for path in listed if not is_test(path) and matches(path, SOURCE_PATTERNS)
-    ]
+    production = [path for path in listed if not is_test(path) and matches(path, SOURCE_PATTERNS)]
     tests = [path for path in listed if is_test(path) and matches(path, SOURCE_PATTERNS)]
     references = [path for path in listed if not is_test(path)]
     return Scope(root, production, tests, references, markers)

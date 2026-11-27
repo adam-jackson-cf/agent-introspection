@@ -12,12 +12,8 @@ pytestmark = pytest.mark.boundary
 RUNTIME = Path(__file__).parents[1] / "src/agent_introspection/hook_runtime"
 
 
-def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -> None:
-    received = tmp_path / "received"
-    fake = tmp_path / "fake-cli"
-    fake.write_text(f'#!/bin/sh\ncat > "{received}.part"; mv "{received}.part" "{received}"\n')
-    fake.chmod(0o755)
-    result = subprocess.run(
+def _run_activity_shim(fake: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["/bin/sh", str(RUNTIME / "activity-shim.sh"), "claude-code", "PreToolUse"],
         input='{"session_id": "s"}',
         capture_output=True,
@@ -26,11 +22,29 @@ def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -
         timeout=10,
         check=False,
     )
+
+
+def _pause() -> None:
+    subprocess.run(["sleep", "0.05"], check=True, timeout=10)
+
+
+def _run_bun_probe(probe: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bun", str(probe)], env=env, capture_output=True, text=True, timeout=60, check=True
+    )
+
+
+def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -> None:
+    received = tmp_path / "received"
+    fake = tmp_path / "fake-cli"
+    fake.write_text(f'#!/bin/sh\ncat > "{received}.part"; mv "{received}.part" "{received}"\n')
+    fake.chmod(0o755)
+    result = _run_activity_shim(fake)
     assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
     for _ in range(100):
         if received.exists():
             break
-        subprocess.run(["sleep", "0.05"], check=True, timeout=10)
+        _pause()
     assert received.read_text() == '{"session_id": "s"}'
 
 
@@ -79,7 +93,7 @@ def test_omp_tool_result_spawns_the_shim_only_for_errors(tmp_path: Path) -> None
     probe = tmp_path / "probe.ts"
     probe.write_text(OMP_RESULT_PROBE % (RUNTIME / "omp/activity.ts"))
     env = {**os.environ, "AGENT_INTROSPECTION_SHIM": str(shim)}
-    subprocess.run(["bun", str(probe)], env=env, capture_output=True, timeout=60, check=True)
+    _run_bun_probe(probe, env)
 
     lines = sink.read_text().split()
     assert lines.count("tool_result") == 1
@@ -105,7 +119,5 @@ def test_omp_prompt_is_exported_only_after_opt_in(
     env.pop("AGENT_INTROSPECTION_OMP_PROMPT_EXPORT", None)
     if opt_in is not None:
         env["AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"] = opt_in
-    result = subprocess.run(
-        ["bun", str(probe)], env=env, capture_output=True, text=True, timeout=60, check=True
-    )
+    result = _run_bun_probe(probe, env)
     assert result.stdout.strip() == expected

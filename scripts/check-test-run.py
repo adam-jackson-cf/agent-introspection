@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from lib.test_evidence import EvidenceError, RunReport, read_listing, read_report
+from lib.run_evidence import EvidenceError, RunReport, read_listing, read_report
 
 RULE = "TEST.failure-propagation"
 NOT_RUN = frozenset({"skipped", "xfail"})

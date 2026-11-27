@@ -1,14 +1,6 @@
 {
   "excluded": [
     {
-      "path": "tests/fixtures/proofs/MYPY.package-coverage/passing/pyproject.toml",
-      "origin": "mypy configuration canary fixture (MYPY.package-coverage); a [tool.mypy]-only pyproject.toml with no dependencies"
-    },
-    {
-      "path": "tests/fixtures/proofs/MYPY.package-coverage/violating/pyproject.toml",
-      "origin": "mypy configuration canary fixture (MYPY.package-coverage); a [tool.mypy]-only pyproject.toml with no dependencies"
-    },
-    {
       "path": "tests/fixtures/proofs/parity.locks/lock-version/dashboard/bun.lock",
       "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
     },

@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 from lib.command_runner import run_command
-from lib.test_evidence import CaseRecord, EvidenceError, RunReport, StaticCase
+from lib.run_evidence import CaseRecord, EvidenceError, RunReport, StaticCase
 
 FRAMEWORK = "bun"
 CASE_LISTER = Path(__file__).resolve().parents[1] / "list-bun-test-cases.ts"

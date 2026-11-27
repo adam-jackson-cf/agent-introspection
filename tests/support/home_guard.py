@@ -54,6 +54,14 @@ def _inside(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
+def _set_environment(name: str, value: str) -> None:
+    os.environ[name] = value
+
+
+def _drop_environment(name: str) -> None:
+    os.environ.pop(name, None)
+
+
 class UserDataGuard:
     def __init__(self, real_home: Path, allowed: tuple[Path, ...]) -> None:
         self.real_home = (str(real_home), os.path.realpath(real_home))
@@ -66,13 +74,13 @@ class UserDataGuard:
         self.item = ""
 
     def redirect(self) -> None:
-        os.environ["HOME"] = str(self.home)
+        _set_environment("HOME", str(self.home))
         for name in REDIRECTED:
             directory = self.home / name.removeprefix("XDG_").removesuffix("_HOME").lower()
             directory.mkdir()
-            os.environ[name] = str(directory)
+            _set_environment(name, str(directory))
         for name in HOME_OVERRIDES:
-            os.environ.pop(name, None)
+            _drop_environment(name)
 
     def protected(self, path: str) -> bool:
         if any(_inside(path, root) for root in self.allowed):

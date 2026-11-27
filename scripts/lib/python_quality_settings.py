@@ -145,17 +145,76 @@ def parse_python_quality(table: Table) -> PythonQuality:
     )
 
 
-@cache
-def python_quality(repo_root: Path = OWNING_REPO) -> PythonQuality:
-    path = repo_root / PROOFS_FILE
+def _load(path: Path, hint: str) -> Table:
     try:
         with path.open("rb") as handle:
-            document = tomllib.load(handle)
+            return tomllib.load(handle)
     except FileNotFoundError as error:
-        raise SettingsError(f"{path}: missing; add {PROOFS_FILE} with a [{TABLE}] table") from error
+        raise SettingsError(f"{path}: missing; {hint}") from error
     except tomllib.TOMLDecodeError as error:
         raise SettingsError(f"{path}: cannot parse: {error}; fix the TOML syntax") from error
-    table = document.get(TABLE)
-    if not isinstance(table, dict):
-        raise SettingsError(f"{path}: [{TABLE}] table is missing; add it")
-    return parse_python_quality(table)
+
+
+def _section(document: Table, dotted: str, path: Path) -> Table:
+    node: object = document
+    for part in dotted.split("."):
+        node = node.get(part) if isinstance(node, dict) else None
+    if not isinstance(node, dict):
+        raise SettingsError(f"{path}: [{dotted}] table is missing; add it")
+    return cast("Table", node)
+
+
+def _shared_string(table: Table, key: str, owner: str, path: Path) -> str:
+    value = table.get(key)
+    if not isinstance(value, str) or not value:
+        raise SettingsError(f"{path}: [{owner}] {key} must be a nonempty string; set it")
+    return value
+
+
+def _shared_strings(table: Table, key: str, owner: str, path: Path) -> list[str]:
+    value = table.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise SettingsError(f"{path}: [{owner}] {key} must be a list of nonempty strings; set it")
+    return list(cast("list[str]", value))
+
+
+def composed_table(repo_root: Path = OWNING_REPO) -> Table:
+    proofs = repo_root / PROOFS_FILE
+    document = _load(proofs, f"add {PROOFS_FILE} with a [{TABLE}] table")
+    pyproject = repo_root / "pyproject.toml"
+    pytest_options = _section(
+        _load(pyproject, "add pyproject.toml"), "tool.pytest.ini_options", pyproject
+    )
+    table = dict(_section(document, TABLE, proofs))
+    layout = _section(document, "layout", proofs)
+    structure = _section(document, "structure", proofs)
+    testpaths = _shared_strings(pytest_options, "testpaths", "tool.pytest.ini_options", pyproject)
+    if len(testpaths) != 1:
+        raise SettingsError(f"{pyproject}: [tool.pytest.ini_options] testpaths must name one root")
+    test_root = testpaths[0]
+    fixtures_dir = _shared_string(layout, "fixtures_dir", "layout", proofs)
+    support_dir = _shared_string(layout, "support_dir", "layout", proofs)
+    flat = [
+        pattern.removeprefix(f"{test_root}/")
+        for pattern in _shared_strings(layout, "test_file_patterns", "layout", proofs)
+        if pattern.startswith(f"{test_root}/") and "/" not in pattern.removeprefix(f"{test_root}/")
+    ]
+    excluded = table.get("excluded_paths", {})
+    groups = table.get("test_groups", [])
+    table["test_root"] = test_root
+    table["generic_name_parts"] = _shared_strings(structure, "banned_words", "structure", proofs)
+    table["excluded_paths"] = {
+        **(excluded if isinstance(excluded, dict) else {}),
+        fixtures_dir: f"{PROOFS_FILE} [layout] fixtures_dir",
+    }
+    table["test_groups"] = sorted({
+        *(groups if isinstance(groups, list) else []),
+        *(Path(fixtures_dir).name, Path(support_dir).name),
+    })
+    table["flat_test_groups"] = {pattern: pattern for pattern in flat}
+    return table
+
+
+@cache
+def python_quality(repo_root: Path = OWNING_REPO) -> PythonQuality:
+    return parse_python_quality(composed_table(repo_root))

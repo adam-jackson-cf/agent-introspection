@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
-import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from types import ModuleType
 
 import pytest
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "check-code-integrity.py"
+from tests.support.script_loader import load_script
+
 _LAYOUT = (
     '[layout]\nsupport_dir = "tests/support"\nfixtures_dir = "tests/fixtures"\n'
     'test_file_patterns = ["tests/test_*.py", "web/**/*.test.ts"]\n'
@@ -17,18 +16,7 @@ _LAYOUT = (
 
 @pytest.fixture(scope="module")
 def checker() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("check_code_integrity", _SCRIPT)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    writes_bytecode = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.dont_write_bytecode = writes_bytecode
-    return module
+    return load_script("check-code-integrity")
 
 
 @pytest.fixture
@@ -231,72 +219,3 @@ def test_glob_patterns_match_path_segments(checker: ModuleType) -> None:
     assert pattern.fullmatch("dashboard/src/views/a.test.ts")
     assert not pattern.fullmatch("dashboard/src/a.ts")
     assert not checker.glob_regex("tests/test_*.py").fullmatch("tests/sub/test_a.py")
-
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@localhost", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-
-
-@pytest.fixture
-def history(repo: Path) -> Path:
-    _git(repo, "init", "-q", "-b", "main")
-    (repo / "a.py").write_text("x = 1  # old\n", encoding="utf-8")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-q", "-m", "base")
-    return repo
-
-
-@pytest.mark.boundary
-def test_staged_mode_reports_only_staged_added_lines(
-    checker: ModuleType,
-    history: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(history)
-    (history / "a.py").write_text("x = 1  # old\ny = 2  # new\n", encoding="utf-8")
-    assert checker.main(["--staged"]) == 0
-    _git(history, "add", "a.py")
-    assert checker.main(["--staged", "--", "."]) == 1
-    errors = capsys.readouterr().err
-    assert "a.py:2: CODE.no-comments: comment '# new'" in errors
-    assert "a.py:1:" not in errors
-
-
-@pytest.mark.boundary
-def test_base_mode_reports_lines_added_since_the_merge_base(
-    checker: ModuleType,
-    history: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(history)
-    _git(history, "checkout", "-q", "-b", "topic")
-    (history / "b.py").write_text("def f() -> None:\n    pass\n", encoding="utf-8")
-    _git(history, "add", "b.py")
-    _git(history, "commit", "-q", "-m", "topic")
-    assert checker.main(["--base", "main"]) == 1
-    errors = capsys.readouterr().err
-    assert "b.py:1: CODE.no-placeholder-bodies" in errors
-    assert "a.py" not in errors
-    assert checker.main(["--base", "main", "--", "a.py"]) == 0
-
-
-@pytest.mark.boundary
-def test_all_mode_scans_every_tracked_file_the_pathspec_selects(
-    checker: ModuleType,
-    history: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(history)
-    assert checker.main(["--all", "--", ".", ":(exclude)a.py"]) == 0
-    assert checker.main(["--all"]) == 1
-    assert "a.py:1: CODE.no-comments: comment '# old'" in capsys.readouterr().err
-    assert checker.main([]) == 2

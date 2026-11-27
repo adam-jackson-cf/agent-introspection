@@ -41,7 +41,7 @@ def _run(repo: Path, script: str, *args: str) -> subprocess.CompletedProcess[str
     stubs = repo.parent / f"{repo.name}-bin"
     environment = {
         **_isolated_env(),
-        "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+        "PATH": f"{stubs}{os.pathsep}{_isolated_env()['PATH']}",
         "STUB_CALLS": str(repo.parent / f"{repo.name}-calls"),
     }
     return subprocess.run(

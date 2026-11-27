@@ -14,11 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from lib.bun_lock import BunLockError, locked_versions, read_bun_lock
-from lib.npm_semver import RangeError, fix_versions, parse_range, parse_version, satisfies
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
+
+from lib.bun_lock import BunLockError, locked_versions, read_bun_lock
+from lib.npm_semver import RangeError, fix_versions, parse_range, parse_version, satisfies
 
 RULE = "SECURITY.dependency-audit"
 _TIMEOUT_SECONDS = 100

@@ -116,7 +116,7 @@ def test_bun_report_ids_join_the_describe_chain(tmp_path: Path) -> None:
 
 def test_unreadable_junit_is_an_evidence_error(tmp_path: Path) -> None:
     adapter = _lib("pytest_adapter")
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     junit = tmp_path / "t1.xml"
     junit.write_text("<testsuites", encoding="utf-8")
 
@@ -131,7 +131,7 @@ def test_unreadable_junit_is_an_evidence_error(tmp_path: Path) -> None:
 def test_normalised_report_rejects_invalid_durations(
     tmp_path: Path, seconds: object, message: str
 ) -> None:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     path = tmp_path / "t1.json"
     case = {"id": "tests/test_a.py::test_x", "outcome": "passed", "seconds": seconds}
     payload = {"schema": 1, "tier": "t1", "framework": "pytest", "started_at": 1, "wall_seconds": 1}
@@ -142,7 +142,7 @@ def test_normalised_report_rejects_invalid_durations(
 
 
 def test_normalised_report_round_trips(tmp_path: Path) -> None:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     record = evidence.CaseRecord("tests/test_a.py::test_x", "passed", "", 0.5, 0)
     report = evidence.RunReport("t1", "pytest", 10.0, 2.0, (record,))
     path = tmp_path / "t1.json"
@@ -168,7 +168,7 @@ def test_collection_output_lists_stable_ids() -> None:
     ("ids", "message"), [([], "collected no tests"), (["a::b", "a::b"], "duplicate")]
 )
 def test_tier_listing_rejects_empty_or_duplicate_collections(ids: list[str], message: str) -> None:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
 
     with pytest.raises(evidence.EvidenceError, match=message):
         evidence.listing_from_ids("t1", "pytest", ids)

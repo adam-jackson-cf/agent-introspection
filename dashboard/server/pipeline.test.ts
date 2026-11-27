@@ -431,7 +431,12 @@ const sentFor = async (totals: number[]): Promise<number> => {
   const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
   const proc = Bun.spawn(
     ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-    { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+    {
+      stdin: new TextEncoder().encode(sql),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60000,
+    },
   );
   const [out, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -466,7 +471,12 @@ const deliveryFor = async (rows: string[]): Promise<Row[]> => {
   const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
   const proc = Bun.spawn(
     ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-    { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+    {
+      stdin: new TextEncoder().encode(sql),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60000,
+    },
   );
   const [out, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -554,29 +564,6 @@ describe("spool delivery: sent counters against records received", () => {
 
   // Evaluates the real sent arithmetic in ClickHouse over inline values(): read-only.
   const live = process.env["AGENT_INTROSPECTION_LIVE_CLICKHOUSE"] === "1";
-  const sentFor = async (totals: number[]): Promise<number> => {
-    // Rows are fed in reverse so the arrival ordering is part of what is checked.
-    const rows = totals
-      .map((total, index) => `(${index + 1}, ${total})`)
-      .reverse()
-      .join(", ");
-    const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
-    const proc = Bun.spawn(
-      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      {
-        stdin: new TextEncoder().encode(sql),
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 60000,
-      },
-    );
-    const [out, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
-    return Number(out.trim());
-  };
 
   test.skipIf(!live)(
     "sent sums positive counter increments and counts a post-reset value as its own increment",
@@ -588,50 +575,6 @@ describe("spool delivery: sent counters against records received", () => {
     },
     120000,
   );
-
-  // Runs SPOOL_DELIVERY's own arrived/beats logic over inline rows shaped like the
-  // logs table (offsets are seconds before now). Read-only.
-  const logRow = (
-    kind: "beat" | "record",
-    host: string,
-    observedAgo: number,
-    producedAgo: number,
-    sentTotal = 0,
-  ): string => {
-    const body =
-      kind === "beat"
-        ? `{"schema":"agent-introspection.spool-status/1","sent_total":{"hook-event":${sentTotal},"session-project":0}}`
-        : `{"schema":"agent-introspection.hook-event/1"}`;
-    const event =
-      kind === "beat"
-        ? "agent_introspection.spool_status"
-        : "agent_introspection.hook_event";
-    const ns = (ago: number) =>
-      `toUInt64(toUnixTimestamp(now() - INTERVAL ${ago} SECOND)) * 1000000000`;
-    return `SELECT ${ns(producedAgo)} AS timestamp, ${ns(observedAgo)} AS observed_timestamp, '${body}' AS body, map('service.name', 'agent-introspection', 'host.name', '${host}') AS resources_string, map('event.name', '${event}') AS attributes_string`;
-  };
-  const deliveryFor = async (rows: string[]): Promise<Row[]> => {
-    const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
-    const proc = Bun.spawn(
-      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      {
-        stdin: new TextEncoder().encode(sql),
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 60000,
-      },
-    );
-    const [out, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
-    return out
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Row);
-  };
 
   test.skipIf(!live)(
     "SPOOL_DELIVERY counts a window by arrival, keeps old-producer records, and ignores shipping order",

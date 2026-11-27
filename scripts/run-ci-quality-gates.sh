@@ -172,7 +172,10 @@ check_t1_isolation() { pytest_tier "$t1_tier" "$@"; }
 check_user_data_guard() { uv run pytest -p no:cacheprovider "$@"; }
 
 check_bun_t1_isolation() {
-  (($#)) || { bun run --cwd dashboard test; return; }
+  (($#)) || {
+    bun run --cwd dashboard test
+    return
+  }
   local files=()
   local file
   for file in "$@"; do
@@ -289,7 +292,9 @@ diff_check() {
   if (($#)); then
     uv run python "scripts/$script" "$@"
   else
-    uv run python "scripts/$script" --repo . --base "$(diff_base)"
+    local base
+    base="$(diff_base)"
+    uv run python "scripts/$script" --repo . --base "$base"
   fi
 }
 
@@ -308,7 +313,10 @@ check_verification_surface() { uv run python scripts/check-verification-surface.
 check_lever_isolation() { uv run python scripts/check-lever-isolation.py "$@"; }
 
 check_scenario() {
-  (($# == 2)) || { usage >&2; return 2; }
+  (($# == 2)) || {
+    usage >&2
+    return 2
+  }
   local name=$1 fixture=$2 work base line code=0 args=()
   work="$(mktemp -d)"
   base="$(uv run python scripts/build-scenario-repo.py "$fixture" "$work/repo")"
@@ -348,12 +356,12 @@ make_report_dir() {
 collect_tier() {
   local tier=$1
   shift
-  uv run python scripts/test-evidence.py collect --tier "$tier" --out "$report_dir/$tier-listing.json" \
+  uv run python scripts/run-evidence.py collect --tier "$tier" --out "$report_dir/$tier-listing.json" \
     --timeout-seconds "$collect_timeout_seconds" -- "$@"
 }
 
 normalise_report() {
-  uv run python scripts/test-evidence.py normalise "$@"
+  uv run python scripts/run-evidence.py normalise "$@"
 }
 
 run_t1() {
@@ -416,7 +424,10 @@ case "$mode" in
     "run_$mode"
     ;;
   install)
-    (($# == 0)) || { usage >&2; exit 2; }
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
     run_install
     ;;
   hook)

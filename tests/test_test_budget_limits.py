@@ -18,7 +18,7 @@ def _lib(name: str) -> ModuleType:
 
 
 def _script(name: str) -> ModuleType:
-    _lib("test_evidence")
+    _lib("run_evidence")
     module_name = name.replace("-", "_")
     spec = importlib.util.spec_from_file_location(module_name, _SCRIPTS / f"{name}.py")
     assert spec is not None
@@ -30,7 +30,7 @@ def _script(name: str) -> ModuleType:
 
 
 def _reports(seconds: list[float], wall: float) -> list[object]:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     cases = tuple(
         evidence.CaseRecord(f"tests/test_a.py::test_case_{index}", "passed", "", value, 0)
         for index, value in enumerate(seconds)
@@ -115,7 +115,7 @@ def test_invalid_machine_limits_are_rejected(entry: dict[str, object], message: 
 
 def test_a_stale_or_wrong_tier_report_is_rejected(tmp_path: Path) -> None:
     checker = _script("check-test-budget")
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     stale = tmp_path / "t1.json"
     other = tmp_path / "t2.json"
     evidence.write_report(evidence.RunReport("t1", "pytest", 100.0, 1.0, ()), stale)

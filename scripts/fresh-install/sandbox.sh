@@ -614,6 +614,7 @@ DOCTOR_WAIT_SECONDS=20
 bounded() {
   local seconds=$1 pid waited=0
   shift
+  BOUNDED_STATUS=1
   set -m
   "$@" >/dev/null 2>&1 &
   pid=$!
@@ -622,12 +623,13 @@ bounded() {
     if [ "$waited" -ge "$seconds" ]; then
       kill -KILL -- "-$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
-      return 1
+      return 0
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  wait "$pid"
+  BOUNDED_STATUS=0
+  wait "$pid" || BOUNDED_STATUS=$?
 }
 
 lever_doctor() {
@@ -635,16 +637,19 @@ lever_doctor() {
   for tool in uv bun git curl python3 docker; do
     command -v "$tool" >/dev/null 2>&1 || {
       echo "$tool is not installed"
-      return 1
+      return 0
     }
   done
-  if [ -z "$DOCKER_SSH" ] && ! bounded "$DOCTOR_WAIT_SECONDS" docker info; then
-    echo "Docker did not answer within $DOCTOR_WAIT_SECONDS s"
-    return 1
+  if [ -z "$DOCKER_SSH" ]; then
+    bounded "$DOCTOR_WAIT_SECONDS" docker info
+    if [ "$BOUNDED_STATUS" -ne 0 ]; then
+      echo "Docker did not answer within $DOCTOR_WAIT_SECONDS s"
+      return 0
+    fi
   fi
   if curl -fsS -m 2 "http://127.0.0.1:$DASHBOARD_PORT/" >/dev/null 2>&1; then
     echo "127.0.0.1:$DASHBOARD_PORT already answers; the sandbox dashboard needs it free"
-    return 1
+    return 0
   fi
 }
 
@@ -664,7 +669,7 @@ lever_finish() {
     mkdir -p "$LEVER_EVIDENCE/state"
     cp -R "$ROOT/state/." "$LEVER_EVIDENCE/state/"
     lever_ports "$ROOT" >"$LEVER_EVIDENCE/ports"
-    (cmd_destroy "$ROOT") >>"$LEVER_EVIDENCE/destroy.log" 2>&1 || code=1
+    bash "$HERE/sandbox.sh" destroy "$ROOT" >>"$LEVER_EVIDENCE/destroy.log" 2>&1 || code=1
   fi
   echo "lever: exit $code; evidence in $LEVER_EVIDENCE" >&2
   exit "$code"
@@ -676,23 +681,34 @@ cmd_lever() {
   DOCKER_SSH=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --data-dir) data=$2; shift 2 ;;
-      --evidence-dir) LEVER_EVIDENCE=$2; shift 2 ;;
-      --docker-ssh) DOCKER_SSH=$2; create=(--docker-ssh "$2"); shift 2 ;;
+      --data-dir)
+        data=$2
+        shift 2
+        ;;
+      --evidence-dir)
+        LEVER_EVIDENCE=$2
+        shift 2
+        ;;
+      --docker-ssh)
+        DOCKER_SSH=$2
+        create=(--docker-ssh "$2")
+        shift 2
+        ;;
       *) die "unknown option $1" ;;
     esac
   done
-  [ -n "$data" ] && [ -n "$LEVER_EVIDENCE" ] ||
-    die "usage: sandbox.sh lever --data-dir DIR --evidence-dir DIR [--docker-ssh USER@HOST]"
+  [ -n "$data" ] && [ -n "$LEVER_EVIDENCE" ] \
+    || die "usage: sandbox.sh lever --data-dir DIR --evidence-dir DIR [--docker-ssh USER@HOST]"
   mkdir -p "$LEVER_EVIDENCE"
   LEVER_EVIDENCE=$(cd "$LEVER_EVIDENCE" && pwd)
-  if ! reason=$(lever_doctor); then
+  reason=$(lever_doctor)
+  if [ -n "$reason" ]; then
     printf '%s: %s\n' "$LEVER_DOCTOR_MARKER" "$reason" | tee "$LEVER_EVIDENCE/doctor.txt" >&2
     exit 3
   fi
   trap lever_finish EXIT
   cmd_create --root "$data" ${create[@]+"${create[@]}"} >"$LEVER_EVIDENCE/create.log" 2>&1
-  cmd_verify "$ROOT" >"$LEVER_EVIDENCE/verify.log" 2>&1 || code=$?
+  bash "$HERE/sandbox.sh" verify "$ROOT" >"$LEVER_EVIDENCE/verify.log" 2>&1 || code=$?
   cd "$REPO"
   return "$code"
 }

@@ -24,6 +24,7 @@ _STRUCTURE_KEYS = frozenset({
     "fixed_files",
     "import_package",
     "owners",
+    "ownership_areas",
     "pyq_owned_extensions",
     "repeat_exempt_files",
     "skill_layout",

@@ -18,7 +18,7 @@ from lib.proofs_settings import (
     strings,
     table,
 )
-from lib.test_evidence import EvidenceError, StaticCase
+from lib.run_evidence import EvidenceError, StaticCase
 
 GROWTH_RULE = "TEST.growth.justified"
 DUPLICATE_RULE = "TEST.duplicate-path"

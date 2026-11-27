@@ -10,7 +10,7 @@ from typing import Any
 
 from lib.machine_probe import machine_id
 from lib.proofs_settings import PROOFS_FILE, SettingsError, approved_paths, load_proofs
-from lib.test_evidence import EvidenceError, RunReport, read_report
+from lib.run_evidence import EvidenceError, RunReport, read_report
 
 WALL_RULE = "TEST.budget.t1-time"
 PER_TEST_RULE = "TEST.budget.per-test-time"

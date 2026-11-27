@@ -18,7 +18,7 @@ def _lib(name: str) -> ModuleType:
 
 
 def _script(name: str) -> ModuleType:
-    _lib("test_evidence")
+    _lib("run_evidence")
     module_name = name.replace("-", "_")
     spec = importlib.util.spec_from_file_location(module_name, _SCRIPTS / f"{name}.py")
     assert spec is not None
@@ -30,7 +30,7 @@ def _script(name: str) -> ModuleType:
 
 
 def _report(tmp_path: Path, outcomes: list[str], name: str = "t1.json") -> Path:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     cases = tuple(
         evidence.CaseRecord(f"tests/test_a.py::test_case_{index}", outcome, "", 0.01, 0)
         for index, outcome in enumerate(outcomes)
@@ -41,7 +41,7 @@ def _report(tmp_path: Path, outcomes: list[str], name: str = "t1.json") -> Path:
 
 
 def _listing(tmp_path: Path, ids: list[str]) -> Path:
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
     path = tmp_path / "t1-listing.json"
     evidence.write_listing(evidence.TierListing("t1", "pytest", tuple(ids)), path)
     return path

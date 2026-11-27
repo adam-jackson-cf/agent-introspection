@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lib.command_runner import isolated_environment, run_command
-from lib.test_evidence import (
+from lib.run_evidence import (
     CaseRecord,
     EvidenceError,
     RunReport,

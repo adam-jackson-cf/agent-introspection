@@ -19,7 +19,7 @@ def _lib(name: str) -> ModuleType:
 
 
 def _script(name: str) -> ModuleType:
-    _lib("test_evidence")
+    _lib("run_evidence")
     module_name = name.replace("-", "_")
     spec = importlib.util.spec_from_file_location(module_name, _SCRIPTS / f"{name}.py")
     assert spec is not None
