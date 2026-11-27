@@ -23,6 +23,7 @@ static_checks=(
   python_quality
   python_scalability
   python_fanout
+  code_integrity
   oxlint
   markdownlint
   prettier
@@ -78,6 +79,14 @@ check_python_scalability() { uv run python scripts/check-python-scalability.py "
 check_python_fanout() {
   uv run python scripts/check-python-fanout.py --source-root src --source-root scripts \
     --source-root tests --source-root .agents/skills --root-package agent_introspection "$@"
+}
+
+check_code_integrity() {
+  if (($#)); then
+    uv run python scripts/check-code-integrity.py "$@"
+  else
+    uv run python scripts/check-code-integrity.py --all -- "$fixtures_exclude"
+  fi
 }
 
 check_oxlint() {
