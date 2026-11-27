@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: gate
+        name: gate
+        entry: bash scripts/gate.sh hook
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: verify
+        name: verify
+        entry: uv run tool verify
+        language: system
+        pass_filenames: false

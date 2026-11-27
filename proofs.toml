@@ -1,0 +1,186 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[validator]
+status = "proofs"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh proofs"
+
+[hooks]
+check = ["bash", "scripts/run-ci-quality-gates.sh", "check", "hook_installed"]
+expect = "pre-commit hook installed"
+
+[[claim]]
+id = "proofs.gate"
+rules = ["GATE.*"]
+control = [
+  "scripts/validate-rule-coverage.py",
+  "scripts/check-quality-gate-parity.py",
+  "scripts/check-hook-installed.py",
+  "scripts/run-ci-quality-gates.sh",
+  ".pre-commit-config.yaml",
+  ".github/workflows/ci-quality-gates.yml",
+  ".github/CODEOWNERS",
+]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh proofs"
+status = "proofs"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "proofs", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/bound"
+violating = "tests/fixtures/proofs/proofs.gate/unbound"
+expect = "lacks ref"
+rule = "GATE.enforced"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "gate_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/parity-matched"
+violating = "tests/fixtures/proofs/proofs.gate/parity-divergent"
+expect = "GATE.parity"
+rule = "GATE.parity"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "gate_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/parity-matched"
+violating = "tests/fixtures/proofs/proofs.gate/unowned"
+expect = "GATE.self-check"
+rule = "GATE.self-check"
+
+[[claim]]
+id = "host.required-checks"
+rules = ["GIT.required-checks"]
+
+[claim.host]
+command = ["gh", "api", "repos/adam-jackson-cf/agent-introspection/branches/main/protection"]
+expect = ["\"strict\": true", "\"gate\"", "\"proofs\""]
+
+[[claim]]
+id = "security.dependency-audit"
+rules = ["SECURITY.dependency-audit"]
+control = ["scripts/check-dependency-audit.py", ".github/dependency-audit.json"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "dependency_audit", "{fixture}"]
+passing = "tests/fixtures/proofs/security.dependency-audit/passing"
+violating = "tests/fixtures/proofs/security.dependency-audit/advisory"
+expect = "SECURITY.dependency-audit lock="
+rule = "SECURITY.dependency-audit"
+timeout_seconds = 120
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "dependency_audit", "{fixture}"]
+passing = "tests/fixtures/proofs/security.dependency-audit/passing"
+violating = "tests/fixtures/proofs/security.dependency-audit/manifest-without-lock"
+expect = "SECURITY.dependency-audit failure=manifest-without-lock"
+rule = "SECURITY.dependency-audit"
+timeout_seconds = 120
+
+[[claim]]
+id = "parity.locks"
+rules = ["PARITY.lock-version", "PARITY.package-manager"]
+control = ["scripts/check-lock-parity.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "lock_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.locks/passing"
+violating = "tests/fixtures/proofs/parity.locks/lock-version"
+expect = "PARITY.lock-version"
+rule = "PARITY.lock-version"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "lock_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.locks/passing"
+violating = "tests/fixtures/proofs/parity.locks/package-manager"
+expect = "PARITY.package-manager"
+rule = "PARITY.package-manager"
+
+[[claim]]
+id = "parity.install-guidance"
+rules = ["PARITY.install-guidance"]
+control = ["scripts/check-install-guidance.py", "scripts/fresh-install/sandbox.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh install"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "install_guidance", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.install-guidance/passing"
+violating = "tests/fixtures/proofs/parity.install-guidance/violating"
+expect = "PARITY.install-guidance"
+rule = "PARITY.install-guidance"
+
+[[claim]]
+id = "skill.metadata"
+rules = ["SKILL.metadata"]
+control = ["scripts/check-skill-metadata.py", ".agents/skill-metadata.schema.json"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "skill_metadata", "{fixture}"]
+passing = "tests/fixtures/proofs/skill.metadata/passing/introspection-good/SKILL.md"
+violating = "tests/fixtures/proofs/skill.metadata/violating/wrong-directory/SKILL.md"
+expect = "SKILL.metadata"
+rule = "SKILL.metadata"
