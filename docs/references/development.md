@@ -109,6 +109,23 @@ workflow (`.github/workflows/live-tests.yml`) on a self-hosted runner labelled `
 - Python naming, structure, and lint limits follow the
   [`python-conventions`](../../.agents/skills/python-conventions/SKILL.md) skill.
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- Pytest treats `ResourceWarning` and `PytestUnraisableExceptionWarning` as errors. A leaked SQLite connection surfaces only as an unraisable `ResourceWarning` at garbage collection.
+- `check-python-mypy.py` fails when a maintained Python file, including an untracked one, is outside `[tool.mypy]` targets, so a new package cannot dodge coverage before it is committed. Skill scripts under `.agents/skills/*/scripts` share module basenames and hold non-importable names, so mypy checks each one in its own run.
+- `scripts/render-measures.py` writes the registry-generated doc sections and `dashboard/src/harnesses.generated.ts`, so the dashboard never copies harness keys, labels, or services by hand. The renderers pad tables and lay out code as Prettier would (print width 80), so a regenerated file passes the format check. `--check` exits non-zero when a committed file differs from the registry.
+- `scripts/ux-probe/probe.ts` reads link text from navigation links only. Per-row table links are row identifiers, and the probe never prints them, so no session ID reaches the evidence. The probe uses the regexes in `docs/ux/rubrics/ux-page.yaml` verbatim, so edit them as code.
+- Markdownlint skips line length under `docs/ux/feature-audit/` because each audit row holds a full formation chain.
+- `tests/conftest.py` points `HOME` at an empty directory for every test, so no test touches the real home. It also puts an `omp` stand-in on `PATH`, so no test runs the real omp.
+- `install-signoz.sh` must run under macOS's system bash 3.2. `tests/test_signoz_install_script.py` keeps only system directories on `PATH`, so macOS runs it under that bash.
+- `tests/test_command_shape_parity.py` selects over inline `values()` rows, so it writes nothing to the ClickHouse it runs against.
+- The fresh-install stub collector (`scripts/fresh-install/otlp_stub.py`) accepts exported traces and metrics but stores only log records, so the sandbox cannot show them. It counts every request by path in `state/collector.json`.
+- `scripts/fresh-install/sandbox.sh` sets each `uv` and `bun` cache variable only when it finds the cache. An empty bun cache variable makes bun cache into the working directory.
+- The sandbox runs the stub collector on `uv`'s own Python. A Homebrew Python started over SSH accepted no loopback connections on macOS, so the collector looked down.
+- `sandbox.sh destroy` deletes only a directory that `create` recorded as its own sandbox.
+
 ## Related Docs
 
 - [README](../../README.md): install and first run.

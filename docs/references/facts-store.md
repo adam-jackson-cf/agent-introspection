@@ -213,6 +213,32 @@ events from SigNoz with the same family filter.
   [`introspection-signals`](../../.agents/skills/introspection-signals/SKILL.md) signal
   changes.
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- The curated tables are `ReplacingMergeTree` tables. The minute loaders, the hourly sweeps, and `facts backfill` read overlapping windows, so they insert some rows more than once. ClickHouse collapses those duplicates on merge, and every reader selects with `FINAL`.
+- Never drop `prompt_labels`. It stores only Jev's answers, and the prompt text expires with SigNoz's 90-day retention, so older prompts cannot be labelled again. A failed decision is a row with `status = 'failed'`, a reason code, and an `attempts` count; `facts sync` retries it until `attempts` reaches the limit.
+- The hook-event loaders key on `observed_timestamp` alone. A record's own time comes from the producer's clock, which can trail by the length of an outage on the sending machine.
+- Spans reach SigNoz when they end, and a turn can run for more than a day, so the minute span loader selects spans that ended recently. A delayed collector export keeps its original observed time, so rows can land after the loaders' 30-minute window; the hourly sweep catches them. The span sweep keys on end time, bounded only by retention, so a span that ran for days still loads once exported.
+- The SigNoz ClickHouse container runs near its memory cap of about 4 GiB, but the default profile lets one query use 10 GB. Without a lower ceiling, a heavy refresh is killed (Code 241) instead of slowing down. `REFRESH_SETTINGS` sets a per-query ceiling, and grouping, sorting, and joining spill to disk at half of it.
+- Do not set the `LOAD_SETTINGS` ceiling below 1.5 GiB: the log sweep peaks near 1.05 GiB. `facts backfill` inserts over short windows to stay inside the ceiling. Its rows equal those of a whole-day run, and `ReplacingMergeTree` makes a rerun idempotent.
+- Snapshot refreshers run with two threads, so dashboard queries keep the CPU while a rebuild runs.
+- Every refresher offset uses minutes only. `_REFRESH_SCHEDULE` rewrites a single-unit `OFFSET` when `facts verify` builds its scratch copy, so a mixed-unit offset would break that rewrite.
+- Minute loaders use a short backoff because they are light and their next run is a minute away. Sweeps back off a full hour so a retry follows the sweep's own next slot instead of landing on a neighbouring sweep 10 minutes later.
+- Refreshers are created `EMPTY` because creating them all at once fired 18 refreshes together. That burst exhausted the retries and left the history tables empty.
+- Install and `facts refresh` never retry a refresh that is still running after its wait budget. Another request would queue a second full run behind the first.
+- `facts install` drops the snapshot refreshers before the loaders, because the refreshers depend on them. On an upgraded store the existing refreshers still wait on the old loaders.
+- The CLI sends each SQL statement in its own POST, because the ClickHouse HTTP interface runs one statement per request. Every request sets `wait_end_of_query`, which buffers the result, so a failure mid-query returns an HTTP error instead of a partial success.
+- Loaders that write rows themselves (`inbox.py`) chunk each INSERT to stay under ClickHouse's 256 KiB query limit, cutting large rows by encoded size. They declare column types for tables with nested objects, because JSON inference would read those as tuples instead of the declared `Map` columns.
+- `preflight` reads only the registry's `[harnesses]` table, so it does not depend on the rest of the registry validating. No module reads the registry at import, so a broken registry cannot stop a command that never reads it, such as `hook`.
+- A support entry keyed by one Codex harness overrides the shared `codex` entry. The Pipeline coverage grid applies every route of a signal to every harness. A route `match` predicate must therefore name the producer-specific event or span, not just match any row.
+- omp renamed its `pi.gen_ai.*` span attributes to `omp.gen_ai.*` on 2026-09-29. `select_spans.sql` stores both under the original `pi.gen_ai.*` names, so every view reads one key across the rename. Tool intent text is dropped under either prefix.
+- A failure signature or span status holds only a diagnostic line. When the output has no diagnostic line, the stored text is empty, so an arbitrary output line with raw content never reaches the durable tables. When the diagnostic keyword lies past character 80, the projection keeps the line from the keyword on. This keyword window keeps every capped text diagnostic.
+- The redactions run in order, before home and digit normalization. The SQL mirrors in `select_logs.sql` and `select_spans.sql` use RE2, which has no lookahead. The long-token rule therefore works in three passes: it marks, unmarks, then redacts.
+- Each projection's `mapFilter` predicate must be a lambda that tests key membership in a tuple of string literals. It may exclude a key suffix and may run over a prefix-renaming `mapApply`. `tests/test_facts.py` evaluates that shape in Python and fails on any other.
+- `select_hook_events.sql` lists its columns in the order of `introspection.hook_events`. `facts backfill` inserts by position, so a new column goes last in both the table and the select; a column placed earlier would shift every value after it.
+
 ## Related Docs
 
 - [Dashboard Data Gaps](data-gaps.md): what cannot be shown, per harness

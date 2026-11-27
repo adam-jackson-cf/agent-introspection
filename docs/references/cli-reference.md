@@ -319,6 +319,22 @@ enabled` that sent rows this week); then `spool`, `schedule`, `schedule_legacy`,
 | 60   | Conflict            | A state that blocks the command: a proposal that changed while a transition was being written, a `proposal draft` run that fails, `facts schedule` on a platform other than macOS or Linux, a scheduler that refuses the job, a missing executable to schedule, or `clickhouse_password_env` given to `facts schedule install`.      |
 | 70   | Internal error      | An operating-system, network or HTTP protocol error no other code covers, or a `launchctl` or `systemctl` call that times out after 30 seconds. Any other exception is a defect: Python prints its traceback and exits 1.                                                                                                            |
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- Commands other than `setup` refuse retired keys so a stale setting never looks active. The error names each one as safe to delete.
+- `setup` checks each `--harness` key against the facts registry at the `config` step. The registry knows fewer keys than the profiles (omp is `oh-my-pi` there). Without this check a dry run would pass and the real run would stop at `facts`.
+- A dry run skips `doctor` because a machine not yet set up would only fail it.
+- A symlinked config file is resolved and written through, so the link is never replaced by a plain file.
+- `facts install` creates and migrates the workflow store even when a refresh failed after the ClickHouse store was created, because the dashboard reads that store. An error from the workflow store never replaces the install failure in the output.
+- `facts schedule install` validates the selected config at install time and records its resolved path, so the scheduled job reads the same file later.
+- `install` refuses `clickhouse_password_env` because the scheduler cannot pass that variable to the job. A password must come from `clickhouse_password_command`, whose executable the job's `PATH` includes.
+- When `sync.log` cannot be written, `facts sync --log` writes to stderr instead, so the scheduler's own capture still gets the line.
+- `launchctl` refuses to load a label that is already loaded.
+- `export_settings` only warns about a missing or different service name, because each producer names its own service by default. Any other export setting turns export on or routes it, so a mismatch fails.
+- `harness list` never runs a binary whose profile has no `version_args`, so listing never starts a harness session.
+
 ## Notes
 
 - Nothing is applied by this tool. See [Proposal Lifecycle](proposal-lifecycle.md) for
