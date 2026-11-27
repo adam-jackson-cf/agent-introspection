@@ -19,7 +19,6 @@ STRUCTURE_RULES = frozenset({
 })
 _STRUCTURE_KEYS = frozenset({
     "banned_words",
-    "base_ref",
     "casing",
     "casing_patterns",
     "catalogue_plurals",
@@ -185,7 +184,7 @@ def _settings(document: dict[str, object]) -> Settings:
     tiers = _strings(structure, "tiers", where)
     package = _string(structure, "import_package", where)
     return Settings(
-        base_ref=_string(structure, "base_ref", where),
+        base_ref=_string(_table(document, "scope", "proofs.toml"), "base_ref", "[scope]"),
         package_dir=f"{_string(structure, 'source_root', where).rstrip('/')}/{package}",
         import_package=package,
         tiers=tiers,

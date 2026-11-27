@@ -92,7 +92,7 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
 
 
 def base_ref(root: Path) -> str:
-    return string(table(load_proofs(root), "structure"), "base_ref", "structure")
+    return string(table(load_proofs(root), "scope"), "base_ref", "scope")
 
 
 def _git_lines(root: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:

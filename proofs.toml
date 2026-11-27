@@ -2,6 +2,7 @@ schema = 1
 
 [scope]
 mode = "whole"
+base_ref = "origin/main"
 
 [hooks]
 check = ["bash", "scripts/run-ci-quality-gates.sh", "check", "hook_installed"]
@@ -64,7 +65,7 @@ rules = ["GIT.required-checks"]
 
 [claim.host]
 command = ["gh", "api", "repos/adam-jackson-cf/agent-introspection/branches/main/protection"]
-expect = ["\"gate\"", "\"proofs\""]
+expect = ["\"gate\"", "\"proofs\"", "\"require_code_owner_reviews\":true"]
 
 [[claim]]
 id = "security.dependency-audit"
@@ -1533,7 +1534,6 @@ large_module_fanout_max = 3
 [python_quality.environment_seams]
 
 [structure]
-base_ref = "origin/main"
 source_root = "src"
 import_package = "agent_introspection"
 tiers = ["contract", "store", "domain", "service", "interface"]

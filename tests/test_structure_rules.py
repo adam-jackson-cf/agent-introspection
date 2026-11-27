@@ -126,7 +126,7 @@ def _write_settings(tmp_path: Path, replace: tuple[str, str]) -> Path:
 @pytest.mark.parametrize(
     ("replace", "message"),
     [
-        (('base_ref = "origin/main"', 'base_ref = "origin/main"\nextra = 1'), "unknown keys"),
+        (('source_root = "src"', 'source_root = "src"\nextra = 1'), "unknown keys"),
         (('money"]', 'money", "billing"]'), "in two tiers"),
         (('fixtures_dir = "tests/fixtures"', 'fixtures = "tests/fixtures"'), "fixtures_dir"),
         (('"scripts/*" = "kebab-case"', '"scripts/*" = "camel"'), "unknown casings"),

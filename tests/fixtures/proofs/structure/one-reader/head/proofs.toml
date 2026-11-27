@@ -1,7 +1,10 @@
 schema = 1
 
-[structure]
+[scope]
+mode = "whole"
 base_ref = "origin/main"
+
+[structure]
 source_root = "src"
 import_package = "shop"
 tiers = ["core", "service", "interface"]
