@@ -56,6 +56,7 @@ SUBPROCESS_CALLS = frozenset({
 # but run the subprocess. Files absent from this map may not call subprocess at all.
 # Tests are out of scope for this rule.
 SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
+    "scripts/check-code-integrity.py": frozenset({"_git"}),
     "scripts/check-dependency-audit.py": frozenset({"_run"}),
     "scripts/check-python-mypy.py": frozenset({"_mypy"}),
     "scripts/check-runner-failure-propagation.py": frozenset({"_run"}),
