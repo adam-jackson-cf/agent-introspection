@@ -953,18 +953,23 @@ def _run_local_command(command: Sequence[str]) -> subprocess.CompletedProcess[st
     return subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
 
 
+def _environment_value(name: str) -> str | None:
+    return os.environ.get(name)
+
+
 def clickhouse_password(signoz: SigNozConfig) -> str:
     """Return the HTTP-mode password from its environment variable or command.
 
     Neither the value nor the command's output is ever logged or put in an error.
     """
     if signoz.clickhouse_password_env is not None:
-        if not os.environ.get(signoz.clickhouse_password_env):
+        value = _environment_value(signoz.clickhouse_password_env)
+        if not value:
             raise ConfigurationError(
                 f"environment variable {signoz.clickhouse_password_env} "
                 "(signoz.clickhouse_password_env) is not set"
             )
-        return os.environ[signoz.clickhouse_password_env]
+        return value
     if signoz.clickhouse_password_command is not None:
         try:
             result = _run_local_command(signoz.clickhouse_password_command)

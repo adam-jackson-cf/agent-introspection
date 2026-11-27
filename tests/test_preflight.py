@@ -181,15 +181,19 @@ import agent_introspection.cli
 def test_a_registry_that_does_not_parse_never_stops_the_cli_from_starting() -> None:
     # `hook`, `spool sync`, and `doctor` must start while the registry is mid-edit;
     # only the commands that read it fail.
-    result = subprocess.run(
-        [sys.executable, "-c", _BROKEN_REGISTRY_IMPORT],
+    result = _run_python(_BROKEN_REGISTRY_IMPORT)
+
+    assert result.returncode == 0, result.stderr
+
+
+def _run_python(code: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
-
-    assert result.returncode == 0, result.stderr
 
 
 def test_checked_columns_and_services_are_the_ones_the_projections_read() -> None:

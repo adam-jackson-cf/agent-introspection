@@ -314,6 +314,12 @@ def detect_output(machine: Any, capsys: pytest.CaptureFixture[str]) -> Any:
     return render
 
 
+def _run_install(args: Sequence[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(INSTALL), *args], capture_output=True, text=True, env=env, timeout=60, check=False
+    )
+
+
 def _install(
     tmp_path: Path, *args: str, detect: str | None, **docker: str
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
@@ -335,9 +341,7 @@ def _install(
         "FAKE_COMPOSE_VERSION": docker.get("compose", "2.24.4"),
         **({"DOCKER_HOST": docker["host"]} if "host" in docker else {}),
     }
-    result = subprocess.run(
-        [str(INSTALL), *args], capture_output=True, text=True, env=env, timeout=60, check=False
-    )
+    result = _run_install(args, env)
     return result, log.read_text().splitlines() if log.exists() else []
 
 

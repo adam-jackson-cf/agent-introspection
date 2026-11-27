@@ -18,14 +18,30 @@ from agent_introspection import facts
 CASES = json.loads((Path(__file__).parent / "fixtures" / "command_shape.json").read_text())
 CONTAINER = "signoz-clickhouse"
 
+
+def _live_clickhouse_requested() -> bool:
+    return os.environ.get("AGENT_INTROSPECTION_LIVE_CLICKHOUSE") == "1"
+
+
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENT_INTROSPECTION_LIVE_CLICKHOUSE") != "1",
+    not _live_clickhouse_requested(),
     reason="set AGENT_INTROSPECTION_LIVE_CLICKHOUSE=1 to run against the local ClickHouse",
 )
 
 
 def _literal(text: str) -> str:
     return "'" + text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+
+
+def _clickhouse_query(query: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", "exec", "-i", CONTAINER, "clickhouse-client", "--format", "JSONEachRow"],
+        input=query,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
 
 
 def test_sql_fragment_matches_the_python_shape_for_every_fixture_case() -> None:
@@ -36,14 +52,7 @@ def test_sql_fragment_matches_the_python_shape_for_every_fixture_case() -> None:
         "SELECT cmd, command_head, command_sub, segments, verification_kinds, gate_run\n"
         f"FROM values('cmd String', {rows})"
     )
-    result = subprocess.run(
-        ["docker", "exec", "-i", CONTAINER, "clickhouse-client", "--format", "JSONEachRow"],
-        input=query,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=True,
-    )
+    result = _clickhouse_query(query)
     got = {row["cmd"]: row for row in map(json.loads, result.stdout.splitlines())}
 
     for case in CASES:

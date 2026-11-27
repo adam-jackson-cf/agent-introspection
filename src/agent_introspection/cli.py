@@ -43,9 +43,13 @@ def _emit(value: object, log: bool = False) -> None:
         print(line)
 
 
+def _configured_path() -> str | None:
+    return os.environ.get("AGENT_INTROSPECTION_CONFIG")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-introspection")
-    parser.add_argument("--config", default=os.environ.get("AGENT_INTROSPECTION_CONFIG"))
+    parser.add_argument("--config", default=_configured_path())
     commands = parser.add_subparsers(dest="command", required=True)
     add_facts_parser(commands)
     add_spool_parser(commands)
