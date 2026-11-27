@@ -126,5 +126,5 @@ show_error_codes = true
 exclude = ["^tests/fixtures/"]
 
 [[tool.mypy.overrides]]
-module = ["pytest", "_pytest.*", "pluggy", "pluggy.*"]
+module = ["pytest", "_pytest.*"]
 follow_imports = "normal"

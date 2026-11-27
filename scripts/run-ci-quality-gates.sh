@@ -21,9 +21,7 @@ static_checks=(
   subprocess_timeouts
   test_placement
   test_mocking
-  test_hooks
   test_tiers
-  test_evasion
   dependency_audit
   ruff_format
   ruff
@@ -39,6 +37,8 @@ static_checks=(
   tsc
   dashboard_format
   dashboard_build
+  test_hooks
+  test_evasion
 )
 
 tracked() {

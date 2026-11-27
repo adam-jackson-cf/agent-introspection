@@ -1,8 +1,9 @@
 import sys
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 
 import pytest
+from pluggy import Result
 
 RULE = "TEST.t1-isolation"
 T2_MARKERS = ("boundary",)
@@ -17,6 +18,11 @@ PROCESS_EVENTS = frozenset({
     "subprocess.Popen",
 })
 NETWORK_EVENTS = frozenset({"socket.bind", "socket.connect", "socket.sendmsg", "socket.sendto"})
+
+
+def wrapper_hook[Hook: Callable[..., object]](function: Hook) -> Hook:
+    marked: Hook = pytest.hookimpl(hookwrapper=True)(function)
+    return marked
 
 
 class TierIsolationError(RuntimeError):
@@ -59,31 +65,31 @@ class TierGuard:
         finally:
             self.item = self.phase = ""
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_setup(self, item: pytest.Item) -> Iterator[None]:
         with self._guarded(item, "setup"):
-            return (yield)
+            yield
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_call(self, item: pytest.Item) -> Iterator[None]:
         with self._guarded(item, "call"):
-            return (yield)
+            yield
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_teardown(self, item: pytest.Item) -> Iterator[None]:
         with self._guarded(item, "teardown"):
-            return (yield)
+            yield
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_makereport(
         self, item: pytest.Item, call: pytest.CallInfo[None]
-    ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-        report = yield
+    ) -> Generator[None, Result[pytest.TestReport], None]:
+        outcome = yield
+        report = outcome.get_result()
         if self.current:
             report.outcome = "failed"
             report.longrepr = "\n".join(self.current)
             self.current = []
-        return report
 
 
 GUARD = TierGuard()

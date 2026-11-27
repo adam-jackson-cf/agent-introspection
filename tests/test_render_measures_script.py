@@ -46,9 +46,10 @@ def test_render_measures_writes_missing_outputs_and_then_reports_them_current(
         tmp_path / "dashboard" / "src" / "harnesses.generated.ts",
     ):
         assert path.read_text().strip()
-    assert "BEGIN GENERATED FROM signal_support.toml" in (
-        tmp_path / "docs" / "references" / "data-gaps.md"
-    ).read_text()
+    assert (
+        "BEGIN GENERATED FROM signal_support.toml"
+        in (tmp_path / "docs" / "references" / "data-gaps.md").read_text()
+    )
 
     current = _render(tmp_path, "--check")
     assert current.returncode == 0, current.stdout + current.stderr

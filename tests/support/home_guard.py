@@ -3,10 +3,11 @@ import pwd
 import shutil
 import sys
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
 import pytest
+from pluggy import Result
 
 RULE = "TEST.user-data-guard"
 REDIRECTED = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
@@ -28,6 +29,11 @@ PATH_EVENTS = {
     "shutil.rmtree": (0,),
     "sqlite3.connect": (0,),
 }
+
+
+def wrapper_hook[Hook: Callable[..., object]](function: Hook) -> Hook:
+    marked: Hook = pytest.hookimpl(hookwrapper=True)(function)
+    return marked
 
 
 class UserDataGuardError(PermissionError):
@@ -96,24 +102,24 @@ class UserDataGuard:
                 self.current.append(message)
                 raise UserDataGuardError(message)
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_protocol(self, item: pytest.Item) -> Iterator[None]:
         self.item = item.nodeid
         try:
-            return (yield)
+            yield
         finally:
             self.item = ""
 
-    @pytest.hookimpl(wrapper=True)
+    @wrapper_hook
     def pytest_runtest_makereport(
         self, item: pytest.Item, call: pytest.CallInfo[None]
-    ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-        report = yield
+    ) -> Generator[None, Result[pytest.TestReport], None]:
+        outcome = yield
+        report = outcome.get_result()
         if self.current:
             report.outcome = "failed"
             report.longrepr = "\n".join(self.current)
             self.current = []
-        return report
 
     def pytest_sessionfinish(self, session: pytest.Session) -> None:
         if self.violations:
