@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import run_command
+from lib.proofs_settings import base_ref
 
 GIT_TIMEOUT_SECONDS = 60
 
 
 class GitError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class DiffBase:
+    commit: str
+    staged: bool
 
 
 @dataclass(frozen=True)
@@ -49,8 +58,12 @@ def file_at(repo: Path, ref: str, path: str) -> str | None:
     return completed.stdout if completed.returncode == 0 else None
 
 
-def changes_since(repo: Path, base: str) -> list[Change]:
-    items = _split(_git(repo, "diff", "--name-status", "-z", "-M", base, "--"))
+def _cached(staged: bool) -> list[str]:
+    return ["--cached"] if staged else []
+
+
+def changes_since(repo: Path, base: str, *, staged: bool = False) -> list[Change]:
+    items = _split(_git(repo, "diff", *_cached(staged), "--name-status", "-z", "-M", base, "--"))
     changes: list[Change] = []
     index = 0
     while index < len(items):
@@ -64,10 +77,14 @@ def changes_since(repo: Path, base: str) -> list[Change]:
     return changes
 
 
-def added_lines(repo: Path, base: str, paths: list[str]) -> dict[str, list[tuple[int, str]]]:
+def added_lines(
+    repo: Path, base: str, paths: list[str], *, staged: bool = False
+) -> dict[str, list[tuple[int, str]]]:
     if not paths:
         return {}
-    diff = _git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", base, "--", *paths)
+    diff = _git(
+        repo, "diff", *_cached(staged), "-U0", "--no-color", "--no-ext-diff", base, "--", *paths
+    )
     found: dict[str, list[tuple[int, str]]] = {}
     current = ""
     line = 0
@@ -80,3 +97,46 @@ def added_lines(repo: Path, base: str, paths: list[str]) -> dict[str, list[tuple
             found.setdefault(current, []).append((line, text[1:]))
             line += 1
     return found
+
+
+def add_base_arguments(parser: argparse.ArgumentParser, *, required: bool) -> None:
+    group = parser.add_mutually_exclusive_group(required=required)
+    group.add_argument("--base", help="judge the worktree against this ref")
+    group.add_argument("--staged", action="store_true", help="judge the staged changes")
+    group.add_argument(
+        "--merge-base",
+        action="store_true",
+        help="judge HEAD against its merge base with proofs.toml [scope] base_ref",
+    )
+
+
+def diff_base(repo: Path, arguments: argparse.Namespace) -> DiffBase | None:
+    if arguments.staged:
+        return DiffBase(resolve(repo, "HEAD"), staged=True)
+    if arguments.merge_base:
+        merge = _git(repo, "merge-base", "HEAD", base_ref(repo)).strip()
+        return DiffBase(merge, staged=False)
+    if arguments.base is None:
+        return None
+    return DiffBase(resolve(repo, arguments.base), staged=False)
+
+
+def required_diff_base(repo: Path, arguments: argparse.Namespace) -> DiffBase:
+    base = diff_base(repo, arguments)
+    if base is None:
+        raise GitError("no diff base; pass --base, --staged or --merge-base")
+    return base
+
+
+def head_files(repo: Path, base: DiffBase | None) -> list[str]:
+    files = tracked_files(repo)
+    if base is not None and base.staged:
+        return files
+    return [path for path in files if filesystem.is_file(repo / path)]
+
+
+def head_text(repo: Path, base: DiffBase | None, path: str) -> str | None:
+    if base is not None and base.staged:
+        return file_at(repo, "", path)
+    target = repo / path
+    return filesystem.read_text(target) if filesystem.is_file(target) else None

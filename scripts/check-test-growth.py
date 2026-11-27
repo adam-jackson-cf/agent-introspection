@@ -4,11 +4,22 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from lib import bun_adapter, filesystem, pytest_adapter
-from lib.git_changes import GitError, changes_since, file_at, files_at, resolve, tracked_files
+from lib.git_changes import (
+    DiffBase,
+    GitError,
+    add_base_arguments,
+    changes_since,
+    diff_base,
+    file_at,
+    files_at,
+    head_files,
+    head_text,
+)
 from lib.proofs_settings import (
     PROOFS_FILE,
     SettingsError,
@@ -62,15 +73,25 @@ def collect(root: Path, files: list[str]) -> Collection:
     return Collection([*cases, *bun_cases], {**unparsable, **bun_unparsable})
 
 
-def _base_collection(repo: Path, base: str, layout: Layout) -> Collection:
+def _snapshot(files: list[str], read: Callable[[str], str | None]) -> Collection:
     with tempfile.TemporaryDirectory() as raw:
         snapshot = Path(raw)
-        files = [path for path in files_at(repo, base) if layout.owns(path)]
         for path in files:
             target = snapshot / path
             filesystem.mkdir(target.parent, parents=True, exist_ok=True)
-            filesystem.write_text(target, file_at(repo, base, path) or "")
+            filesystem.write_text(target, read(path) or "")
         return collect(snapshot, files)
+
+
+def _base_collection(repo: Path, base: str, layout: Layout) -> Collection:
+    files = [path for path in files_at(repo, base) if layout.owns(path)]
+    return _snapshot(files, lambda path: file_at(repo, base, path))
+
+
+def _head_collection(repo: Path, base: DiffBase | None, files: list[str]) -> Collection:
+    if base is not None and base.staged:
+        return _snapshot(files, lambda path: head_text(repo, base, path))
+    return collect(repo, files)
 
 
 def _words(case: StaticCase) -> list[str]:
@@ -106,21 +127,16 @@ def _duplicates(new: list[StaticCase], current: list[StaticCase]) -> list[str]:
     return problems
 
 
-def check(repo: Path, base: str | None, paths: list[str]) -> list[str]:
+def check(repo: Path, base: DiffBase | None, paths: list[str]) -> list[str]:
     layout = load_layout(repo)
-    current_files = [
-        path
-        for path in tracked_files(repo)
-        if layout.owns(path) and filesystem.is_file(repo / path)
-    ]
-    current = collect(repo, current_files)
+    current_files = [path for path in head_files(repo, base) if layout.owns(path)]
+    current = _head_collection(repo, base, current_files)
     if base is None:
         known: set[str] = set()
         changed = set(current_files)
     else:
-        commit = resolve(repo, base)
-        known = {case.id for case in _base_collection(repo, commit, layout).cases}
-        changed = {change.path for change in changes_since(repo, commit)}
+        known = {case.id for case in _base_collection(repo, base.commit, layout).cases}
+        changed = {change.path for change in changes_since(repo, base.commit, staged=base.staged)}
     scope = set(paths) if paths else None
     new = [
         case
@@ -138,11 +154,11 @@ def check(repo: Path, base: str | None, paths: list[str]) -> list[str]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="check-test-growth.py")
     parser.add_argument("--repo", type=Path, default=Path())
-    parser.add_argument("--base")
+    add_base_arguments(parser, required=False)
     parser.add_argument("paths", nargs="*")
     arguments = parser.parse_args(argv)
     try:
-        problems = check(arguments.repo, arguments.base, arguments.paths)
+        problems = check(arguments.repo, diff_base(arguments.repo, arguments), arguments.paths)
     except (SettingsError, GitError, EvidenceError) as error:
         print(
             f"{PROOFS_FILE}: {GROWTH_RULE}: {error}; fix the setting or repository state",

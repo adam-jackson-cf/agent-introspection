@@ -6,7 +6,14 @@ import sys
 from pathlib import Path
 
 from lib import filesystem
-from lib.git_changes import GitError, added_lines, changes_since, resolve
+from lib.git_changes import (
+    DiffBase,
+    GitError,
+    add_base_arguments,
+    added_lines,
+    changes_since,
+    required_diff_base,
+)
 from lib.proofs_settings import (
     PROOFS_FILE,
     SettingsError,
@@ -20,21 +27,23 @@ from lib.proofs_settings import (
 RULE = "TEST.golden-change-record"
 
 
-def check(repo: Path, base: str) -> list[str]:
+def check(repo: Path, base: DiffBase) -> list[str]:
     golden = table(load_proofs(repo), "golden")
     globs = strings(golden, "globs", "golden")
     record = string(golden, "change_record", "golden")
     if not filesystem.is_file(repo / record):
         return [f"{PROOFS_FILE}: {RULE}: [golden] change_record {record} does not exist; create it"]
-    commit = resolve(repo, base)
+    commit = base.commit
     changed = sorted({
         path
-        for change in changes_since(repo, commit)
+        for change in changes_since(repo, commit, staged=base.staged)
         for path in (change.path, change.old_path)
         if path
     })
     goldens = [path for path in changed if matches(path, globs)]
-    entries = "\n".join(text for _, text in added_lines(repo, commit, [record]).get(record, []))
+    entries = "\n".join(
+        text for _, text in added_lines(repo, commit, [record], staged=base.staged).get(record, [])
+    )
     return [
         f"{path}: {RULE}: golden file changed with no new entry naming it in {record}; "
         f"add an entry to {record} that names {path} and says why it changed"
@@ -46,10 +55,10 @@ def check(repo: Path, base: str) -> list[str]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="check-golden-changes.py")
     parser.add_argument("--repo", type=Path, default=Path())
-    parser.add_argument("--base", required=True)
+    add_base_arguments(parser, required=True)
     arguments = parser.parse_args(argv)
     try:
-        problems = check(arguments.repo, arguments.base)
+        problems = check(arguments.repo, required_diff_base(arguments.repo, arguments))
     except (SettingsError, GitError) as error:
         print(
             f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr

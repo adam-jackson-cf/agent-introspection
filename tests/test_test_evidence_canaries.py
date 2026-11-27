@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -45,7 +46,6 @@ def _lib(name: str) -> ModuleType:
 
 def _environment() -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    environment.pop("PROOFS_BASE_REF", None)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
 
@@ -94,9 +94,13 @@ def test_run_report_canary_proves_failure_propagation(fixture: str, failing: boo
     assert (completed.returncode != 0) is failing
 
 
-def _run_fixture(case_id: str, tmp_path: Path) -> dict[str, tuple[str, str]]:
+def _run_fixture(
+    case_id: str, tmp_path: Path, *, guarded: bool = False
+) -> dict[str, tuple[str, str]]:
     adapter = _lib("pytest_adapter")
     junit = tmp_path / "report.xml"
+    tests = _CONFORMANCE / case_id / "tests"
+    guards = ["-c", "pyproject.toml", "--rootdir", ".", str(tests)] if guarded else ["tests"]
     subprocess.run(
         [
             sys.executable,
@@ -108,9 +112,9 @@ def _run_fixture(case_id: str, tmp_path: Path) -> dict[str, tuple[str, str]]:
             "-o",
             "junit_family=xunit1",
             f"--junitxml={junit}",
-            "tests",
+            *guards,
         ],
-        cwd=_CONFORMANCE / case_id,
+        cwd=_REPO if guarded else _CONFORMANCE / case_id,
         env=_environment(),
         capture_output=True,
         text=True,
@@ -118,6 +122,58 @@ def _run_fixture(case_id: str, tmp_path: Path) -> dict[str, tuple[str, str]]:
         check=False,
     )
     return {case.id: (case.outcome, case.reason) for case in adapter.report(junit, "t1").cases}
+
+
+def _spec(case_id: str) -> dict[str, object]:
+    spec: dict[str, object] = json.loads(
+        (_CONFORMANCE / case_id / "case.json").read_text(encoding="utf-8")
+    )
+    return spec
+
+
+_GUARD_RULES = frozenset({"TEST.t1-isolation", "TEST.user-data-guard"})
+_GUARD_CASES = sorted(
+    path.name
+    for path in _CONFORMANCE.iterdir()
+    if (path / "case.json").is_file() and _spec(path.name)["rule"] in _GUARD_RULES
+)
+_RECORD_CASES = {
+    "runtime-skip-recorded",
+    "expected-failure-recorded",
+    "tier-selection",
+    "empty-collection",
+}
+
+
+@pytest.mark.parametrize("case_id", _GUARD_CASES)
+def test_a_guarded_conformance_case_gets_its_verdict_from_the_tier_guards(
+    case_id: str, tmp_path: Path
+) -> None:
+    spec = _spec(case_id)
+
+    records = _run_fixture(case_id, tmp_path, guarded=True)
+
+    assert records
+    if spec["expect"] == "finding":
+        assert any(
+            outcome in {"failed", "error"} and str(spec["rule"]) in reason
+            for outcome, reason in records.values()
+        ), records
+    else:
+        assert spec["expect"] == "clean"
+        assert {outcome for outcome, _ in records.values()} == {"passed"}, records
+
+
+def test_every_run_report_and_collection_case_is_asserted() -> None:
+    cases = {
+        path.name
+        for path in _CONFORMANCE.iterdir()
+        if (path / "case.json").is_file()
+        and _spec(path.name)["evidence"] in {"run-report", "collection"}
+    }
+
+    assert cases == set(_GUARD_CASES) | _RECORD_CASES
+    assert len(_GUARD_CASES) == 7
 
 
 def test_conformance_runtime_skip_is_recorded(tmp_path: Path) -> None:

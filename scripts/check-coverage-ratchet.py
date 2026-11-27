@@ -8,13 +8,20 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from lib import filesystem
-from lib.git_changes import GitError, added_lines, changes_since, file_at, resolve
+from lib.git_changes import (
+    DiffBase,
+    GitError,
+    add_base_arguments,
+    added_lines,
+    changes_since,
+    file_at,
+    head_text,
+    required_diff_base,
+)
 from lib.proofs_settings import (
     PROOFS_FILE,
     SettingsError,
     approved_paths,
-    load_proofs,
     string,
     table,
 )
@@ -78,28 +85,33 @@ def pragma_patterns(coverage: dict[str, Any]) -> list[re.Pattern[str]]:
     return [re.compile(pattern) for pattern in (DEFAULT_PRAGMA, SCRIPT_PRAGMA, *configured)]
 
 
-def _new_approval(repo: Path, commit: str) -> bool:
-    head = approved_paths(load_proofs(repo), RULE)
+def _proofs(text: str | None) -> dict[str, Any]:
+    if text is None:
+        raise SettingsError(f"{PROOFS_FILE} is missing")
+    return tomllib.loads(text)
+
+
+def _new_approval(head: dict[str, Any], repo: Path, commit: str) -> bool:
     base_text = file_at(repo, commit, PROOFS_FILE)
     base = approved_paths(tomllib.loads(base_text), RULE) if base_text else set()
-    return CONFIG in head - base
+    return CONFIG in approved_paths(head, RULE) - base
 
 
-def check(repo: Path, base: str) -> list[str]:
-    commit = resolve(repo, base)
-    fixtures = (
-        string(table(load_proofs(repo), "layout"), "fixtures_dir", "layout").rstrip("/") + "/"
-    )
+def check(repo: Path, base: DiffBase) -> list[str]:
+    commit = base.commit
+    proofs = _proofs(head_text(repo, base, PROOFS_FILE))
+    fixtures = string(table(proofs, "layout"), "fixtures_dir", "layout").rstrip("/") + "/"
     before = coverage_table(file_at(repo, commit, CONFIG))
-    after = coverage_table(filesystem.read_text(repo / CONFIG))
-    changed = [change.path for change in changes_since(repo, commit) if change.status != "D"]
+    after = coverage_table(head_text(repo, base, CONFIG))
+    changes = changes_since(repo, commit, staged=base.staged)
+    changed = [change.path for change in changes if change.status != "D"]
     problems = [
         f"{path}: {RULE}: coverage configuration file added or changed; keep coverage settings in "
         f"{CONFIG} [tool.coverage] and remove {path}"
         for path in changed
         if path in OTHER_CONFIGS
     ]
-    if not _new_approval(repo, commit):
+    if not _new_approval(proofs, repo, commit):
         problems.extend(
             f"{CONFIG}: {RULE}: {change} without approval; restore it, or add an owner-approved "
             f"[[exception]] for {CONFIG} to {PROOFS_FILE} in this change"
@@ -107,7 +119,7 @@ def check(repo: Path, base: str) -> list[str]:
         )
     patterns = pragma_patterns(after)
     owned = [path for path in changed if not path.startswith(fixtures)]
-    for path, lines in sorted(added_lines(repo, commit, owned).items()):
+    for path, lines in sorted(added_lines(repo, commit, owned, staged=base.staged).items()):
         problems.extend(
             f"{path}:{number}: {RULE}: added coverage exclusion pragma; cover the code with a test "
             "instead of excluding it"
@@ -124,10 +136,10 @@ def _excludes(text: str, patterns: list[re.Pattern[str]]) -> bool:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="check-coverage-ratchet.py")
     parser.add_argument("--repo", type=Path, default=Path())
-    parser.add_argument("--base", required=True)
+    add_base_arguments(parser, required=True)
     arguments = parser.parse_args(argv)
     try:
-        problems = check(arguments.repo, arguments.base)
+        problems = check(arguments.repo, required_diff_base(arguments.repo, arguments))
     except (SettingsError, GitError, tomllib.TOMLDecodeError) as error:
         print(
             f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr

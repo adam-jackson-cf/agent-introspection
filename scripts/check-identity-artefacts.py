@@ -5,7 +5,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from lib.git_changes import GitError, changes_since, resolve
+from lib.git_changes import (
+    DiffBase,
+    GitError,
+    add_base_arguments,
+    changes_since,
+    required_diff_base,
+)
 from lib.proofs_settings import (
     PROOFS_FILE,
     SettingsError,
@@ -25,7 +31,7 @@ def _test_paths(layout: dict[str, object]) -> list[str]:
     return [*strings(layout, "test_file_patterns", "layout"), f"{support}/**", f"{fixtures}/**"]
 
 
-def check(repo: Path, base: str) -> list[str]:
+def check(repo: Path, base: DiffBase) -> list[str]:
     document = load_proofs(repo)
     artefacts = table(document, "identity_artefacts")
     reasons = {pattern: str(reason) for pattern, reason in artefacts.items()}
@@ -34,7 +40,7 @@ def check(repo: Path, base: str) -> list[str]:
     tests = _test_paths(table(document, "layout"))
     changed = {
         path
-        for change in changes_since(repo, resolve(repo, base))
+        for change in changes_since(repo, base.commit, staged=base.staged)
         for path in (change.path, change.old_path)
         if path
     }
@@ -53,10 +59,10 @@ def check(repo: Path, base: str) -> list[str]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="check-identity-artefacts.py")
     parser.add_argument("--repo", type=Path, default=Path())
-    parser.add_argument("--base", required=True)
+    add_base_arguments(parser, required=True)
     arguments = parser.parse_args(argv)
     try:
-        problems = check(arguments.repo, arguments.base)
+        problems = check(arguments.repo, required_diff_base(arguments.repo, arguments))
     except (SettingsError, GitError) as error:
         print(
             f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr
