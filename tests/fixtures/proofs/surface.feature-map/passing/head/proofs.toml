@@ -1,0 +1,15 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[layout]
+support_dir = "tests/support"
+fixtures_dir = "tests/fixtures"
+test_file_patterns = ["tests/**/test_*.py"]
+
+[surface]
+lever_name = "the sandbox lever"
+lever_command = ["bash", "scripts/lever.sh", "lever"]
+feature_map_path = "docs/features"
+journey_file_pattern = "tests/journeys/test_*.py"

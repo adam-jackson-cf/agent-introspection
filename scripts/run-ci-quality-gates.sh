@@ -7,8 +7,15 @@ usage() {
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+export PYTHONDONTWRITEBYTECODE=1
 
 fixtures_exclude=':(exclude)tests/fixtures/**'
+t1_selection=(-m "not boundary")
+t2_selection=(-m boundary)
+pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
+collect_timeout_seconds=300
+report_dir=""
+t1_started=""
 
 static_checks=(
   gate_parity
@@ -30,6 +37,10 @@ static_checks=(
   tsc
   dashboard_format
   dashboard_build
+  failure_propagation
+  test_growth
+  coverage_ratchet
+  identity_artefacts
 )
 
 tracked() {
@@ -99,6 +110,52 @@ check_prettier() {
 }
 
 check_typescript_limits() { bun scripts/check-typescript-limits.ts "$@"; }
+
+diff_base() {
+  if [[ -n "${PROOFS_BASE_REF:-}" ]]; then
+    git merge-base HEAD "$PROOFS_BASE_REF"
+  else
+    git rev-parse HEAD
+  fi
+}
+
+diff_check() {
+  local script=$1
+  shift
+  if (($#)); then
+    uv run python "scripts/$script" "$@"
+  else
+    uv run python "scripts/$script" --repo . --base "$(diff_base)"
+  fi
+}
+
+check_failure_propagation() {
+  uv run python scripts/check-runner-failure-propagation.py "${1:-scripts/run-ci-quality-gates.sh}" \
+    static t1 t2 hook
+}
+
+check_test_run() { uv run python scripts/check-test-run.py "$@"; }
+check_test_budget() { uv run python scripts/check-test-budget.py "$@"; }
+check_test_growth() { diff_check check-test-growth.py "$@"; }
+check_coverage_ratchet() { diff_check check-coverage-ratchet.py "$@"; }
+check_identity_artefacts() { diff_check check-identity-artefacts.py "$@"; }
+check_golden_changes() { diff_check check-golden-changes.py "$@"; }
+check_verification_surface() { uv run python scripts/check-verification-surface.py "$@"; }
+check_lever_isolation() { uv run python scripts/check-lever-isolation.py "$@"; }
+
+check_scenario() {
+  (($# == 2)) || { usage >&2; return 2; }
+  local name=$1 fixture=$2 work base line code=0 args=()
+  work="$(mktemp -d)"
+  base="$(uv run python scripts/build-scenario-repo.py "$fixture" "$work/repo")"
+  while IFS= read -r line; do
+    line=${line//\{repo\}/$work/repo}
+    args+=("${line//\{base\}/$base}")
+  done <"$fixture/argv"
+  "check_$name" "${args[@]}" || code=$?
+  rm -rf "$work"
+  return "$code"
+}
 check_tsc() { bun run --cwd dashboard check; }
 check_dashboard_format() { bun run --cwd dashboard format:check; }
 check_dashboard_build() { bun run --cwd dashboard build; }
@@ -116,13 +173,42 @@ run_static() {
   done
 }
 
+make_report_dir() {
+  if [[ -z "$report_dir" ]]; then
+    report_dir="$(mktemp -d)"
+    trap 'rm -rf "$report_dir"' EXIT
+  fi
+}
+
+collect_tier() {
+  local tier=$1
+  shift
+  uv run python scripts/test-evidence.py collect --tier "$tier" --out "$report_dir/$tier-listing.json" \
+    --timeout-seconds "$collect_timeout_seconds" -- "$@"
+}
+
+normalise_report() {
+  uv run python scripts/test-evidence.py normalise "$@"
+}
+
 run_t1() {
-  uv run pytest -m "not boundary"
-  bun run --cwd dashboard test
+  make_report_dir
+  t1_started="$(date +%s)"
+  collect_tier t1 "${t1_selection[@]}"
+  COVERAGE_FILE="$report_dir/.coverage" uv run pytest "${pytest_report[@]}" \
+    --junitxml="$report_dir/t1-pytest.xml" --cov=agent_introspection --cov-report= "${t1_selection[@]}"
+  normalise_report pytest --tier t1 "$report_dir/t1-pytest.xml" "$report_dir/t1-pytest.json"
+  bun run --cwd dashboard test --reporter=junit --reporter-outfile="$report_dir/t1-bun.xml"
+  normalise_report bun --tier t1 --prefix dashboard/ "$report_dir/t1-bun.xml" "$report_dir/t1-bun.json"
+  check_test_run --listing "$report_dir/t1-listing.json" "$report_dir/t1-pytest.json" "$report_dir/t1-bun.json"
 }
 
 run_t2() {
-  uv run pytest -m boundary
+  make_report_dir
+  collect_tier t2 "${t2_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/t2-pytest.xml" "${t2_selection[@]}"
+  normalise_report pytest --tier t2 "$report_dir/t2-pytest.xml" "$report_dir/t2-pytest.json"
+  check_test_run --listing "$report_dir/t2-listing.json" "$report_dir/t2-pytest.json"
 }
 
 run_proofs() {
@@ -144,6 +230,7 @@ case "$mode" in
     prepare
     run_static
     run_t1
+    check_test_budget --since "$t1_started" "$report_dir/t1-pytest.json" "$report_dir/t1-bun.json"
     run_t2
     ;;
   check)

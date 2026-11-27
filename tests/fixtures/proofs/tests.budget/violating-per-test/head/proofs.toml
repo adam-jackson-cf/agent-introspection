@@ -1,0 +1,10 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[[test_budget.machine]]
+id = "@machine@"
+wall_limit_s = 10
+per_test_limit_s = 1
+approval = "fixture owner, 2026-11-27"

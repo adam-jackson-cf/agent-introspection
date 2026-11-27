@@ -553,8 +553,96 @@ cmd_destroy() {
   echo "destroyed $ROOT"
 }
 
+LEVER_DOCTOR_MARKER="LEVER DOCTOR FAILED"
+DASHBOARD_PORT=4173
+DOCTOR_WAIT_SECONDS=20
+
+bounded() {
+  local seconds=$1 pid waited=0
+  shift
+  "$@" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$seconds" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
+lever_doctor() {
+  local tool
+  for tool in uv bun git curl python3 docker; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      echo "$tool is not installed"
+      return 1
+    }
+  done
+  if [ -z "$DOCKER_SSH" ] && ! bounded "$DOCTOR_WAIT_SECONDS" docker info; then
+    echo "Docker did not answer within $DOCTOR_WAIT_SECONDS s"
+    return 1
+  fi
+  if curl -fsS -m 2 "http://127.0.0.1:$DASHBOARD_PORT/" >/dev/null 2>&1; then
+    echo "127.0.0.1:$DASHBOARD_PORT already answers; the sandbox dashboard needs it free"
+    return 1
+  fi
+}
+
+lever_ports() {
+  local file
+  echo "$DASHBOARD_PORT"
+  for file in "$1/state/clickhouse_url" "$1/state/otlp_endpoint"; do
+    [ -f "$file" ] && sed 's|.*:||; s|/.*||' "$file"
+  done
+  return 0
+}
+
+lever_finish() {
+  local code=$?
+  trap - EXIT
+  if [ -n "${ROOT-}" ] && [ -f "$ROOT/state/sandbox" ]; then
+    mkdir -p "$LEVER_EVIDENCE/state"
+    cp -R "$ROOT/state/." "$LEVER_EVIDENCE/state/"
+    lever_ports "$ROOT" >"$LEVER_EVIDENCE/ports"
+    (cmd_destroy "$ROOT") >>"$LEVER_EVIDENCE/destroy.log" 2>&1 || code=1
+  fi
+  echo "lever: exit $code; evidence in $LEVER_EVIDENCE" >&2
+  exit "$code"
+}
+
+cmd_lever() {
+  local data="" reason code=0 create=()
+  LEVER_EVIDENCE=""
+  DOCKER_SSH=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --data-dir) data=$2; shift 2 ;;
+      --evidence-dir) LEVER_EVIDENCE=$2; shift 2 ;;
+      --docker-ssh) DOCKER_SSH=$2; create=(--docker-ssh "$2"); shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  [ -n "$data" ] && [ -n "$LEVER_EVIDENCE" ] ||
+    die "usage: sandbox.sh lever --data-dir DIR --evidence-dir DIR [--docker-ssh USER@HOST]"
+  mkdir -p "$LEVER_EVIDENCE"
+  LEVER_EVIDENCE=$(cd "$LEVER_EVIDENCE" && pwd)
+  if ! reason=$(lever_doctor); then
+    printf '%s: %s\n' "$LEVER_DOCTOR_MARKER" "$reason" | tee "$LEVER_EVIDENCE/doctor.txt" >&2
+    exit 3
+  fi
+  trap lever_finish EXIT
+  cmd_create --root "$data" ${create[@]+"${create[@]}"} >"$LEVER_EVIDENCE/create.log" 2>&1
+  cmd_verify "$ROOT" >"$LEVER_EVIDENCE/verify.log" 2>&1 || code=$?
+  cd "$REPO"
+  return "$code"
+}
+
 command=${1-}
-[ -n "$command" ] || die "usage: sandbox.sh create|run|verify|agent|destroy ..."
+[ -n "$command" ] || die "usage: sandbox.sh create|run|verify|agent|destroy|lever ..."
 shift
 case "$command" in
   create) cmd_create "$@" ;;
@@ -562,5 +650,6 @@ case "$command" in
   verify) cmd_verify "$@" ;;
   agent) cmd_agent "$@" ;;
   destroy) cmd_destroy "$@" ;;
+  lever) cmd_lever "$@" ;;
   *) die "unknown command $command" ;;
 esac
