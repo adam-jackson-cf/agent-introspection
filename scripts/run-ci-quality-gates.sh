@@ -9,6 +9,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 fixtures_exclude=':(exclude)tests/fixtures/**'
+structure_event=--merge-base
 
 hook_modes=(static t1 t2)
 
@@ -35,6 +36,7 @@ static_checks=(
   shfmt
   dashboard_format
   dashboard_build
+  structure
 )
 
 tracked() {
@@ -111,6 +113,14 @@ check_skill_metadata() {
 check_subprocess_timeouts() { uv run python scripts/check-test-subprocess-timeouts.py "$@"; }
 check_dependency_audit() {
   uv run python scripts/check-dependency-audit.py --policy .github/dependency-audit.json "$@"
+}
+
+check_structure() {
+  if (($#)); then
+    uv run python -B scripts/check-structure.py "$@"
+  else
+    uv run python -B scripts/check-structure.py "$structure_event"
+  fi
 }
 
 check_ruff_format() {
@@ -270,6 +280,7 @@ case "$mode" in
       usage >&2
       exit 2
     }
+    structure_event=--staged
     prepare
     for mode in "${hook_modes[@]}"; do
       "run_$mode"
