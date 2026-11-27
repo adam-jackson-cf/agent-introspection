@@ -22,11 +22,9 @@ import {
 } from "../format";
 import { CoverageSummary, StateChip } from "./PipelineCoverage";
 
-/** Hook rows whose harness could not be resolved chart as their own series. */
 const UNRESOLVED_KEY = "unresolved";
 const UNRESOLVED_LABEL = "unresolved (Codex hook)";
 
-/** Long to wide for the chart: one entry per day, one value per series. */
 export function dailyByHarness(rows: Row[]) {
   const daily = new Map<string, Row>();
   for (const row of rows) {
@@ -56,7 +54,6 @@ function dailySeriesOf(selected: readonly Harness[], dailyRows: Row[]) {
 
 type Data = Record<string, Row[]>;
 
-/** Which window each figure covers, in a few words (docs/ux/DESIGN.md: every KPI states its period). */
 const PERIOD = {
   loaders: "current",
   freshness: "last day",
@@ -157,10 +154,6 @@ function GlanceBand({ data }: { data: Data }) {
   );
 }
 
-/**
- * A table whose rows are mostly fine: the server's one-line summary, only the
- * exception rows, and the full table in a disclosure in place.
- */
 function ExceptionTable(props: {
   summary: string;
   columns: Column[];
@@ -231,7 +224,6 @@ const FRESHNESS_COLUMNS: Column[] = [
   },
 ];
 
-/** Server summary figures as the one-line summaries above the exception rows. */
 const loaderSummaryText = (summary: Row) => {
   const failing = num(summary["failing"]);
   return `${num(summary["ok"])} on schedule${failing > 0 ? `, ${failing} stale or failing` : ""}`;
@@ -491,7 +483,6 @@ function sanitizationPanel(data: Data) {
   );
 }
 
-/** A registry signal's view as a link to its page, falling back to the key. */
 function SignalView({ view }: { view: string }) {
   const { registry } = useView();
   const known = (VIEW_IDS as readonly string[]).includes(view);

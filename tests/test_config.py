@@ -96,12 +96,10 @@ def test_retired_keys_are_named_as_safe_to_delete(
 
 
 EXAMPLE = Path(__file__).parents[1] / "config.example.toml"
-# A commented-out table header or `key = value` line in the example.
 COMMENTED_SETTING = re.compile(r"^# (\[[\w.]+\]|\w+ = .*)$")
 
 
 def _example_with_every_setting() -> str:
-    """Return the example with each commented setting switched on."""
     return "\n".join(
         match.group(1) if (match := COMMENTED_SETTING.match(line)) else line
         for line in EXAMPLE.read_text().splitlines()
@@ -110,7 +108,6 @@ def _example_with_every_setting() -> str:
 
 def test_example_configuration_is_valid_and_the_defaults() -> None:
     example = load_config(EXAMPLE)
-    # The example spells the database path with ~, which expands to this test's home.
     assert example.database.path == Path.home() / default_database_path().relative_to(
         default_database_path().parents[3]
     )
@@ -277,7 +274,6 @@ def test_a_machine_is_the_signoz_host_unless_it_says_it_is_additional() -> None:
     })
 
     assert additional.machine.additional
-    # The host's collector, even when the host's own [signoz] setting was copied over.
     assert additional.collector_endpoint == "https://signoz-host.example:4318"
     with pytest.raises(ConfigurationError, match=r'additional machine \(\[machine\] role = "addi'):
         require_host(additional, "this command needs SigNoz's ClickHouse")
@@ -317,7 +313,6 @@ def test_the_machine_table_rejects_a_bad_role_or_export_endpoint(
 def test_a_collector_endpoint_on_the_otlp_grpc_port_is_refused(
     document: dict[str, Any],
 ) -> None:
-    # Every harness profile writes the collector endpoint with an OTLP/HTTP exporter.
     with pytest.raises(
         ConfigurationError, match=re.escape("OTLP/HTTP base URL (port 4318), not its OTLP/gRPC")
     ):

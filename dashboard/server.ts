@@ -44,10 +44,6 @@ const ADDRESS = "127.0.0.1";
 const PORT = 4173;
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
-/**
- * Route counts (coverage, contributor chips) and Pipeline's whole-history checks
- * are shared for 10 minutes, the cadence the fact snapshots rebuild on.
- */
 const SHARED_TTL_MS = 600_000;
 const CACHE_ENTRIES = 32;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -113,10 +109,6 @@ const params = (filters: Filters): Record<string, string> => ({
   harness: filters.harness,
 });
 
-/**
- * Shares one pending result per key for `ttlMs`, so concurrent and repeated loads
- * run a query once. A failed result is dropped at once, so the next load retries.
- */
 export function ttlCache<T>(
   ttlMs: number,
   maxEntries: number,
@@ -160,7 +152,6 @@ async function loadRegistry(
     });
   if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
-  // A signal of an experimental feature that is off is not defined on this machine.
   const gated = gatedSignals(features);
   const registry = {
     signals: signals.filter((row) => !gated.has(String(row["signal"]))),
@@ -182,14 +173,12 @@ export function createApp(
   overrides: Partial<Dependencies> = {},
 ): (request: Request) => Promise<Response> {
   const dependencies: Dependencies = {
-    // Resolved only when no query is injected, so tests need no ClickHouse address.
     query:
       overrides.query ??
       clickhouse(clickhouseUrl(), fetch, credentialsFromEnv()),
     workflow: sqliteWorkflow(),
     assets: new Map(),
     now: () => new Date(),
-    // Read once at start; a config change takes effect when the service restarts.
     features: overrides.features ?? experimentalFeatures(),
     ...overrides,
   };
@@ -216,8 +205,6 @@ export function createApp(
   const checkCache = ttlCache<Row[]>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
   const unroutedCache = ttlCache<Unrouted>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
 
-  // "Data as of": the refreshers feeding the view (see server/refreshers.ts). `stale` is
-  // the loader's own test (a refresh failed, or the next one is more than 2 minutes late).
   const refreshersCache = ttlCache<Row[]>(SHARED_TTL_MS, 1, clock);
   const factsAsOf = (scope: string[] | null): Promise<ViewResponse["asOf"]> =>
     refreshersCache("facts", () => query(REFRESHERS))
@@ -229,7 +216,6 @@ export function createApp(
     const bound = params(filters);
     const reg = await registry();
     const registryDone = performance.now();
-    // Started now, awaited after the view's own batch, so the two run together.
     const countsMs = { value: 0 };
     const counts = routeCountCache(tenMinutes(bound), () =>
       routeCounts(query, reg, bound),
@@ -240,8 +226,6 @@ export function createApp(
       },
       () => undefined,
     );
-    // Snapshots keep one extra day (facts.SNAPSHOT_DAYS + 1), so a "Last 90 days"
-    // window whose start was computed a moment before this request still reads them.
     const withinSnapshots =
       Date.parse(filters.start) >=
       dependencies.now().getTime() - (SNAPSHOT_DAYS + 1) * 86_400_000;
@@ -249,7 +233,6 @@ export function createApp(
     let errors: Record<string, string>;
     let asOf: Promise<ViewResponse["asOf"]>;
     if (id === "pipeline") {
-      // Pipeline reads every fact table, so every refresher is in scope.
       asOf = factsAsOf(null);
       ({ data, errors } = await pipelineData(
         query,
@@ -267,7 +250,6 @@ export function createApp(
         },
       ));
     } else {
-      // Without intervention outcomes, the before/after inputs are never queried.
       const queries =
         id === "interventions" && !features.intervention_outcomes
           ? {}
@@ -279,7 +261,6 @@ export function createApp(
         bound,
       ));
       const names = Object.keys(queries);
-      // Every branch failing means ClickHouse is down, not that one query is bad.
       if (names.length > 0 && Object.keys(errors).length === names.length)
         throw new Error(Object.values(errors)[0]);
       if (id === "interventions")
@@ -291,7 +272,6 @@ export function createApp(
         );
     }
     const sqlDone = performance.now();
-    // Chips need the route counts; without them the view shows no chips.
     const totals = await counts.catch((error: unknown) => {
       errors["route_counts"] = shortMessage(error);
       return null;
@@ -340,7 +320,6 @@ export function createApp(
       harness,
       session,
       queriedAt: dependencies.now().toISOString(),
-      // A session can be older than the snapshot horizon.
       data: await batch(query, live(SESSION_QUERIES), { harness, session }),
     };
     return json(response);
@@ -394,7 +373,6 @@ if (import.meta.main) {
   const assets = await loadAssets(securityHeaders);
   const app = createApp({ assets });
   Bun.serve({ hostname: ADDRESS, port: PORT, fetch: app });
-  // Load the registry before the first view request needs it.
   void app(
     new Request(`http://${ADDRESS}:${PORT}/api/registry`, {
       headers: { host: `${ADDRESS}:${PORT}` },

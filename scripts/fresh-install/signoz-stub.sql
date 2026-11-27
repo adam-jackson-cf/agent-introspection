@@ -1,8 +1,3 @@
--- A stand-in for the two SigNoz tables the facts store reads, for a disposable
--- ClickHouse in the fresh-install sandbox. Column names and types follow SigNoz's
--- schema for the columns preflight.py checks and facts_sql/select_*.sql read; the
--- distributed tables are plain MergeTree tables under the same names, and the span
--- table's camel-case columns are aliases as in SigNoz. Nothing else of SigNoz exists.
 CREATE DATABASE IF NOT EXISTS signoz_traces;
 CREATE DATABASE IF NOT EXISTS signoz_logs;
 

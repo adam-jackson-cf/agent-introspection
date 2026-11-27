@@ -21,11 +21,9 @@ export const lastDays = (days: number): Pick<Filters, "start" | "end"> => {
     end: iso(end),
   };
 };
-/** The selector label for the filters: a live preset, or a fixed custom range. */
 export const presetFor = (filters: Filters) =>
   Object.entries(PRESETS).find(([, days]) => days === filters.range)?.[0] ??
   "Custom range";
-/** Reads the URL: `range` is a live preset; `start`/`end` a fixed range; neither the default preset. */
 export const readFilters = (): Filters => {
   const query = new URLSearchParams(window.location.search);
   const harness = query.get("harness") ?? "";
@@ -42,7 +40,6 @@ export const readFilters = (): Filters => {
   if (start && end) return { start, end, ...scope };
   return { ...lastDays(DEFAULT_DAYS), ...scope, range: DEFAULT_DAYS };
 };
-/** Filters as URL parameters: a live preset keeps only its length; All has no `harness`. */
 export const filterQuery = (filters: Filters) => {
   const query = new URLSearchParams(
     filters.range === undefined
@@ -52,7 +49,6 @@ export const filterQuery = (filters: Filters) => {
   if (filters.harness !== "") query.set("harness", filters.harness);
   return query;
 };
-/** Filters as API parameters: always the resolved window. */
 export const apiQuery = (filters: Filters) =>
   new URLSearchParams({
     start: filters.start,

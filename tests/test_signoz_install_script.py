@@ -20,12 +20,8 @@ INSTALL = SIGNOZ_SCRIPTS / "install-signoz.sh"
 
 @pytest.fixture
 def machine(monkeypatch: pytest.MonkeyPatch) -> FakeMachine:
-    """Fake this machine: Docker on PATH, every port free, ClickHouse silent."""
     return FakeMachine(monkeypatch)
 
-
-# install-signoz.sh, driven with a fake `docker` and `agent-introspection` on PATH. The
-# PATH keeps only system directories, so macOS runs it under its bash 3.2.
 
 _FAKE_DOCKER = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_DOCKER_LOG"
@@ -61,8 +57,6 @@ def _executable(path: Path, text: str) -> None:
 
 @pytest.fixture
 def detect_output(machine: FakeMachine, capsys: pytest.CaptureFixture[str]) -> Any:
-    """Print `signoz detect` for a faked machine, as the install script reads it."""
-
     def render(*args: Any, **kwargs: Any) -> str:
         machine(*args, **kwargs)
         assert main(["signoz", "detect"]) == 0
@@ -80,7 +74,6 @@ def _run_install(args: Sequence[str], env: dict[str, str]) -> subprocess.Complet
 def _install(
     tmp_path: Path, *args: str, detect: str | None, **docker: str
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    """Run install-signoz.sh; return the result and the docker commands it ran."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
     _executable(fake_bin / "docker", _FAKE_DOCKER)
@@ -192,7 +185,6 @@ def test_install_needs_a_compose_that_can_replace_the_published_ports(
 
 @pytest.mark.parametrize("args", [["--tag", "latest"], ["--dir"], ["--bogus"]])
 def test_install_rejects_bad_arguments(tmp_path: Path, args: list[str]) -> None:
-    # A dry run: an argument that is wrongly accepted prints a plan, never downloads.
     result, docker_commands = _install(tmp_path, "--dry-run", *args, detect="")
 
     assert result.returncode == 2

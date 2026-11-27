@@ -12,7 +12,6 @@ const proposal: Row = {
   target: "t",
   tier: "established_tool",
   state: "applied",
-  // 14:00 London (BST) on 10 September.
   applied_at: "2026-09-10T13:00:00Z",
 };
 const cluster = (d: string, tasks: number, harness = "codex_exec"): Row => ({
@@ -48,7 +47,6 @@ test("the application day counts in neither window, and the rate change is a col
   expect(result["post_matched"]).toBe(4);
   expect(result["pre_tasks"]).toBe(20);
   expect(result["post_tasks"]).toBe(20);
-  // rate 2/20 -> 4/20 is +100 %.
   expect(result["change_pct"]).toBeCloseTo(100);
 });
 
@@ -62,7 +60,6 @@ test("rate change is null without a pre rate or when it is zero", () => {
 });
 
 test("windows use the London calendar day of the application", () => {
-  // 23:30 UTC on 9 September is 00:30 on 10 September in London.
   const result = prePost(
     { ...proposal, applied_at: "2026-09-09T23:30:00Z" },
     facts([
@@ -77,7 +74,6 @@ test("windows use the London calendar day of the application", () => {
 });
 
 test("a range starting at London midnight keeps its first whole day", () => {
-  // 23:00 UTC on 1 September and 19 September are London midnights (BST).
   const result = prePost(
     proposal,
     facts([
@@ -169,7 +165,6 @@ const workflow = {
       ...proposal,
       id: "p3",
       verdict: null,
-      // outside the range: applied counts, in range does not.
       applied_at: "2026-08-01T00:00:00Z",
       metric_harnesses: ["codex_exec"],
       harnesses: ["claude-code"],
@@ -242,7 +237,6 @@ test("a harness scope keeps rows seen in it by metric harnesses first; rows with
     true,
   );
   expect(data["findings"]).toHaveLength(1);
-  // p1 (harnesses) and p3 (metric_harnesses override harnesses) stay; p2 does not.
   expect(data["proposals"]!.map((row) => row["id"])).toEqual(["p1", "p3"]);
   expect(data["proposal_events"]).toEqual([
     { proposal_id: "p1", event: "applied" },

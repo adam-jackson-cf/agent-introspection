@@ -1,26 +1,3 @@
-"""Read and rewrite the settings table of a producer's config file (JSON, TOML, dotenv).
-
-``harness configure`` manages a few keys in one table of a harness's own config file
-and must leave everything else as it was. For each format, ``read_table`` returns the
-table's current values and ``update_table`` returns the file text with only the given
-keys set (a ``TableUpdate``, with notes on any change to the file's layout):
-
-- JSON is rewritten whole, in the file's indentation style, keeping key order and every
-  value;
-- TOML edits the table's key lines in place (a key line may hold an inline table), or
-  appends the table when the file has none. A table it cannot edit in place (split into
-  ``[table.*]`` sub-tables, or a managed key written as dotted keys or across lines) is
-  replaced by a regenerated block of inline values that keeps every unmanaged key and
-  value. Each comment in the replaced lines moves to its own line above the key it
-  was written in or above, and the update carries a note saying the table was
-  rewritten. The result must re-parse to the intended document;
-- dotenv updates ``KEY=value`` lines in place, each keeping its trailing comment, and
-  appends missing keys, keeping comments and order.
-
-``backup`` and ``atomic_write`` change a file safely: a timestamped copy first, then a
-same-directory temporary file renamed over it with the original permissions.
-"""
-
 from __future__ import annotations
 
 import copy
@@ -39,11 +16,9 @@ from pathlib import Path
 from typing import Any, cast
 
 FORMATS = ("json", "toml", "dotenv")
-# Managed keys and the values to set, in the order to add them.
 type Values = Mapping[str, object]
 NEW_FILE_MODE = 0o600
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
-# Basic and literal strings, so a scan can skip the characters inside them.
 _QUOTED = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*'")
 _STRING_ESCAPES = {
     '"': '\\"',
@@ -58,24 +33,17 @@ _DOTENV_LINE = re.compile(r"^(?P<lead>\s*(?:export\s+)?)(?P<key>[A-Za-z_][A-Za-z
 _DOTENV_QUOTED = re.compile(
     r"""^(?P<quote>["'])(?P<inner>.*?)(?P=quote)(?P<comment>\s*(?:#.*)?)$"""
 )
-# An unquoted value ends where whitespace and `#` start its comment.
 _DOTENV_COMMENT = re.compile(r"\s+#")
 _DOTENV_BARE = re.compile(r"[A-Za-z0-9_./:@%+,=-]*")
 _DOTENV_ESCAPES = {'"': '"', "\\": "\\", "n": "\n"}
 
 
 class ConfigFileError(ValueError):
-    """A config file cannot be read, or cannot be changed safely."""
+    pass
 
 
 @dataclass(frozen=True)
 class TableUpdate:
-    """A config file's text with the managed keys set, and notes on how it was changed.
-
-    ``notes`` is empty when only key lines changed or were added; a TOML table that
-    had to be regenerated adds one note naming it and the comments it moved.
-    """
-
     text: str
     notes: tuple[str, ...] = ()
 
@@ -85,7 +53,6 @@ def _table_path(table: str) -> tuple[str, ...]:
 
 
 def _descend(document: Mapping[str, Any], path: tuple[str, ...], where: str) -> dict[str, Any]:
-    """Return the table at ``path``, or an empty one when it is absent."""
     node: object = document
     for depth, part in enumerate(path):
         node = cast(Mapping[str, Any], node).get(part, {})
@@ -97,16 +64,12 @@ def _descend(document: Mapping[str, Any], path: tuple[str, ...], where: str) -> 
 def _with_values(
     document: Mapping[str, Any], path: tuple[str, ...], values: Values
 ) -> dict[str, Any]:
-    """Return a copy of ``document`` with ``values`` set in the table at ``path``."""
     updated = copy.deepcopy(dict(document))
     node = updated
     for part in path:
         node = node.setdefault(part, {})
     node.update(copy.deepcopy(dict(values)))
     return updated
-
-
-# --- JSON ---------------------------------------------------------------------------
 
 
 def _json_document(text: str) -> dict[str, Any]:
@@ -122,7 +85,6 @@ def _json_document(text: str) -> dict[str, Any]:
 
 
 def _json_indent(text: str) -> str | None:
-    """Return the file's indentation unit, or None for a one-line document."""
     for line in text.split("\n")[1:]:
         content = line.lstrip(" \t")
         if content and len(content) < len(line):
@@ -131,7 +93,6 @@ def _json_indent(text: str) -> str | None:
 
 
 def render_json(document: Mapping[str, Any], like: str) -> str:
-    """Return ``document`` as JSON in the indentation and final newline of ``like``."""
     rendered = json.dumps(document, indent=_json_indent(like), ensure_ascii=False)
     return rendered + ("\n" if like.endswith("\n") or not like else "")
 
@@ -140,9 +101,6 @@ def _update_json(text: str, path: tuple[str, ...], values: Values) -> str:
     document = _json_document(text)
     _descend(document, path, "JSON")
     return render_json(_with_values(document, path, values), text)
-
-
-# --- TOML values --------------------------------------------------------------------
 
 
 def _toml_string(value: str) -> str:
@@ -163,7 +121,6 @@ def _toml_float(value: float) -> str:
 
 
 def toml_key(key: str) -> str:
-    """Return ``key`` as a TOML key: bare when it can be, else a basic string."""
     return key if _BARE_KEY.fullmatch(key) else _toml_string(key)
 
 
@@ -177,13 +134,6 @@ _SCALARS: tuple[tuple[type | tuple[type, ...], Callable[[Any], str]], ...] = (
 
 
 def toml_value(value: object) -> str:
-    """Return ``value`` as one-line TOML: scalars, arrays, and nested inline tables.
-
-    Raises
-    ------
-    ConfigFileError
-        When the value has a type TOML cannot hold.
-    """
     if isinstance(value, list):
         return "[" + ", ".join(toml_value(item) for item in value) + "]"
     if isinstance(value, dict):
@@ -197,16 +147,10 @@ def toml_value(value: object) -> str:
     raise ConfigFileError(f"cannot write a {type(value).__name__} as TOML")
 
 
-# --- TOML documents -----------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class _Statement:
-    """One header or key/value in a TOML file, by its line span (inclusive)."""
-
     first: int
     last: int
-    # The table a key/value sits in, or a header's own path.
     table: tuple[str, ...]
     key: str = ""
     header: bool = False
@@ -226,7 +170,6 @@ def _toml_document(text: str) -> dict[str, Any]:
 
 
 def _statement_end(lines: list[str], first: int) -> tuple[int, dict[str, Any]]:
-    """Return the last line of the statement starting at ``first``, and its parse."""
     for last in range(first, len(lines)):
         try:
             return last, tomllib.loads("".join(lines[first : last + 1]))
@@ -236,7 +179,6 @@ def _statement_end(lines: list[str], first: int) -> tuple[int, dict[str, Any]]:
 
 
 def _header_path(parsed: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return a parsed header's table path (``[a.b]`` or ``[[a.b]]``)."""
     path: list[str] = []
     node: object = parsed
     while isinstance(node, dict) and len(node) == 1:
@@ -246,7 +188,6 @@ def _header_path(parsed: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _masked(line: str) -> str:
-    """Return ``line`` with every quoted string blanked, keeping character positions."""
     return _QUOTED.sub(lambda match: "_" * len(match.group()), line)
 
 
@@ -271,7 +212,6 @@ def _statements(lines: list[str]) -> list[_Statement]:
 
 
 def _defined_elsewhere(statements: list[_Statement], path: tuple[str, ...]) -> bool:
-    """Return whether the table is written as an inline or dotted key of a parent table."""
     return any(
         not statement.header
         and len(statement.table) < len(path)
@@ -285,7 +225,6 @@ def _newline(text: str) -> str:
 
 
 def _key_line(line: str, value: object) -> str:
-    """Return a key line with its value replaced, keeping its key, spacing, and comment."""
     masked = _masked(line)
     equals = masked.index("=")
     body = line.rstrip("\r\n")
@@ -298,13 +237,12 @@ def _key_line(line: str, value: object) -> str:
 
 
 class _UnsafeEditError(ConfigFileError):
-    """A table holds a managed key in a form that cannot be edited line by line."""
+    pass
 
 
 def _edit_in_place(
     lines: list[str], statements: list[_Statement], path: tuple[str, ...], values: Values
 ) -> str:
-    """Return the lines with each managed key line replaced, and new keys added last."""
     header = next((item for item in statements if item.header and item.table == path), None)
     section = [item for item in statements if not item.header and item.table == path]
     replaced: dict[int, str] = {}
@@ -326,7 +264,6 @@ def _edit_in_place(
 
 
 def _section_end(statements: list[_Statement], header: _Statement) -> int:
-    """Return the last line of a header's key/values (its trailing comments excluded)."""
     end = header.last
     for statement in statements[statements.index(header) + 1 :]:
         if statement.header:
@@ -336,12 +273,6 @@ def _section_end(statements: list[_Statement], header: _Statement) -> int:
 
 
 def _line_comment(lines: list[str], statement: _Statement, index: int) -> str:
-    """Return the comment on line ``index`` of a statement, or ``""`` when it has none.
-
-    Each ``#`` outside a one-line string is tried in turn. It starts a comment when the
-    statement parses the same without the rest of the line, so a ``#`` inside a
-    multi-line string is never taken for one.
-    """
     span = lines[statement.first : statement.last + 1]
     parsed = tomllib.loads("".join(span))
     line = lines[index]
@@ -361,7 +292,6 @@ def _line_comment(lines: list[str], statement: _Statement, index: int) -> str:
 
 
 def _owner(statement: _Statement, path: tuple[str, ...]) -> str:
-    """Return the regenerated table's key a statement belongs to (``""``: its header)."""
     inner = statement.table[len(path) :]
     if inner:
         return inner[0]
@@ -371,11 +301,6 @@ def _owner(statement: _Statement, path: tuple[str, ...]) -> str:
 def _moved_comments(
     lines: list[str], statements: list[_Statement], path: tuple[str, ...], dropped: set[int]
 ) -> dict[str, list[str]]:
-    """Return the comments in the replaced lines by the key they were written in or above.
-
-    A comment line belongs to the statement after it; a comment inside or after a
-    statement, to that statement. ``""`` holds those of the table's own header.
-    """
     starts = {statement.first: statement for statement in statements}
     comments: dict[str, list[str]] = {}
     pending: list[str] = []
@@ -393,12 +318,6 @@ def _moved_comments(
 
 
 def _replaced_lines(statements: list[_Statement], headers: list[_Statement]) -> set[int]:
-    """Return the lines a regenerated table replaces.
-
-    These are each header's key/values and, above every header after the first, the
-    comment and blank lines that lead up to it, so a comment on a sub-table moves with
-    it.
-    """
     in_statements = {
         index for statement in statements for index in range(statement.first, statement.last + 1)
     }
@@ -415,10 +334,6 @@ def _replaced_lines(statements: list[_Statement], headers: list[_Statement]) -> 
 def _regenerate(
     lines: list[str], statements: list[_Statement], path: tuple[str, ...], table: Mapping[str, Any]
 ) -> TableUpdate:
-    """Replace the table and its sub-tables with one block of inline values.
-
-    Each comment in the replaced lines is kept on its own line above its key.
-    """
     headers = [item for item in statements if item.header and item.table[: len(path)] == path]
     dropped = _replaced_lines(statements, headers)
     comments = _moved_comments(lines, statements, path, dropped)
@@ -472,7 +387,6 @@ def _update_toml(text: str, path: tuple[str, ...], values: Values) -> TableUpdat
     if path and not headers:
         attempts = [appended]
     elif path and any(header.table != path for header in headers):
-        # Sub-tables cannot be edited line by line: regenerate the whole table.
         attempts = [regenerate]
     elif path:
         attempts = [in_place, regenerate]
@@ -486,14 +400,7 @@ def _update_toml(text: str, path: tuple[str, ...], values: Values) -> TableUpdat
     raise ConfigFileError(f"cannot rewrite [{'.'.join(path)}] safely; change it by hand")
 
 
-# --- dotenv -------------------------------------------------------------------------
-
-
 def _dotenv_parts(raw: str) -> tuple[str, str]:
-    """Split what follows ``KEY=`` into its value and its trailing comment (``""``: none).
-
-    The comment keeps the whitespace before its ``#``, so a rewritten line keeps it.
-    """
     text = raw.strip()
     quoted = _DOTENV_QUOTED.match(text)
     if quoted is None:
@@ -509,7 +416,6 @@ def _dotenv_parts(raw: str) -> tuple[str, str]:
 
 
 def _dotenv_assignments(text: str) -> dict[str, tuple[int, str]]:
-    """Return each key's last assigning line and its value: the last assignment wins."""
     assignments: dict[str, tuple[int, str]] = {}
     for index, line in enumerate(_lines(text)):
         match = _DOTENV_LINE.match(line)
@@ -551,17 +457,7 @@ def _update_dotenv(text: str, values: Values) -> str:
     return "".join(lines + added)
 
 
-# --- Public interface ---------------------------------------------------------------
-
-
 def read_table(text: str, file_format: str, table: str) -> dict[str, Any]:
-    """Return the current values of the settings table, empty when the table is absent.
-
-    Raises
-    ------
-    ConfigFileError
-        When the text does not parse, or the table path holds a non-table value.
-    """
     if file_format == "dotenv":
         return {key: value for key, (_line, value) in _dotenv_assignments(text).items()}
     document = _json_document(text) if file_format == "json" else _toml_document(text)
@@ -569,13 +465,6 @@ def read_table(text: str, file_format: str, table: str) -> dict[str, Any]:
 
 
 def update_table(text: str, file_format: str, table: str, values: Values) -> TableUpdate:
-    """Return the file text with ``values`` set in the settings table, all else kept.
-
-    Raises
-    ------
-    ConfigFileError
-        When the text does not parse, or the table cannot be changed safely.
-    """
     if file_format == "dotenv":
         return TableUpdate(_update_dotenv(text, values))
     if file_format == "json":
@@ -592,17 +481,6 @@ def _without(document: dict[str, Any], path: tuple[str, ...]) -> None:
 
 
 def remove_toml_keys(text: str, paths: Sequence[tuple[str, ...]]) -> str:
-    """Return TOML text without the keys or tables at ``paths``, all else kept.
-
-    Each path names a key (``("signoz", "docker_host")``) or a whole table with its
-    sub-tables (``("sessions",)``). Their lines go; comments and other lines stay.
-
-    Raises
-    ------
-    ConfigFileError
-        When the text does not parse, or a path is written inside an inline table
-        whose other values would have to change too.
-    """
     intended = _toml_document(text)
     for path in paths:
         _without(intended, path)
@@ -623,7 +501,6 @@ def remove_toml_keys(text: str, paths: Sequence[tuple[str, ...]]) -> str:
 
 
 def backup(path: Path, now: datetime | None = None) -> Path:
-    """Copy ``path`` to ``<name>.bak-<UTC timestamp>`` beside it, keeping its metadata."""
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%S%fZ")
     target = path.with_name(f"{path.name}.bak-{stamp}")
     shutil.copy2(path, target)
@@ -631,7 +508,6 @@ def backup(path: Path, now: datetime | None = None) -> Path:
 
 
 def atomic_write(path: Path, text: str, mode: int) -> None:
-    """Replace ``path`` with ``text`` through a same-directory temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:

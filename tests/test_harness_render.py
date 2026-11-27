@@ -18,7 +18,6 @@ def _module(harnesses: dict[str, str]) -> str:
 
 
 def _constant(module: str, name: str) -> str:
-    """Return the source of one exported constant, from its name to its semicolon."""
     return module.split(f"export const {name}", 1)[1].split(";\n", 1)[0]
 
 
@@ -61,6 +60,5 @@ def test_module_takes_the_layout_prettier_gives_it() -> None:
     assert 'export const HARNESSES = [\n  "harness_0",\n' in wide
     assert f'  harness_0:\n    "{long_label}",\n' in wide
     assert "export const HARNESS_SERVICES_SQL =\n  \"'harness_0', " in wide
-    # Prettier never splits a string or reflows a comment; every other line fits in 80.
     code = [line for line in wide.splitlines() if '"' not in line and not line.startswith("/")]
     assert all(len(line) <= 80 for line in code)

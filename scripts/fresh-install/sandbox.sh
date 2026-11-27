@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Test the install of the committed HEAD on a fresh machine, without touching this one.
-#
-#   sandbox.sh create  [--root DIR] [--no-clickhouse]   build a sandbox, print its root
-#                      [--docker-ssh USER@HOST]          ClickHouse on another Mac's Docker
-#   sandbox.sh run     ROOT COMMAND...                   run one command inside it
-#   sandbox.sh verify  ROOT                              the scripted install, checked
-#   sandbox.sh agent   ROOT [--model M] [--budget USD]   a fresh Claude Code session
-#                                                        follows the README instead
-#   sandbox.sh destroy ROOT                              stop and delete everything
-#
-# The sandbox is a clone of HEAD, an empty home, stand-ins for launchctl, systemctl,
-# omp, docker, claude, and codex (each logs its calls and touches nothing real), a
-# disposable ClickHouse container holding a stub of the two SigNoz tables, and a stub
-# OTLP collector that writes log records into it. See README.md beside this script.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -34,10 +20,7 @@ free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
-# --- create ---------------------------------------------------------------------------
-
 write_fake() {
-  # write_fake NAME BODY: a stand-in on the sandbox PATH that logs every call.
   cat >"$ROOT/fakebin/$1" <<EOF
 #!/bin/sh
 printf '%s %s\n' "$1" "\$*" >>"$ROOT/state/calls.log"
@@ -48,9 +31,6 @@ EOF
 
 make_fakes() {
   mkdir -p "$ROOT/fakebin"
-  # launchd, for the sandbox: a kept-alive job (the dashboard) really starts, from its
-  # plist's program, directory, environment, and log; a timed job (the sync) is only
-  # recorded as loaded. `list` and `print` report what is loaded; `bootout` stops it.
   cat >"$ROOT/fakebin/launchd.py" <<'LAUNCHD'
 import os, plistlib, signal, subprocess, sys
 from pathlib import Path
@@ -91,9 +71,6 @@ if args[:1] == ["bootstrap"]:
     (jobs / job["Label"]).write_text(str(pid))
 sys.exit(0)
 LAUNCHD
-  # systemd, for the sandbox on Linux: `systemctl --user` with the same split. A
-  # service with `[Install]` (the dashboard) really starts from its unit file, unquoted
-  # as systemd would; a timer (the sync) is only recorded as enabled and active.
   cat >"$ROOT/fakebin/systemd.py" <<'SYSTEMD'
 import os, shlex, signal, subprocess, sys
 from pathlib import Path
@@ -178,7 +155,6 @@ SYSTEMD
 echo \"claude is a stand-in in the fresh-install sandbox\" >&2; exit 1"
   write_fake codex "case \"\$1\" in --version) echo \"codex-cli 0.156.1\"; exit 0 ;; esac
 echo \"codex is a stand-in in the fresh-install sandbox\" >&2; exit 1"
-  # omp's `plugin link` records the plugin as a link in its plugin directory.
   write_fake omp "link=\"\$HOME/.omp/plugins/node_modules/agent-introspection-activity\"
 case \"\$1 \$2\" in
   \"plugin link\") mkdir -p \"\${link%/*}\" && ln -sfn \"\$3\" \"\$link\" ;;
@@ -189,7 +165,6 @@ exit 0"
 }
 
 link_tools() {
-  # The real tools a new user would have installed first: uv, bun, and Python.
   mkdir -p "$ROOT/tools"
   for name in uv uvx bun python3 python3.12 git curl; do
     found=$(command -v "$name" 2>/dev/null) || continue
@@ -201,13 +176,9 @@ link_tools() {
 write_runner() {
   local uv_cache bun_cache caches=""
   uv_cache=$(uv cache dir 2>/dev/null || true)
-  # `bun pm cache` needs a package.json; an empty cache variable would make bun cache
-  # into the working directory, so each is set only when found.
   bun_cache=$(cd "$REPO/dashboard" && bun pm cache 2>/dev/null | tail -1 || true)
   if [ -n "$uv_cache" ]; then caches="UV_CACHE_DIR=\"$uv_cache\" "; fi
   if [ -n "$bun_cache" ]; then caches="${caches}BUN_INSTALL_CACHE_DIR=\"$bun_cache\" "; fi
-  # Claude Code sources a snapshot of the caller's own shell before each command; in
-  # the sandbox it is skipped, so the caller's PATH and functions never come back.
   cat >"$ROOT/state/bashenv" <<'BASHENV'
 source() {
   case "${1-}" in */shell-snapshots/*) return 0 ;; esac
@@ -232,17 +203,12 @@ EOF
 }
 
 tunnel() {
-  # tunnel NAME FORWARD: keep an SSH forward to the --docker-ssh host open in the
-  # background, recording its pid for destroy.
   nohup ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
     -L "$2" "$DOCKER_SSH" >"$ROOT/state/$1-tunnel.log" 2>&1 &
   echo $! >"$ROOT/state/$1-tunnel.pid"
 }
 
 remote_docker() {
-  # Docker on another machine, for a machine without its own: its socket is forwarded
-  # here, so every docker command below reaches it. Only the sandbox's container runs
-  # there; its ClickHouse port is forwarded back to this machine's loopback.
   local socket="/tmp/ai-fi-$STAMP.sock"
   tunnel docker "$socket:/var/run/docker.sock"
   echo "unix://$socket" >"$ROOT/state/docker_host"
@@ -277,8 +243,6 @@ start_clickhouse() {
   docker exec -i "$name" clickhouse-client --multiquery <"$HERE/signoz-stub.sql"
   echo "$CLICKHOUSE_URL" >"$ROOT/state/clickhouse_url"
   OTLP_PORT=$(free_port)
-  # uv's own Python serves the stub: a Homebrew Python started over SSH has been seen to
-  # accept no loopback connections on macOS, so the collector looked down.
   local python
   python=$(uv python find 3.12 2>/dev/null || command -v python3)
   nohup "$python" -I "$HERE/otlp_stub.py" "$OTLP_PORT" "$CLICKHOUSE_URL" "$ROOT/state" \
@@ -323,7 +287,6 @@ cmd_create() {
   git clone --quiet --no-local "$REPO" "$ROOT/repo"
   head="$(git -C "$REPO" rev-parse HEAD)"
   git -C "$ROOT/repo" checkout --quiet --detach "$head"
-  # A machine where Claude Code and Codex have run once: their config directories exist.
   mkdir -p "$ROOT/home/.claude" "$ROOT/home/.codex"
   make_fakes
   link_tools
@@ -332,8 +295,6 @@ cmd_create() {
   ln -sfn "$ROOT" "$REPO/.tmp/fresh-install/latest" 2>/dev/null || true
   echo "$ROOT"
 }
-
-# --- run, verify ---------------------------------------------------------------------
 
 cmd_run() {
   ROOT=$(need_root "${1-}")
@@ -344,11 +305,9 @@ cmd_run() {
 STEP=0
 FAILED=0
 step() {
-  # step NAME EXPECT COMMAND: run COMMAND in the sandbox; EXPECT is an exit code or "any".
   local name=$1 expect=$2 code=0
   shift 2
   STEP=$((STEP + 1))
-  # stdout (the JSON report) and stderr (progress, diagnostics) are kept apart.
   local log
   log="$ROOT/state/verify/$(printf '%02d' "$STEP")-$name.log"
   (cd "$ROOT/repo" && "$ROOT/run" "$@") >"$log" 2>"${log%.log}.err" || code=$?
@@ -361,7 +320,6 @@ step() {
 }
 
 check() {
-  # check NAME CONDITION...: a condition evaluated outside the sandbox.
   local name=$1
   shift
   if "$@" >/dev/null 2>&1; then
@@ -373,7 +331,6 @@ check() {
 }
 
 json_field() {
-  # json_field FILE EXPRESSION: print a Python expression over the JSON in FILE (`d`).
   python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"
 }
 
@@ -398,7 +355,6 @@ wait_for_dashboard() {
 }
 
 dashboard_views_clean() {
-  # Every view answers 200 with no failed dataset (`errors` empty).
   local view window since now
   since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -455,7 +411,6 @@ cmd_verify() {
   else
     echo "  skip  dashboard checks: another dashboard already answers on 127.0.0.1:4173"
   fi
-  # One Claude Code tool call through the installed hook, then the minute sync.
   step hook-event 0 "printf '%s' '{\"session_id\":\"fresh-1\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"},\"tool_use_id\":\"fresh-tool-1\",\"cwd\":\"/srv/work\"}' | /bin/sh \"\$HOME/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh\" claude-code PreToolUse; sleep 3"
   step facts-sync 0 'agent-introspection facts sync'
   check "hook record reached the facts store" fresh_hook_recorded
@@ -485,8 +440,6 @@ SUMMARY
   fi
 }
 
-# --- agent -----------------------------------------------------------------------------
-
 cmd_agent() {
   ROOT=$(need_root "${1-}")
   shift
@@ -509,8 +462,6 @@ cmd_agent() {
     esac
   done
   command -v claude >/dev/null || die "claude is not installed"
-  # The CLI's defaults name a SigNoz on this machine's loopback ports. A session that
-  # leaves out the sandbox's addresses would install into it, so refuse while one answers.
   if ! $allow_local && { curl -fsS -m 2 http://127.0.0.1:8123/ping >/dev/null 2>&1 \
     || curl -sS -m 2 -o /dev/null http://127.0.0.1:4318/ 2>/dev/null; }; then
     die "a SigNoz answers on 127.0.0.1:8123 or :4318; stop it, or pass --allow-local-signoz"
@@ -525,13 +476,6 @@ cmd_agent() {
     "$HERE/agent-prompt.txt" >"$prompt"
   prompt_text="$(cat "$prompt")"
   echo "agent: a fresh Claude Code session installs from $ROOT/repo; transcript: $transcript"
-  # Every Bash command the session runs goes through the sandbox runner, and it cannot
-  # edit files directly. It loads no user settings (so none of this machine's hooks or
-  # plugins run, and the prefix wraps only its own commands) and no MCP server, and it
-  # starts with no memory of the session that built this branch.
-  # The session inherits nothing of the calling session: no session identifiers, and
-  # no telemetry settings that could send its records to this machine's SigNoz.
-  # Authentication variables are kept.
   local unset=() name
   for name in $(env | grep -oE '^(OTEL_[A-Za-z0-9_]*|CLAUDECODE|CLAUDE_CODE_(SESSION_ID|CHILD_SESSION|ENTRYPOINT|ENHANCED_TELEMETRY_BETA|MESSAGING_[A-Za-z0-9_]*))=' | tr -d =); do
     unset+=(-u "$name")
@@ -561,8 +505,6 @@ print(result.get("result", "") if result else "no result event; see the transcri
 ' "$transcript" | tee "$ROOT/state/agent-report.md"
 }
 
-# --- destroy ---------------------------------------------------------------------------
-
 signal_sandbox_process() {
   local pid="$1" pattern="$2"
   shift 2
@@ -573,7 +515,6 @@ signal_sandbox_process() {
 
 cmd_destroy() {
   ROOT=$(need_root "${1-}")
-  # Only the directory `create` recorded as its own is ever deleted.
   local recorded
   recorded="$(cat "$ROOT/state/root" 2>/dev/null)" || recorded=""
   [ "$recorded" = "$ROOT" ] || die "refusing to delete $ROOT: not created as this sandbox"

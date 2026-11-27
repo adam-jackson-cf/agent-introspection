@@ -158,7 +158,6 @@ describe("refreshers feeding a view", () => {
     expect(asOfFor(rows, ["missing"])).toBeNull();
     const never = { view: "load_logs", as_of: null, stale: 1 };
     expect(asOfFor([never], null)).toBeNull();
-    // at is the oldest loader or recent refresh; daily history refreshes are excluded.
     expect(asOfFor([never, ...rows], null)?.at).toBe("2026-09-30T11:50:00Z");
     expect(
       asOfFor(rows, ["load_spans", "refresh_usage_events_recent"])?.at,

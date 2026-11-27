@@ -282,7 +282,6 @@ def test_each_step_is_announced_as_it_starts_and_ends(host: Host, tmp_path: Path
         "dashboard",
         "doctor",
     ]
-    # The backfill's progress comes between the facts step's start and end.
     assert "a long backfill can take minutes" in lines[4]
     ended = next(index for index, line in enumerate(lines) if line.startswith("setup: facts: done"))
     relayed = lines[5:ended]

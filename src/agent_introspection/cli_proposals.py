@@ -1,5 +1,3 @@
-"""Proposal and candidate subcommands of the Agent Introspection CLI."""
-
 from __future__ import annotations
 
 import argparse
@@ -140,8 +138,6 @@ def _mark_applied(args: argparse.Namespace) -> dict[str, Any]:
     require_successful_validation(evidence)
     connection = open_store(args)
     try:
-        # One transaction covers approved -> applying -> applied, so a failure or a
-        # competing change never strands the proposal in applying.
         with immediate_transaction(connection):
             state = connection.execute(
                 "SELECT state FROM proposals WHERE id = ?", (args.proposal_id,)

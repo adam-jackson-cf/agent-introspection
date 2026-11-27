@@ -9,9 +9,6 @@ import pytest
 from agent_introspection import hooks, spool
 from tests.support.otlp_collector import hook_record
 
-# --- OTLP body --------------------------------------------------------------------
-
-
 def test_the_body_is_one_resource_with_a_compact_record_per_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -54,9 +51,6 @@ def test_the_status_family_is_named_and_timed_by_its_own_field() -> None:
     attributes = {a["key"]: a["value"]["stringValue"] for a in entry["attributes"]}
     assert attributes["event.name"] == "agent_introspection.spool_status"
     assert entry["timeUnixNano"] == str(int(datetime(2026, 10, 1, tzinfo=UTC).timestamp()) * 10**9)
-
-
-# --- Responses --------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

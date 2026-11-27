@@ -2,7 +2,6 @@ import type { Registry, SignalDefinition } from "../contracts";
 import { plain } from "../format";
 import { groupOf, VIEWS } from "../routes";
 
-/** Alignment as a class name: `not applicable` → `not-applicable`. */
 const alignmentClass = (alignment: string) => alignment.replaceAll(" ", "-");
 
 function SupportTable({
@@ -77,7 +76,6 @@ function Entry({
   );
 }
 
-/** Every signal's definition from the registry, grouped by view, with per-harness routes. */
 export default function Glossary({ registry }: { registry: Registry }) {
   return (
     <>

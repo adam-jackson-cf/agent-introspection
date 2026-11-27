@@ -19,7 +19,6 @@ import {
   SERIES,
 } from "../format";
 
-/** Pure reshape: one wide row per day, values copied from the server rows. */
 function wideByDay(
   rows: Row[],
   pick: (row: Row) => string | null,

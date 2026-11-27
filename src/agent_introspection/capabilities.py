@@ -1,15 +1,3 @@
-"""Producer capabilities: the kinds of producer data the dashboard signals consume.
-
-The registry (``signal_support.toml``) declares each capability under
-``[[capability]]``, with hints for recognising it in an unknown producer's telemetry,
-and lists on every harness-scoped ``[[signal]]`` the capabilities its definition
-``requires``. A harness profile (``profiles.py``) claims a status for each capability.
-``project`` maps those claims onto the signals; ``impact`` previews which signals
-enabling a producer would hide on this machine. Parity is strict: a signal that an
-enabled producer cannot reach today is hidden, so a capability that still needs an
-adapter or a check hides it too.
-"""
-
 from __future__ import annotations
 
 import re
@@ -38,8 +26,6 @@ CAPABILITY_IDS = (
     "prompt_text",
 )
 HINT_KINDS = ("span_names", "event_names", "attribute_keys")
-# native: in the producer's own telemetry now; hook: an installed activity hook supplies
-# it; hook_available: a documented hook or plugin surface exists, but no adapter yet.
 STATUSES = ("native", "hook", "hook_available", "missing", "not_applicable", "unverified")
 PRESENT = frozenset({"native", "hook"})
 
@@ -49,9 +35,7 @@ UNKNOWN = "unknown"
 UNREACHABLE = "unreachable"
 NOT_APPLICABLE = "not_applicable"
 OUTCOMES = (REACHABLE, REACHABLE_WITH_WORK, UNKNOWN, UNREACHABLE, NOT_APPLICABLE)
-# Outcomes that hide a signal, most severe first.
 _HIDING = (UNREACHABLE, UNKNOWN, REACHABLE_WITH_WORK)
-# A registry cell's alignment as a projection outcome.
 _CELL_OUTCOMES = {
     "aligned": REACHABLE,
     "differs": REACHABLE,
@@ -63,8 +47,6 @@ _CAPABILITY_KEYS = frozenset({"id", "title", "need", "check", "hints"})
 
 @dataclass(frozen=True)
 class Capability:
-    """One kind of producer data that signals consume, and how to recognise it."""
-
     id: str
     title: str
     need: str
@@ -72,22 +54,11 @@ class Capability:
     hints: Mapping[str, tuple[str, ...]]
 
     def matches(self, kind: str, name: str) -> bool:
-        """Return whether a span name, event name, or attribute key matches a hint.
-
-        ``kind`` is one of ``HINT_KINDS``; patterns match anywhere, ignoring case.
-        """
         return any(re.search(pattern, name, re.IGNORECASE) for pattern in self.hints[kind])
 
 
 @dataclass(frozen=True)
 class CapabilityClaim:
-    """A producer's status for one capability, with the route and evidence behind it.
-
-    ``lacks`` names signals the capability still does not reach for this producer
-    (for example, Codex token usage without cache writes): for those signals the
-    capability counts as missing.
-    """
-
     status: str
     evidence: str
     route: str = ""
@@ -95,8 +66,6 @@ class CapabilityClaim:
 
 
 class HiddenSignal(TypedDict):
-    """A signal enabling a producer would hide, and why."""
-
     signal: str
     title: str
     outcome: str
@@ -105,8 +74,6 @@ class HiddenSignal(TypedDict):
 
 
 class Impact(TypedDict):
-    """Signal visibility on a machine before and after enabling a producer."""
-
     candidate: str
     enabled: list[str]
     visible_now: list[str]
@@ -115,8 +82,6 @@ class Impact(TypedDict):
 
 
 class CapabilityProfile(Protocol):
-    """What ``project`` and ``impact`` read from a harness profile."""
-
     @property
     def key(self) -> str: ...
 
@@ -188,16 +153,6 @@ def _capability(entry: object) -> Capability:
 
 
 def load_capabilities(document: Mapping[str, Any] | None = None) -> tuple[Capability, ...]:
-    """Parse and validate the registry's capabilities, in file order.
-
-    ``document`` is a parsed registry; None reads the repo registry.
-
-    Raises
-    ------
-    facts.RegistryError
-        When an entry is malformed, an id is unknown or repeated, a hint is not a valid
-        regular expression, or a capability is not declared.
-    """
     source = _registry_document() if document is None else document
     entries = source.get("capability", [])
     _require(isinstance(entries, list), "capability must be an array of tables")
@@ -223,16 +178,6 @@ def _required_ids(value: object, signal: str) -> tuple[str, ...]:
 
 
 def requirements(registry_document: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
-    """Return each harness-scoped signal's required capability ids, in file order.
-
-    Validates the document's capabilities first.
-
-    Raises
-    ------
-    facts.RegistryError
-        When the capabilities are invalid, a harness-scoped signal has no ``requires``
-        or names an unknown or repeated capability, or a system signal has one.
-    """
     load_capabilities(registry_document)
     required: dict[str, tuple[str, ...]] = {}
     for entry in registry_document.get("signal", []):
@@ -247,11 +192,6 @@ def requirements(registry_document: Mapping[str, Any]) -> dict[str, tuple[str, .
 def statuses_for(
     claims: Mapping[str, CapabilityClaim], signal: str, required: Iterable[str]
 ) -> dict[str, str]:
-    """Return the status of each capability ``signal`` requires.
-
-    A claim that lacks the signal counts as ``missing``; an unclaimed capability as
-    ``unverified``.
-    """
     statuses: dict[str, str] = {}
     for capability in required:
         claim = claims.get(capability)
@@ -263,12 +203,6 @@ def statuses_for(
 
 
 def outcome(statuses: Iterable[str]) -> str:
-    """Return the projection outcome of a signal from its required statuses.
-
-    A not-applicable capability makes the signal not applicable; otherwise a missing
-    one makes it unreachable, an unverified one unknown, and a hook that has no adapter
-    yet reachable with work.
-    """
     present = set(statuses)
     if "not_applicable" in present:
         return NOT_APPLICABLE
@@ -284,11 +218,6 @@ def outcome(statuses: Iterable[str]) -> str:
 def project(
     profile: CapabilityProfile, registry: facts.Registry, registry_key: str = ""
 ) -> dict[str, str]:
-    """Return each harness-scoped signal's outcome for a profile, in registry order.
-
-    The outcome is one of ``OUTCOMES``. ``registry_key`` applies that surface's
-    capability overrides (for example, headless Codex exec has no user friction).
-    """
     claims = profile.claims(registry_key)
     return {
         signal: outcome(statuses_for(claims, signal, required).values())
@@ -311,11 +240,6 @@ def _cells(registry: facts.Registry, signal: str) -> dict[str, facts.Row]:
 def _hidden_entry(
     candidate: CapabilityProfile, registry: facts.Registry, signal: facts.Row
 ) -> HiddenSignal | None:
-    """Return why enabling ``candidate`` would hide ``signal``, or None when it would not.
-
-    A surface the registry already describes is judged by its registry cell, which is
-    authoritative; a producer the registry does not know is judged by projection.
-    """
     signal_id = str(signal["signal"])
     required = registry.requires.get(signal_id, ())
     cells = _cells(registry, signal_id)
@@ -345,15 +269,6 @@ def _hidden_entry(
 def impact(
     enabled: Sequence[str] | None, candidate: CapabilityProfile, registry: facts.Registry
 ) -> Impact:
-    """Preview signal visibility on this machine if ``candidate`` were also enabled.
-
-    ``enabled`` holds the configured harness keys (None enables every registry
-    harness, ``codex`` names the three Codex surfaces). Visibility now follows the
-    registry (``facts.hidden_signals``). A candidate hides every visible signal it
-    cannot reach today, with the capabilities that stand in the way: ``missing``
-    lists those not native or hook-supplied, and ``note`` the registry's reason for a
-    surface it already describes.
-    """
     harnesses = facts.enabled_harnesses(registry, enabled)
     hidden_now = {str(row["signal"]) for row in facts.hidden_signals(registry, harnesses)}
     visible_now = [

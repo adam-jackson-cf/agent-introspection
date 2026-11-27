@@ -559,7 +559,6 @@ describe("view queries", () => {
       expect(sql).toContain("{start:DateTime64(3, 'UTC')}");
       expect(sql).toContain("{harness:String}");
     }
-    // Headless Codex exec has no next prompt: out of the corrected denominator.
     expect(intent["kpi"]).toContain(
       "countIf(harness != 'codex_exec' AND corrected_next IS NOT NULL)",
     );

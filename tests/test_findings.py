@@ -207,7 +207,6 @@ def test_dashboard_generic_class_literal_mirrors_the_findings_pattern() -> None:
     literal = re.search(r"GENERIC_CLASS = String\.raw`([^`]*)`", source)
 
     assert literal is not None
-    # The dashboard embeds the pattern in a ClickHouse string literal, doubling backslashes.
     assert literal.group(1).replace("\\\\", "\\") == findings.GENERIC_CLASS.pattern
 
 

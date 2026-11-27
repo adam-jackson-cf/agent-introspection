@@ -20,7 +20,7 @@ definitions:
   first_viewport: the top 1330 px of the page at 2560 px wide.
   kpi: an `article.panel` whose body is `.kpi` (a figure with its detail line).
   panel: an `article.panel` that is not a KPI.
-  state_words: # DESIGN.md status scale, in order
+  state_words:
     - healthy
     - no events
     - idle
@@ -30,7 +30,6 @@ definitions:
     - stray (unexplained)
     - not in use
     - not in use, rows present
-  # Regexes below are used verbatim by scripts/ux-probe (case-insensitive for period_phrase).
   period_phrase: '\b(current|last day|last 24 hours|last \d+ days|up to \d+ days|selected range|all time)\b'
   computation_pattern: 'Math\.(max|min|round|floor|ceil)\(|\.reduce\(|num\([^()]*\)\s*[-+*/]\s|\s[-+*/]\s*num\('
   computation_scope: matches are counted in the page's view file(s) under dashboard/src/views/.

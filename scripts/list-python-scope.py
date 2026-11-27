@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Write the NUL-delimited maintained Python file set for shell callers."""
-
 from __future__ import annotations
 
 import subprocess
@@ -11,7 +9,6 @@ from lib.python_quality_settings import SettingsError
 
 
 def main() -> int:
-    """Print every maintained tracked Python file, NUL-delimited, on stdout."""
     try:
         paths = tracked_python_files()
         sys.stdout.buffer.write(b"".join(path.encode("utf-8") + b"\0" for path in paths))

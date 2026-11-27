@@ -1,34 +1,3 @@
-"""``agent-introspection setup``: the whole single-machine install in one command.
-
-The steps run in order, and the first that fails stops the run:
-
-1. ``config``: write the choices given as options into the config file, through the
-   line-preserving TOML writer (comments and other keys kept, the file backed up), and
-   check the result loads. Retired settings of an older config are removed (a retired
-   ``[dashboard] clickhouse_url`` moves to ``[signoz]``), and an older config that
-   relied on every harness being enabled keeps omp while its plugin is installed. Only
-   options that were given are written; everything else keeps its default. An
-   additional machine is refused: it has its own workflow.
-2. ``signoz``: every preflight check, read-only (the connection, version, columns,
-   grants, and producer data).
-3. ``facts``: ``facts install``, the workflow store, then ``facts backfill``.
-4. ``harnesses``: ``harness configure`` for each enabled harness (export settings,
-   activity hooks, and, with ``prompt_export``, prompt export).
-5. ``schedule``: the minute ``facts sync`` job.
-6. ``dashboard``: the dashboard service, built from the checkout (unless skipped).
-7. ``doctor``: every check, as ``agent-introspection doctor`` reports it.
-
-Every step is idempotent, so a rerun is a reinstall. ``progress`` hears one line as each
-step starts and ends (the CLI prints them to stderr), since ``facts`` alone can take
-minutes on a busy SigNoz. ``dry_run`` reports what each step
-would do and changes nothing: the config diff, the read-only preflight against the
-options given, each harness's planned changes, and the refusals the schedule and
-dashboard would hit. It passes when the real run would get through every step; it
-runs no ``doctor``, whose report of a machine not yet set up would only fail.
-``setup`` never installs SigNoz; that stays the onboarding skill's opt-in guided
-script.
-"""
-
 from __future__ import annotations
 
 import difflib
@@ -66,7 +35,6 @@ DEFAULT_BACKFILL_DAYS: Final = 90
 
 type Progress = Callable[[str], None]
 
-# What each step does, as the progress line names it while it runs.
 _STEP_DOING: Final = {
     "config": "writing the config",
     "signoz": "checking SigNoz",
@@ -80,8 +48,6 @@ _STEP_DOING: Final = {
 
 @dataclass(frozen=True)
 class SetupOptions:
-    """The user's decisions, gathered by the onboarding skill; None keeps a key as it is."""
-
     config_path: Path | None = None
     clickhouse_url: str | None = None
     clickhouse_user: str | None = None
@@ -97,15 +63,12 @@ class SetupOptions:
 
 
 class SetupError(RuntimeError):
-    """A step failed; ``step`` names it and the run stops there."""
-
     def __init__(self, step: str, detail: str) -> None:
         super().__init__(detail)
         self.step = step
 
 
 def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
-    """Return the config values the options set, by table."""
     signoz = {
         "clickhouse_url": options.clickhouse_url,
         "clickhouse_user": options.clickhouse_user,
@@ -129,11 +92,6 @@ def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
 
 
 def _upgraded(document: dict[str, Any], options: SetupOptions) -> tuple[SetupOptions, list[str]]:
-    """Return the options with what an older config implies, and a note for each.
-
-    A retired ``[dashboard] clickhouse_url`` moves to ``[signoz] clickhouse_url``, and a
-    config from before omp was opt-in keeps omp while its plugin is installed.
-    """
     notes: list[str] = []
     dashboard = document.get("dashboard")
     signoz = document.get("signoz")
@@ -156,12 +114,6 @@ def _upgraded(document: dict[str, Any], options: SetupOptions) -> tuple[SetupOpt
 
 
 def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
-    """Write the options' settings into the config file; return the config and a report.
-
-    Retired settings of an older config are removed first, so an upgrade reinstalls
-    without editing the file by hand (the change shows in the diff and the backup).
-    """
-    # Resolved, so a symlinked config is written through, never replaced.
     path = (options.config_path or default_config_path()).expanduser().resolve()
     before = path.read_text("utf-8") if path.exists() else ""
     text = before
@@ -177,12 +129,9 @@ def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
             text = config_writers.update_table(text, "toml", table, values).text
         config = parse_config(tomllib.loads(text))
         require_host(config, "setup installs the SigNoz host's facts store and schedule")
-        # The facts registry knows fewer keys than the harness profiles (omp is
-        # `oh-my-pi`): refuse here, before a dry run passes and a real one stops at facts.
         facts.enabled_harnesses(facts.load_registry(), config.harnesses_enabled)
     except (config_writers.ConfigFileError, tomllib.TOMLDecodeError, ConfigurationError) as exc:
         raise SetupError("config", f"{path}: {exc}") from None
-    # A missing file is always written: the later steps load it from this path.
     changed = text != before or not path.exists()
     backup: Path | None = None
     if changed and not options.dry_run:
@@ -279,7 +228,6 @@ def _silent(_line: str) -> None:
 
 
 def _announced[T](name: str, run: Callable[[], T], progress: Progress, dry_run: bool) -> T:
-    """Run one step between a start and an end progress line; a failure ends it too."""
     doing = _STEP_DOING[name]
     if name == "facts" and not dry_run:
         doing += " (a long backfill can take minutes; progress follows)"
@@ -311,7 +259,6 @@ def _step(name: str, run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 
 
 def run(options: SetupOptions, progress: Progress = _silent) -> dict[str, Any]:
-    """Run every step in order; stop at the first that fails and report how far it got."""
     steps: dict[str, Any] = {}
 
     def step(name: str, produce: Callable[[], dict[str, Any]]) -> None:

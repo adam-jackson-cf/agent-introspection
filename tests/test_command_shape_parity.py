@@ -1,9 +1,3 @@
-"""Run the SQL command-shape fragment in ClickHouse against the shared fixture.
-
-Opt in with ``AGENT_INTROSPECTION_LIVE_CLICKHOUSE=1``; the query only selects over
-inline ``values()`` rows, so it writes nothing.
-"""
-
 from __future__ import annotations
 
 import json

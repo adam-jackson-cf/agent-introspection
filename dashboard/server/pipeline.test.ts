@@ -562,7 +562,6 @@ describe("spool delivery: sent counters against records received", () => {
     expect(SPOOL_STATUS).not.toContain("max(timestamp)");
   });
 
-  // Evaluates the real sent arithmetic in ClickHouse over inline values(): read-only.
   const live = process.env["AGENT_INTROSPECTION_LIVE_CLICKHOUSE"] === "1";
 
   test.skipIf(!live)(
@@ -580,16 +579,11 @@ describe("spool delivery: sent counters against records received", () => {
     "SPOOL_DELIVERY counts a window by arrival, keeps old-producer records, and ignores shipping order",
     async () => {
       const hour = 3600;
-      // Heartbeats produced at totals 100, 130, 160; the 130 beat is stale and
-      // ships last, so arrival order is 100, 160, 130. Producer order gives 60.
       const beats = [
         logRow("beat", "h", 5 * hour, 5 * hour, 100),
         logRow("beat", "h", 3 * hour, 3 * hour, 160),
         logRow("beat", "h", 2 * hour, 4 * hour, 130),
       ];
-      // Within the window (arrived after the first beat, by the last beat):
-      // one produced 3 days ago (past the old 48 hour guard) but observed 3.5 hours ago, one produced just
-      // before arriving, one outside the window.
       const records = [
         logRow("record", "h", 3.5 * hour, 3 * 24 * hour),
         logRow("record", "h", 3.5 * hour, 3.5 * hour),
@@ -716,18 +710,13 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
 
   test("SQL carries the KPI totals, rates, daily sums and harness filter", async () => {
     const { sql } = await run({ harness: "oh-my-pi" });
-    // Loaders KPI: total, failing, ok = total - failing.
     expect(sql).toContain("total - failing AS ok");
-    // Freshness KPI: missing sources and largest lag, a NULL lag counting as 0.
     expect(sql).toContain("countIf(facts_missing = 1) AS missing_facts");
     expect(sql).toContain("if(count() > 0, max(ifNull(lag_seconds, 0)), NULL)");
-    // Parity KPI and subtitle window label.
     expect(sql).toContain("countIf(ok = 1) AS matching");
     expect(sql).toContain("AS window_label");
-    // Daily rows are summed over sources in SQL.
     expect(sql).toContain("count() AS n FROM (");
     expect(sql).toContain("GROUP BY day, harness ORDER BY day, harness");
-    // The harness filter is in the freshness and parity queries.
     expect(
       sql.split("{harness:String} = '' OR harness = {harness:String}").length,
     ).toBeGreaterThan(4);

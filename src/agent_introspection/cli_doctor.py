@@ -1,5 +1,3 @@
-"""The doctor command of the Agent Introspection CLI, wired to this machine."""
-
 from __future__ import annotations
 
 import argparse
@@ -29,7 +27,6 @@ def _drift_report(
 
 
 def default_probes() -> doctor.Probes:
-    """Return the probes that touch this machine."""
     return doctor.Probes(
         connect=facts.runner,
         tcp_open=doctor.tcp_open,

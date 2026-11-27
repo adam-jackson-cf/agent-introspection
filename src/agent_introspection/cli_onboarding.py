@@ -1,11 +1,3 @@
-"""The onboarding command groups of the Agent Introspection CLI.
-
-``signoz`` finds the SigNoz on this machine, ``producers`` identifies and explores the
-services that send telemetry, ``harness`` previews and configures producer harnesses,
-``dashboard`` runs the dashboard as a service, ``doctor`` checks every onboarding
-step, and ``setup`` runs the whole install.
-"""
-
 from __future__ import annotations
 
 from typing import Any

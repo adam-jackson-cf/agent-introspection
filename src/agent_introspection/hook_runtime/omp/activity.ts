@@ -3,21 +3,6 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-// Activity hooks for omp (see docs/references/hook-events.md). Each handler builds a small
-// JSON envelope and hands it to the detached activity shim, which runs
-// `agent-introspection hook omp <event>`. Handlers never block, throw, or change
-// the agent's behaviour; a failed spawn loses one record and is logged by event and
-// error code only. The error text of a failed tool result is handed to the shim in
-// memory and reduced to a normalized signature there; it is never stored.
-//
-// omp exports no user-prompt event, so `before_agent_start` sends one: an
-// `omp.user_prompt` OTLP log (the same shape as Claude Code's `user_prompt` and
-// Codex's `codex.user_prompt`) to the collector omp itself exports to, taken from
-// the standard `OTEL_EXPORTER_OTLP_*` variables. `facts sync` labels it with Jev.
-// With no endpoint configured, omp exports nothing and neither does this. Prompt
-// text leaves the machine only after the user opts in: the onboarding workflow sets
-// `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` at its prompt-export step.
-
 const shimPath =
   process.env["AGENT_INTROSPECTION_SHIM"] ??
   join(
@@ -104,7 +89,6 @@ function sessionId(context: OmpContext): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** Join the text parts of a tool result's content; other parts carry no text. */
 function textOf(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
@@ -119,7 +103,6 @@ function exitCodeOf(event: ToolResultEvent): number | undefined {
   return typeof code === "number" && Number.isFinite(code) ? code : undefined;
 }
 
-/** Append one line naming the event and error code; never any payload. */
 function logSpawnFailure(event: ActivityEvent, error: unknown): void {
   try {
     const code = (error as { code?: unknown })?.code;
@@ -129,7 +112,6 @@ function logSpawnFailure(event: ActivityEvent, error: unknown): void {
       `${new Date().toISOString()} omp ${event} spawn ${typeof code === "string" ? code : "error"}\n`,
     );
   } catch {
-    // Logging must never disturb the session.
   }
 }
 
@@ -154,7 +136,6 @@ function emit(
     child.stdin?.end(envelope);
     child.unref();
   } catch {
-    // Telemetry must never disturb the session.
   }
 }
 
@@ -190,7 +171,6 @@ function attribute(
   return { key, value };
 }
 
-/** Send one `omp.user_prompt` log to omp's OTLP collector; failures are dropped. */
 function exportPrompt(prompt: unknown, context: OmpContext): void {
   try {
     if (process.env["AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"] !== "1") {
@@ -247,7 +227,6 @@ function exportPrompt(prompt: unknown, context: OmpContext): void {
       body: JSON.stringify(body),
     }).catch(() => undefined);
   } catch {
-    // Telemetry must never disturb the session.
   }
 }
 
@@ -288,8 +267,6 @@ export default function registerOmpActivityHooks(api: OmpExtensionAPI): void {
     });
   });
   api.on("input", (event, context) => {
-    // Only input typed while the agent is busy is a steer; idle input becomes a
-    // prompt and is covered by before_agent_start.
     const idle = context?.isIdle?.() ?? true;
     if (!idle) {
       emit("input", context, { text: event.text, idle });

@@ -23,8 +23,6 @@ BUN = Path("/opt/bun/bin/bun")
 
 
 class Recorder:
-    """Records bun and scheduler commands, answering each with ``code``."""
-
     def __init__(self, code: int = 0) -> None:
         self.code = code
         self.loaded = False
@@ -99,7 +97,6 @@ def test_install_restarts_a_systemd_user_service(
     dashboard_service.install(settings, REPO)
 
     unit = dashboard_service.service_file().read_text()
-    # systemd takes WorkingDirectory= as a bare path; a quoted one fails to load.
     assert f"WorkingDirectory={REPO / 'dashboard'}\n" in unit
     assert 'Environment="INTROSPECTION_WORKFLOW_DB=/srv/ai/workflow.sqlite3"\n' in unit
     assert 'Environment="INTROSPECTION_CLICKHOUSE_USER=reader"\n' in unit

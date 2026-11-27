@@ -1,14 +1,3 @@
-"""Harness profiles: how to switch on a producer's telemetry, and what it offers.
-
-Each producer has one profile, a TOML file in the ``harness_profiles`` package
-(schema ``agent-introspection.harness-profile/1``). A registered profile covers one or
-more registry harnesses (``codex`` covers the three Codex surfaces); a candidate
-describes a producer that is not a harness yet, from measured evidence. A profile
-names the config files and settings that switch on its export, the session store and
-activity-hook adapter it relies on, and a status for every producer capability
-(``capabilities.py``), with per-surface overrides.
-"""
-
 from __future__ import annotations
 
 import glob
@@ -34,14 +23,10 @@ SCHEMA = "agent-introspection.harness-profile/1"
 PACKAGE = "agent_introspection.harness_profiles"
 PROFILE_STATUSES = ("registered", "candidate")
 FILE_FORMATS = ("json", "toml", "dotenv")
-# first: the first path whose variables are set; each: every root that is chosen or
-# exists (Codex homes). See `config_paths`.
 ROOT_MODES = ("first", "each")
 SETTING_GROUPS = ("export", "prompt_export")
-# Placeholders a setting value may hold. `service_name` is the profile's first one.
 TEMPLATES = ("otlp_endpoint", "otlp_protocol", "service_name")
 _TEMPLATE = re.compile(r"\{(\w+)\}")
-# `$NAME` or `${NAME}` in a config file path.
 _PATH_VARIABLE = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 _PROFILE_KEYS = frozenset({
     "schema",
@@ -63,14 +48,9 @@ _PROFILE_KEYS = frozenset({
 _CONFIG_FILE_KEYS = frozenset({"id", "paths", "format", "table", "roots", "home_globs"})
 _SETTING_KEYS = frozenset({"file", "key", "value", "group", "purpose"})
 _CLAIM_KEYS = frozenset({"status", "route", "evidence", "lacks"})
-# The local collector's OTLP port for each transport, and the transport of each
-# OTEL_EXPORTER_OTLP_PROTOCOL value.
 OTLP_PORTS = {"http": OTLP_HTTP_PORT, "grpc": OTLP_GRPC_PORT}
 OTLP_PROTOCOLS = {"http/protobuf": "http", "http/json": "http", "grpc": "grpc"}
-# The protocol `{otlp_protocol}` renders to: the collector endpoint is OTLP/HTTP.
 OTLP_HTTP_PROTOCOL = "http/protobuf"
-# Codex exporter tables: `otlp-http = { endpoint, protocol }` posts to its endpoint as
-# given, with protocol binary or json; `otlp-grpc = { endpoint }`.
 _EXPORTER_TRANSPORTS = {"otlp-http": "http", "otlp-grpc": "grpc"}
 _EXPORTER_HTTP_PROTOCOLS = ("binary", "json")
 _TRANSPORT_TEMPLATES = frozenset({"otlp_endpoint", "otlp_protocol"})
@@ -81,27 +61,21 @@ type SettingValue = str | bool | int | dict[str, SettingValue]
 
 
 class ProfileError(ValueError):
-    """A harness profile is malformed or disagrees with the registry."""
+    pass
 
 
 @dataclass(frozen=True)
 class ConfigFile:
-    """A file holding a producer's telemetry settings, and where in it they go."""
-
     id: str
     paths: tuple[str, ...]
     format: str
     table: str
     roots: str
-    # Glob patterns of more config directories for an ``each`` file, such as Orca's
-    # per-account Codex homes; ``~`` expands, and every matching directory is a root.
     home_globs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Setting:
-    """One managed key in a config file's settings table."""
-
     file: str
     key: str
     value: SettingValue
@@ -109,14 +83,11 @@ class Setting:
     purpose: str
 
     def render(self, context: Mapping[str, str]) -> SettingValue:
-        """Return the value with each placeholder filled from ``context``."""
         return render_value(self.value, context)
 
 
 @dataclass(frozen=True)
 class Profile:
-    """One producer's telemetry configuration and capability claims."""
-
     key: str
     title: str
     status: str
@@ -134,24 +105,13 @@ class Profile:
 
     @property
     def aliases(self) -> tuple[str, ...]:
-        """The names that resolve to this profile: key, registry keys, and service names."""
         return tuple(dict.fromkeys((self.key, *self.registry_keys, *self.service_names)))
 
     def claims(self, registry_key: str = "") -> dict[str, CapabilityClaim]:
-        """Return the capability claims, with ``registry_key``'s overrides applied."""
         return {**self.capabilities, **self.capability_overrides.get(registry_key, {})}
 
 
 def expand_config_path(raw: str, environ: Mapping[str, str], home: Path) -> Path | None:
-    """Expand one config file path: ``$NAME`` or ``${NAME}``, and a leading ``~``.
-
-    The one expansion ``doctor`` and ``harness configure`` share for a profile's
-    ``[[config_file]] paths`` and ``--root`` directories. A path naming a variable that
-    is unset or empty is None, so a harness's config-directory variable falls through
-    to its default path. ``~`` expands only as the path's first part, as a shell does,
-    never inside a variable's value. Nothing is globbed: each path names one file or
-    directory.
-    """
     names = [braced or bare for braced, bare in _PATH_VARIABLE.findall(raw)]
     if any(not environ.get(name) for name in names):
         return None
@@ -164,20 +124,6 @@ def expand_config_path(raw: str, environ: Mapping[str, str], home: Path) -> Path
 def config_paths(
     config_file: ConfigFile, environ: Mapping[str, str], home: Path, extras: Sequence[Path] = ()
 ) -> list[Path]:
-    """Return the files a profile's config file names on this machine, existing or not.
-
-    The one resolution ``harness configure`` writes and ``doctor`` reads. A path whose
-    variable is unset or empty is skipped (``expand_config_path``). A file configured
-    once (``first``) is the first remaining path: a set config-directory variable
-    replaces the default location, as it does for the harness (``CLAUDE_CONFIG_DIR``),
-    even before the harness has written a file there. A file configured in each root
-    (``each``) is in every remaining path that names a variable, the home the user
-    chose, in every other whose directory exists, and in every directory a
-    ``home_globs`` pattern matches. ``extras`` are more files of the same name in
-    directories named by ``--root``: they replace a ``first`` file's path and join the
-    ``each`` ones. With nothing chosen and no ``extras``, the first remaining path is,
-    even when ``home_globs`` match: a matched home never stands in for the default one.
-    """
     candidates = [
         (raw, path)
         for raw in config_file.paths
@@ -194,7 +140,6 @@ def config_paths(
 
 
 def _glob_homes(config_file: ConfigFile, home: Path) -> list[Path]:
-    """Return the file in every directory a ``home_globs`` pattern matches, sorted."""
     name = Path(config_file.paths[0]).name
     patterns = [
         str(home / pattern[2:]) if pattern.startswith("~/") else pattern
@@ -205,13 +150,6 @@ def _glob_homes(config_file: ConfigFile, home: Path) -> list[Path]:
 
 
 def render_value(value: SettingValue, context: Mapping[str, str]) -> SettingValue:
-    """Return ``value`` with each placeholder replaced from ``context``.
-
-    Raises
-    ------
-    ProfileError
-        When ``context`` has no value for a placeholder.
-    """
     if isinstance(value, dict):
         return {key: render_value(item, context) for key, item in value.items()}
     if not isinstance(value, str):
@@ -222,15 +160,6 @@ def render_value(value: SettingValue, context: Mapping[str, str]) -> SettingValu
 
 
 def export_context(profile: Profile, otlp_endpoint: str | None = None) -> dict[str, str]:
-    """Return the values a profile's setting placeholders take on this machine.
-
-    ``otlp_endpoint`` is the collector's OTLP/HTTP base URL,
-    ``AppConfig.collector_endpoint``: config ``[signoz] otlp_endpoint`` (default
-    ``DEFAULT_OTLP_ENDPOINT``), or on an additional machine ``[machine] export_endpoint``,
-    the host's collector. Config refuses the OTLP/gRPC port there, so every profile
-    writes one transport: the protocol is always ``http/protobuf``. The service name is
-    the profile's first.
-    """
     return {
         "otlp_endpoint": (otlp_endpoint or DEFAULT_OTLP_ENDPOINT).rstrip("/"),
         "otlp_protocol": OTLP_HTTP_PROTOCOL,
@@ -245,7 +174,6 @@ def _placeholders(value: SettingValue) -> set[str]:
 
 
 def _port(url: object) -> int | None:
-    """Return the port an http(s) URL names, or None when it names none or is not one."""
     if not isinstance(url, str):
         return None
     parts = urlsplit(url)
@@ -257,12 +185,6 @@ def _port(url: object) -> int | None:
 
 
 def on_collector_host(url: str, collector: str) -> bool:
-    """Return whether ``url`` names the machine of the collector at ``collector``.
-
-    Every local name (``config.is_local_host``) is one machine, so a local collector is
-    reached through any of them. A collector on another machine, the host an additional
-    machine exports to, is reached only through the host name its own URL gives.
-    """
     host = (urlsplit(url).hostname or "").rstrip(".")
     collector_host = (urlsplit(collector).hostname or "").rstrip(".")
     if is_local_host(collector_host):
@@ -271,20 +193,11 @@ def on_collector_host(url: str, collector: str) -> bool:
 
 
 def _collector_port(transport: str, context: Mapping[str, str]) -> int:
-    """Return the port the collector serves ``transport`` on.
-
-    OTLP/HTTP is served on the configured endpoint's port; OTLP/gRPC on OTLP's own.
-    """
     configured = _port(context["otlp_endpoint"]) if transport == "http" else None
     return configured if configured is not None else OTLP_PORTS[transport]
 
 
 def _reaches(url: object, transport: str, path: str, context: Mapping[str, str]) -> bool:
-    """Return whether ``url`` is an exporter endpoint of the collector's ``transport``.
-
-    It must name the collector's machine (``on_collector_host``) and port. OTLP/HTTP
-    must post to the same path as the profile's value; gRPC takes no path.
-    """
     port = _port(url)
     if port is None or not on_collector_host(cast(str, url), context["otlp_endpoint"]):
         return False
@@ -297,7 +210,6 @@ def _reaches(url: object, transport: str, path: str, context: Mapping[str, str])
 def _exporter_transport(
     rendered: SettingValue, value: object, context: Mapping[str, str]
 ) -> str | None:
-    """Judge a Codex exporter table: one `otlp-http` or `otlp-grpc` entry."""
     if not isinstance(value, Mapping) or len(value) != 1:
         return None
     kind, options = next(iter(cast(Mapping[str, object], value).items()))
@@ -324,13 +236,6 @@ def _sibling(
 def _variable_transport(
     profile: Profile, setting: Setting, current: Mapping[str, object], context: Mapping[str, str]
 ) -> str | None:
-    """Judge an endpoint or protocol variable with its partner: the exporter reads both.
-
-    The endpoint keeps the current protocol when the profile accepts it (any OTLP
-    protocol for a ``{otlp_protocol}`` value, else that literal), or else the one about
-    to be written. A current protocol is kept when it reaches the collector with the
-    current endpoint, or with the profile's endpoint that replaces it.
-    """
     is_endpoint = isinstance(setting.value, str) and _ENDPOINT in setting.value
     endpoint = (
         setting
@@ -366,25 +271,6 @@ def _variable_transport(
 def equivalent_transport(
     profile: Profile, setting: Setting, current: Mapping[str, object], context: Mapping[str, str]
 ) -> str | None:
-    """Return how an export setting's current value reaches the collector another way.
-
-    The transport-equivalence rule shared by ``doctor`` and ``harness configure``: an
-    export setting whose profile value templates the collector endpoint or protocol is
-    satisfied by any OTLP exporter that reaches the collector, over OTLP/HTTP (port
-    4318, or the configured endpoint's port; protocol ``http/protobuf`` or
-    ``http/json``; a Codex ``otlp-http`` exporter posting to the same ``/v1/<signal>``
-    path with protocol ``binary`` or ``json``) or over OTLP/gRPC (port 4317, protocol
-    ``grpc``; a Codex ``otlp-grpc`` exporter). Its URL must name the collector's
-    machine (``on_collector_host``): any local name for a local collector, the host's
-    own name on an additional machine. ``current`` is the settings table as the file
-    holds it now; ``context`` comes from ``export_context``.
-
-    Returns
-    -------
-    str or None
-        ``http`` or ``grpc``, or None when the setting is not templated that way or its
-        current value is not such an exporter.
-    """
     if setting.group != "export" or not _placeholders(setting.value) & _TRANSPORT_TEMPLATES:
         return None
     if isinstance(setting.value, dict):
@@ -540,7 +426,6 @@ def _overrides(value: object, where: str) -> dict[str, dict[str, CapabilityClaim
 
 
 def _check_registry(profile: Profile, registry: facts.Registry, where: str) -> None:
-    """Check the profile's harness identity and hook adapter against the registry."""
     if profile.status == "candidate":
         _require(not profile.registry_keys, f"{where}: a candidate covers no registry harness")
     else:
@@ -568,7 +453,6 @@ def _check_registry(profile: Profile, registry: facts.Registry, where: str) -> N
 def _check_claim(
     profile: Profile, registry: facts.Registry, capability: str, claim: CapabilityClaim
 ) -> None:
-    """Check one claim's route, hook status, and lacked signals against the registry."""
     where = f"profile {profile.key} {capability}"
     if claim.route:
         rows = [row for row in registry.routes if row["route"] == claim.route]
@@ -595,14 +479,6 @@ def parse_profile(
     registry: facts.Registry,
     where: str = "profile",
 ) -> Profile:
-    """Validate one parsed profile against the contract and the registry.
-
-    Raises
-    ------
-    ProfileError
-        When a key is missing, unknown, or of the wrong type, or the profile names a
-        harness, route, adapter, capability, or signal that does not exist.
-    """
     _require(document.get("schema") == SCHEMA, f"{where}: schema must be {SCHEMA}")
     _table(document, where, _PROFILE_KEYS)
     config_files = _config_files(document.get("config_file", []), where)
@@ -638,12 +514,10 @@ def _parse_text(text: str, registry: facts.Registry, where: str) -> Profile:
 
 
 def load_profile(path: Path, registry: facts.Registry | None = None) -> Profile:
-    """Load and validate one profile file, such as a draft for a candidate producer."""
     return _parse_text(path.read_text(), registry or facts.load_registry(), str(path))
 
 
 def _check_profile_set(profiles: Sequence[Profile], registry: facts.Registry) -> None:
-    """Check names are unambiguous and every registry harness has one registered profile."""
     names = [name for profile in profiles for name in profile.aliases]
     repeated = sorted({name for name in names if names.count(name) > 1})
     _require(not repeated, f"harness profiles: {', '.join(repeated)} name more than one")
@@ -658,14 +532,6 @@ def _check_profile_set(profiles: Sequence[Profile], registry: facts.Registry) ->
 
 
 def load_profiles(registry: facts.Registry | None = None) -> tuple[Profile, ...]:
-    """Load and validate every bundled profile, ordered by key.
-
-    Raises
-    ------
-    ProfileError
-        When a profile is invalid, its file name is not ``<key>.toml``, two profiles
-        share a name, or a registry harness has no registered profile.
-    """
     registry = registry or facts.load_registry()
     profiles: list[Profile] = []
     for resource in sorted(files(PACKAGE).iterdir(), key=lambda item: item.name):
@@ -681,13 +547,6 @@ def load_profiles(registry: facts.Registry | None = None) -> tuple[Profile, ...]
 
 
 def resolve(name: str, profiles: Sequence[Profile] | None = None) -> Profile:
-    """Return the profile a profile key, registry harness key, or service name names.
-
-    Raises
-    ------
-    ProfileError
-        When no profile has that name.
-    """
     known = load_profiles() if profiles is None else profiles
     for profile in known:
         if name in profile.aliases:

@@ -279,8 +279,6 @@ def test_concurrent_decisions_cannot_overwrite_each_other(
     competing: list[BaseException | None] = []
 
     def decide_elsewhere(statement: str) -> None:
-        # Run a competing decision on a separate connection at the moment the first
-        # decision has read the proposal state and has not yet written.
         if competing or "FROM proposal_events" not in statement:
             return
         try:

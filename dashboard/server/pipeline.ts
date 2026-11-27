@@ -36,42 +36,30 @@ import {
 type Params = Record<string, string>;
 type Source = RouteSource;
 export type RouteCounts = {
-  /** route → harness → rows matching the route predicate. */
   total: Map<string, Map<string, number>>;
-  /** route → harness → matching rows not explained by a registered stray. */
   unexplained: Map<string, Map<string, number>>;
-  /** route → harness → UTC day of the route's first row when no row precedes the window. */
   first: Map<string, Map<string, string>>;
 };
 
 const START = "{start:DateTime64(3, 'UTC')}";
 const WINDOW = `ts >= ${START} AND ts < {end:DateTime64(3, 'UTC')}`;
-/** How far before the window the route scan looks for an earlier row (the snapshot horizon). */
 const ROUTE_LOOKBACK_DAYS = 90;
 const SOURCES: Source[] = ["spans", "logs", "hooks"];
-/**
- * The relation each route source's predicates run against. Activity hooks are
- * read through `hook_rows`, a view that resolves each event's harness, so it
- * takes no FINAL (the view already reads `hook_events` FINAL).
- */
 const SOURCE_RELATION: Record<Source, string> = {
   spans: "introspection.spans FINAL",
   logs: "introspection.logs FINAL",
   hooks: "introspection.hook_rows",
 };
-/** The event or span name column of each source, for unrouted-row reporting. */
 const NAME_COLUMN: Record<Source, string> = {
   spans: "name",
   logs: "event_name",
   hooks: "event_type",
 };
-/** Codex spans the loader keeps; mirrors select_spans.sql, including its usage predicate. */
 const CODEX_SPAN_NAMES =
   "'session_task.turn', 'session_task.run', 'run_sampling_request', 'try_run_sampling_request', 'turn/start', 'turn/interrupt', 'turn/steer'";
 const CODEX_LOADED = `(name IN (${CODEX_SPAN_NAMES}) OR (name = 'handle_responses' AND mapContains(attributes_number, 'gen_ai.usage.input_tokens')))`;
 const FORBIDDEN_KEYS =
   "['prompt', 'user_prompt', 'arguments', 'output', 'content', 'user.email', 'user.account_id', 'user.account_uuid', 'user.id', 'organization.id', 'gen_ai.tool.description', 'pi.gen_ai.tool.call.intent', 'omp.gen_ai.tool.call.intent']";
-/** Raw-text keys the activity hooks must never store (docs/references/hook-events.md). */
 const HOOK_FORBIDDEN_KEYS =
   "['prompt', 'user_prompt', 'tool_input', 'tool_response', 'arguments', 'output', 'content', 'message']";
 
@@ -91,16 +79,6 @@ const strayCondition = (registry: Registry, source: Source): string => {
         .join(" OR ");
 };
 
-/**
- * Counts rows per harness for every route predicate over the window, and the
- * part of each count not explained by a registered stray. Predicates come from
- * the registry tables that `facts install` loaded from the repo-owned file. The
- * scan reaches back `ROUTE_LOOKBACK_DAYS` before the window start, so each route also
- * reports the day of its first row when no row precedes it in that span (a route
- * that started mid-window, such as an activity hook installed then). Route
- * predicates read raw attributes no snapshot keeps, so this is the one raw scan; the
- * lookback keeps it off all history.
- */
 export function routeCountQueries(registry: Registry): Record<string, string> {
   const queries: Record<string, string> = {};
   for (const source of SOURCES) {
@@ -132,7 +110,6 @@ function harnessCounts(rows: Row[], index: number) {
   return [totals, rest, first] as const;
 }
 
-/** Interprets the per-source count rows of `routeCountQueries`. */
 export function countsFromRows(
   registry: Registry,
   rows: Record<string, Row[]>,
@@ -191,7 +168,6 @@ const hasRoute = (registry: Registry, route: string, harness: Harness) =>
       candidate.route === route && candidate.harness === harness,
   );
 
-/** Rows and unexplained rows on the signal's routes that are not this harness's own. */
 function foreignCounts(
   registry: Registry,
   counts: RouteCounts,
@@ -255,7 +231,6 @@ const ownRows = (
     ? 0
     : (counts.total.get(support.route)?.get(harness) ?? 0);
 
-/** The chip state is the coverage state seen from one panel. */
 const CHIP_STATE: Partial<Record<CoverageState, ContributionState>> = {
   healthy: "rows",
   "stray (unexplained)": "rows",
@@ -266,7 +241,6 @@ const CHIP_STATE: Partial<Record<CoverageState, ContributionState>> = {
   "stray (explained)": "not applicable",
 };
 
-/** One enabled harness's chip for a signal, from its coverage state. */
 function chip(
   registry: Registry,
   counts: RouteCounts,
@@ -287,11 +261,6 @@ function chip(
   return { state: "rows", rows: own, from };
 }
 
-/**
- * Chip state per enabled harness for every harness-scoped signal of a view that
- * is shown on this machine, reusing the coverage grid's state. `from` is the day
- * a route's first row arrived when that falls inside the window.
- */
 export function contributions(
   registry: Registry,
   counts: RouteCounts,
@@ -314,18 +283,6 @@ export function contributions(
   return result;
 }
 
-/**
- * Coverage grid: registry alignment versus data per signal × harness, for the
- * signals shown on this machine. A harness is active when any of its routes has
- * rows in the window, so a route without rows is a possible break only while the
- * harness is otherwise active, and only for routes that must have rows; a
- * rare-event route reports no events. Rows on another harness's route of the
- * same signal are stray: explained when a registered stray covers them,
- * unexplained otherwise. A signal that is not applicable to a harness should
- * have no rows at all, so any rows flag it. A harness this machine does not
- * enable is not in use; rows on its own route are flagged, since its producer
- * still exports.
- */
 export function coverageGrid(registry: Registry, counts: RouteCounts): Row[] {
   const active = harnessesWithRows(registry, counts);
   const enabled = new Set<string>(enabledHarnesses(registry));
@@ -387,17 +344,14 @@ GROUP BY harness, name`;
 
 const UNROUTED_LIMIT = 40;
 
-/** Rows no route or registered stray claims, by harness and name: the top names. */
 export const unroutedQuery = (registry: Registry): string =>
   `SELECT * FROM (${unroutedParts(registry)}) ORDER BY n DESC LIMIT ${UNROUTED_LIMIT}`;
 
-/** The same rows with no limit, counted per harness: names and rows. */
 export const unroutedTotalsQuery = (registry: Registry): string =>
   `SELECT harness, count() AS names, sum(n) AS rows FROM (${unroutedParts(registry)}) GROUP BY harness`;
 
 const LOADER_STALE =
   "exception != '' OR now() > next_refresh_time + INTERVAL 2 MINUTE";
-/** The harness the page selected; All (empty) keeps every row. */
 const SELECTED = "({harness:String} = '' OR harness = {harness:String})";
 
 const LOADERS = `SELECT view, toString(status) AS status, toString(last_success_time) AS last_success,
@@ -406,7 +360,6 @@ const LOADERS = `SELECT view, toString(status) AS status, toString(last_success_
     exception, written_rows
 FROM system.view_refreshes WHERE database = 'introspection' ORDER BY view`;
 
-/** Loaders in total, failing (stale) and healthy: the Loaders KPI. */
 const LOADER_SUMMARY = `SELECT count() AS total, countIf(stale = 1) AS failing, total - failing AS ok
 FROM (SELECT toUInt8(${LOADER_STALE}) AS stale FROM system.view_refreshes WHERE database = 'introspection')`;
 
@@ -456,19 +409,11 @@ FROM raw AS r LEFT JOIN facts AS f ON f.source = r.source AND f.harness = r.harn
 const FRESHNESS = `${FRESHNESS_CTES}
 SELECT * FROM fresh WHERE ${SELECTED} ORDER BY harness, source`;
 
-/** Sources compared, sources with SigNoz rows but no facts, and the largest lag (NULL lag counts 0). */
 const FRESHNESS_SUMMARY = `${FRESHNESS_CTES}
 SELECT count() AS sources, countIf(facts_missing = 1) AS missing_facts,
     if(count() > 0, max(ifNull(lag_seconds, 0)), NULL) AS max_lag_seconds
 FROM fresh WHERE ${SELECTED}`;
 
-/**
- * Direct recount of the raw SigNoz usage source with the validated producer
- * contracts, against usage_events. The check covers the last 7 days of the
- * selected window, because a raw recount scans SigNoz's full trace table, and
- * ends 10 minutes before now so rows the loaders have not copied yet are not
- * reported as drift.
- */
 const PARITY_WINDOW_END =
   "least({end:DateTime64(3, 'UTC')}, now64(3) - INTERVAL 10 MINUTE)";
 const PARITY_WINDOW_START = `greatest({start:DateTime64(3, 'UTC')}, ${PARITY_WINDOW_END} - INTERVAL 7 DAY)`;
@@ -538,18 +483,12 @@ WHERE raw_operations > 0 OR fact_operations > 0
 const PARITY = `${PARITY_CTES}
 SELECT * FROM checked WHERE ${SELECTED} ORDER BY harness`;
 
-/** Harnesses compared, how many match, and the window label for the subtitle. */
 const PARITY_SUMMARY = `${PARITY_CTES}
 SELECT count() AS harnesses, countIf(ok = 1) AS matching,
     if(count() > 0, concat(substring(toString(${PARITY_WINDOW_START}), 1, 16), ' → ',
         substring(toString(${PARITY_WINDOW_END}), 1, 16), ' UTC'), '') AS window_label
 FROM checked WHERE ${SELECTED}`;
 
-/**
- * All = Σ harnesses. Each check computes the All value directly (no harness
- * grouping) and from per-harness groups, for counts and for ratio numerators
- * and denominators. Session counts are harness-scoped, so they must also add up.
- */
 const RECOMBINATION: Record<
   string,
   { table: string; ts: string; measures: string[] }
@@ -610,14 +549,12 @@ export function recombinationQueries(): Record<string, string> {
 const sumMeasure = (grouped: Row[], name: string): number =>
   grouped.reduce((total, row) => total + Number(row[name] ?? 0), 0);
 
-/** Compares each direct All aggregate with the sum of its per-harness rows. */
 export function recombine(
   results: Record<string, Row[]>,
   errors: Record<string, string> = {},
 ): Row[] {
   const rows: Row[] = [];
   for (const [check, spec] of Object.entries(RECOMBINATION)) {
-    // A check missing one side would read as 0 = 0; leave it out instead.
     if (`${check}:all` in errors || `${check}:harness` in errors) continue;
     const all = results[`${check}:all`] ?? [];
     const grouped = results[`${check}:harness`] ?? [];
@@ -641,7 +578,6 @@ export function recombine(
   );
 }
 
-// Home paths only count rows loaded at or after HOME_PATH_CUTOFF (M4 option b).
 const SANITIZATION_TABLES = `SELECT 'spans' AS source, count() AS rows,
     countIf(hasAny(mapKeys(attrs_string), ${FORBIDDEN_KEYS})) AS forbidden_keys,
     countIf(lengthUTF8(status_message) > 160) AS long_status,
@@ -668,10 +604,6 @@ SELECT 'signoz_hook_logs', count(),
 FROM signoz_logs.distributed_logs_v2
 WHERE ${RAW_ANY_FAMILY}`;
 
-/**
- * Per table plus one All row (`source = ''`, ROLLUP): `violations` is the flagged
- * rows of each kind added together, so the KPI needs no page arithmetic.
- */
 const SANITIZATION = `SELECT source, sum(rows) AS rows, sum(forbidden_keys) AS forbidden_keys,
     sum(long_status) AS long_status, sum(home_paths) AS home_paths, sum(violations) AS violations
 FROM (
@@ -682,7 +614,6 @@ FROM (
 ORDER BY indexOf(['spans', 'logs', 'hook_events', 'signoz_hook_logs'], source)
 SETTINGS max_threads = 2`;
 
-/** Coverage cells in these states are the ones nothing explains (the Coverage KPI). */
 const UNEXPLAINED: Record<string, true> = {
   "possible break": true,
   "stray (unexplained)": true,
@@ -695,7 +626,6 @@ const coverageSummary = (rows: Row[]): Row => ({
     .length,
 });
 
-/** What each coverage state means, in the status scale's order (docs/ux/principles.md P3). */
 const STATE_DEFINITIONS: Record<CoverageState, string> = {
   healthy: "The route has rows and no unexplained rows elsewhere.",
   "no events": "No rows; this route only has rows when a rare event happens.",
@@ -712,7 +642,6 @@ const STATE_DEFINITIONS: Record<CoverageState, string> = {
     "The harness is not enabled here, but its route still has rows.",
 };
 
-/** One row per state in scale order with its cell count: the legend and the coverage band. */
 const coverageStates = (rows: Row[]): Row[] =>
   (Object.keys(STATE_DEFINITIONS) as CoverageState[]).map((state) => ({
     state,
@@ -720,7 +649,6 @@ const coverageStates = (rows: Row[]): Row[] =>
     definition: STATE_DEFINITIONS[state],
   }));
 
-/** One row per view in registry order: cells, healthy cells and unexplained cells. */
 function coverageByView(registry: Registry, rows: Row[]): Row[] {
   const views = [...new Set(rows.map((row) => String(row["view"])))];
   return views.map((view) => {
@@ -737,21 +665,17 @@ function coverageByView(registry: Registry, rows: Row[]): Row[] {
   });
 }
 
-/** Exact unrouted names and rows for the selected harness, from the uncapped totals. */
 const unroutedSummary = (totals: Row[]): Row => ({
   names: totals.reduce((sum, row) => sum + Number(row["names"] ?? 0), 0),
   rows: totals.reduce((sum, row) => sum + Number(row["rows"] ?? 0), 0),
 });
 
-/** Stale or failing loaders only: the exceptions of the refresh table. */
 const loaderExceptions = (rows: Row[]): Row[] =>
   rows.filter((row) => Number(row["stale"]) === 1);
 
-/** Sources with SigNoz rows but no fact rows: the only freshness rule the server has. */
 const freshnessExceptions = (rows: Row[]): Row[] =>
   rows.filter((row) => Number(row["facts_missing"]) === 1);
 
-/** Keeps the selected harness's rows; All (empty) keeps every row. */
 const selectedHarness = (params: Params) => {
   const harness = params["harness"] ?? "";
   return (rows: Row[]): Row[] =>
@@ -768,14 +692,11 @@ const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, count() AS n FR
         AND (${HARNESS_FILTER} OR (harness = '' AND {harness:String} = ''))
 ) GROUP BY day, harness ORDER BY day, harness`;
 
-/** Sanitization scans every fact row ever stored; callers cache it. */
 export const sanitizationRows = (query: Query): Promise<Row[]> =>
   query(SANITIZATION);
 
-/** The capped list and the uncapped per-harness totals behind it. */
 export type Unrouted = { list: Row[]; totals: Row[] };
 
-/** Unrouted rows scan the window's raw facts against every route; callers cache it. */
 export const unroutedRows = async (
   query: Query,
   registry: Registry,
@@ -788,14 +709,12 @@ export const unroutedRows = async (
   return { list, totals };
 };
 
-/** Results the caller may share between loads, already started. */
 export type PipelineShared = {
   counts: Promise<RouteCounts>;
   sanitization: Promise<Row[]>;
   unrouted: Promise<Unrouted>;
 };
 
-/** The result of a shared load, or its failure as a short message under `key`. */
 async function settle<T>(
   load: Promise<T>,
   key: string,
@@ -828,7 +747,6 @@ export async function pipelineData(
     spool_delivery: SPOOL_DELIVERY,
     ...recombinationQueries(),
   };
-  // Each part fails alone: its dataset is empty and named in `errors`.
   const failed: Record<string, string> = {};
   const [settled, routes, sanitization, unrouted] = await Promise.all([
     batchSettled(query, withinSnapshots ? queries : live(queries), params),
@@ -837,17 +755,14 @@ export async function pipelineData(
     settle(shared.unrouted, "unrouted", failed),
   ]);
   const results = settled.data;
-  // The recombination branches feed one panel, so they report as one dataset.
   const errors: Record<string, string> = { ...failed };
   for (const [key, message] of Object.entries(settled.errors))
     errors[/:(all|harness)$/.test(key) ? "recombination" : key] = message;
-  // Every part failing means ClickHouse is down, not that one query is bad.
   const parts = Object.keys(queries).length + 3;
   if (Object.keys(settled.errors).length + Object.keys(failed).length === parts)
     throw new Error(Object.values(errors)[0]);
   const selected = selectedHarness(params);
   const coverage = selected(routes ? coverageGrid(registry, routes) : []);
-  // A failed delivery query leaves the counts empty (shown as unknown), not a clean bill.
   const spool = withDelivery(
     results["spool_status"]!,
     results["spool_delivery"]!,

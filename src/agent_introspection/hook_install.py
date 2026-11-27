@@ -1,26 +1,3 @@
-"""Install and remove a harness's activity hooks, the ``harness configure`` hook step.
-
-The hook runtime ships in this package (``hook_runtime/``): the shim every hook runs,
-and omp's plugin package. Installing copies it to the managed directory under the home
-(``doctor_harness.MANAGED_RUNTIME``), so no hook ever runs a repository path, then
-registers the hooks with the harness:
-
-- Claude Code: one owned entry per activity event in the ``hooks`` of the settings file
-  ``harness configure`` writes, each running ``/bin/sh <shim> claude-code <event>``.
-  Entries this tool did not write (another tool's hooks) are kept as they are.
-- omp: ``omp plugin link <runtime>/omp``, which records the plugin in omp's plugin
-  directory; nothing goes in ``~/.omp/agent``.
-
-When a non-default config file was selected, its path goes in a pointer file beside
-the shim (``doctor_harness.CONFIG_POINTER``), which the shim exports as
-``AGENT_INTROSPECTION_CONFIG``; with the default file the pointer is removed. One home
-holds one pointer, so the last ``harness configure`` sets it for every harness.
-
-Every write backs up the file it replaces to ``<file>.bak-<UTC timestamp>`` and is
-atomic; a second run changes nothing. A dry run reports the same actions and writes
-nothing.
-"""
-
 from __future__ import annotations
 
 import json
@@ -43,7 +20,6 @@ from agent_introspection.doctor_harness import (
     pointed_config,
 )
 
-# The runtime files, by path under ``hook_runtime/`` and the managed directory, and mode.
 RUNTIME_FILES: Final = (
     (SHIM, 0o755),
     ("omp/activity.ts", 0o644),
@@ -57,19 +33,11 @@ type CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
 class HookInstallError(ValueError):
-    """A hook cannot be installed or removed safely."""
+    pass
 
 
 @dataclass(frozen=True)
 class HookOptions:
-    """Where and how the hooks are installed.
-
-    ``home`` holds the managed runtime and omp's plugin directory; ``run`` runs the
-    ``omp`` command (a test passes a fake). ``backed_up`` names files this run already
-    backed up or created, so the hook write adds no second backup of them.
-    ``config_path`` is the selected config file, None for the default.
-    """
-
     home: Path
     dry_run: bool = False
     run: CommandRunner | None = None
@@ -78,7 +46,6 @@ class HookOptions:
 
 
 def packaged(name: str) -> str:
-    """Return the text of one runtime file as this package ships it."""
     return files("agent_introspection").joinpath("hook_runtime", name).read_text("utf-8")
 
 
@@ -99,7 +66,6 @@ def _install_file(name: str, mode: int, options: HookOptions) -> dict[str, Any]:
 
 
 def _point_config(options: HookOptions) -> dict[str, Any]:
-    """Write the selected config path beside the shim, or remove it for the default."""
     target = options.home / MANAGED_RUNTIME / CONFIG_POINTER
     selected = pointed_config(options.config_path)
     content = f"{selected}\n" if selected is not None else None
@@ -117,19 +83,14 @@ def _point_config(options: HookOptions) -> dict[str, Any]:
 
 
 def runtime_files(adapter: str) -> tuple[tuple[str, int], ...]:
-    """Return the runtime files a hook adapter needs: the shim, and for omp its plugin."""
     return tuple(item for item in RUNTIME_FILES if adapter == "omp" or "/" not in item[0])
 
 
 def install_runtime(options: HookOptions, adapter: str) -> list[dict[str, Any]]:
-    """Copy the shim (and for omp its plugin package) in, and point the shim at the config."""
     return [
         *(_install_file(name, mode, options) for name, mode in runtime_files(adapter)),
         _point_config(options),
     ]
-
-
-# --- Claude Code ---------------------------------------------------------------------
 
 
 def _owned_entry(shim: Path, event: str) -> dict[str, Any]:
@@ -147,7 +108,6 @@ def _owned_entry(shim: Path, event: str) -> dict[str, Any]:
 
 
 def is_owned(entry: object) -> bool:
-    """Return whether a Claude Code hook entry runs this tool's shim (from any location)."""
     if not isinstance(entry, Mapping) or not isinstance(entry.get("hooks"), list):
         return False
     commands = [hook.get("command") for hook in entry["hooks"] if isinstance(hook, Mapping)]
@@ -168,7 +128,6 @@ def _hook_table(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def without_claude_hooks(settings: dict[str, Any]) -> dict[str, Any]:
-    """Return settings without any entry that runs this tool's shim."""
     hooks = _hook_table(settings)
     for event in list(hooks):
         kept = [entry for entry in hooks[event] if not is_owned(entry)]
@@ -182,7 +141,6 @@ def without_claude_hooks(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def with_claude_hooks(settings: dict[str, Any], shim: Path) -> dict[str, Any]:
-    """Return settings with exactly one owned entry per activity event, appended last."""
     hooks = _hook_table(without_claude_hooks(settings))
     for event in CLAUDE_HOOK_EVENTS:
         hooks.setdefault(event, []).append(_owned_entry(shim, event))
@@ -203,10 +161,6 @@ def _load_settings(path: Path) -> tuple[str | None, dict[str, Any]]:
 
 
 def write_claude_hooks(path: Path, options: HookOptions, *, remove: bool = False) -> dict[str, Any]:
-    """Add (or with ``remove``, take out) the owned activity hooks in one settings file.
-
-    ``path`` is followed through a symlink, so a linked settings file is written in place.
-    """
     path = path.resolve()
     before, settings = _load_settings(path)
     shim = options.home / MANAGED_RUNTIME / SHIM
@@ -230,9 +184,6 @@ def write_claude_hooks(path: Path, options: HookOptions, *, remove: bool = False
     }
 
 
-# --- omp -----------------------------------------------------------------------------
-
-
 def _run_omp(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command, capture_output=True, text=True, timeout=_OMP_TIMEOUT_SECONDS, check=False
@@ -244,7 +195,6 @@ def _which(name: str) -> str | None:
 
 
 def require(adapter: str) -> str:
-    """Refuse an adapter whose binary is missing, before anything is written; return it."""
     if adapter != "omp":
         return ""
     binary = _which("omp")
@@ -264,7 +214,6 @@ def _omp(arguments: Sequence[str], options: HookOptions) -> None:
 
 
 def link_omp_plugin(options: HookOptions, *, remove: bool = False) -> dict[str, Any]:
-    """Link the managed plugin into omp (or with ``remove``, uninstall it)."""
     managed = options.home / MANAGED_RUNTIME / "omp"
     link = options.home / OMP_PLUGIN_LINK
     linked = link.exists() and link.resolve() == managed.resolve()
@@ -282,11 +231,6 @@ def link_omp_plugin(options: HookOptions, *, remove: bool = False) -> dict[str, 
 
 
 def install(adapter: str, settings: Sequence[Path], options: HookOptions) -> dict[str, Any]:
-    """Install the runtime and register one harness's hooks; ``adapter`` is its hook adapter.
-
-    ``settings`` are the Claude Code settings files ``harness configure`` writes, one per
-    root.
-    """
     require(adapter)
     result: dict[str, Any] = {"runtime": install_runtime(options, adapter)}
     if adapter == "claude-code":
@@ -299,7 +243,6 @@ def install(adapter: str, settings: Sequence[Path], options: HookOptions) -> dic
 
 
 def remove(adapter: str, settings: Sequence[Path], options: HookOptions) -> dict[str, Any]:
-    """Unregister one harness's hooks; the shared runtime stays for the other harnesses."""
     if adapter == "claude-code" and settings:
         return {"settings": [write_claude_hooks(path, options, remove=True) for path in settings]}
     if adapter == "omp":

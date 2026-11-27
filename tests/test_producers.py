@@ -92,8 +92,6 @@ def test_rows_without_a_service_name_are_one_unregistered_entry_no_command_targe
         "profile": None,
         "note": producers.EMPTY_SERVICE_NOTE,
     }
-    # drift_report's unregistered names are what `doctor --drift` tells the user to
-    # profile, so each must be a name `producers profile` accepts.
     assert report["unregistered"] == ["toolbox"]
     assert report["unnamed_rows"] == 5
     with pytest.raises(producers.ProducerError, match=r"non-empty service\.name"):

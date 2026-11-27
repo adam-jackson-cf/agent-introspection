@@ -155,8 +155,6 @@ def test_checked_columns_and_services_are_the_ones_the_projections_read() -> Non
 
 
 def _local_command(monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str) -> None:
-    """Answer the Docker context lookup or password command without running anything."""
-
     def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, returncode, stdout, "")
 
@@ -165,8 +163,6 @@ def _local_command(monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
 
 @dataclass(frozen=True)
 class SetupCase:
-    """A config whose connection cannot be set up, and what the local command answers."""
-
     config: str
     reason: str
     statuses: dict[str, str]

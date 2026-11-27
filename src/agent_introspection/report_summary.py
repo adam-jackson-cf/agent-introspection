@@ -1,10 +1,3 @@
-"""Short, human-readable summaries of the ``doctor`` and ``setup`` JSON reports.
-
-The JSON report stays on stdout for tools; these lines go to stderr for a person (or an
-agent) reading the run: each check that is not a pass, the files a run added or changed
-with their backups, and what to do next.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
@@ -31,7 +24,6 @@ def _check_line(item: Mapping[str, Any]) -> list[str]:
 
 
 def doctor_lines(report: Mapping[str, Any]) -> list[str]:
-    """Return a count line, then every check that is not a pass, the worst first."""
     counts = ", ".join(f"{count} {status}" for status, count in report["summary"].items() if count)
     verdict = "passed" if report["passed"] else "FAILED"
     checks = report.get("checks", report.get("not_passing", []))
@@ -50,7 +42,6 @@ def _harness_file_action(item: Mapping[str, Any]) -> str:
 
 
 def _files(node: object) -> Iterator[tuple[str, str, str | None]]:
-    """Yield (path, action, backup) for every file entry in a setup report."""
     if isinstance(node, Mapping):
         if "path" in node and "action" in node:
             yield str(node["path"]), str(node["action"]), node.get("backup")
@@ -92,7 +83,6 @@ def _next_steps(report: Mapping[str, Any]) -> list[str]:
 
 
 def setup_lines(report: Mapping[str, Any]) -> list[str]:
-    """Return what a setup run did or would do, its doctor result, and what comes next."""
     if not report["passed"] and report.get("stopped_at"):
         return [
             f"setup: stopped at {report['stopped_at']}: {report['error']}",

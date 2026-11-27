@@ -23,7 +23,6 @@ def fake_clickhouse(
     show_grants: str = ALL_GRANTS,
     database_exists: bool = False,
 ) -> tuple[list[str], facts.SqlRunner]:
-    """Answer each preflight statement; CHECK GRANT is unsupported unless given."""
     executed: list[str] = []
 
     def run(sql: str) -> str:

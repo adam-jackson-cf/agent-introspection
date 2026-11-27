@@ -1,5 +1,3 @@
-"""Canonical deterministic-first intervention selection."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -49,7 +47,6 @@ def select_intervention(
     repeated_ordered_workflow: bool,
     recurrence_scope: str,
 ) -> InterventionDecision:
-    """Return exactly one intervention using the canonical tier order."""
     labels = tuple(tier.label for tier in tiers)
     if labels != CANONICAL_TIER_LABELS:
         raise ValueError("enforcement tiers are not in canonical order")

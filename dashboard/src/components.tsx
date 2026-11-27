@@ -33,14 +33,12 @@ import { enabledHarnesses, isHidden } from "./harness-scope";
 
 export type ViewContextValue = {
   registry: Registry;
-  /** Server-owned threshold: rates over fewer samples are muted. */
   minRateN: number;
   contributions: Contributions;
   filters: Filters;
   sessionHref: (harness: string, session: string) => string;
   viewHref: (id: ViewPath) => string;
   navigate: (path: string, next: Filters) => void;
-  /** Datasets of the view whose query failed (`ViewResponse.errors`). */
   errors: Record<string, string>;
 };
 export const ViewContext = createContext<ViewContextValue | null>(null);
@@ -50,7 +48,6 @@ export const useView = (): ViewContextValue => {
   return value;
 };
 
-/** The selected harness, or every enabled harness for All. */
 const selectedHarnesses = (
   context: Pick<ViewContextValue, "registry" | "filters">,
 ): readonly Harness[] =>
@@ -58,11 +55,9 @@ const selectedHarnesses = (
     ? enabledHarnesses(context.registry)
     : [context.filters.harness];
 
-/** The harnesses a view's charts and tables cover: the selection, or All = enabled. */
 export const useSelectedHarnesses = (): readonly Harness[] =>
   selectedHarnesses(useView());
 
-/** Whether a signal is shown on this machine (every enabled harness reaches it). */
 export const useVisible = (signal: string): boolean =>
   !isHidden(useView().registry, signal);
 
@@ -71,11 +66,6 @@ const supportFor = (registry: Registry, signal: string, harness: Harness) =>
     (entry) => entry.signal === signal && entry.harness === harness,
   );
 
-/**
- * The panel's measured signal is listed first; the rest only describe it (for
- * example the effort dimension). Returns the registry entries when the measured
- * signal is not applicable to any selected harness.
- */
 export function notApplicable(
   context: ViewContextValue,
   signals: string[],
@@ -91,7 +81,6 @@ export function notApplicable(
     : null;
 }
 
-/** Most telling first when no signal of the panel has rows. */
 const SILENT_ORDER: Contribution["state"][] = [
   "route missing",
   "no events",
@@ -99,11 +88,6 @@ const SILENT_ORDER: Contribution["state"][] = [
   "not applicable",
 ];
 
-/**
- * One harness's chip for a panel: rows when any of its signals has rows on the
- * harness's route (with the measured signal's start day when that falls in the
- * window), else the most telling coverage state among its signals.
- */
 export function panelContribution(
   contributions: Contributions,
   signals: string[],
@@ -135,7 +119,6 @@ const chipTitle = (harness: Harness, chip: Contribution) => {
 
 type Chips = (readonly [Harness, Contribution])[];
 
-/** One chip per selected harness; none when no signal is harness-scoped. */
 const panelChips = (context: ViewContextValue, signals: string[]): Chips => {
   const scoped = signals.filter((signal) =>
     context.registry.signals.some(
@@ -153,7 +136,6 @@ const panelChips = (context: ViewContextValue, signals: string[]): Chips => {
       );
 };
 
-/** Chips agree when every harness has the same state and route start day. */
 const sameChips = (a: Chips, b: Chips) =>
   a.length === b.length &&
   a.every(
@@ -163,11 +145,6 @@ const sameChips = (a: Chips, b: Chips) =>
       b[index]![1].from === chip.from,
   );
 
-/**
- * The enclosing Section band: its shared chips, whether they are neutral (some panel in
- * the band draws non-harness series, so a coloured row would be a second legend), and how
- * a panel reports that. Null outside a Section.
- */
 type Band = {
   chips: Chips;
   neutral: boolean;
@@ -175,12 +152,6 @@ type Band = {
 };
 const BandContext = createContext<Band | null>(null);
 
-/**
- * Which harnesses contributed rows to the signals in the window. Row counts
- * and route start days sit in the panel's `i` popover. Coloured chips name the
- * harnesses of a harness chart; `neutral` chips are plain source status ("Data
- * from ...") with no swatch, for panels whose chart colours something else.
- */
 export function Contributors({
   signals,
   neutral = false,
@@ -222,7 +193,6 @@ export function Contributors({
   );
 }
 
-/** One harness's alignment and what it means for the signal; the route is one fold away. */
 function SupportRow(props: {
   context: ViewContextValue;
   signal: string;
@@ -259,15 +229,10 @@ function SupportRow(props: {
   );
 }
 
-/** The glossary link names the panel's measured signal, so no two panels repeat one label. */
 const glossaryLabel = (registry: Registry, signals: string[]): string =>
   registry.signals.find((entry) => entry.signal === signals[0])?.title ??
   "all signals";
 
-/**
- * Registry-driven note: each signal's question and formula first, then what each
- * harness's alignment means; capture detail is folded and the Glossary has it all.
- */
 export function InfoNote({ signals }: { signals: string[] }) {
   const context = useView();
   return (
@@ -332,14 +297,12 @@ class Boundary extends Component<
   }
 }
 
-/** The failure messages of the datasets a panel shows, in `source` order. */
 export const failedSources = (
   errors: Record<string, string>,
   source: string | string[] = [],
 ): string[] =>
   [source].flat().flatMap((key) => (key in errors ? [errors[key]!] : []));
 
-/** A panel whose query failed: read-only, so the data is simply unavailable. */
 export function PanelError({ messages }: { messages: string[] }) {
   return (
     <div className="state-notice" role="alert">
@@ -361,7 +324,6 @@ export function NotApplicableNotice({ entries }: { entries: SignalSupport[] }) {
   );
 }
 
-/** The "i" button: hover, focus or click opens its note; Escape closes it. */
 export function InfoPopover({
   label,
   children,
@@ -397,10 +359,6 @@ export function InfoPopover({
   );
 }
 
-/**
- * Whether this panel's chart draws parts rather than harnesses, and the callback a chart
- * uses to say so (the band hears it too, so its shared row can go neutral).
- */
 function usePartSeries(band: Band | null): [boolean, (parts: boolean) => void] {
   const panelId = useId();
   const [parts, setParts] = useState(false);
@@ -415,7 +373,6 @@ function usePartSeries(band: Band | null): [boolean, (parts: boolean) => void] {
   return [parts, report];
 }
 
-/** The not-applicable reason, the query failure, or the panel's content, in that order. */
 function PanelBody(props: {
   missing: SignalSupport[] | null;
   failed: string[];
@@ -426,15 +383,6 @@ function PanelBody(props: {
   return props.children;
 }
 
-/**
- * Panel frame shared by every view: title, contributors, and an info note
- * rendered from the signal support registry. When the panel's signal is not
- * applicable to any selected harness, the body is replaced by the registry's
- * reason, never by zero. A panel whose measured signal (the first) is hidden on
- * this machine is not rendered; other hidden signals drop out of its chips and note.
- * A panel whose `source` dataset failed to load shows that failure instead of an
- * empty body, because an empty dataset would read as zero.
- */
 export function Panel({
   title,
   subtitle,
@@ -447,10 +395,8 @@ export function Panel({
   title: string;
   subtitle?: string;
   signals: string[];
-  /** The `data` keys this panel shows; any of them in the view's `errors` fails the panel. */
   source?: string | string[] | undefined;
   span?: 1 | 3 | 4 | 5 | 6 | 7 | 8 | 12;
-  /** Anchor for in-page links such as a KPI's "Show …" link. */
   id?: string;
   children: ReactNode;
 }) {
@@ -462,8 +408,6 @@ export function Panel({
   if (signals[0] !== undefined && shown[0] !== signals[0]) return null;
   const chips = panelChips(context, shown);
   const failed = failedSources(context.errors, source);
-  // The band's row serves a panel with the same chips when it is the right kind: a
-  // coloured row for a harness chart, a neutral one for a chart that colours parts.
   const sharedRow =
     band !== null && sameChips(chips, band.chips) && parts === band.neutral;
   const ownRow = chips.length > 0 && !sharedRow;
@@ -498,7 +442,6 @@ export function Panel({
   );
 }
 
-/** One headline number; the value is null when nothing contributes. */
 export function Kpi({
   title,
   value,
@@ -513,13 +456,9 @@ export function Kpi({
   value: string;
   detail?: string;
   signals: string[];
-  /** The `data` keys this figure comes from; see `Panel`. */
   source?: string | string[];
-  /** Sample size of a rate value: muted when below the server's threshold. */
   n?: number;
-  /** 1 is one column of a five-column band (`Section columns={5}`). */
   span?: 1 | 3;
-  /** A link to the detail behind the figure. */
   children?: ReactNode;
 }) {
   const { minRateN } = useView();
@@ -535,7 +474,6 @@ export function Kpi({
   );
 }
 
-/** Each panel's signal list directly inside a band, skipping hidden ones. */
 const bandSignals = (
   children: ReactNode,
   hidden: (s: string) => boolean,
@@ -551,18 +489,12 @@ const bandSignals = (
       : [];
   });
 
-/**
- * A band of panels. Its heading is followed by one contributor row for the
- * union of its panels' signals when at least one panel shares that row; a
- * panel repeats a row only when its own chips differ from the band's.
- */
 export function Section({
   title,
   columns,
   children,
 }: {
   title: string;
-  /** Five lets a band of five KPIs share one row; the default is twelve. */
   columns?: 5;
   children: ReactNode;
 }) {
@@ -601,7 +533,6 @@ export function Section({
   );
 }
 
-/** All plus each harness this machine uses. */
 export function HarnessSelector({
   value,
   harnesses,
@@ -666,7 +597,6 @@ export const isPlainClick = (event: MouseEvent) =>
   !event.shiftKey &&
   !event.altKey;
 
-/** A link to another view that keeps the current range and harness, like the nav. */
 export function ViewLink({
   view,
   children,
@@ -691,7 +621,6 @@ export function ViewLink({
   );
 }
 
-/** An in-page link to a panel on this page; it scrolls without touching the URL or the data. */
 export function ShowLink(props: { target: string; children: string }) {
   return (
     <a
@@ -708,10 +637,8 @@ export function ShowLink(props: { target: string; children: string }) {
   );
 }
 
-/** A rate over fewer samples than the server's threshold is muted, not hidden. */
 export const isMutedRate = (n: number, minRateN: number) => n < minRateN;
 
-/** A formatted rate with its sample size; dimmed when n is below the server's threshold. */
 export function RateValue(props: {
   pct: number | null;
   n: number;
@@ -726,10 +653,6 @@ export function RateValue(props: {
   );
 }
 
-/**
- * Table columns for a pivoted daily rate: each series' cell is the rate and
- * reads its sample size from the row's `<series>_n` (the daily query's denominator).
- */
 export const rateSeriesColumns = (series: Series[]): Column[] =>
   series.map((entry) => ({
     key: entry.key,

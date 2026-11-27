@@ -13,8 +13,6 @@ _FIRST_NS = 1_791_000_000 * 1_000_000_000
 
 @dataclass
 class FakeService:
-    """One service's telemetry, by name: what the fake ClickHouse aggregates."""
-
     spans: dict[str, int] = field(default_factory=dict)
     events: dict[str, int] = field(default_factory=dict)
     span_keys: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -24,7 +22,6 @@ class FakeService:
 
 
 def _line(row: dict[str, object]) -> str:
-    # ClickHouse quotes 64-bit integers in JSONEachRow.
     return json.dumps({
         key: str(value) if isinstance(value, int) else value for key, value in row.items()
     })
@@ -35,8 +32,6 @@ def _top(counts: dict[Any, int], limit: int) -> list[tuple[Any, int]]:
 
 
 class FakeClickHouse:
-    """Answers the producers queries by shape, and records every query it was sent."""
-
     def __init__(self, services: dict[str, FakeService]) -> None:
         self.services = services
         self.queries: list[str] = []
@@ -88,7 +83,6 @@ class FakeClickHouse:
 
 
 def tool_producer() -> FakeService:
-    """A producer with tool spans, a session key, model usage logs, and content keys."""
     return FakeService(
         spans={"Tool.execute": 40, "LLM.run": 10, "/Users/alice/build": 2, "/home/bob/build": 3},
         events={"api_request": 12, "user_prompt": 4},

@@ -1,10 +1,3 @@
-"""Render the dashboard's harness identity module from the signal registry.
-
-Used by ``scripts/render-measures.py [--check]``. ``dashboard/src/harnesses.generated.ts``
-holds the registry's harness keys, labels, and service list, so the dashboard never
-copies them by hand. The output is already in the layout Prettier gives it.
-"""
-
 from __future__ import annotations
 
 import json
@@ -16,7 +9,6 @@ from agent_introspection import facts
 HARNESSES_MODULE = (
     Path(__file__).resolve().parents[2] / "dashboard" / "src" / "harnesses.generated.ts"
 )
-# Prettier's default print width, which the dashboard formats with.
 _PRINT_WIDTH = 80
 _IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
@@ -30,7 +22,6 @@ def _fits(line: str) -> bool:
 
 
 def _array(head: str, items: list[str], suffix: str) -> list[str]:
-    """Return an array initializer on one line when it fits, else one item per line."""
     line = f"{head} = [{', '.join(items)}]{suffix};"
     if _fits(line):
         return [line]
@@ -38,20 +29,17 @@ def _array(head: str, items: list[str], suffix: str) -> list[str]:
 
 
 def _property(key: str, value: str) -> list[str]:
-    """Return an object property, quoting the key only when it is not an identifier."""
     name = key if _IDENTIFIER.match(key) else _string(key)
     line = f"  {name}: {value},"
     return [line] if _fits(line) else [f"  {name}:", f"    {value},"]
 
 
 def _assignment(head: str, value: str) -> list[str]:
-    """Return a constant; a value too long for the line moves to its own indented line."""
     line = f"{head} = {value};"
     return [line] if _fits(line) else [f"{head} =", f"  {value};"]
 
 
 def render_harnesses(registry: facts.Registry | None = None) -> str:
-    """Return ``harnesses.generated.ts`` for the registry's ``[harnesses]`` table."""
     harnesses = (registry or facts.load_registry()).harnesses
     services = ", ".join(map(facts.sql_string, harnesses))
     lines = [

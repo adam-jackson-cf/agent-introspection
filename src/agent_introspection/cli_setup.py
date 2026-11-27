@@ -1,5 +1,3 @@
-"""The ``setup`` command of the Agent Introspection CLI."""
-
 from __future__ import annotations
 
 import argparse
@@ -12,7 +10,6 @@ from agent_introspection.cli_common import diagnostic
 
 
 def _argv(text: str) -> tuple[str, ...]:
-    """Split a command given as one shell-quoted string into its arguments."""
     arguments = tuple(shlex.split(text))
     if not arguments:
         raise argparse.ArgumentTypeError("a command needs at least one argument")

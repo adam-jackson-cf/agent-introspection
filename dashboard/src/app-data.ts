@@ -16,7 +16,6 @@ import { readLocation, type Location } from "./routes";
 
 type AppResponse = ViewResponse | SessionResponse;
 
-/** Current location and filters, kept in step with the browser history. */
 export function useRouting() {
   const [location, setLocation] = useState<Location>(readLocation);
   const [filters, setFilters] = useState<Filters>(readFilters);
@@ -76,11 +75,9 @@ export const matchingSession = (
     ? response
     : null;
 
-/** The visible failure: a registry that has not loaded outranks a view failure. */
 export const visibleFailure = (registryFailure: string, viewFailure: string) =>
   registryFailure || viewFailure;
 
-/** Loads the signal registry; `reload` retries it only while it is absent. */
 function useRegistry() {
   const [registry, setRegistry] = useState<Registry | null>(null);
   const [failure, setFailure] = useState("");
@@ -107,11 +104,9 @@ function useRegistry() {
   return { registry, registryFailure: failure, reload };
 }
 
-/** Longest a view may take before the request is abandoned (user decision, 2026-10-02). */
 export const REQUEST_TIMEOUT_MS = 120_000;
 const TIMEOUT_MESSAGE = `Query timed out after ${REQUEST_TIMEOUT_MS / 1000} s`;
 
-/** Whole seconds since `loading` began; 0 when idle. */
 function useElapsed(loading: boolean) {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
@@ -127,14 +122,12 @@ function useElapsed(loading: boolean) {
   return seconds;
 }
 
-/** The first view response of the page load marks `view-ready`, measured from navigation start. */
 function markViewReady() {
   if (performance.getEntriesByName("view-ready").length > 0) return;
   performance.mark("view-ready");
   performance.measure("view-ready", { start: 0, end: "view-ready" });
 }
 
-/** Registry plus the response for the current location, newest request wins. */
 export function useAppData(location: Location, filters: Filters) {
   const [response, setResponse] = useState<AppResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +137,6 @@ export function useAppData(location: Location, filters: Filters) {
   const failure = visibleFailure(registryFailure, viewFailure);
   const elapsedSeconds = useElapsed(loading);
 
-  // The registry and the view load side by side; neither waits for the other.
   const load = useCallback(() => {
     const abort = new AbortController();
     const request = ++sequence.current;
@@ -185,7 +177,6 @@ export function useAppData(location: Location, filters: Filters) {
 
   const viewResponse = matchingView(location, response, filters);
   const sessionResponse = matchingSession(location, response);
-  // After a failed refresh the last good response of this view stays on screen, dimmed.
   const lastGoodView =
     failure &&
     !viewResponse &&

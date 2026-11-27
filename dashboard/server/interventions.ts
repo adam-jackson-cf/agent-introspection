@@ -2,9 +2,7 @@ import type { Row } from "../src/contracts";
 
 const DAY = 86_400_000;
 const CORRECTION_DETECTOR = "facts.repeated_correction";
-/** The datasets the page never sees: inputs of the before/after windows. */
 const DAILY_INPUTS = ["cluster_daily", "task_daily"];
-/** A proposal's latest evaluation: shown only with intervention outcomes on. */
 const OUTCOME_FIELDS = [
   "verdict",
   "evaluated_ratio",
@@ -14,44 +12,31 @@ const OUTCOME_FIELDS = [
 
 export type InterventionScope = { harness: string; start: string; end: string };
 
-/** Failure-cluster tasks and all tasks per London day. */
 type DailyFacts = { clusters: Row[]; tasks: Row[] };
 
 const strings = (value: unknown): string[] | null =>
   Array.isArray(value) ? value.map(String) : null;
 
-/** The Europe/London calendar day of an instant, matching the daily facts buckets. */
 const londonDay = (instant: number) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(
     instant,
   );
 
-/** The calendar day `offset` days from `day`, both as YYYY-MM-DD. */
 const addDays = (day: string, offset: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + offset * DAY)
     .toISOString()
     .slice(0, 10);
 
-/** Whole days from `from` to `to` (YYYY-MM-DD). */
 const between = (from: string, to: string) =>
   Math.round(
     (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY,
   );
 
-/**
- * Tags a finding or proposal with its subject kind: `cluster`, or `correction` for a
- * finding of the retired repeated-correction detector, kept as dormant history.
- */
 const withKind = (row: Row): Row => ({
   ...row,
   kind: row["detector"] === CORRECTION_DETECTOR ? "correction" : "cluster",
 });
 
-/**
- * Findings span harnesses; a harness filter keeps those seen in it (the metric's
- * harnesses, else the finding's). Rows without a harness list (older stores)
- * belong to All only.
- */
 const inScope = (row: Row, harness: string) =>
   harness === "" ||
   (
@@ -63,7 +48,6 @@ const inScope = (row: Row, harness: string) =>
 const total = (rows: Row[], key: string) =>
   rows.reduce((sum, row) => sum + Number(row[key]), 0);
 
-/** The range's first and last complete London days (inclusive). */
 const firstFull = (instant: number) =>
   londonDay(instant - 1) === londonDay(instant)
     ? addDays(londonDay(instant), 1)
@@ -73,7 +57,6 @@ const lastFull = (instant: number) =>
     ? addDays(londonDay(instant), -1)
     : londonDay(instant - 1);
 
-/** Matched events and tasks of one proposal in one window, over its harnesses. */
 function windowCounts(
   proposal: Row,
   daily: DailyFacts,
@@ -105,22 +88,11 @@ function windowCounts(
   return { matched, tasks, rate: tasks > 0 ? matched / tasks : null };
 }
 
-/** The percentage change from `before` to `after`; NULL when either is missing or `before` is 0. */
 const rateChange = (before: number | null, after: number | null) =>
   before === null || after === null || before === 0
     ? null
     : (100 * (after - before)) / before;
 
-/**
- * The finding's own task rate in equal runs of whole London days before and after
- * the application day, clipped to the selected range, over the metric's
- * harnesses (the finding's when the metric has none): tasks that hit its failure
- * cluster per task. The application day itself
- * mixes pre and post events, so neither window counts it. `change_pct` is the
- * rate change, NULL when either rate is missing or the earlier rate is 0. A
- * proposal of the retired repeated-correction detector has no cluster to match,
- * so its counts and rates are NULL rather than a measured 0.
- */
 export function prePost(
   proposal: Row,
   daily: DailyFacts,
@@ -128,7 +100,6 @@ export function prePost(
   end: string,
 ): Row {
   const appliedDay = londonDay(Date.parse(String(proposal["applied_at"])));
-  // The shorter side of the range around the application day sets both windows.
   const days = Math.max(
     Math.min(
       between(firstFull(Date.parse(start)), appliedDay),
@@ -167,7 +138,6 @@ export function prePost(
   };
 }
 
-/** Proposals per tier in first-seen order; a missing tier is "not recorded". */
 function tierCounts(proposals: Row[]): Row[] {
   const counts = new Map<string, number>();
   for (const row of proposals) {
@@ -177,7 +147,6 @@ function tierCounts(proposals: Row[]): Row[] {
   return [...counts].map(([tier, count]) => ({ tier, proposals: count }));
 }
 
-/** The four KPI counts and the applied verdict parts, one row. */
 function kpiRow(
   findings: Row[],
   proposals: Row[],
@@ -200,15 +169,6 @@ function kpiRow(
   };
 }
 
-/**
- * Turns the ClickHouse daily facts and the SQLite workflow rows into the page's
- * datasets: harness-scoped findings, proposals and decision history, the KPI row,
- * proposals per tier, and the before/after
- * comparison of every proposal applied strictly inside the range.
- * Without `outcomes` (the experimental `intervention_outcomes` feature), nothing
- * says whether an applied intervention worked: no comparisons, no applied KPI
- * parts, no proposal verdicts, and no `evaluated` decision events.
- */
 export function interventionsData(
   clickhouse: Record<string, Row[]>,
   workflow: Record<string, Row[]>,

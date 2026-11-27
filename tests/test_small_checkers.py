@@ -1,5 +1,3 @@
-"""Regression tests for the small quality-gate checker scripts."""
-
 from __future__ import annotations
 
 from pathlib import Path

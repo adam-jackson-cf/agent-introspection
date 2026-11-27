@@ -29,7 +29,6 @@ export default function App() {
   const [custom, setCustom] = useState(
     () => presetFor(readFilters()) === "Custom range",
   );
-  // History restores filters without touching the selector; re-derive it.
   useEffect(() => {
     setCustom(presetFor(filters) === "Custom range");
   }, [filters]);
@@ -53,7 +52,6 @@ export default function App() {
   };
   const setRange = (days: number) =>
     change({ ...filters, ...lastDays(days), range: days });
-  // A live preset slides to now on Refresh; a custom range reloads as it is.
   const refresh = () => {
     if (filters.range === undefined || location.kind !== "view") {
       data.refresh();
@@ -64,7 +62,6 @@ export default function App() {
     navigate(viewHref(locationPath(location), next), next, true);
   };
   const harnesses = data.registry ? enabledHarnesses(data.registry) : [];
-  // A link can name a harness this machine does not use; fall back to All.
   const stale =
     data.registry !== null &&
     filters.harness !== "" &&

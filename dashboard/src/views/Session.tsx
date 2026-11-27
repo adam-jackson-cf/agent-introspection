@@ -6,7 +6,6 @@ import { fmtCount, fmtSeconds, maybe, num } from "../format";
 const flag = (value: unknown) =>
   value === null || value === undefined ? "—" : num(value) === 1 ? "yes" : "no";
 
-/** Head counts come from the uncapped server count query. */
 const headCounts = (data: SessionResponse["data"]) => {
   const head = data["head_counts"]?.[0];
   return {

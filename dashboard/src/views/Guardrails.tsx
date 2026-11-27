@@ -26,11 +26,9 @@ import {
   VERIFICATION_LABEL,
 } from "../format";
 
-/** The All row of a summary query (`harness === ''`); empty result reads as no data. */
 const allRow = (rows: Row[] | undefined): Row =>
   rows?.find((row) => row["harness"] === "") ?? {};
 
-/** Reshapes long daily rows into one row per day with a column per harness (values copied from `field`, plus `<harness>_n` from `nField`). */
 function wideDaily(rows: Row[], field: string, nField?: string): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
@@ -46,10 +44,6 @@ function wideDaily(rows: Row[], field: string, nField?: string): Row[] {
   );
 }
 
-/**
- * Sandbox denials where every enabled harness has a sandbox; elsewhere the slot
- * shows who decides approvals.
- */
 function SandboxOrDecisionsKpi(props: {
   sandboxShown: boolean;
   sandbox: Row;
@@ -77,7 +71,6 @@ function SandboxOrDecisionsKpi(props: {
   );
 }
 
-/** Sandbox panels pair with the approval panels only where every enabled harness has a sandbox. */
 const sandboxLayout = (shown: boolean) =>
   shown
     ? { span: 6 as const, approvals: "Who approves, and what is denied?" }
@@ -86,11 +79,9 @@ const sandboxLayout = (shown: boolean) =>
 const NO_SHAPE =
   "No verification runs yet: the command shape is stored from the deploy date, and earlier rows are left out, not counted as no verification.";
 
-/** "All" for the rollup row, else the harness name. */
 const harnessOrAll = (row: Row) =>
   row["harness"] === "" ? "All" : <HarnessName value={row["harness"]} />;
 
-/** Verification by kind: bars keyed kind · harness in the server's fixed order, then the exact figures. */
 function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
   return (
     <>

@@ -13,12 +13,9 @@ import { HARNESS_LABEL, num } from "./format";
 
 export type Series = { key: string; label: string; color: string };
 
-/** What the enclosing Panel tells its charts and tables. */
 export const PanelContext = createContext<{
   label: string;
-  /** The panel shows coloured harness chips, which then act as a harness legend. */
   harnessChips: boolean;
-  /** A chart tells its panel whether its series are not harnesses (chips then go neutral). */
   reportSeries: (parts: boolean) => void;
 }>({ label: "", harnessChips: false, reportSeries: () => undefined });
 type Format = (value: number | null) => string;
@@ -41,7 +38,6 @@ export function useWidth(ref: RefObject<HTMLElement | null>): number {
   return width;
 }
 
-/** Rounds an axis maximum up to 1, 2, or 5 × 10ⁿ. */
 function niceMax(value: number): number {
   if (value <= 0) return 1;
   const power = 10 ** Math.floor(Math.log10(value));
@@ -63,7 +59,6 @@ export function Legend({ series }: { series: Series[] }) {
   );
 }
 
-/** Fills every UTC day between the first and last row so gaps stay visible. */
 function continuousDays(rows: Row[]): Row[] {
   if (rows.length === 0) return rows;
   const byDay = new Map(rows.map((row) => [String(row["day"]), row]));
@@ -80,7 +75,6 @@ function continuousDays(rows: Row[]): Row[] {
   return out;
 }
 
-/** Splits a line into runs of consecutive days with values; missing days break it. */
 function runs(
   points: (readonly [number, number | null])[],
 ): [number, number][][] {
@@ -96,7 +90,6 @@ function runs(
   return result;
 }
 
-/** Column path with a 4px rounded data end and a square baseline. */
 const columnPath = (x: number, y: number, width: number, height: number) => {
   const r = Math.min(4, width / 2, height);
   return `M${x},${y + height}V${y + r}Q${x},${y} ${x + r},${y}H${x + width - r}Q${x + width},${y} ${x + width},${y + r}V${y + height}Z`;
@@ -109,10 +102,8 @@ const cellValue = (row: Row, key: string) => {
     : Number(raw);
 };
 
-/** The y-axis ceiling: a cap on the fitted axis, or the whole axis when `fixed`. */
 type Axis = { max?: number | undefined; fixed?: boolean | undefined };
 
-/** Line markers: one on every point, hollow where a day's sample is under `minN`. */
 export type Markers = { minN: number };
 
 type Plot = {
@@ -125,7 +116,6 @@ type Plot = {
   y: (amount: number) => number;
 };
 
-/** Scales and spacing shared by every layer of one daily chart. */
 export function makePlot(
   rows: Row[],
   series: Series[],
@@ -157,13 +147,8 @@ export function makePlot(
   };
 }
 
-/** A day's sample size for a series, when its row carries `<key>_n`. */
 const sampleOf = (row: Row, key: string) => cellValue(row, `${key}_n`);
 
-/**
- * A series' value on a day. With markers the sample size follows it, and an empty day
- * says why: a row with no sample ("No outcomes") or no row at all ("No data").
- */
 export function valueText(
   row: Row,
   entry: Series,
@@ -221,7 +206,6 @@ function DayLabels({ rows, plot }: { rows: Row[]; plot: Plot }) {
   );
 }
 
-/** One day's stacked parts, bottom to top; the last part gets the rounded end. */
 function DayColumn(props: {
   row: Row;
   index: number;
@@ -449,7 +433,6 @@ function DayTooltip(props: {
   );
 }
 
-/** Where each navigation key moves the focused day; null means none yet. */
 export const DAY_KEYS: Record<
   string,
   (current: number | null, last: number) => number
@@ -461,7 +444,6 @@ export const DAY_KEYS: Record<
   End: (_current, last) => last,
 };
 
-/** The keyboard-selected day of a chart: one tab stop, arrows move, Escape clears. */
 function useDayFocus(days: number, clearHover: () => void) {
   const [active, setActive] = useState<number | null>(null);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -486,17 +468,9 @@ function useDayFocus(days: number, clearHover: () => void) {
   };
 }
 
-/**
- * The chart's accessible name, and whether it needs its own legend: coloured
- * contributor chips already name the harnesses a legend would. Series that are not
- * harnesses always get the legend, and the panel's chips then turn neutral so only
- * one set of keys carries colour.
- */
-/** Whether every series is a harness, so coloured harness chips can name them. */
 export const seriesAreHarnesses = (series: Series[]): boolean =>
   series.every((entry) => entry.key in HARNESS_LABEL);
 
-/** Tells the enclosing panel whether this chart's series are parts (not harnesses). */
 export function useReportSeries(series: Series[]): void {
   const { reportSeries } = useContext(PanelContext);
   const parts = !seriesAreHarnesses(series);
@@ -514,12 +488,6 @@ const chartNaming = (
   legend: !(panel.harnessChips && seriesAreHarnesses(series)),
 });
 
-/**
- * Daily trend as stacked columns (mutually exclusive parts of one total) or
- * lines (a rate per series). One y-axis. The chart is one tab stop: Left/Right,
- * Home and End move between days, Escape clears; hovering or focusing a day
- * shows every series value for that day.
- */
 export function DailyChart({
   rows: sparse,
   series,
@@ -533,14 +501,8 @@ export function DailyChart({
   series: Series[];
   kind: "stack" | "line";
   format: Format;
-  /** Ceiling for the axis; the axis still fits the data when it stays lower. */
   max?: number;
-  /** Makes `max` the whole axis (0 to max), as for a percentage that always spans 0–100. */
   fixed?: boolean;
-  /**
-   * Line charts: a marker on every point, hollow when a day's `<series key>_n` is under
-   * `minN`, with that n in the readout. A day without a row reads "No data".
-   */
   markers?: Markers;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -608,7 +570,6 @@ export type BarItem = {
   detail?: ReactNode;
 };
 
-/** Horizontal bars from one baseline with the value at the tip. */
 export function BarList({
   items,
   format,
@@ -665,7 +626,6 @@ const cell = (value: Scalar | Scalar[] | undefined): ReactNode =>
 
 export type Sort = { key: string; descending: boolean };
 
-/** A cell's value as a number when it is one (ClickHouse sends 64-bit integers as strings). */
 const numeric = (value: Scalar | Scalar[] | undefined): number | null => {
   if (typeof value === "number") return value;
   if (typeof value !== "string" || value.trim() === "") return null;
@@ -673,7 +633,6 @@ const numeric = (value: Scalar | Scalar[] | undefined): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-/** Ascending order; null and missing values sort after every value in both directions. */
 function compareCells(
   a: Scalar | Scalar[] | undefined,
   b: Scalar | Scalar[] | undefined,
@@ -691,10 +650,6 @@ const isBlank = (value: Scalar | Scalar[] | undefined) =>
 
 const pinned = (row: Row) => row["harness"] === "";
 
-/**
- * Rows ordered by one column. The server's All row (harness '') keeps its
- * position; every other row is reordered around it.
- */
 export function sortRows(rows: Row[], sort: Sort | null): Row[] {
   if (!sort) return rows;
   const sign = sort.descending ? -1 : 1;
@@ -711,7 +666,6 @@ export function sortRows(rows: Row[], sort: Sort | null): Row[] {
   return rows.map((row) => (pinned(row) ? row : sorted[next++]!));
 }
 
-/** A column header that sorts its table: numbers start largest first, text A to Z. */
 function SortHeader({
   column,
   sort,
@@ -759,12 +713,7 @@ export function DataTable({
   columns: Column[];
   rows: Row[];
   empty?: string;
-  /**
-   * Rows the source holds before a display limit; shows "Showing N of M" when larger.
-   * Defaults to the `total_rows` column a limited query returns (`count() OVER ()`).
-   */
   total?: number;
-  /** Accessible name of the scrollable table region; defaults to the panel title. */
   label?: string;
 }) {
   const panel = useContext(PanelContext);
@@ -830,7 +779,6 @@ export function DataTable({
   );
 }
 
-/** The chart's data as a table, for exact values and non-visual reading. */
 export function TableView({
   columns,
   rows,

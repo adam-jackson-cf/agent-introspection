@@ -1,5 +1,3 @@
-"""SigNoz subcommands of the Agent Introspection CLI."""
-
 from __future__ import annotations
 
 import argparse

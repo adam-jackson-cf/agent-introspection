@@ -32,7 +32,6 @@ _CLAUDE_EXPORT = {
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """An empty HOME, with no harness config directory variables set."""
     directory = tmp_path / "home"
     directory.mkdir()
     monkeypatch.setenv("HOME", str(directory))
@@ -89,7 +88,6 @@ def test_configure_claude_code_sets_only_managed_keys_with_a_backup(
     written = json.loads(settings.read_text())
     assert written["env"] == {"OPENROUTER_API_KEY": _SENTINEL, **_CLAUDE_EXPORT}
     assert written["theme"] == "dark"
-    # Another tool's hook stays first; this tool's activity hooks follow it.
     assert written["hooks"]["Stop"][0] == json.loads(original)["hooks"]["Stop"][0]
     assert hook_install.is_owned(written["hooks"]["Stop"][1])
     assert settings.read_text().startswith('{\n    "theme": "dark",')
@@ -121,8 +119,6 @@ def test_prompt_export_is_written_only_when_opted_in(
     result, _ = run_harness(capsys, config, "configure", "claude-code", "--prompt-export")
 
     [item] = result["files"]
-    # Prompts are exported with assistant responses kept redacted: Claude Code's
-    # response switch follows the prompt switch when unset.
     assert {key: action for key, action in _actions(item).items() if action != "unchanged"} == {
         "OTEL_LOG_USER_PROMPTS": "add",
         "OTEL_LOG_ASSISTANT_RESPONSES": "add",
@@ -180,7 +176,6 @@ def test_parts_of_a_managed_value_the_profile_does_not_manage_are_never_shown(
 _CREDENTIALED = f"https://user:{_SENTINEL}@collector.example:4318/?token={_SENTINEL}"
 _ENDPOINT_KEY = "OTEL_EXPORTER_OTLP_ENDPOINT"
 _CODEX_EXPORTER = f'{{ otlp-http = {{ endpoint = "{_CREDENTIALED}", protocol = "binary" }} }}'
-# Per harness: the file holding a credentialed managed URL, its text, and the key.
 _CREDENTIALED_FILES = {
     "claude-code": (
         ".claude/settings.json",
@@ -215,7 +210,6 @@ def test_a_managed_url_is_shown_as_doctor_shows_it_without_credentials(
             assert change["old"] == {"otlp-http": {"endpoint": shown, "protocol": "binary"}}
         else:
             assert change["old"] == shown
-            # doctor names the same value the same way.
             assert doctor_harness.shown_value(_CREDENTIALED) == repr(shown)
 
 
@@ -241,8 +235,6 @@ def test_claude_config_dir_wins_and_a_symlinked_file_is_written_through(
 def test_a_set_config_directory_is_configured_before_its_harness_has_written_there(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The harness reads only the directory its variable names, so a file left at the
-    # default location is not the one to configure.
     legacy = _claude_settings(home)
     before = legacy.read_text()
     claude_dir = tmp_path / "claude-config"
@@ -509,7 +501,6 @@ def test_every_harness_exports_to_the_configured_collector_over_one_transport(
         result["harness"]: {item["key"]: item["new"] for item in result["files"][0]["changes"]}
         for result in results
     }
-    # Every exporter is OTLP/HTTP to the configured collector's port.
     for key in ("claude-code", "omp"):
         assert new[key]["OTEL_EXPORTER_OTLP_ENDPOINT"] == endpoint
         assert new[key]["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
@@ -530,7 +521,6 @@ def test_an_additional_machine_points_each_harness_at_the_host_collector(
     config = config_file(
         tmp_path,
         f'[machine]\nrole = "additional"\nexport_endpoint = "{host}/"\n'
-        # The host's own setting, copied over, does not apply here.
         '[signoz]\notlp_endpoint = "http://127.0.0.1:4318"\n',
     )
     _codex_home(
@@ -548,7 +538,6 @@ def test_an_additional_machine_points_each_harness_at_the_host_collector(
     assert changes["OTEL_EXPORTER_OTLP_ENDPOINT"] == host
     assert changes["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
     [item] = codex["files"]
-    # gRPC to the host reaches its collector; a local exporter reaches nothing here.
     assert _actions(item) == {
         "exporter": "satisfied",
         "trace_exporter": "change",
@@ -594,10 +583,6 @@ def test_doctor_and_configure_resolve_a_profiles_config_paths_alike(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Every variable the paths name points into tmp_path or is unset, so no file is
-    # ever created outside the test's directories. `set_before_the_harness_wrote`: a set
-    # variable names a directory with no file yet, and only the default location holds
-    # one.
     variables_set = variables != "unset"
     variable_files = variables == "set"
     names = set(re.findall(r"\$\{?(\w+)", " ".join(spec.paths)))
@@ -625,7 +610,6 @@ def test_doctor_and_configure_resolve_a_profiles_config_paths_alike(
     assert found == harness_config.config_targets(spec)
     named = profiles.expand_config_path(spec.paths[0], environ, home)
     if variables_set and "$" in spec.paths[0]:
-        # The path a set variable names is always among them, existing or not.
         assert named is not None
         assert found[0] == named.resolve()
 

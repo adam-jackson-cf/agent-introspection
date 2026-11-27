@@ -29,9 +29,6 @@ def test_a_dead_endpoint_and_a_timeout_keep_the_files_with_their_class(
     assert refused == spool.Outcome("keep", "ConnectionRefusedError")
 
 
-# --- Draining ---------------------------------------------------------------------
-
-
 def test_a_drain_sends_in_batches_of_fifty_and_removes_what_was_accepted(
     collector: Collector, inbox: Path
 ) -> None:
@@ -181,9 +178,6 @@ def test_the_logged_class_never_includes_record_text_or_the_endpoint(
     assert "secret" not in log
     assert "127.0.0.1" not in log
     assert "key-0" not in log
-
-
-# --- Status and sync --------------------------------------------------------------
 
 
 def test_the_status_record_reports_backlog_age_counters_and_last_error(

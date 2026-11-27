@@ -34,9 +34,6 @@ def tool_call(tool_name: str, tool_input: dict[str, Any], cwd: str = "/Users/me/
     return dict(item["attrs"])
 
 
-# --- Parity with select_logs.sql --------------------------------------------------
-
-
 def test_log_projection_renders_the_shared_command_shape_rules() -> None:
     select = facts.render_select("select_logs.sql", "1")
 
@@ -149,7 +146,6 @@ def test_arguments_hash_is_canonical_and_workdir_falls_back_to_cwd() -> None:
         ),
         ("Exit code 1\nTraceback (most recent call last):\n", "Traceback (most recent call last):"),
         ("Exit code 2\nsome plain output\n", ""),
-        # Mirrors the SQL: `0x` splits the run, so hex after it becomes a second `N`.
         ("build error 0xdeadbeef00 at step 12\n", "build error NxN at step N"),
         ("x" * 200 + " error: boom", "error: boom"),
     ],
@@ -208,9 +204,6 @@ def test_signature_hash_covers_the_redacted_line_not_the_raw_text() -> None:
     assert hooks.signature_hash("") == ""
 
 
-# --- Prompts ----------------------------------------------------------------------
-
-
 def test_prompt_is_measured_never_stored(tmp_path: Path) -> None:
     envelope = {"session_id": SESSION, "prompt_id": "p-1", "prompt": PROMPT, "cwd": "/x"}
 
@@ -238,9 +231,6 @@ def test_turn_open_tracks_prompt_and_stop(tmp_path: Path) -> None:
     assert hooks.turn_open(ctx, "claude-code", SESSION) == 1
     markers = list((tmp_path / "state").iterdir())
     assert all("go" not in path.read_text() for path in markers)
-
-
-# --- Claude Stop and the other events ---------------------------------------------
 
 
 def transcript(tmp_path: Path) -> Path:
@@ -439,7 +429,6 @@ def test_omp_events(tmp_path: Path) -> None:
 def test_unknown_producer_event_and_missing_session_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="producer"):
         hooks.normalize("gemini", "Stop", {"session_id": SESSION}, context(tmp_path))
-    # Codex needs no hook: its prompts reach the classifier through its own telemetry.
     with pytest.raises(ValueError, match="producer"):
         hooks.normalize("codex", "UserPromptSubmit", {"session_id": SESSION}, context(tmp_path))
     with pytest.raises(ValueError, match="unsupported"):
@@ -472,9 +461,6 @@ def test_no_raw_argument_or_output_text_in_records(tmp_path: Path) -> None:
         [],
         0,
     )
-
-
-# --- Writing, CLI entry, and ingest -----------------------------------------------
 
 
 def test_write_is_atomic_and_main_never_fails(

@@ -26,10 +26,7 @@ def _never(*args: str) -> subprocess.CompletedProcess[str]:
 
 @dataclass
 class Launchd:
-    """A launchctl stand-in that tracks which labels are loaded."""
-
     loaded: set[str] = field(default_factory=set)
-    # stderr for a plist whose bootstrap fails, or "" when it loads.
     refuse: Callable[[bytes], str] = lambda _plist: ""
     stuck: bool = False
     calls: list[tuple[str, ...]] = field(default_factory=list)
@@ -53,7 +50,6 @@ class Launchd:
             return _result(5, error)
         label = plistlib.loads(content)["Label"]
         if label in self.loaded:
-            # launchctl refuses to load a label that is already loaded.
             return _result(37, "Bootstrap failed: 37: Operation already in progress")
         self.loaded.add(label)
         return _result()
@@ -61,11 +57,6 @@ class Launchd:
 
 @dataclass
 class Systemd:
-    """A ``systemctl --user`` stand-in; ``fail`` maps a verb to its stderr.
-
-    ``enabled`` defaults to ``active``: a running timer is an enabled one.
-    """
-
     fail: dict[str, str] = field(default_factory=dict)
     active: bool = False
     enabled: bool | None = None
@@ -142,7 +133,6 @@ def test_systemd_units_run_the_same_sync_every_minute_with_the_same_path_and_con
     timer = schedule.timer_unit()
 
     assert 'Environment="PATH=/opt/docker/bin:/usr/bin"\n' in service
-    # Each argument is quoted, `%` and `$` are literal, and --log writes the sync log.
     assert (
         'ExecStart="/home/me/.local/bin/agent-introspection" "--config" '
         '"/home/me/My Config/50%%$$HOME.toml" "facts" "sync" "--log"\n'
@@ -177,7 +167,6 @@ def test_scheduled_job_path_follows_the_password_and_key_sources(
         clickhouse_url="http://localhost:8123", clickhouse_password_command=("security", "-w")
     )
 
-    # omp's directory is never added: labels read only the configured key command.
     assert schedule.job_path(AppConfig()) == []
     assert schedule.job_path(AppConfig(signoz=command)) == ["/usr/bin"]
     keyed = AppConfig(labels_openrouter_key_command=("pass", "show", "openrouter"))
@@ -275,7 +264,6 @@ _STILL_RUNNING = (
     [
         ("legacy", "install", r"could not stop the legacy job.*not permitted"),
         ("current", "install", _STILL_RUNNING),
-        # A loaded job whose plist is gone is not given one it would never use.
         ("current without plist", "install", _STILL_RUNNING),
         ("current", "remove", _STILL_RUNNING),
     ],
@@ -284,8 +272,6 @@ _STILL_RUNNING = (
 def test_a_loaded_job_that_cannot_be_stopped_blocks_the_change_and_is_left_as_it_was(
     monkeypatch: pytest.MonkeyPatch, home: Path, job: str, change: str, error: str
 ) -> None:
-    # `launchctl bootout` fails outside the user's GUI session (over SSH, say): the job
-    # keeps running, so the command must neither report it stopped nor change its files.
     label, path, content = (
         (schedule.LEGACY_LABEL, schedule.legacy_plist_file(), _legacy_plist())
         if job == "legacy"
@@ -310,8 +296,6 @@ def test_a_loaded_job_that_cannot_be_stopped_blocks_the_change_and_is_left_as_it
 def test_a_job_that_cannot_be_stopped_after_the_legacy_plist_was_retired_says_so(
     monkeypatch: pytest.MonkeyPatch, home: Path
 ) -> None:
-    # The legacy job was not loaded, so install moved its plist away before it found
-    # the current job stuck; putting it back would not restore anything that ran.
     previous = schedule.plist(Path("/old/ai"), ["/usr/bin"])
     schedule.plist_file().parent.mkdir(parents=True)
     schedule.plist_file().write_bytes(previous)
@@ -372,7 +356,6 @@ def test_failed_bootstrap_after_a_migration_brings_the_legacy_job_back(
 def test_failed_bootstrap_puts_back_a_legacy_job_that_was_not_loaded_unloaded(
     monkeypatch: pytest.MonkeyPatch, home: Path
 ) -> None:
-    # The user stopped the legacy job; a failed install must not start it again.
     schedule.legacy_plist_file().parent.mkdir(parents=True)
     schedule.legacy_plist_file().write_bytes(_legacy_plist())
     launchd = Launchd(refuse=lambda plist: "" if plist == _legacy_plist() else "boom")
@@ -389,8 +372,6 @@ def test_failed_bootstrap_puts_back_a_legacy_job_that_was_not_loaded_unloaded(
 def test_failed_bootstrap_puts_back_a_previous_job_that_was_not_loaded_unloaded(
     monkeypatch: pytest.MonkeyPatch, home: Path
 ) -> None:
-    # The user booted the job out to pause syncing; a failed reinstall must not
-    # start it again.
     previous = schedule.plist(Path("/old/agent-introspection"), ["/usr/bin"])
     schedule.plist_file().parent.mkdir(parents=True)
     schedule.plist_file().write_bytes(previous)
@@ -485,7 +466,6 @@ def test_launchd_status_reports_the_job_and_any_legacy_job(
     status = schedule.schedule_status()
 
     assert (status["scheduler"], status["installed"], status["loaded"]) == ("launchd", False, False)
-    # The spool counts come from the test's own spool, never the real home's.
     assert (status["inbox_backlog"], status["inbox_rejected"]) == (2, 1)
     assert status["legacy"] == {
         "label": schedule.LEGACY_LABEL,
@@ -564,8 +544,6 @@ def test_systemd_install_that_fails_to_start_restores_and_restarts_the_previous_
 def test_systemd_install_that_fails_puts_back_a_stopped_timer_stopped(
     monkeypatch: pytest.MonkeyPatch, home: Path, enabled: bool, kept: tuple[str, ...]
 ) -> None:
-    # The user stopped (or disabled) the timer to pause syncing; a failed reinstall
-    # must not start it again, nor change whether it starts at login.
     schedule.systemd_units_dir().mkdir(parents=True)
     schedule.service_file().write_text("old service")
     schedule.timer_file().write_text("old timer")
@@ -716,7 +694,6 @@ def test_sync_log_rotates_by_size_and_keeps_a_bounded_number_of_files(tmp_path: 
     assert files == ["sync.log", "sync.log.1", "sync.log.2"]
     assert len(files) == schedule.LOG_FILES
     kept = "".join((tmp_path / name).read_text() for name in files)
-    # The newest lines survive; only the oldest are dropped.
     assert "line 11 " in kept
     assert "line 0 " not in kept
     line = len(f"2026-10-12T08:30:05Z line 11 {filler}\n")

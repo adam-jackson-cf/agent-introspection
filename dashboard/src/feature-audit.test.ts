@@ -2,12 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-/**
- * Guards the feature audit (docs/ux/feature-audit): every panel, figure and
- * section title recorded in the baseline must still be rendered somewhere in the
- * dashboard source. A title may move to another page or component; it may only
- * disappear when its entry names a decided change from the audit README.
- */
 type Entry = {
   page: string;
   title: string;
@@ -36,7 +30,6 @@ async function sourceText(directory: string): Promise<string> {
   return parts.join("\n");
 }
 const source = await sourceText(import.meta.dir);
-/** The literal part of a title; template expressions vary with the data. */
 const literal = (title: string) => title.split("${")[0]!.trim();
 
 describe("feature audit baseline", () => {

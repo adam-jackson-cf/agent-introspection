@@ -21,10 +21,8 @@ import {
   num,
 } from "../format";
 
-/** The server's All row (ROLLUP over harness) carries harness ''. */
 const isAll = (row: Row) => row["harness"] === "";
 
-/** "Measured as" text from the server's counts for each harness's retry route. */
 function retryRoute(row: Row): string {
   const harness = String(row["harness"]);
   if (harness.startsWith("codex"))
@@ -33,7 +31,6 @@ function retryRoute(row: Row): string {
   return `requests with attempt > 1 · ${fmtCount(num(row["failed_attempts"]))} failed attempts · ${fmtCount(num(row["exhausted"]))} exhausted`;
 }
 
-/** Long daily rows to one row per day: error rate (and its n) and TTFT per harness. */
 function dailyByDay(daily: Row[]): { errors: Row[]; ttft: Row[] } {
   const errors: Record<string, Row> = {};
   const ttft: Record<string, Row> = {};

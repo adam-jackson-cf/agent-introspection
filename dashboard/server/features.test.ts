@@ -5,7 +5,6 @@ import { experimentalFeatures } from "./features";
 import { END, HOST, registry, registryRows, START } from "./test-fixtures";
 import type { Registry } from "../src/contracts";
 
-/** The fixture registry plus the outcomes feature's system signal. */
 const withOutcomes = (): Registry => {
   const reg = registry();
   return {

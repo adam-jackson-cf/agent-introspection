@@ -188,7 +188,6 @@ def test_closed_collector_ports_and_a_missing_hooks_endpoint(machine: Machine) -
     result = machine.report(probes)
 
     assert one(result, "collector_http")["status"] == "fail"
-    # The machine's harnesses export over OTLP/gRPC, so a closed 4317 is their route.
     grpc = one(result, "collector_grpc")
     assert grpc["status"] == "warn"
     assert "export over OTLP/gRPC" in grpc["fix"]
@@ -225,7 +224,6 @@ def test_a_partly_enabled_profile_counts_only_its_enabled_surfaces(machine: Mach
     codex = one(result, "telemetry", "codex")
     assert codex["status"] == "pass"
     assert set(codex["services"]) == {"codex_exec"}
-    # Every registry harness is counted, so the surfaces left out are seen sending.
     disabled = one(result, "disabled_harnesses")
     assert disabled["status"] == "warn"
     assert disabled["harnesses"] == ["codex-app-server", "codex_cli_rs"]
@@ -370,7 +368,6 @@ def test_the_schedule_on_the_signoz_host(
     ("command", "environ", "omp", "expected"),
     [
         (True, {}, None, "pass"),
-        # Only the key command counts: a shell key or omp's stored credential does not.
         (False, {"OPENROUTER_API_KEY": SECRET}, None, "off"),
         (False, {}, "/bin/omp", "off"),
         (False, {}, None, "off"),
@@ -525,7 +522,6 @@ def test_drift_warns_per_drifted_or_unreadable_service_and_unregistered_or_unnam
     }
     assert drift_checks["claude-code"]["detail"].startswith("claude-code gained 2 and lost 1")
     assert "producers profile opencode" in drift_checks["opencode"]["fix"]
-    # Rows no service name claims are counted only; the sender needs OTEL_SERVICE_NAME.
     unnamed = one(result, "drift_unnamed")
     assert (unnamed["status"], unnamed["unnamed_rows"]) == ("info", 12)
     assert unnamed["detail"].startswith("12 rows have an empty service.name")
@@ -572,7 +568,6 @@ def test_an_absent_default_config_means_the_defaults(machine: Machine) -> None:
     result = doctor.report(doctor.Options(inbox=machine.inbox), machine.probes)
 
     assert one(result, "config")["status"] == "info"
-    # With no config, records go to the local collector's logs URL.
     assert one(result, "hooks_endpoint")["detail"] == "127.0.0.1:4318 accepts connections"
 
 

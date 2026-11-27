@@ -50,7 +50,6 @@ class _Ping(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def ping_server() -> Iterator[tuple[type[_Ping], str]]:
-    """An HTTP server on a free loopback port, standing in for ClickHouse."""
     handler = type("Ping", (_Ping,), {})
     server = HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

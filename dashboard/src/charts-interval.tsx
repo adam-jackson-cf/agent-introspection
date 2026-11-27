@@ -1,12 +1,10 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { useWidth } from "./charts";
 
-/** One interval row: a point `value` with its `lo`–`hi` whisker over `n` samples. */
 export type IntervalRow = {
   key: string;
   label: string;
   n: number;
-  /** null reads "not applicable": the group cannot produce the measure. */
   value: number | null;
   lo: number | null;
   hi: number | null;
@@ -17,7 +15,6 @@ export type IntervalGroup = {
   color: string;
   rows: IntervalRow[];
 };
-/** The value axis: `fixed` spans min–max with 0/50/100-style gridlines, `log` uses decade ticks. */
 export type IntervalAxis = {
   min: number;
   max: number;
@@ -32,7 +29,6 @@ const VALUE_WIDTH = 104;
 const TOP = 6;
 const AXIS_HEIGHT = 22;
 
-/** Powers of ten inside a log axis, ascending. */
 export function logTicks(min: number, max: number): number[] {
   const ticks: number[] = [];
   for (let power = Math.ceil(Math.log10(min)); 10 ** power <= max; power += 1)
@@ -40,7 +36,6 @@ export function logTicks(min: number, max: number): number[] {
   return ticks;
 }
 
-/** The decade range holding every value, for a log axis; values must be positive. */
 export function logExtent(values: number[]): { min: number; max: number } {
   const positive = values.filter((value) => value > 0);
   if (positive.length === 0) return { min: 1, max: 10 };
@@ -49,13 +44,11 @@ export function logExtent(values: number[]): { min: number; max: number } {
   return { min: 10 ** low, max: 10 ** Math.max(high, low + 1) };
 }
 
-/** Gridline values: decades on a log axis, else the axis ends and midpoint. */
 export const axisTicks = (axis: IntervalAxis): number[] =>
   axis.log
     ? logTicks(axis.min, axis.max)
     : [axis.min, (axis.min + axis.max) / 2, axis.max];
 
-/** Position of a value along `[left, left + span]`, clamped to the axis. */
 export function scaleValue(
   axis: IntervalAxis,
   value: number,
@@ -72,7 +65,6 @@ export function scaleValue(
 
 export type Slot = { group: IntervalGroup; row: IntervalRow; y: number };
 
-/** Row positions below each group header, top to bottom. */
 function layout(groups: IntervalGroup[]): {
   slots: Slot[];
   headers: { group: IntervalGroup; y: number }[];
@@ -147,17 +139,10 @@ export function IntervalMarks(props: {
   );
 }
 
-/**
- * Whole-window intervals, one row per (group, row): a whisker from `lo` to `hi` and a
- * dot at `value`, hollow when the row has fewer than `minN` samples. One shared axis.
- * The chart is one tab stop: arrows move between rows, Escape clears, and the focused
- * row is read out in a live region.
- */
 export function IntervalChart(props: {
   groups: IntervalGroup[];
   axis: IntervalAxis;
   format: (value: number) => string;
-  /** Rows with fewer samples than this get a hollow dot. */
   minN: number;
   label: string;
 }) {

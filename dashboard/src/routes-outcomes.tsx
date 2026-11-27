@@ -5,7 +5,6 @@ import Interventions from "./views/Interventions";
 import Provider from "./views/Provider";
 import Recurrence from "./views/Recurrence";
 
-/** Guardrail, provider and learning-loop views. */
 export const OUTCOME_VIEWS: ViewSpec[] = [
   {
     id: "guardrails",

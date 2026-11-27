@@ -8,7 +8,6 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-      # Needs the local SigNoz ClickHouse (CI has none), so it runs only when facts SQL changes.
       - id: facts-verify
         name: facts SQL builds in a scratch ClickHouse database
         entry: uv run agent-introspection facts verify

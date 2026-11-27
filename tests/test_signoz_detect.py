@@ -11,7 +11,6 @@ from tests.support.signoz_machine import CLICKHOUSE, SIGNOZ_UI, UNRELATED, FakeM
 
 @pytest.fixture
 def machine(monkeypatch: pytest.MonkeyPatch) -> FakeMachine:
-    """Fake this machine: Docker on PATH, every port free, ClickHouse silent."""
     return FakeMachine(monkeypatch)
 
 

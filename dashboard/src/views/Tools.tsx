@@ -22,11 +22,9 @@ import {
   orDash,
 } from "../format";
 
-/** The server's All row: the rollup row, harness = ''. */
 const allRow = (rows: Row[] | undefined): Row =>
   (rows ?? []).find((row) => row["harness"] === "") ?? {};
 
-/** Long daily rows to one row per day, a column per harness; values are copied. */
 function reshapeDaily(rows: Row[], valueKey: string, nKey?: string): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {

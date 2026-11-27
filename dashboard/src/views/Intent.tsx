@@ -24,15 +24,12 @@ import {
 const words = (value: unknown) => String(value ?? "").replaceAll("_", " ");
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
-/** Labelled tasks whose type is empty get their own row, so shares sum to 100%. */
 export const typeLabel = (type: string) => (type === "" ? "untyped" : type);
 
-/** Server rate and sample size of a `<key>_rate` / `<key>_den` column pair. */
 const pct = (row: Row, key: string) => (
   <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
 );
 
-/** Long daily rows to one row per day: each harness's server rate and its n. */
 function pivotCorrectedRate(rows: Row[]): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
@@ -46,13 +43,11 @@ function pivotCorrectedRate(rows: Row[]): Row[] {
   return [...days.values()];
 }
 
-/** Rows of a view dataset, empty while the server omits it. */
 const rowsOf = (data: Record<string, Row[]>, key: string) => data[key] ?? [];
 
 export default function Intent({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const kpi = rowsOf(data, "kpi");
-  // The rollup row (harness '') is All, computed by the server.
   const all = kpi.find((row) => row["harness"] === "") ?? {};
   const byHarness = kpi.filter((row) => row["harness"] !== "");
   const series = selected.map((harness) => ({

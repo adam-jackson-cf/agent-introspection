@@ -29,7 +29,6 @@ def jev_response(**overrides: Any) -> dict[str, Any]:
                 "choice": "ignored_instruction",
                 "confidence": 0.8,
             },
-            # Jev's score is the expected level; the label is the most likely level.
             "sentiment": {
                 "type": "score",
                 "score": 0.6,
@@ -83,8 +82,6 @@ def test_run_labels_prompts_and_stores_only_answers() -> None:
     assert "frustrated" in insert
     assert "uv, not pip" not in insert
     assert "supersecret123" not in sent[0].decode()
-    # A floating selector such as ~typesafe/jev-latest would let a newer, unevaluated Jev label
-    # prompts.
     assert json.loads(sent[0])["model"] == classify.JEV_PINNED_MODEL
     assert "supersecret123" not in insert
 
@@ -165,8 +162,6 @@ def test_http_poster_closes_the_error_response_and_withholds_its_body(
 
 
 class KeyCommands:
-    """A stand-in for the key command seam; ``outcomes`` maps argv[0] to its result."""
-
     def __init__(self, **outcomes: subprocess.CompletedProcess[str] | Exception) -> None:
         self.outcomes = outcomes
         self.ran: list[tuple[str, ...]] = []

@@ -55,7 +55,6 @@ function CoverageRow(props: {
   );
 }
 
-/** Every known harness for All, so harnesses this machine does not use show as not in use. */
 function CoverageGrid({ rows }: { rows: Row[] }) {
   const { filters } = useView();
   const harnesses: readonly Harness[] =
@@ -101,16 +100,10 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
   );
 }
 
-/**
- * The coverage answer in numbers, from the server: cells, healthy cells, the count
- * of each other state, and per view the healthy and unexplained cells. Shown on
- * Pipeline (linked to the grid) and again at the top of the grid page.
- */
 export function CoverageSummary(props: {
   data: Record<string, Row[]>;
   span: 4 | 12;
   linked: boolean;
-  /** Lets the band see this panel's signals, like a Panel placed directly. */
   signals?: string[];
 }) {
   const { data, span, linked } = props;
@@ -176,7 +169,6 @@ export function CoverageSummary(props: {
   );
 }
 
-/** L3: opens on the coverage numbers, then what each state means, then every cell. */
 export default function PipelineCoverage({
   data,
 }: {

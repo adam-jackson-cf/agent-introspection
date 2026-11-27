@@ -1,50 +1,4 @@
 #!/usr/bin/env bash
-# install-signoz.sh: the opt-in, guided install of a new self-hosted SigNoz on this
-# machine for Agent Introspection. Run it only when the user asks for a new SigNoz.
-#
-# Usage: install-signoz.sh [--dry-run] [--dir PATH] [--tag TAG]
-#
-#   --dry-run   run every check and print the plan; change nothing
-#   --dir PATH  install directory, absent or empty
-#               (default ${XDG_DATA_HOME:-$HOME/.local/share}/agent-introspection/signoz)
-#   --tag TAG   SigNoz release for the signoz/signoz image (default DEFAULT_TAG below)
-#
-# It never reconfigures an existing SigNoz. It refuses (exit 3) when:
-# - `agent-introspection signoz detect` finds a SigNoz or ClickHouse, or any of ports
-#   4317, 4318, 8123, and 8080 in use (without that command, its own port probe);
-# - any SigNoz or ClickHouse container (running or stopped), a Compose project named
-#   signoz, or a signoz-* volume exists, which `docker compose up` would reuse.
-# A missing requirement (including Docker Compose older than COMPOSE_MINIMUM below), a
-# Docker context that is not this machine, or a non-empty --dir stops it with exit 1;
-# a bad argument with exit 2.
-#
-# Then it downloads the pinned foundryctl (checked against the SHA-256 pinned below),
-# writes casting.yaml pinning the SigNoz and collector images, runs `foundryctl gauge`
-# and `forge`, copies docker-compose.clickhouse-http.yaml next to the generated
-# compose.yaml, starts the stack with both files, waits for ClickHouse on
-# 127.0.0.1:8123, and says that the config.toml [signoz] defaults reach it. It prints no
-# secret.
-# The override publishes ClickHouse HTTP, OTLP, and the UI on 127.0.0.1 only, so this
-# SigNoz serves this machine alone until the user widens it (the override says how).
-#
-# Sources, read 2026-10-13:
-# - https://signoz.io/docs/install/docker/ : the self-hosted Docker install is Foundry
-#   (foundryctl). `foundryctl forge` writes pours/deployment/compose.yaml, and
-#   `docker compose up -d` starts it. Ports: UI 8080, OTLP gRPC 4317, OTLP/HTTP 4318.
-# - https://github.com/SigNoz/signoz/blob/v0.145.0/deploy/README.md : the install.sh
-#   script and the deploy/ Compose files are deprecated; v0.145.0 no longer ships them.
-# - https://github.com/SigNoz/signoz/releases/tag/v0.145.0 : latest stable SigNoz.
-# - https://github.com/SigNoz/signoz-otel-collector/releases/tag/v0.144.13 : latest
-#   stable collector, the image Foundry's `latest` default resolved to on this date.
-# - https://github.com/SigNoz/foundry/releases/tag/v0.3.0 : foundryctl archives and
-#   checksums. At that tag, docs/reference/casting-file.md sets images with
-#   spec.<molding>.spec.image, and docs/examples/docker/compose shows the generated
-#   stack: ClickHouse is service and container signoz-telemetrystore-clickhouse-0-0
-#   (HTTP 8123 inside the Compose network only), the collector is service `ingester`
-#   (4317 and 4318 on every interface), and the UI is service signoz-signoz-0 (8080
-#   on every interface).
-# - https://docs.docker.com/reference/compose-file/merge/ : the `!override` tag the
-#   override uses to replace a port list needs Docker Compose 2.24.4 or later.
 
 set -euo pipefail
 
@@ -53,13 +7,11 @@ readonly COLLECTOR_TAG="v0.144.13"
 readonly FOUNDRY_VERSION="v0.3.0"
 readonly COMPOSE_MINIMUM="2.24.4"
 readonly PORTS="4317 4318 8123 8080"
-# The generated services the override names: ClickHouse, the collector, the UI.
 readonly OVERRIDE_SERVICES="signoz-telemetrystore-clickhouse-0-0 ingester signoz-signoz-0"
 readonly OVERRIDE="docker-compose.clickhouse-http.yaml"
 readonly CLICKHOUSE_PING="http://127.0.0.1:8123/ping"
 readonly WAIT_SECONDS=300
 
-# SHA-256 of each foundryctl v0.3.0 archive, from the release's checksums file.
 foundry_sha256() {
   case "$1" in
     darwin_amd64) echo "8012e7854454102501fc9d8ab2f4d02ce210bc00b4613e0801b82cae04cf548c" ;;
@@ -173,7 +125,6 @@ require_tools() {
   [[ -f "$script_dir/$OVERRIDE" ]] || die "$OVERRIDE is missing next to this script"
 }
 
-# Agent Introspection runs only against a SigNoz on this machine.
 require_local_docker() {
   local host="${DOCKER_HOST:-}"
   if [[ -z "$host" ]]; then
@@ -212,8 +163,6 @@ findings_from_ports() {
   done
 }
 
-# Containers in any state, a Compose project, and volumes `docker compose up` would
-# reuse. A listing that fails stops the install rather than passing the check.
 findings_from_docker() {
   local containers projects volumes name
   containers="$(docker ps -a --format '{{.Names}} {{.Image}}')" || die "docker ps -a failed"

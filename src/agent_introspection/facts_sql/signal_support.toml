@@ -1,43 +1,3 @@
-# Signal support registry.
-#
-# One definition per signal, one route per producer. `facts install` loads this
-# file into `introspection.signals`, `introspection.signal_routes`,
-# `introspection.signal_support`, and `introspection.signal_strays`. The
-# dashboard renders every info note from those tables; notes are never written
-# in the UI.
-#
-# Support keys are harness names, or `codex` for all three Codex surfaces. A
-# harness-specific entry overrides the `codex` entry. Alignment is one of:
-#   aligned      the producer reaches the shared definition directly
-#   differs      the producer reaches it by a different route; `note` says how
-#   not applicable  the signal cannot exist for the harness by construction
-#                   (headless Codex exec has no user to interrupt, steer, or follow up)
-#   not emitted  the producer has no route, natively or through an activity hook
-#                (docs/references/hook-events.md); `note` says why
-#
-# Visibility rule: parity is judged over the harnesses this machine uses (config
-# `[harnesses] enabled`, loaded into `introspection.harnesses` by `facts install`).
-# A harness-scoped signal is shown only when every enabled harness reaches it
-# (aligned, differs, or not applicable); when an enabled harness does not emit it,
-# the signal is hidden on that machine and listed with the reason. A signal no
-# harness produces is listed under [[excluded]] and never shown.
-#
-# Route `match` predicates run against rows of one harness in `introspection.spans`,
-# `introspection.logs`, or, for source `hooks`, `introspection.hook_rows` (activity-hook
-# events with the harness resolved; hook routes start when the hooks were installed). `expect = "events"` marks a route for rare events (interrupts,
-# steers, sandbox denials, API errors, delegations) where zero rows while the
-# harness is active is a valid observation, not a possible break. The Pipeline coverage grid applies every route of a signal to every
-# harness, so a predicate must name the producer-specific event or span, not
-# just "has data".
-#
-# Capabilities: each [[capability]] is one kind of producer data the signals consume
-# (capabilities.py). Every harness-scoped signal lists the capabilities its
-# definition needs in `requires`; a harness profile (harness_profiles/) records
-# which capabilities a producer has, so a producer that is not yet a harness can be
-# projected onto the signals before it is added. `hints` are case-insensitive
-# regular expressions over span names, event names, and attribute keys that suggest
-# the capability in an unknown producer's telemetry (`producers profile`).
-
 [harnesses]
 oh-my-pi = "omp"
 codex-app-server = "Codex app-server"
@@ -56,10 +16,6 @@ provider = "Provider"
 recurrence = "Recurring failures"
 intent = "Requests and corrections"
 interventions = "Findings and fixes"
-
-# ---------------------------------------------------------------------------
-# Capabilities
-# ---------------------------------------------------------------------------
 
 [[capability]]
 id = "export"
@@ -200,10 +156,6 @@ check = "One event per submitted prompt with its text (not a redaction placehold
 span_names = []
 event_names = ['user_prompt', 'prompt']
 attribute_keys = ['(^|[._])prompt$', 'prompt[._](text|length)', 'user_prompt']
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 [[route]]
 id = "codex.usage"
@@ -440,15 +392,6 @@ source = "hooks"
 match = "event_type = 'steer'"
 description = "Activity hook `steer` (omp `input` while the agent is running)."
 
-# ---------------------------------------------------------------------------
-# Known stray rows: rows that match another producer's route or no route, and
-# are explained rather than a live route of the harness they are labelled with.
-# ---------------------------------------------------------------------------
-
-# Producers that export to the same SigNoz but are not harnesses: the loaders do not
-# read them, no signal is defined for them, and they are never ranked or compared.
-# `producers discover` reports them as known producers. A stray may name one in place
-# of a harness.
 [producers]
 opencode = "opencode"
 
@@ -472,10 +415,6 @@ harness = "oh-my-pi"
 source = "spans"
 match = "name LIKE 'moby.%' OR name LIKE 'build%' OR name LIKE 'load %' OR name LIKE 'remotes.docker.%' OR name IN ('HEAD /_ping', 'GET /v1.54/version', 'HTTP POST')"
 reason = "Inferred: Docker buildx spans inherit OTEL_SERVICE_NAME=oh-my-pi when omp runs docker builds. They are not agent telemetry."
-
-# ---------------------------------------------------------------------------
-# V1 Pipeline
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "pipeline.loader_refresh"
@@ -538,10 +477,6 @@ question = "Does the data match what the registry says each harness emits?"
 unit = "state"
 formula = "Per signal × harness: registry alignment versus rows on the harness's route and rows matching another harness's route. Healthy, idle, possible break, no events, not applicable, stray (explained or not), or not in use (a harness this machine does not enable; flagged when its routes still have rows). Signals hidden on this machine are listed separately."
 scope = "system"
-
-# ---------------------------------------------------------------------------
-# V2 Cache efficiency
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "usage.input_tokens"
@@ -646,10 +581,6 @@ requires = ["session_identity", "model_usage"]
 codex = { route = "codex.usage", alignment = "aligned", note = "`conversation.id`." }
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.conversation.id`." }
 claude-code = { route = "claude.usage", alignment = "aligned", note = "`session.id`." }
-
-# ---------------------------------------------------------------------------
-# V3 Reasoning effort
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "effort.reasoning_tokens"
@@ -768,10 +699,6 @@ codex = { route = "codex.agent_spawn", alignment = "differs", note = "Subagent s
 oh-my-pi = { route = "omp.subagent", alignment = "aligned", note = "`invoke_agent <agent>` spans in the trace, advisors excluded." }
 claude-code = { route = "hook.subagent_start", alignment = "aligned", note = "`SubagentStart` hook events with the task's prompt ID. From the activity hooks' install date; earlier rows have no value." }
 
-# ---------------------------------------------------------------------------
-# V4 Tool failures
-# ---------------------------------------------------------------------------
-
 [[signal]]
 id = "tools.calls"
 view = "tools"
@@ -849,10 +776,6 @@ requires = ["task_boundary", "tool_calls", "tool_arguments"]
 codex = { route = "codex.tool_result", alignment = "aligned", note = "Ordered by call time within the task." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Argument hash from the `tool_call` hook. From the activity hooks' install date; earlier rows have no value." }
 claude-code = { route = "hook.tool_call", alignment = "differs", note = "Argument hash from the `PreToolUse` hook. From the activity hooks' install date; earlier rows have no value." }
-
-# ---------------------------------------------------------------------------
-# V5 Friction
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "friction.interrupt"
@@ -935,10 +858,6 @@ requires = ["task_boundary", "tool_calls", "tool_arguments"]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Operation = tool + command head + subcommand." }
 oh-my-pi = { route = "omp.execute_tool", alignment = "differs", note = "Operation = tool + command head + subcommand from the `tool_call` hook; tool name only before the hooks." }
 claude-code = { route = "claude.tool_result", alignment = "differs", note = "Operation = tool + command head + subcommand from the `PreToolUse` hook; tool + bash argv0 before the hooks." }
-
-# ---------------------------------------------------------------------------
-# V6 Guardrails
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "guard.decisions"
@@ -1030,10 +949,6 @@ requires = ["task_boundary", "tool_calls", "tool_arguments"]
 codex = { route = "codex.tool_result", alignment = "differs", note = "Kinds and outcomes as for verification runs; calls outside a user turn are unattributed." }
 oh-my-pi = { route = "hook.tool_call", alignment = "differs", note = "Kinds from the `tool_call` hook, outcome from the `execute_tool` span; call → root run of the same trace. From the deploy date." }
 claude-code = { route = "hook.tool_call", alignment = "differs", note = "Kinds from the `PreToolUse` hook, outcome from `tool_result`; call → interaction of the same trace. From the deploy date." }
-
-# ---------------------------------------------------------------------------
-# V7 Provider
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "provider.calls"
@@ -1152,10 +1067,6 @@ codex = { alignment = "not emitted", note = "Codex reports only the requested mo
 oh-my-pi = { route = "omp.chat", alignment = "aligned", note = "`gen_ai.request.model` vs `gen_ai.response.model`." }
 claude-code = { alignment = "not emitted", note = "LLM request spans carry only the requested model." }
 
-# ---------------------------------------------------------------------------
-# V8 Recurrence
-# ---------------------------------------------------------------------------
-
 [[signal]]
 id = "recur.targets"
 view = "recurrence"
@@ -1194,10 +1105,6 @@ requires = ["task_boundary", "tool_calls", "tool_failure"]
 codex = { route = "codex.tool_result", alignment = "aligned" }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error from the `tool_failure` hook; from the deploy date, span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line from the `PostToolUseFailure` hook; the `error_type` class before the hooks." }
-
-# ---------------------------------------------------------------------------
-# V10 Intent and corrections (Jev labels of submitted prompts)
-# ---------------------------------------------------------------------------
 
 [[signal]]
 id = "intent.labelled"
@@ -1281,10 +1188,6 @@ codex_exec = { alignment = "not applicable", note = "Headless one-shot runs have
 oh-my-pi = { route = "omp.user_prompt", alignment = "differs", note = "Prompt event sent by the omp activity extension." }
 claude-code = { route = "claude.user_prompt", alignment = "aligned" }
 
-# ---------------------------------------------------------------------------
-# V9 Interventions (workflow records in the local SQLite store)
-# ---------------------------------------------------------------------------
-
 [[signal]]
 id = "intervene.findings"
 view = "interventions"
@@ -1311,11 +1214,6 @@ question = "Are repeats addressed at the strongest deterministic tier?"
 unit = "proposals"
 formula = "Proposals by selected tier (tool, script, skill, guidance) and approval state."
 scope = "system"
-
-# ---------------------------------------------------------------------------
-# Excluded signals: no harness produces them, natively or through an activity
-# hook, so they are never shown.
-# ---------------------------------------------------------------------------
 
 [[excluded]]
 id = "intervene.rule_adherence"

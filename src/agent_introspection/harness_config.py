@@ -1,21 +1,3 @@
-"""Harness commands: list producer profiles, switch on a harness's export, preview parity.
-
-``harness list`` shows every bundled profile, whether this machine enables it, its
-binary on ``PATH``, and the version that binary prints (doctor's bounded version
-probe; ``--no-version`` runs no binary). ``harness configure`` writes a
-registered harness's ``export`` settings (and, opted in, its ``prompt_export`` ones)
-into the harness's own config files through ``config_writers``: only the profile's
-managed keys change, each changed file is first backed up to
-``<file>.bak-<UTC timestamp>``, and a second run changes nothing. A setting whose
-current value already reaches the collector over the other OTLP transport is left
-alone unless forced (``profiles.equivalent_transport``). It then installs the
-harness's activity hooks (``hook_install``), which ``harness remove-hooks`` takes out
-again. The output names only managed keys, so no other value in those files is ever
-printed, and shows their values as ``doctor`` does, without URL credentials or
-queries. ``harness impact`` previews
-which dashboard signals enabling a producer would hide (``capabilities.impact``).
-"""
-
 from __future__ import annotations
 
 import os
@@ -37,21 +19,12 @@ from agent_introspection import (
 )
 from agent_introspection.profiles import ConfigFile, Profile, Setting, SettingValue
 
-# Value parts of a managed setting shown in the output; any other nested key (such as
-# an exporter's headers) is named but never shown.
 _SHOWN_PARTS = frozenset({"otlp-http", "otlp-grpc", "endpoint", "protocol"})
 _NOT_SHOWN = "(not shown)"
 
 
 @dataclass(frozen=True)
 class ConfigureOptions:
-    """How ``harness configure`` runs.
-
-    ``roots`` are extra config directories: every one is configured, beside the
-    profile's existing roots for a file configured in each root, or in place of the
-    profile's paths for a file configured once.
-    """
-
     dry_run: bool = False
     prompt_export: bool = False
     force: bool = False
@@ -60,14 +33,6 @@ class ConfigureOptions:
 
 
 class SettingChange(TypedDict):
-    """One managed key's change in a config file.
-
-    ``action`` is ``add``, ``change``, ``unchanged``, or ``satisfied``; ``old`` and
-    ``new`` are the value before and after (a part the profile does not manage shown as
-    ``(not shown)``). ``transport`` says how a satisfied value reaches the collector;
-    ``opt_in`` marks a prompt-export setting left as it is, and ``on`` whether it is set.
-    """
-
     key: str
     group: str
     action: str
@@ -80,34 +45,20 @@ class SettingChange(TypedDict):
 
 @dataclass(frozen=True)
 class _Plan:
-    """The changes to one config file, and the values to write."""
-
     changes: list[SettingChange]
     updates: dict[str, SettingValue]
 
 
 def omp_plugin_installed(home: Path) -> bool:
-    """Return whether omp's activity plugin is linked into this home's omp."""
     return (home / doctor_harness.OMP_PLUGIN_LINK).is_symlink()
 
 
 def profile_keys(enabled: Sequence[str]) -> list[str]:
-    """Return the distinct profile keys that ``[harnesses] enabled`` names, in its order.
-
-    A Codex surface (``codex_exec``) and ``codex`` both name the ``codex`` profile.
-    """
     known = profiles.load_profiles()
     return list(dict.fromkeys(profiles.resolve(name, known).key for name in enabled))
 
 
 def harness_list(enabled: Sequence[str] | None, *, versions: bool = True) -> dict[str, Any]:
-    """Return every bundled profile with its status, enablement, binary, and version.
-
-    ``enabled`` is config ``[harnesses] enabled``; None enables every registry harness.
-    ``versions`` runs each binary found on PATH with the profile's ``version_args``
-    through doctor's bounded probe (``doctor_harness.installed_version``, at most
-    ``doctor_harness.VERSION_TIMEOUT_SECONDS`` each); False runs no binary.
-    """
     registry = facts.load_registry()
     harnesses = facts.enabled_harnesses(registry, enabled)
     return {
@@ -119,13 +70,6 @@ def harness_list(enabled: Sequence[str] | None, *, versions: bool = True) -> dic
 
 
 def listed_version(profile: Profile, binary_path: str | None, run: bool) -> dict[str, Any]:
-    """Return the version ``binary_path`` prints and whether the profile verified it.
-
-    ``installed_version`` and ``version_verified`` are None when the version is unknown:
-    the binary is not on PATH (``binary_path`` None), or it was not run or printed no
-    version, which ``version_note`` then says. ``run`` False runs nothing, and neither
-    does a profile with no ``version_args``, so a harness never starts a session here.
-    """
     unknown: dict[str, Any] = {"installed_version": None, "version_verified": None}
     if binary_path is None:
         return unknown
@@ -174,19 +118,6 @@ def _root_file(root: str, config_file: ConfigFile) -> Path:
 
 
 def config_targets(config_file: ConfigFile, roots: Sequence[str] = ()) -> list[Path]:
-    """Return the files to configure, resolved through symlinks, without repeats.
-
-    The files ``profiles.config_paths`` resolves, which ``doctor`` reads: a file
-    configured once (``roots = "first"``) goes to the first path whose variables are
-    set, created if absent, and a file configured in each root to every chosen or
-    existing root. ``roots`` adds explicit config directories (see
-    ``ConfigureOptions``).
-
-    Raises
-    ------
-    ValueError
-        When a ``roots`` entry is not a directory, or no path's variables are set.
-    """
     extras = [_root_file(root, config_file) for root in roots]
     chosen = profiles.config_paths(config_file, os.environ, Path.home(), extras)
     if not chosen:
@@ -198,11 +129,6 @@ def config_targets(config_file: ConfigFile, roots: Sequence[str] = ()) -> list[P
 
 
 def _shown(value: object) -> object:
-    """Return a managed setting's value as safe to print, as ``doctor`` shows it.
-
-    Any part the profile does not manage is hidden, and text is shown through
-    ``doctor_harness.shown_text``: a URL without credentials, query, or fragment.
-    """
     if isinstance(value, Mapping):
         return {
             str(key): _shown(item) if key in _SHOWN_PARTS else _NOT_SHOWN
@@ -222,7 +148,6 @@ def _change(
     context: Mapping[str, str],
     options: ConfigureOptions,
 ) -> tuple[SettingChange, SettingValue]:
-    """Return one managed key's change and its intended value."""
     wanted = setting.render(context)
     old = current.get(setting.key)
     change: SettingChange = {
@@ -234,7 +159,6 @@ def _change(
     }
     transport = profiles.equivalent_transport(profile, setting, current, context)
     if setting.group == "prompt_export" and not options.prompt_export:
-        # Prompt export is opt-in: report its state, never change it.
         change["action"] = "unchanged"
         change["new"] = _shown(old)
         change["opt_in"] = True
@@ -283,11 +207,6 @@ def _configure_file(
     options: ConfigureOptions,
     context: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Plan one file's managed keys and, unless a dry run, write the changed ones.
-
-    ``notes`` says how the file's layout changes beyond the managed key lines, such as
-    a TOML table rewritten whole (``config_writers.TableUpdate``).
-    """
     original = _read(path)
     text = original or ""
     try:
@@ -347,7 +266,6 @@ def _registered(name: str) -> Profile:
 
 
 def _settings_files(profile: Profile, roots: Sequence[str]) -> list[Path]:
-    """Return the JSON settings files that hold Claude Code's hooks, one per root."""
     return [
         path
         for config_file in profile.config_files
@@ -357,7 +275,6 @@ def _settings_files(profile: Profile, roots: Sequence[str]) -> list[Path]:
 
 
 def remove_hooks(name: str, *, dry_run: bool = False, roots: Sequence[str] = ()) -> dict[str, Any]:
-    """Take a registered harness's activity hooks out; its export settings stay."""
     profile = _registered(name)
     options = hook_install.HookOptions(home=Path.home(), dry_run=dry_run)
     hooks = hook_install.remove(profile.hook_adapter, _settings_files(profile, roots), options)
@@ -370,19 +287,6 @@ def remove_hooks(name: str, *, dry_run: bool = False, roots: Sequence[str] = ())
 
 
 def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -> dict[str, Any]:
-    """Write a registered harness's export settings into its config files.
-
-    ``otlp_endpoint`` is ``AppConfig.collector_endpoint`` (None for the default): ``[signoz]
-    otlp_endpoint``, or ``[machine] export_endpoint`` on an additional machine.
-
-    Then it installs the harness's activity hooks, when its profile names a hook adapter.
-
-    Raises
-    ------
-    ValueError
-        When the profile is unknown or a candidate, a root is not a directory, a config
-        file cannot be parsed or changed safely, or a hook cannot be installed.
-    """
     profile = _registered(name)
     context = profiles.export_context(profile, otlp_endpoint)
     hook_install.require(profile.hook_adapter)
@@ -422,7 +326,6 @@ def configure(name: str, otlp_endpoint: str | None, options: ConfigureOptions) -
 
 
 def _impact_profile(name: str, registry: facts.Registry) -> Profile:
-    """Resolve a bundled profile by name, or load a draft profile file by path."""
     if name.endswith(".toml") or os.sep in name:
         path = Path(name).expanduser()
         if not path.is_file():
@@ -432,7 +335,6 @@ def _impact_profile(name: str, registry: facts.Registry) -> Profile:
 
 
 def _projection(profile: Profile, registry: facts.Registry) -> dict[str, dict[str, int]]:
-    """Count each projection outcome per surface (the profile key for a candidate)."""
     surfaces = profile.registry_keys or ("",)
     summary: dict[str, dict[str, int]] = {}
     for surface in surfaces:
@@ -444,12 +346,6 @@ def _projection(profile: Profile, registry: facts.Registry) -> dict[str, dict[st
 
 
 def harness_impact(name: str, enabled: Sequence[str] | None) -> dict[str, Any]:
-    """Preview signal parity on this machine if the producer were also enabled.
-
-    ``name`` is a profile key, registry harness key, or service name, or the path of a
-    draft profile file. ``enabled`` is config ``[harnesses] enabled``. A producer that
-    is already enabled is noted, with the signals it keeps hidden now.
-    """
     registry = facts.load_registry()
     profile = _impact_profile(name, registry)
     result: dict[str, Any] = {

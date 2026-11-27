@@ -5,10 +5,8 @@ import {
   type Registry,
 } from "./contracts";
 
-/** Alignments that reach a signal on a machine using the harness. */
 const REACHES = new Set(["aligned", "differs", "not applicable"]);
 
-/** The harnesses this machine uses, in registry order. */
 export const enabledHarnesses = (
   registry: Pick<Registry, "harnesses">,
 ): Harness[] =>
@@ -18,11 +16,6 @@ export const enabledHarnesses = (
     ),
   );
 
-/**
- * Harness-scoped signals some enabled harness does not emit, one entry per signal
- * and reason. Parity is judged over the enabled harnesses only, so a signal is
- * shown when every enabled harness reaches it and hidden otherwise.
- */
 export function hiddenSignals(
   registry: Pick<Registry, "signals" | "support" | "harnesses">,
 ): HiddenSignal[] {
@@ -53,7 +46,6 @@ export function hiddenSignals(
   return hidden;
 }
 
-/** Whether the signal is hidden on this machine. */
 export const isHidden = (
   registry: Pick<Registry, "hidden">,
   signal: string,

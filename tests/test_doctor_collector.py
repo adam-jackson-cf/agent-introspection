@@ -27,7 +27,6 @@ def test_live_posts_one_empty_logs_request_to_the_hooks_endpoint(
     port = int(collector.base.rsplit(":", 1)[1])
     probes = replace(
         machine.probes,
-        # Only the test collector is really dialled; the standard OTLP ports are faked.
         tcp_open=lambda host, wanted: wanted != port or doctor.tcp_open(host, wanted),
         post_json=doctor.post_json,
     )
@@ -43,8 +42,6 @@ def test_live_posts_one_empty_logs_request_to_the_hooks_endpoint(
 
 def test_tcp_open_and_http_get_talk_to_a_local_server(collector: Collector) -> None:
     port = int(collector.base.rsplit(":", 1)[1])
-    # A port taken and released: nothing listens, so a connection is refused at once on
-    # every platform, never left to the connect timeout.
     with socket.socket() as unused:
         unused.bind(("127.0.0.1", 0))
         closed = unused.getsockname()[1]

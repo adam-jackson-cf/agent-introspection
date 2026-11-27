@@ -1,12 +1,3 @@
-"""Read-only checks that a SigNoz ClickHouse can host the facts store.
-
-``setup`` runs these before ``facts install``, and ``doctor`` reports them, against an
-existing or local SigNoz. Nothing is created or written: grants are read with ``SHOW
-GRANTS``, source tables through ``system.columns`` and ``WHERE 0`` probes. A
-configuration that does not load, or a connection that cannot be set up, is reported
-as a failing check.
-"""
-
 from __future__ import annotations
 
 import json
@@ -24,13 +15,8 @@ from agent_introspection.facts import (
     sql_string,
 )
 
-# Refreshable materialized views are production ready (no experimental setting) from
-# ClickHouse 24.10; APPEND arrived in 24.9 and DEPENDS ON with the feature in 23.12.
-# `facts install` sets no experimental flag, so 24.10 is the minimum.
 MINIMUM_VERSION: Final = (24, 10)
 
-# The SigNoz columns facts_sql/select_spans.sql, select_logs.sql, and
-# select_hook_events.sql read.
 SPAN_TABLE: Final = ("signoz_traces", "distributed_signoz_index_v3")
 SPAN_COLUMNS: Final = (
     "timestamp",
@@ -62,8 +48,6 @@ LOG_COLUMNS: Final = (
     "resource",
 )
 
-# Privileges `facts install`, `backfill`, `sync`, and the loaders need on the facts
-# database, each with the broader privileges that imply it.
 REQUIRED_PRIVILEGES: Final = {
     "CREATE DATABASE": ("CREATE",),
     "CREATE TABLE": ("CREATE",),
@@ -103,7 +87,6 @@ def _version(run: SqlRunner) -> Check:
 
 def _transport(config: AppConfig) -> Check:
     url = urlsplit(config.signoz.clickhouse_url)
-    # The config only accepts local hosts, so this records what the CLI talks to.
     return _check("transport", "pass", f"{url.scheme} to {url.hostname} on this machine")
 
 
@@ -128,11 +111,6 @@ def _source(run: SqlRunner, table: tuple[str, str], columns: tuple[str, ...]) ->
 
 
 def parse_grants(text: str) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
-    """Return (privilege, scope) pairs granted and revoked by ``SHOW GRANTS`` output.
-
-    Column-level grants such as ``SELECT(a, b)`` are kept with their parentheses, so
-    they never count as a table-wide privilege.
-    """
     granted: set[tuple[str, str]] = set()
     revoked: set[tuple[str, str]] = set()
     for line in text.splitlines():
@@ -146,11 +124,6 @@ def parse_grants(text: str) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]
 
 
 def missing_privileges(text: str, *, database_exists: bool) -> list[str]:
-    """Return the required facts-database privileges ``SHOW GRANTS`` does not give.
-
-    A revoke on the facts database or any of its tables counts against the privilege,
-    so partial revokes fail closed.
-    """
     granted, revoked = parse_grants(text)
     return [
         required
@@ -180,11 +153,6 @@ def _required(database_exists: bool) -> list[str]:
 
 
 def _grant_gaps(run: SqlRunner, database_exists: bool) -> tuple[list[str], str]:
-    """Return missing privileges and how they were determined.
-
-    ``CHECK GRANT`` (recent ClickHouse releases) resolves roles and partial revokes on the
-    server; older servers fall back to parsing ``SHOW GRANTS``.
-    """
     try:
         missing = [
             privilege
@@ -228,7 +196,6 @@ def _view_refreshes(run: SqlRunner) -> Check:
 
 
 def _producer_data(run: SqlRunner) -> Check:
-    # The services the curated projections load: the registry's `[harnesses]` keys.
     services = ", ".join(map(sql_string, registry_harnesses()))
     rows = run(
         "SELECT source, service, count() AS rows FROM ("
@@ -269,7 +236,6 @@ def _guarded(name: str, check: Callable[[], Check], *, status: str = "fail") -> 
 
 
 def _setup_failure(name: str, exc: ConfigurationError) -> Check:
-    # Configuration errors name settings and variables, never a password or its output.
     return _check(name, "fail", f"{type(exc).__name__}: {exc}")
 
 
@@ -277,7 +243,6 @@ def _server_checks(run: SqlRunner) -> list[Check]:
     try:
         version = _guarded("clickhouse_version", lambda: _version(run))
     except ConfigurationError as exc:
-        # The Docker runner refuses a non-local Docker context on its first statement.
         return [_setup_failure("connection", exc)]
     if version["status"] != "pass" and "version" not in version:
         return [version]
@@ -300,19 +265,12 @@ def _report(config: AppConfig, server_checks: list[Check]) -> dict[str, Any]:
 
 
 def preflight(run: SqlRunner, config: AppConfig) -> dict[str, Any]:
-    """Run every read-only check; ``passed`` is false when any check fails."""
     return _report(config, _server_checks(run))
 
 
 def report(
     load: Callable[[], AppConfig], connect: Callable[[AppConfig], SqlRunner]
 ) -> dict[str, Any]:
-    """Load the configuration, connect, and run every check; never raise a setup error.
-
-    A configuration that does not load fails a ``configuration`` check. A runner that
-    cannot be built, such as a missing ClickHouse password, fails a ``connection``
-    check.
-    """
     try:
         config = load()
     except ConfigurationError as exc:

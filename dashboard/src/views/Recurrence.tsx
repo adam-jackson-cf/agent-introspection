@@ -17,7 +17,6 @@ const harnessOrder = (harness: unknown) =>
 const stringList = (value: unknown) =>
   Array.isArray(value) ? value.map(String) : [];
 
-/** The Europe/London calendar date of an ISO instant, which the SQL week cuts at. */
 export function londonDate(instant: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/London",
@@ -27,10 +26,6 @@ export function londonDate(instant: string): string {
   }).format(new Date(instant));
 }
 
-/**
- * Failure-cluster rows arrive finished (one per tool family × failure class);
- * only the per-harness breakdown is put in registry order, never ranked.
- */
 export function clusterRows(rows: Row[]): Row[] {
   return rows.map((row) => ({
     ...row,
@@ -40,7 +35,6 @@ export function clusterRows(rows: Row[]): Row[] {
   }));
 }
 
-/** Long daily rows (one per day and harness, finished) as one row per day for the chart. */
 function dailyWide(rows: Row[]): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
@@ -56,7 +50,6 @@ function dailyWide(rows: Row[]): Row[] {
   );
 }
 
-/** Each harness's occurrences of one cluster, in registry order. */
 function Breakdown({ row }: { row: Row }) {
   const parts = stringList(row["breakdown"]);
   return (

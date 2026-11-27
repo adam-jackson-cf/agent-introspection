@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""Type-check every maintained Python file and fail when the mypy target list drifts.
-
-The drift check enforces ``MYPY.package-coverage``: every maintained Python file (including
-untracked ones) must be covered by ``[tool.mypy] files``/``packages``, and every listed entry must
-exist. Skill scripts under ``.agents/skills/*/scripts`` share module basenames and contain
-non-importable names, so they are checked one file per mypy invocation with the same config.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -19,6 +11,14 @@ from pathlib import Path
 
 from lib.python_tool_scope import as_list, load_pyproject, maintained_python_files
 
+_DESCRIPTION = """Type-check every maintained Python file and fail when the mypy target list drifts.
+
+The drift check enforces ``MYPY.package-coverage``: every maintained Python file (including
+untracked ones) must be covered by ``[tool.mypy] files``/``packages``, and every listed entry must
+exist. Skill scripts under ``.agents/skills/*/scripts`` share module basenames and contain
+non-importable names, so they are checked one file per mypy invocation with the same config.
+"""
+
 _ISOLATED_GLOB = ".agents/skills/*/scripts/*"
 
 
@@ -27,7 +27,6 @@ def _is_isolated(path: str) -> bool:
 
 
 def _entries(settings: dict[str, object], root: Path) -> list[str]:
-    """Return configured source roots as root-relative POSIX paths, with globs expanded."""
     bases = [Path(item) for item in as_list(settings.get("mypy_path")) or ["."]]
     entries: list[str] = []
     for item in as_list(settings.get("files")):
@@ -50,7 +49,6 @@ def _entries(settings: dict[str, object], root: Path) -> list[str]:
 
 
 def _normalise_entry(item: str) -> str:
-    """Return ``item`` as a root-relative POSIX path; ``.`` stays ``.``."""
     return Path(item).as_posix()
 
 
@@ -59,7 +57,6 @@ def _covered(path: str, entries: list[str]) -> bool:
 
 
 def coverage_problems(root: Path, config: Path) -> list[str]:
-    """Return one diagnostic per uncovered maintained file or stale configured entry."""
     settings = load_pyproject(config).get("tool", {}).get("mypy", {})
     entries = _entries(settings, root)
     if not entries:
@@ -106,8 +103,7 @@ def _mypy(config: Path, root: Path, targets: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the drift check, then mypy for the configured targets and isolated skill scripts."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=_DESCRIPTION)
     parser.add_argument("--config", type=Path, default=Path("pyproject.toml"))
     parser.add_argument("--drift-only", action="store_true", help="skip running mypy")
     parser.add_argument("paths", nargs="*", type=Path)

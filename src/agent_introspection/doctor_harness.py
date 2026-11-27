@@ -1,17 +1,3 @@
-"""Per-harness ``doctor`` checks: binary, config files, export settings, hooks, telemetry.
-
-``doctor`` runs one block of these checks per enabled harness profile (``profiles.py``;
-the ``codex`` profile covers its three surfaces). A profile's config files resolve as
-``harness configure`` resolves the files it writes (``profiles.config_paths``):
-``first`` takes the first path whose variables are set, ``each`` every chosen or
-existing root, and a resolved file that does not exist is reported missing.
-
-Files are read as ``harness configure`` reads them (``config_writers.read_table``).
-Only a profile's managed settings are put into a result, and their values are shown
-without URL credentials, queries, or exporter headers. Other keys, secrets among
-them, never appear.
-"""
-
 from __future__ import annotations
 
 import json
@@ -33,15 +19,11 @@ from agent_introspection.json_types import JsonMapping
 
 STATUSES: Final = ("pass", "warn", "fail", "off", "info")
 VERSION_TIMEOUT_SECONDS: Final = 5
-# Where `harness configure` installs the shim and the omp plugin, under the home.
 MANAGED_RUNTIME: Final = Path(".local/lib/agent-introspection/activity-hooks-v1")
 SHIM: Final = "activity-shim.sh"
-# Beside the shim: the config path the hooks read, written only for a non-default one.
 CONFIG_POINTER: Final = "config-path"
 OMP_PLUGIN_LINK: Final = Path(".omp/plugins/node_modules/agent-introspection-activity")
 OMP_PLUGIN_FILES: Final = ("package.json", "activity.ts")
-# The events `harness configure claude-code` registers, with their tool-name matchers
-# (hook_install.py).
 CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "PreToolUse": "*",
     "PostToolUseFailure": "*",
@@ -50,12 +32,10 @@ CLAUDE_HOOK_EVENTS: Final[Mapping[str, str | None]] = {
     "StopFailure": None,
     "SubagentStart": None,
 }
-# Rows are counted over a day; the last row is looked for over a week.
 LAST_SEEN_DAYS: Final = 7
 RAISED_FIX: Final = (
     "the check could not run: fix the cause its error class names, then rerun doctor"
 )
-# The error of a resolved config file that does not exist yet.
 MISSING: Final = "missing"
 _RANK = {"pass": 0, "info": 1, "off": 2, "warn": 3, "fail": 4}
 _DAY_SECONDS = 86_400
@@ -80,16 +60,10 @@ type VersionProbe = Callable[[Sequence[str]], str]
 
 
 def check(name: str, status: str, detail: str, fix: str = "", **extra: object) -> Check:
-    """Return one doctor check; ``fix`` says what to do when it is not a pass."""
     return {"name": name, "status": status, "detail": detail, "fix": fix, **extra}
 
 
 def guarded(name: str, produce: Callable[[], Check | list[Check]], **extra: object) -> list[Check]:
-    """Run one check, adding ``extra`` to each result.
-
-    An exception becomes a failing check that names only its class, so one check never
-    stops the report and an error message never carries a value into it.
-    """
     try:
         result = produce()
     except Exception as exc:
@@ -98,14 +72,11 @@ def guarded(name: str, produce: Callable[[], Check | list[Check]], **extra: obje
 
 
 def worst(statuses: Iterable[str]) -> str:
-    """Return the most severe status (``pass`` for none)."""
     return max(statuses, key=_RANK.__getitem__, default="pass")
 
 
 @dataclass(frozen=True)
 class HarnessProbes:
-    """How the harness checks find binaries, run them, and resolve paths."""
-
     which: Which
     version: VersionProbe
     environ: Mapping[str, str]
@@ -114,13 +85,6 @@ class HarnessProbes:
 
 @dataclass(frozen=True)
 class Telemetry:
-    """Each enabled service's rows in the last day and last-seen time, or why not counted.
-
-    ``counts`` maps a service to ``spans`` and ``logs`` (rows in 24 hours) and
-    ``last_seen`` (Unix seconds, 0 when none in ``LAST_SEEN_DAYS``). ``skipped`` says
-    why nothing was asked; ``error`` names the class of a failed query.
-    """
-
     counts: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
     skipped: str = ""
     error: str = ""
@@ -128,8 +92,6 @@ class Telemetry:
 
 @dataclass(frozen=True)
 class HarnessContext:
-    """What every harness block shares: the config, enabled harnesses, and the probes."""
-
     config: AppConfig
     enabled: tuple[str, ...]
     telemetry: Telemetry
@@ -140,12 +102,6 @@ class HarnessContext:
 
 @dataclass(frozen=True)
 class LoadedFile:
-    """One resolved config file, or the class of the error that kept it from being read.
-
-    ``document`` is the whole file and ``table`` the settings table the profile manages
-    (the same for ``table = ""``), both as ``config_writers.read_table`` reads them.
-    """
-
     spec: profiles.ConfigFile
     path: Path
     document: JsonMapping = field(default_factory=dict)
@@ -153,11 +109,7 @@ class LoadedFile:
     error: str = ""
 
 
-# --- Showing values ----------------------------------------------------------------
-
-
 def shown_path(path: Path, home: Path) -> str:
-    """Return ``path`` with the home directory written as ``~``."""
     try:
         return f"~/{path.relative_to(home).as_posix()}"
     except ValueError:
@@ -165,10 +117,6 @@ def shown_path(path: Path, home: Path) -> str:
 
 
 def shell_path(path: Path, home: Path) -> str:
-    """Return ``path`` quoted for a pasted shell command, the home directory as ``~``.
-
-    The ``~/`` stays outside the quotes so the shell still expands it.
-    """
     try:
         relative = path.relative_to(home).as_posix()
     except ValueError:
@@ -177,10 +125,6 @@ def shell_path(path: Path, home: Path) -> str:
 
 
 def shown_text(text: str) -> str:
-    """Return a URL without credentials, query, or fragment; other text, shortened.
-
-    ``doctor`` and ``harness configure`` show a managed setting's text through it.
-    """
     parts = urlsplit(text)
     if parts.scheme and parts.hostname:
         try:
@@ -195,7 +139,6 @@ def shown_text(text: str) -> str:
 
 
 def _shown_table(table: Mapping[str, object]) -> str:
-    """Name an exporter table by kind and endpoint only, never its headers."""
     if len(table) == 1:
         kind, options = next(iter(table.items()))
         endpoint = options.get("endpoint") if isinstance(options, Mapping) else None
@@ -205,7 +148,6 @@ def _shown_table(table: Mapping[str, object]) -> str:
 
 
 def shown_value(value: object) -> str:
-    """Return a managed setting's value as safe to print."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -218,16 +160,12 @@ def shown_value(value: object) -> str:
 
 
 def age(seconds: float) -> str:
-    """Return a short age such as ``5 min``, ``3 h``, or ``2 d``."""
     minutes = int(max(seconds, 0) // 60)
     if minutes < 60:
         return f"{minutes} min"
     if minutes < 48 * 60:
         return f"{minutes // 60} h"
     return f"{minutes // (24 * 60)} d"
-
-
-# --- Binary --------------------------------------------------------------------------
 
 
 def _run_version(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -242,7 +180,6 @@ def _run_version(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 def installed_version(argv: Sequence[str]) -> str:
-    """Return the first dotted version number ``argv`` prints, or ``""`` for none."""
     completed = _run_version(argv)
     match = _VERSION.search(completed.stdout) or _VERSION.search(completed.stderr)
     return match.group(0) if match else ""
@@ -253,7 +190,6 @@ def _version_key(version: str) -> tuple[int, ...]:
 
 
 def binary_check(profile: profiles.Profile, probes: HarnessProbes) -> Check:
-    """Find the binary on PATH and compare its version with the verified ones."""
     found = probes.which(profile.binary)
     if found is None:
         return check(
@@ -296,9 +232,6 @@ def binary_check(profile: profiles.Profile, probes: HarnessProbes) -> Check:
     )
 
 
-# --- Config files --------------------------------------------------------------------
-
-
 def _unique(paths: Iterable[Path]) -> list[Path]:
     seen: dict[Path, Path] = {}
     for path in paths:
@@ -307,15 +240,10 @@ def _unique(paths: Iterable[Path]) -> list[Path]:
 
 
 def config_paths(spec: profiles.ConfigFile, probes: HarnessProbes) -> list[Path]:
-    """Return the files ``spec`` names, as ``harness configure`` resolves the ones it writes."""
     return _unique(profiles.config_paths(spec, probes.environ, probes.home, []))
 
 
 def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
-    """Read one config file as ``harness configure`` does; a failure keeps its error class.
-
-    A file that does not exist has the error ``MISSING``.
-    """
     if not path.exists() and not path.is_symlink():
         return LoadedFile(spec, path, error=MISSING)
     try:
@@ -328,7 +256,6 @@ def load_file(spec: profiles.ConfigFile, path: Path) -> LoadedFile:
 
 
 def load_files(profile: profiles.Profile, context: HarnessContext) -> list[LoadedFile]:
-    """Resolve and read every config file the profile names."""
     return [
         load_file(spec, path)
         for spec in profile.config_files
@@ -339,7 +266,6 @@ def load_files(profile: profiles.Profile, context: HarnessContext) -> list[Loade
 def files_check(
     profile: profiles.Profile, files: Sequence[LoadedFile], probes: HarnessProbes
 ) -> Check:
-    """Check every config file the profile names exists and can be read."""
     found = [shown_path(item.path, probes.home) for item in files if not item.error]
     broken = [
         f"{shown_path(item.path, probes.home)} ({item.error})"
@@ -373,9 +299,6 @@ def files_check(
     return check("config_files", "pass", f"read {', '.join(found)}", files=found)
 
 
-# --- Settings ------------------------------------------------------------------------
-
-
 def _result(key: str, status: str, detail: str) -> dict[str, str]:
     return {"key": key, "status": status, "detail": detail}
 
@@ -386,11 +309,6 @@ def setting_result(
     table: JsonMapping,
     context: Mapping[str, str],
 ) -> dict[str, str]:
-    """Judge one managed setting against its rendered value and transport equivalence.
-
-    A missing or different service name only warns, because producers name their own
-    service by default; any other export setting turns on or routes export, so it fails.
-    """
     expected = setting.render(context)
     actual = table.get(setting.key)
     if setting.key in table and actual == expected:
@@ -407,7 +325,6 @@ def setting_result(
 
 
 def _settings_detail(results: Sequence[Mapping[str, str]]) -> str:
-    """Summarise setting results: ``6 match; satisfied (grpc): A, B; missing: C``."""
     groups: dict[str, list[str]] = {}
     for result in results:
         detail = result["detail"]
@@ -429,7 +346,6 @@ def _configure_fix(profile: profiles.Profile, item: LoadedFile, probes: HarnessP
 
 
 def export_check(profile: profiles.Profile, item: LoadedFile, context: HarnessContext) -> Check:
-    """Check one config file's export settings."""
     rendering = profiles.export_context(profile, context.config.collector_endpoint)
     results = [
         setting_result(profile, setting, item.table, rendering)
@@ -438,7 +354,6 @@ def export_check(profile: profiles.Profile, item: LoadedFile, context: HarnessCo
     ]
     status = worst(result["status"] for result in results)
     path = shown_path(item.path, context.probes.home)
-    # A file kept in each root (a Codex home) is named, so its checks tell apart.
     where = f"{path}: " if item.spec.roots == "each" else ""
     return check(
         "export_settings",
@@ -453,21 +368,17 @@ def export_check(profile: profiles.Profile, item: LoadedFile, context: HarnessCo
 def export_checks(
     profile: profiles.Profile, files: Sequence[LoadedFile], context: HarnessContext
 ) -> list[Check]:
-    """Check the export settings of every config file that parsed."""
     return [export_check(profile, item, context) for item in files if not item.error]
 
 
 @dataclass(frozen=True)
 class _PromptSetting:
-    """One prompt-export setting in one config file, against the profile's value."""
-
     item: LoadedFile
     setting: profiles.Setting
     wanted: profiles.SettingValue
 
     @property
     def state(self) -> str:
-        """``on`` (the profile's value), ``unset``, or ``other`` (a value set by hand)."""
         if self.setting.key not in self.item.table:
             return "unset"
         return "on" if self.item.table[self.setting.key] == self.wanted else "other"
@@ -482,31 +393,21 @@ class _PromptSetting:
 
 @dataclass(frozen=True)
 class _PromptFile:
-    """One config file's prompt-export settings, in profile order.
-
-    The first is the file's switch: prompt text is exported only while it holds the
-    profile's value. Any others qualify what the switch exports (Claude Code's keeps
-    assistant responses redacted); one left unset follows the switch.
-    """
-
     item: LoadedFile
     settings: tuple[_PromptSetting, ...]
 
     @property
     def exporting(self) -> bool:
-        """Whether the switch is on, so the harness exports prompt text from this file."""
         return self.settings[0].state == "on"
 
     @property
     def differing(self) -> list[_PromptSetting]:
-        """The settings not at the profile's value."""
         return [row for row in self.settings if row.state != "on"]
 
 
 def _prompt_files(
     profile: profiles.Profile, files: Sequence[LoadedFile], rendering: Mapping[str, str]
 ) -> list[_PromptFile]:
-    """Return each readable file's prompt-export settings; files with none are left out."""
     found = (
         _PromptFile(
             item,
@@ -523,12 +424,6 @@ def _prompt_files(
 
 
 def _prompt_state(prompt_files: Sequence[_PromptFile]) -> str:
-    """Return ``on``, ``off``, ``partly``, or ``by_hand`` for a harness's files together.
-
-    ``partly``: some files export and others do not (one Codex home of several), or an
-    exporting file leaves a qualifying setting unset. ``by_hand``: every file exports
-    and a qualifying setting holds a value set by hand.
-    """
     exporting = [prompt_file for prompt_file in prompt_files if prompt_file.exporting]
     if not exporting:
         return "off"
@@ -542,11 +437,6 @@ def _prompt_state(prompt_files: Sequence[_PromptFile]) -> str:
 def _prompt_configure(
     profile: profiles.Profile, prompt_files: Sequence[_PromptFile], home: Path
 ) -> str:
-    """Return the ``--prompt-export`` command for the files that differ.
-
-    A file kept in each root (a Codex home) is named with ``--root``, as
-    ``export_check`` does, so the command writes the files that differ.
-    """
     roots = "".join(
         f" --root {shell_path(prompt_file.item.path.parent, home)}"
         for prompt_file in prompt_files
@@ -558,18 +448,6 @@ def _prompt_configure(
 def prompt_check(
     profile: profiles.Profile, files: Sequence[LoadedFile], context: HarnessContext
 ) -> list[Check]:
-    """Report whether prompt export is on; off is a choice, never a failure.
-
-    A file exports prompt text only while its switch (its first prompt-export setting)
-    holds the profile's value, so a file whose switch is unset or set otherwise is
-    ``off`` whatever its other settings hold. A harness some of whose files export and
-    others do not warns, naming the files that export. So does an exporting file that
-    leaves a qualifying setting unset (Claude Code's switch alone also exports
-    assistant responses): ``harness configure`` writes all of them or none. An
-    exporting file whose qualifying settings hold a value set by hand (such as
-    ``OTEL_LOG_ASSISTANT_RESPONSES=1``) is ``info``: a deliberate choice, reported with
-    the value and what ``harness configure --prompt-export`` would write over it.
-    """
     rendering = profiles.export_context(profile, context.config.collector_endpoint)
     prompt_files = _prompt_files(profile, files, rendering)
     if not prompt_files:
@@ -620,11 +498,7 @@ def prompt_check(
     ]
 
 
-# --- Activity hooks ------------------------------------------------------------------
-
-
 def claude_hook_command(shim: Path, event: str) -> str:
-    """Return the command the Claude Code installer writes for ``event``."""
     return f"/bin/sh {shlex.quote(str(shim))} claude-code {event}"
 
 
@@ -646,7 +520,6 @@ def _runs_shim(entries: object, matcher: str | None, command: str) -> bool:
 
 
 def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
-    """Check settings.json runs the managed shim for each activity event."""
     fix = "`agent-introspection harness configure claude-code` (with --dry-run first)"
     settings = next((item for item in files if item.spec.format == "json" and not item.error), None)
     if settings is None:
@@ -673,7 +546,6 @@ def claude_hooks_check(files: Sequence[LoadedFile], home: Path) -> Check:
 
 
 def omp_plugin_check(home: Path) -> Check:
-    """Check omp's plugin link resolves to the managed plugin directory."""
     managed = home / MANAGED_RUNTIME / "omp"
     fix = "`agent-introspection harness configure omp` (with --dry-run first)"
     link = home / OMP_PLUGIN_LINK
@@ -707,7 +579,6 @@ def omp_plugin_check(home: Path) -> Check:
 
 
 def pointed_config(config_path: Path | None) -> str | None:
-    """Return the config path the hooks must be pointed at; None for the default file."""
     if config_path is None:
         return None
     selected = config_path.expanduser().resolve(strict=False)
@@ -715,7 +586,6 @@ def pointed_config(config_path: Path | None) -> str | None:
 
 
 def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Check:
-    """Check the hooks read the config file doctor checked."""
     pointer = home / MANAGED_RUNTIME / CONFIG_POINTER
     read = pointer.read_text("utf-8").strip() if pointer.is_file() else None
     expected = pointed_config(config_path)
@@ -732,7 +602,6 @@ def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Che
 
 
 def shim_check(home: Path, profile_key: str) -> Check:
-    """Check the managed shim exists, is executable, and is the one this CLI ships."""
     shim = home / MANAGED_RUNTIME / SHIM
     fix = f"`agent-introspection harness configure {profile_key}` installs it"
     if not shim.is_file():
@@ -756,7 +625,6 @@ def hook_checks(
     home: Path,
     config_path: Path | None = None,
 ) -> list[Check]:
-    """Check the activity hooks of a profile with a hook adapter, each isolated."""
     adapters: dict[str | None, Callable[[], Check]] = {
         "claude-code": partial(claude_hooks_check, files, home),
         "omp": partial(omp_plugin_check, home),
@@ -771,11 +639,7 @@ def hook_checks(
     ]
 
 
-# --- Telemetry -----------------------------------------------------------------------
-
-
 def telemetry_counts(run: facts.SqlRunner, services: Sequence[str]) -> dict[str, dict[str, int]]:
-    """Count each service's spans and logs in the last day and find its last row (one query)."""
     counts = {service: {"spans": 0, "logs": 0, "last_seen": 0} for service in services}
     if not services:
         return counts
@@ -796,7 +660,6 @@ def telemetry_counts(run: facts.SqlRunner, services: Sequence[str]) -> dict[str,
 
 
 def telemetry_check(profile: profiles.Profile, context: HarnessContext) -> Check:
-    """Report the profile's rows in the last day; none means idle or export off."""
     telemetry = context.telemetry
     if telemetry.skipped:
         return check("telemetry", "info", f"not counted: {telemetry.skipped}")
@@ -832,11 +695,7 @@ def telemetry_check(profile: profiles.Profile, context: HarnessContext) -> Check
     )
 
 
-# --- The block -----------------------------------------------------------------------
-
-
 def harness_checks(profile: profiles.Profile, context: HarnessContext) -> list[Check]:
-    """Run every check for one enabled harness profile, each isolated from the others."""
     files: list[LoadedFile] = []
 
     def config_files() -> Check:

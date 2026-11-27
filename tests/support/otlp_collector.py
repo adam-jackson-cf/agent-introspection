@@ -1,5 +1,3 @@
-"""A local OTLP/HTTP logs collector and spool record helpers for the producer tests."""
-
 import json
 import threading
 import time
@@ -14,8 +12,6 @@ OCCURRED = "2026-09-30T12:00:00.123456Z"
 
 
 class Collector:
-    """Records every POSTed request and answers from a script (then ``default``)."""
-
     def __init__(self) -> None:
         self.bodies: list[dict[str, Any]] = []
         self.script: list[tuple[int, str]] = []

@@ -28,7 +28,6 @@ const DETECTOR_LABEL: Record<string, string> = {
 const strings = (value: unknown): string[] | null =>
   Array.isArray(value) ? value.map(String) : null;
 
-/** A finding's subject as one readable line. */
 export const subjectLabel = (row: Row): string =>
   row["kind"] === "correction"
     ? `${String(row["project"] ?? "—")} · ${String(row["correction_kind"] ?? "—").replaceAll("_", " ")}`
@@ -36,7 +35,6 @@ export const subjectLabel = (row: Row): string =>
       ? `${String(row["tool_family"])} · ${String(row["failure_class"] ?? "—")}`
       : String(row["category"] ?? "—");
 
-/** The structured success metric as one readable line; null for a legacy free-text metric. */
 export const metricLabel = (row: Row): string | null =>
   row["metric"] == null
     ? null
@@ -74,11 +72,9 @@ const BASELINE_SERIES = [
   },
 ];
 
-/** Applied-KPI detail: in-range count plus verdict parts that sum to the headline. */
 export const appliedDetail = (kpi: Row): string =>
   `${fmtCount(num(kpi["applied_in_range"]))} in range · ${fmtCount(num(kpi["validated"]))} validated · ${fmtCount(num(kpi["regressed"]))} regressed · ${fmtCount(num(kpi["inconclusive"]))} inconclusive · ${fmtCount(num(kpi["not_evaluated"]))} not evaluated`;
 
-/** Where proposals come from: drafted by hand, never on a schedule. */
 function NoProposals() {
   return (
     <div className="not-applicable" role="status">
@@ -95,12 +91,10 @@ function NoProposals() {
   );
 }
 
-/** The children once a proposal exists; before that, how proposals get drafted. */
 function WithProposals(props: { count: number; children: ReactNode }) {
   return props.count === 0 ? <NoProposals /> : props.children;
 }
 
-/** Did applied interventions reduce what they targeted? Experimental, off by default. */
 function OutcomeSection(props: { data: Record<string, Row[]>; count: number }) {
   const comparisons = props.data["comparisons"] ?? [];
   const baseline = props.data["baseline_daily"] ?? [];
@@ -212,7 +206,6 @@ const PROPOSAL_COLUMNS = [
   },
 ];
 
-/** A proposal's latest recorded evaluation: intervention outcomes only. */
 const EVALUATION_COLUMNS = [
   VERDICT_COLUMN,
   {
@@ -232,7 +225,6 @@ const EVALUATION_COLUMNS = [
   },
 ];
 
-/** The Proposals panel; with intervention outcomes on, each proposal's evaluation too. */
 function ProposalsPanel(props: { proposals: Row[]; outcomes: boolean }) {
   const panel = props.outcomes
     ? {
@@ -268,7 +260,6 @@ export default function Interventions({
 }: {
   data: Record<string, Row[]>;
 }) {
-  // Experimental (`[experimental] intervention_outcomes`): did applied interventions work?
   const outcomes = useView().registry.features.intervention_outcomes;
   const kpi = data["kpis"]?.[0] ?? {};
   const findings = data["findings"] ?? [];

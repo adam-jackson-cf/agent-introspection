@@ -1,5 +1,3 @@
-"""Approval-gated proposal state transitions."""
-
 from __future__ import annotations
 
 import json
@@ -34,8 +32,6 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
     ProposalState.IMPLEMENTATION_FAILED: frozenset(),
 }
 
-# Deterministic interventions in canonical tier order; the remaining intervention
-# types apply only when no tier can enforce the behavior.
 DETERMINISTIC_INTERVENTIONS = (
     InterventionType.ESTABLISHED_TOOL,
     InterventionType.NEW_TOOL,
@@ -48,12 +44,11 @@ SKILL_INTERVENTIONS = frozenset({InterventionType.CREATE_SKILL, InterventionType
 
 
 class ProposalConflictError(RuntimeError):
-    """A proposal changed between reading its state and writing a transition."""
+    pass
 
 
 @contextmanager
 def immediate_transaction(connection: sqlite3.Connection) -> Iterator[None]:
-    """Hold the write lock from the first read to commit, rolling back on failure."""
     if connection.in_transaction:
         raise RuntimeError("an immediate transaction cannot start inside an open transaction")
     connection.execute("BEGIN IMMEDIATE")
@@ -76,7 +71,6 @@ def _transaction(
 
 
 def require_successful_validation(evidence: JsonMapping) -> None:
-    """Require evidence of the form {"validation": {"status": "passed", "checks": [...]}}."""
     validation = evidence.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise ValueError(
@@ -94,7 +88,6 @@ def require_successful_validation(evidence: JsonMapping) -> None:
 
 CLUSTER_TASK_RATE = "cluster_task_rate"
 SUCCESS_METRICS = (CLUSTER_TASK_RATE,)
-# Metrics older proposals may carry that nothing measures any more.
 RETIRED_METRICS = ("correction_task_rate",)
 MIN_METRIC_WINDOW_DAYS = 7
 _SUCCESS_METRIC_KEYS = frozenset({
@@ -108,14 +101,6 @@ _SUCCESS_METRIC_KEYS = frozenset({
 
 @dataclass(frozen=True)
 class SuccessMetric:
-    """The finding's task rate after application against the rate before it.
-
-    Success means (matching tasks per task over ``evaluation_days`` after the proposal
-    was applied) <= ``max_ratio`` x (the same over ``baseline_days`` before), counted
-    only for ``harnesses``. ``cluster_task_rate`` matches tasks that hit a failure
-    cluster.
-    """
-
     metric: str
     harnesses: tuple[str, ...]
     baseline_days: int
@@ -124,7 +109,6 @@ class SuccessMetric:
 
     @classmethod
     def parse(cls, value: object) -> SuccessMetric:
-        """Validate a structured success metric; free-text metrics are rejected."""
         if not isinstance(value, dict) or set(value) != _SUCCESS_METRIC_KEYS:
             raise ValueError(
                 "predicted_success_metric must be an object with exactly "
@@ -159,7 +143,6 @@ class SuccessMetric:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> SuccessMetric | None:
-        """Read a stored proposal's metric; ``None`` for a legacy free-text metric."""
         try:
             return cls.parse(payload.get("predicted_success_metric"))
         except ValueError:
@@ -262,7 +245,6 @@ def _now() -> str:
 
 
 def metric_for_subject(subject: dict[str, Any]) -> str | None:
-    """Return the success metric a finding subject is measured by, if it has one."""
     if "tool_family" in subject and "failure_class" in subject:
         return CLUSTER_TASK_RATE
     return None
@@ -271,7 +253,6 @@ def metric_for_subject(subject: dict[str, Any]) -> str | None:
 def _require_counts_match_finding(
     proposal: ProposalInput, row: sqlite3.Row | tuple[Any, ...]
 ) -> None:
-    """Reject occurrence, task and day counts that disagree with the stored finding."""
     stored = {"occurrence_count": row[2], "task_count": row[3], "day_count": row[4]}
     for name, expected in stored.items():
         if getattr(proposal, name) != expected:
@@ -279,7 +260,6 @@ def _require_counts_match_finding(
 
 
 def _require_metric_matches_finding(proposal: ProposalInput, subject_json: str) -> None:
-    """Require the metric to measure the finding's kind over harnesses it was seen in."""
     subject = json.loads(subject_json) if subject_json else {}
     metric = SuccessMetric.parse(proposal.predicted_success_metric)
     expected = metric_for_subject(subject)
@@ -299,7 +279,6 @@ def append_proposal_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> None:
-    """Append one immutable event after the proposal's latest, inside the caller's transaction."""
     if not connection.in_transaction:
         raise RuntimeError("appending a proposal event requires an open transaction")
     sequence = connection.execute(
@@ -326,10 +305,6 @@ def append_proposal_event(
 def create_proposal(
     connection: sqlite3.Connection, proposal: ProposalInput, *, outer_transaction: bool = False
 ) -> str:
-    """Persist a pending proposal and its immutable creation event.
-
-    With ``outer_transaction`` the caller's open transaction owns commit and rollback.
-    """
     proposal_id = str(uuid.uuid4())
     now = _now()
     payload = json.dumps(proposal.__dict__, sort_keys=True, separators=(",", ":"))
@@ -370,13 +345,6 @@ def transition_proposal(
     *,
     outer_transaction: bool = False,
 ) -> None:
-    """Apply a valid transition while retaining an immutable event history.
-
-    The state read and the write share one immediate transaction, and the write is
-    conditioned on the state and version that were read, so concurrent decisions
-    cannot overwrite each other. With ``outer_transaction`` the caller's open
-    transaction owns commit and rollback, so several transitions can apply atomically.
-    """
     if request.target_state is ProposalState.APPLIED:
         require_successful_validation(request.evidence)
     with _transaction(connection, outer_transaction=outer_transaction):

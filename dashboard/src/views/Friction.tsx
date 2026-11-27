@@ -40,7 +40,6 @@ function pivotCleanDaily(daily: Row[]): Row[] {
 export default function Friction({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const kpi = data["kpi"] ?? [];
-  // The server returns one All row (harness '') beside the per-harness rows.
   const all = kpi.find((row) => row["harness"] === "") ?? {};
   const harnessRows = kpi.filter((row) => row["harness"] !== "");
   const rate = (key: string) => maybe(all[`${key}_rate`]);

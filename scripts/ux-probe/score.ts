@@ -1,8 +1,3 @@
-// Turns <dir>/<page>.checks.json (probe) and <dir>/<page>.inspect.json (scorer's yes/no answers to the
-// `inspect` checks) into <dir>/<page>.scores.json by the rubric's scoring_rule, then runs score_rubric.py.
-//
-// Usage: bun scripts/ux-probe/score.ts <dir> <page...>
-// inspect.json: { "A3": { "pass": false, "evidence": "<capture + position or file:line>" }, "D3": { ... } }
 import { readFileSync } from "node:fs";
 
 type Check = { pass: boolean; evidence: string };
@@ -16,7 +11,6 @@ const SCORER = `${process.env["HOME"]}/.agents/by-request/setup-ux-standards/scr
 const rubric = Bun.YAML.parse(readFileSync(RUBRIC, "utf8")) as Rubric;
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
-/** Highest level whose checks, and every lower level's, all pass. */
 function criterionScore(checks: Rubric["criteria"][number]["checks"], results: Record<string, Check>) {
   let score = 0;
   for (const level of [1, 2, 3]) {

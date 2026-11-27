@@ -37,7 +37,6 @@ const effortSeries = (rows: Row[]): Series[] =>
       color: EFFORT_COLOR[effort] ?? OTHER_TOKEN,
     }));
 
-/** Server rate beside its sample size; the rate is a column (`<key>_rate`, n = `<key>_den`). */
 const pct = (row: Row, key: string) => (
   <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
 );
@@ -47,7 +46,6 @@ const fixed1 = (value: unknown) => {
   return figure === null ? "—" : figure.toFixed(1);
 };
 
-/** Long daily rows → one row per day, one column per series (reshape only: values are the server's). */
 const byDay = (rows: Row[], cells: (row: Row) => Row): Row[] => {
   const days = new Map<string, Row>();
   for (const row of rows) {
@@ -74,7 +72,6 @@ function dailyViews(data: Record<string, Row[]>) {
   };
 }
 
-/** Interval rows grouped by harness, in the server's registry order; `read` maps one row. */
 function intervalGroups(
   rows: Row[],
   read: (row: Row) => { n: number; value: unknown; lo: unknown; hi: unknown },
@@ -103,7 +100,6 @@ function intervalGroups(
   return [...groups.values()];
 }
 
-/** Table rows for an interval chart: the exact n, value and bounds the marks draw. */
 const intervalColumns = (unit: (value: unknown) => string) => [
   {
     key: "harness",

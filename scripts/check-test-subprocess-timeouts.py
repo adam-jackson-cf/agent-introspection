@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Fail when a test spawns a subprocess without a timeout (TEST.subprocess-timeouts)."""
-
 from __future__ import annotations
 
 import ast

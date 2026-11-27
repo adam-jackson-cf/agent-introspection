@@ -21,11 +21,6 @@ def pytest_configure(config: pytest.Config) -> None:
 def isolated_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point HOME at an empty directory, so no test reads or writes the real home.
-
-    `harness configure` installs hooks under the home; a test that needs a populated
-    home sets HOME again itself.
-    """
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     for name in home_guard.REDIRECTED:
@@ -36,8 +31,6 @@ def isolated_home(
 
 
 class FakeOmp:
-    """Stands in for the `omp` binary: `plugin link` and `plugin uninstall` act on HOME."""
-
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
@@ -56,7 +49,6 @@ class FakeOmp:
 
 @pytest.fixture(autouse=True)
 def fake_omp(monkeypatch: pytest.MonkeyPatch) -> FakeOmp:
-    """No test runs the real omp: hook installs find and run this stand-in."""
     from agent_introspection import hook_install
 
     omp = FakeOmp()
@@ -67,7 +59,6 @@ def fake_omp(monkeypatch: pytest.MonkeyPatch) -> FakeOmp:
 
 @pytest.fixture
 def open_workflow() -> Iterator[OpenWorkflow]:
-    """Open workflow stores that the test closes when it ends."""
     from agent_introspection.workflow import connect_workflow
 
     with ExitStack() as stack:
@@ -80,7 +71,6 @@ def open_workflow() -> Iterator[OpenWorkflow]:
 
 @pytest.fixture
 def collector() -> Iterator[Collector]:
-    """A local OTLP/HTTP logs collector, shut down when the test ends."""
     server = Collector()
     yield server
     server.close()
@@ -88,7 +78,6 @@ def collector() -> Iterator[Collector]:
 
 @pytest.fixture
 def inbox(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """An isolated record spool and hook log, with no OTEL endpoint in the environment."""
     from agent_introspection import hooks
 
     for name in (

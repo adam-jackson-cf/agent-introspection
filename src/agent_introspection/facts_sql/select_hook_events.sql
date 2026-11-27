@@ -1,10 +1,3 @@
--- Activity-hook events (docs/references/hook-events.md) that reached SigNoz as OTLP logs from the
--- spool exporter on every machine. The record is the JSON `body`; the attributes are
--- flattened as the hook record defines them: numbers and flags to `attrs_number`,
--- text to `attrs_string`, every other value (lists such as targets) to compact JSON
--- text. The family filter is mandatory: `agent-introspection` also holds legacy rows
--- with other event names and non-JSON bodies, which must never be parsed here.
--- Columns follow the table's order (added columns last) because backfills insert by position.
 SELECT
     JSONExtractString(body, 'event_id') AS event_id,
     JSONExtractString(body, 'producer') AS producer,

@@ -1,17 +1,3 @@
-"""The dashboard as a user service: built from a repository checkout and kept running.
-
-``install`` builds the dashboard in the checkout's ``dashboard/`` (``bun install
---frozen-lockfile``, then ``bun run build``) and starts a service that runs ``bun
-server.ts`` there: a launchd agent on macOS (kept alive), a systemd user service on
-Linux (restarted on failure). The service runs from the checkout given at install, so
-pulling or switching branches changes what it serves at its next restart; rerun
-``install`` after an update to rebuild and restart it. The service sets only ``PATH``
-(the system directories and bun's) and, when one was selected, the config path; the
-dashboard reads ClickHouse at ``[signoz] clickhouse_url``. A ClickHouse password is
-refused: the server reads one only from its own environment, which a service file
-would have to store. An additional machine is refused: its dashboard is the host's.
-"""
-
 from __future__ import annotations
 
 import plistlib
@@ -49,7 +35,6 @@ def _run_bun(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[s
 
 
 def dashboard_directory(repo: Path) -> Path:
-    """Return the checkout's dashboard directory; refuse a path that is not a checkout."""
     directory = repo.expanduser().resolve() / "dashboard"
     if not (directory / "package.json").is_file() or not (directory / "server.ts").is_file():
         raise ValueError(
@@ -77,7 +62,6 @@ def _require_no_password(config: AppConfig) -> None:
 
 
 def build(directory: Path, bun: Path) -> None:
-    """Install the dashboard's locked dependencies and build its assets."""
     for step in (("install", "--frozen-lockfile"), ("run", "build")):
         result = _run_bun((str(bun), *step), directory)
         if result.returncode != 0:
@@ -86,11 +70,6 @@ def build(directory: Path, bun: Path) -> None:
 
 
 def _environment(settings: AppConfig, bun: Path, config: Path | None) -> dict[str, str]:
-    """Return the service's variables.
-
-    PATH, and what the server reads only from its own environment: the workflow store,
-    a non-default ClickHouse user, and the config path.
-    """
     environment = {
         "PATH": ":".join(dict.fromkeys((str(bun.parent), *schedule.SYSTEM_PATH))),
         "INTROSPECTION_WORKFLOW_DB": str(settings.database.path.expanduser()),
@@ -103,7 +82,6 @@ def _environment(settings: AppConfig, bun: Path, config: Path | None) -> dict[st
 
 
 def plist(settings: AppConfig, directory: Path, bun: Path, config: Path | None = None) -> bytes:
-    """Return the launchd agent that keeps ``bun server.ts`` running in ``directory``."""
     return plistlib.dumps({
         "Label": LABEL,
         "ProgramArguments": [str(bun), "server.ts"],
@@ -119,11 +97,6 @@ def plist(settings: AppConfig, directory: Path, bun: Path, config: Path | None =
 def service_unit(
     settings: AppConfig, directory: Path, bun: Path, config: Path | None = None
 ) -> str:
-    """Return the systemd user service that keeps ``bun server.ts`` running.
-
-    ``WorkingDirectory=`` takes a bare path (systemd does not unquote it), so only its
-    ``%`` specifier character is escaped.
-    """
     quote = schedule.unit_quote
     environment = "".join(
         f"Environment={quote(f'{name}={value}')}\n"
@@ -146,7 +119,6 @@ def service_unit(
 
 
 def _start_launchd(content: bytes) -> None:
-    """Replace the agent; when the new one will not start, put the running one back."""
     domain = schedule.launchd_domain()
     agent = plist_file()
     previous: bytes | None = None
@@ -180,14 +152,12 @@ def _start_systemd(content: str) -> None:
 
 
 def check(config: AppConfig, repo: Path) -> tuple[str, Path, Path]:
-    """Refuse what ``install`` would refuse; return the scheduler, directory, and bun."""
     require_host(config, "the dashboard reads the host's ClickHouse")
     _require_no_password(config)
     return schedule.platform_scheduler(), dashboard_directory(repo), _bun()
 
 
 def install(config: AppConfig, repo: Path, config_path: Path | None = None) -> dict[str, Any]:
-    """Build the dashboard in ``repo`` and (re)start its service on ``PORT``."""
     scheduler, directory, bun = check(config, repo)
     build(directory, bun)
     if scheduler == "launchd":
@@ -203,7 +173,6 @@ def install(config: AppConfig, repo: Path, config_path: Path | None = None) -> d
 
 
 def remove() -> dict[str, Any]:
-    """Stop the dashboard service and delete its file."""
     if schedule.platform_scheduler() == "launchd":
         if schedule.launchd_loaded(LABEL):
             schedule.launchctl("bootout", f"{schedule.launchd_domain()}/{LABEL}")
@@ -221,7 +190,6 @@ def remove() -> dict[str, Any]:
 
 
 def status() -> dict[str, Any]:
-    """Report whether the dashboard service is installed and running (read-only)."""
     scheduler = schedule.SCHEDULERS.get(schedule.platform_name())
     if scheduler == "launchd":
         return {
