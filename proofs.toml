@@ -1465,7 +1465,6 @@ files = ["SKILL.md", "README.md", "references/*.md", "assets/**", "scripts/**"]
 "tests/test_harness_*.py" = "harnesses"
 "tests/test_hook*.py" = "hooks"
 "tests/test_inbox.py" = "spool"
-"tests/test_interventions.py" = "interventions"
 "tests/test_measures_doc.py" = "facts"
 "tests/test_preflight*.py" = "doctor"
 "tests/test_producers.py" = "producers"
