@@ -179,4 +179,5 @@ no finding with task types to show.
 with its feature ID. `dashboard/src/feature-audit.test.ts` fails when one of them is no longer rendered anywhere in
 `dashboard/src`. A title may move to another page or component. To remove one on purpose, set its `removed` to a
 decision ID from [Decided changes](#decided-changes); the test also fails when that ID isn't in the table. The test
-runs with `bun run --cwd dashboard test` and the repository quality gates.
+runs with `bun run --cwd dashboard test` and in the T1 tier of the quality gates
+(`bash scripts/run-ci-quality-gates.sh t1`), so every commit and CI run includes it.

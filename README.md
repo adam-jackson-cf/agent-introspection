@@ -125,3 +125,19 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 | Contribute code                        | [Development](docs/references/development.md)                                                                                                                 |
 
 [docs/README.md](docs/README.md) indexes every doc.
+
+## Contributing
+
+Install the pinned Bun and the commit hook once in each clone (every gate mode also runs
+the last two commands). With mise activated in your shell, `bun` in the checkout is the
+pinned 1.3.0, which the commit hook's time budget expects:
+
+```bash
+mise trust && mise install
+uv sync --locked --dev
+uv run pre-commit install
+```
+
+Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`, which only checks and
+never changes files. [Development](docs/references/development.md) lists the gate modes,
+the fix script `scripts/fix-quality-gates.sh`, the test tiers, and `proofs.toml`.
