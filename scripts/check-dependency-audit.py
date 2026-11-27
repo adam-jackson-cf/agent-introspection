@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail on known-vulnerable locked dependencies (SECURITY.dependency-audit).
 
-Python: `uv export --locked` audited by pip-audit. Bun: `bun audit` in dashboard/.
+Python: `uv export --locked` audited by pip-audit. Bun: `bun audit` beside every tracked bun.lock.
 Pass a requirements file to audit only that file (used by the canary).
 Needs network access to the vulnerability databases.
 """
@@ -46,6 +46,12 @@ def audit_bun(directory: Path) -> int:
     return result.returncode
 
 
+def bun_locks() -> list[Path]:
+    """Every Bun lockfile git tracks, so a new Bun project is audited without a list to update."""
+    listed = _run(["git", "ls-files", "--", "*bun.lock", ":!tests/fixtures/**"])
+    return [Path(line) for line in listed.stdout.splitlines() if line]
+
+
 def main(argv: list[str]) -> int:
     """Audit an explicit requirements file, or the locked Python and Bun dependencies."""
     if argv:
@@ -70,7 +76,7 @@ def main(argv: list[str]) -> int:
             )
             return 1
         python_status = audit_python(requirements)
-    bun_status = audit_bun(Path("dashboard"))
+    bun_status = max((audit_bun(lock.parent) for lock in bun_locks()), default=0)
     return 1 if python_status or bun_status else 0
 
 
