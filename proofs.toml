@@ -1519,6 +1519,7 @@ large_module_fanout_max = 3
 "tests/test_quality_scripts.py" = ["_git", "_run"]
 "tests/test_render_measures_script.py" = ["_render"]
 "tests/test_signoz_install_script.py" = ["_run_install"]
+"tests/test_structure_rules_scenarios.py" = ["_git"]
 "tests/test_test_evidence_canaries.py" = ["_gate", "_run_fixture"]
 "tests/test_tier_guards.py" = ["_run"]
 "tests/journeys/test_install_journey.py" = ["_lever"]

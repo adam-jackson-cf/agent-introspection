@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import subprocess
 from collections.abc import Callable, Iterator, Sequence
@@ -27,6 +28,8 @@ def isolated_home(
         monkeypatch.setenv(name, str(home / name.lower()))
     for name in home_guard.HOME_OVERRIDES:
         monkeypatch.delenv(name, raising=False)
+    for name in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(name)
     return home
 
 

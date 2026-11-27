@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -118,3 +119,32 @@ def test_missing_base_ref_fails_instead_of_skipping(
     with pytest.raises(git.GitError, match="merge-base"):
         checker.judge(repo, "merge-base", [])
     capsys.readouterr()
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@localhost", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+
+
+def test_scenario_repo_ignores_a_hook_exported_git_location(
+    git: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    _git(outer, "init", "-q")
+    _git(outer, "commit", "-q", "--allow-empty", "-m", "outer")
+    before = (outer / ".git" / "HEAD").read_text(encoding="utf-8")
+    monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(outer / ".git" / "index"))
+    repo = git.build_scenario(_SCENARIOS / "compliant", tmp_path / "work")
+    assert (repo / ".git").is_dir()
+    assert (outer / ".git" / "HEAD").read_text(encoding="utf-8") == before
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_INDEX_FILE")
+    assert _git(outer, "log", "--format=%s").split() == ["outer"]

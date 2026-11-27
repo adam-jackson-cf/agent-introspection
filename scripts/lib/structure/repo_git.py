@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lib import filesystem
+from lib.command_runner import isolated_environment
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _SCENARIO_IDENTITY = [
@@ -25,12 +26,21 @@ class Change:
     old_path: str | None
 
 
-def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(["git", *args], cwd=root, check=False, capture_output=True, timeout=60)
+def _git(
+    root: Path, args: list[str], *, scratch: bool = False
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        env=isolated_environment() if scratch else None,
+        check=False,
+        capture_output=True,
+        timeout=60,
+    )
 
 
-def git_text(root: Path, args: list[str]) -> str:
-    completed = _git(root, args)
+def git_text(root: Path, args: list[str], *, scratch: bool = False) -> str:
+    completed = _git(root, args, scratch=scratch)
     if completed.returncode != 0:
         message = completed.stderr.decode("utf-8", "replace").strip()
         raise GitError(f"git {' '.join(args)} failed: {message}")
@@ -116,11 +126,13 @@ def build_scenario(fixture: Path, workdir: Path) -> Path:
         raise GitError(f"scenario {fixture} needs base/ and head/ directories")
     repo = workdir / "repo"
     filesystem.copy_tree(base, repo, symlinks=True)
-    git_text(repo, ["init", "-q", "-b", "main"])
-    git_text(repo, ["add", "-A"])
-    tree = git_text(repo, ["write-tree"]).strip()
-    commit = git_text(repo, [*_SCENARIO_IDENTITY, "commit-tree", tree, "-m", "base"]).strip()
-    git_text(repo, ["update-ref", "HEAD", commit])
+    git_text(repo, ["init", "-q", "-b", "main"], scratch=True)
+    git_text(repo, ["add", "-A"], scratch=True)
+    tree = git_text(repo, ["write-tree"], scratch=True).strip()
+    commit = git_text(
+        repo, [*_SCENARIO_IDENTITY, "commit-tree", tree, "-m", "base"], scratch=True
+    ).strip()
+    git_text(repo, ["update-ref", "HEAD", commit], scratch=True)
     _replace_tree(head, repo)
-    git_text(repo, ["add", "-A"])
+    git_text(repo, ["add", "-A"], scratch=True)
     return repo

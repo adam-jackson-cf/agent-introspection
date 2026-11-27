@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from lib import filesystem
+from lib.command_runner import isolated_environment
 
 _STUBBED_TOOLS = ("uv", "bun", "bunx", "npx", "pre-commit")
 _STEP_TIMEOUT_SECONDS = 20
@@ -25,17 +26,13 @@ exit 0
 """
 
 
-def _scratch_env() -> dict[str, str]:
-    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-
-
 def _run(
     argv: list[str], cwd: Path, env: dict[str, str] | None, *, check: bool
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         argv,
         cwd=cwd,
-        env=_scratch_env() if env is None else env,
+        env=isolated_environment() if env is None else env,
         check=check,
         capture_output=True,
         text=True,
@@ -78,7 +75,7 @@ def _run_runner(runner: Path, repository: Path, directory: Path, mode: str, fail
     filesystem.mkdir(state, exist_ok=True)
     for leftover in filesystem.iterdir(state):
         filesystem.unlink(leftover)
-    scratch = _scratch_env()
+    scratch = isolated_environment()
     env = {
         **scratch,
         "CI": "true",
