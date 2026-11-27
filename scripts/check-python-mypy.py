@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -61,16 +62,29 @@ def coverage_problems(root: Path, config: Path) -> list[str]:
     settings = load_pyproject(config).get("tool", {}).get("mypy", {})
     entries = _entries(settings, root)
     if not entries:
-        return ["MYPY.package-coverage: [tool.mypy] lists no files or packages"]
+        return [
+            f"{config.name}: MYPY.package-coverage: [tool.mypy] lists no files or packages; "
+            "list every maintained source root in [tool.mypy] files"
+        ]
     problems = [
-        f"MYPY.package-coverage: configured entry does not exist: {entry}"
+        f"{config.name}: MYPY.package-coverage: configured entry does not exist: {entry}; "
+        "delete the entry or restore its path"
         for entry in entries
         if entry.startswith("<package:") or not (root / entry).exists()
     ]
-    excludes = as_list(settings.get("exclude"))
+    excludes = [re.compile(pattern) for pattern in as_list(settings.get("exclude"))]
+    maintained = maintained_python_files(root)
     problems.extend(
-        f"MYPY.package-coverage: {path} is not covered by [tool.mypy] files/packages"
-        for path in maintained_python_files(root, excludes)
+        f"{config.name}: MYPY.SETTING.exclude: [tool.mypy] exclude {pattern.pattern!r} hides "
+        f"maintained file {path}; narrow the pattern to non-maintained paths"
+        for pattern in excludes
+        for path in maintained
+        if pattern.search(path)
+    )
+    problems.extend(
+        f"{path}: MYPY.package-coverage: not covered by [tool.mypy] files/packages; "
+        "add its source root to [tool.mypy] files"
+        for path in maintained
         if not _is_isolated(path) and not _covered(path, entries)
     )
     return problems
@@ -86,9 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("pyproject.toml"))
     parser.add_argument("--drift-only", action="store_true", help="skip running mypy")
+    parser.add_argument("paths", nargs="*", type=Path)
     args = parser.parse_args(argv)
     config = args.config.resolve()
     root = config.parent
+    if args.paths:
+        return _mypy(config, root, [path.resolve().as_posix() for path in args.paths])
     problems = coverage_problems(root, config)
     for problem in problems:
         print(problem, file=sys.stderr)
