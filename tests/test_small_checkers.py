@@ -94,18 +94,21 @@ def test_mypy_coverage_accepts_dot_dot_slash_and_globs(tmp_path: Path) -> None:
 
 def test_skill_metadata_uses_real_yaml(tmp_path: Path) -> None:
     checker = _load("check-skill-metadata")
+    schema = checker.load_schema(
+        Path(__file__).parents[1] / ".agents" / "skill-metadata.schema.json"
+    )
     skill = tmp_path / "demo" / "SKILL.md"
     skill.parent.mkdir()
     skill.write_text(
         "---\nname: demo\ndescription: Use when testing\nglobal: true\n---\nbody\n",
         encoding="utf-8",
     )
-    assert checker.check_skill(skill) == []
+    assert checker.check_skill(skill, schema) == []
     skill.write_text(
         "---\nname: demo\ndescription: Use when testing\nbroken: [unclosed\n---\nbody\n",
         encoding="utf-8",
     )
-    assert any("invalid YAML" in problem for problem in checker.check_skill(skill))
+    assert any("invalid YAML" in problem for problem in checker.check_skill(skill, schema))
 
 
 def test_render_measures_handles_missing_outputs(
