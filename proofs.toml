@@ -1825,6 +1825,12 @@ numbered_allowlist = [
   "x509",
 ]
 
+[[test_budget.machine]]
+id = "darwin-arm64-apple-m5-pro-python3.14-bun1.3.0"
+wall_limit_s = 19
+per_test_limit_s = 1
+approval = "adam-jackson-cf, 2026-11-27"
+
 [surface]
 lever_name = "sandbox.sh lever"
 feature_map_path = "docs/features"
