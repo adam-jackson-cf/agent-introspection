@@ -47,3 +47,16 @@ def test_an_empty_tier_is_reported() -> None:
 def test_every_tier_must_be_named_with_its_selector() -> None:
     tiers, paths = checker.parse_tiers(["--tier", "t1=not boundary", "--tier", "t2=boundary", "x"])
     assert (tiers, paths) == ({"t1": "not boundary", "t2": "boundary"}, ["x"])
+
+
+def test_a_collected_id_with_spaces_in_its_parameters_is_kept() -> None:
+    output = (
+        "tests/test_a.py::test_one[import subprocess as sp]\n"
+        "tests/test_a.py::test_two\n"
+        "\n"
+        "2 tests collected in 0.01s\n"
+    )
+    assert checker.listed_ids(output) == [
+        "tests/test_a.py::test_one[import subprocess as sp]",
+        "tests/test_a.py::test_two",
+    ]

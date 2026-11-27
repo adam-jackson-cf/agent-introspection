@@ -21,12 +21,17 @@ def _pytest(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def listed_ids(output: str) -> list[str]:
+    listing = output.split("\n\n", 1)[0]
+    return [line for line in listing.splitlines() if "::" in line]
+
+
 def collect(selector: str | None, paths: list[str]) -> tuple[list[str], str | None]:
     arguments = ["--collect-only", "-q", "-p", "no:cacheprovider", *paths]
     if selector is not None:
         arguments += ["-m", selector]
     completed = _pytest(arguments)
-    ids = [line for line in completed.stdout.splitlines() if "::" in line and " " not in line]
+    ids = listed_ids(completed.stdout)
     if completed.returncode not in {0, NO_TESTS_COLLECTED}:
         return ids, completed.stdout[-2000:] + completed.stderr[-2000:]
     return ids, None
