@@ -40,7 +40,7 @@ next steps.
 `setup` writes the config, builds the facts store, configures Claude Code and Codex
 (export settings and activity hooks; for omp too, pass
 `--harness claude-code --harness codex --harness oh-my-pi`), schedules the
-minute sync, starts the dashboard at <http://127.0.0.1:4173>, and ends with
+minute sync, starts the dashboard at <http://127.0.0.1:4173> (`--dashboard-port` picks another), and ends with
 `agent-introspection doctor`. It stops at the first failing step and names it; every
 step is idempotent, so rerun it to reinstall. Restart running agent sessions so they
 pick up their settings.

@@ -6,7 +6,8 @@ its views correctly.
 ## Server
 
 The companion is an independent Bun package in `dashboard/`. The server binds only to
-`127.0.0.1:4173`. `agent-introspection dashboard install --repo <checkout>` runs it as
+`127.0.0.1`, at `[dashboard] port` in the agent-introspection config (default 4173);
+`dashboard install`, `dashboard view` and `doctor` read the same setting. `agent-introspection dashboard install --repo <checkout>` runs it as
 a user service: it builds the checkout's dashboard (`bun install --frozen-lockfile`,
 then `bun run build`) and starts `bun server.ts` there as a launchd agent kept alive
 (macOS) or a systemd user service restarted on failure (Linux), logging to
@@ -79,7 +80,7 @@ what the running service's `/api` routes return to the page, so an agent reads w
 person sees without a browser (see the [CLI reference](cli-reference.md)). They need
 the service running on this machine and fail with exit code 60 when it is not.
 `INTROSPECTION_DASHBOARD_URL` points them at another loopback address (default
-`http://127.0.0.1:4173`); an address off this machine is refused.
+`http://127.0.0.1:<port>`, the `[dashboard] port`); an address off this machine is refused.
 
 ## Related Docs
 
