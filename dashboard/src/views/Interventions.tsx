@@ -30,19 +30,19 @@ const strings = (value: unknown): string[] | null =>
 
 /** A finding's subject as one readable line. */
 export const subjectLabel = (row: Row): string =>
-  row.kind === "correction"
-    ? `${String(row.project ?? "—")} · ${String(row.correction_kind ?? "—").replaceAll("_", " ")}`
-    : row.tool_family != null
-      ? `${String(row.tool_family)} · ${String(row.failure_class ?? "—")}`
-      : String(row.category ?? "—");
+  row["kind"] === "correction"
+    ? `${String(row["project"] ?? "—")} · ${String(row["correction_kind"] ?? "—").replaceAll("_", " ")}`
+    : row["tool_family"] != null
+      ? `${String(row["tool_family"])} · ${String(row["failure_class"] ?? "—")}`
+      : String(row["category"] ?? "—");
 
 /** The structured success metric as one readable line; null for a legacy free-text metric. */
 export const metricLabel = (row: Row): string | null =>
-  row.metric == null
+  row["metric"] == null
     ? null
-    : `${String(row.metric)} ≤ ${num(row.max_ratio)}× baseline · ${num(row.evaluation_days)} d after vs ${num(row.baseline_days)} d before${
-        strings(row.metric_harnesses)
-          ? ` · ${strings(row.metric_harnesses)!.map(harnessLabel).join(", ")}`
+    : `${String(row["metric"])} ≤ ${num(row["max_ratio"])}× baseline · ${num(row["evaluation_days"])} d after vs ${num(row["baseline_days"])} d before${
+        strings(row["metric_harnesses"])
+          ? ` · ${strings(row["metric_harnesses"])!.map(harnessLabel).join(", ")}`
           : ""
       }`;
 
@@ -76,7 +76,7 @@ const BASELINE_SERIES = [
 
 /** Applied-KPI detail: in-range count plus verdict parts that sum to the headline. */
 export const appliedDetail = (kpi: Row): string =>
-  `${fmtCount(num(kpi.applied_in_range))} in range · ${fmtCount(num(kpi.validated))} validated · ${fmtCount(num(kpi.regressed))} regressed · ${fmtCount(num(kpi.inconclusive))} inconclusive · ${fmtCount(num(kpi.not_evaluated))} not evaluated`;
+  `${fmtCount(num(kpi["applied_in_range"]))} in range · ${fmtCount(num(kpi["validated"]))} validated · ${fmtCount(num(kpi["regressed"]))} regressed · ${fmtCount(num(kpi["inconclusive"]))} inconclusive · ${fmtCount(num(kpi["not_evaluated"]))} not evaluated`;
 
 /** Where proposals come from: drafted by hand, never on a schedule. */
 function NoProposals() {
@@ -102,8 +102,8 @@ function WithProposals(props: { count: number; children: ReactNode }) {
 
 /** Did applied interventions reduce what they targeted? Experimental, off by default. */
 function OutcomeSection(props: { data: Record<string, Row[]>; count: number }) {
-  const comparisons = props.data.comparisons ?? [];
-  const baseline = props.data.baseline_daily ?? [];
+  const comparisons = props.data["comparisons"] ?? [];
+  const baseline = props.data["baseline_daily"] ?? [];
   return (
     <Section title="Did an intervention reduce what it targeted?">
       <Panel
@@ -122,7 +122,7 @@ function OutcomeSection(props: { data: Record<string, Row[]>; count: number }) {
               {
                 key: "applied_at",
                 label: "Applied (UTC)",
-                render: (row) => shortTime(row.applied_at),
+                render: (row) => shortTime(row["applied_at"]),
               },
               { key: "days", label: "Window days", numeric: true },
               { key: "pre_matched", label: "Before", numeric: true },
@@ -134,16 +134,16 @@ function OutcomeSection(props: { data: Record<string, Row[]>; count: number }) {
                 label: "Rate change",
                 numeric: true,
                 render: (row) =>
-                  row.change_pct === null || row.change_pct === undefined
+                  row["change_pct"] === null || row["change_pct"] === undefined
                     ? "—"
-                    : `${num(row.change_pct).toFixed(0)}%`,
+                    : `${num(row["change_pct"]).toFixed(0)}%`,
               },
               VERDICT_COLUMN,
               {
                 key: "evaluated_ratio",
                 label: "Recorded ratio",
                 numeric: true,
-                render: (row) => fmtRatio(row.evaluated_ratio),
+                render: (row) => fmtRatio(row["evaluated_ratio"]),
               },
             ]}
             rows={comparisons}
@@ -188,7 +188,7 @@ const VERDICT_COLUMN = {
   key: "verdict",
   label: "Verdict",
   render: (row: Row) =>
-    row.verdict == null ? "not evaluated" : String(row.verdict),
+    row["verdict"] == null ? "not evaluated" : String(row["verdict"]),
 };
 
 const PROPOSAL_COLUMNS = [
@@ -208,7 +208,7 @@ const PROPOSAL_COLUMNS = [
   {
     key: "applied_at",
     label: "Applied (UTC)",
-    render: (row: Row) => shortTime(row.applied_at),
+    render: (row: Row) => shortTime(row["applied_at"]),
   },
 ];
 
@@ -219,16 +219,16 @@ const EVALUATION_COLUMNS = [
     key: "evaluated_ratio",
     label: "Ratio",
     numeric: true,
-    render: (row: Row) => fmtRatio(row.evaluated_ratio),
+    render: (row: Row) => fmtRatio(row["evaluated_ratio"]),
   },
   {
     key: "rates",
     label: "Baseline → evaluation rate",
     numeric: true,
     render: (row: Row) =>
-      row.verdict == null
+      row["verdict"] == null
         ? "—"
-        : `${fmtPct(row.baseline_rate == null ? null : 100 * num(row.baseline_rate))} → ${fmtPct(row.evaluation_rate == null ? null : 100 * num(row.evaluation_rate))}`,
+        : `${fmtPct(row["baseline_rate"] == null ? null : 100 * num(row["baseline_rate"]))} → ${fmtPct(row["evaluation_rate"] == null ? null : 100 * num(row["evaluation_rate"]))}`,
   },
 ];
 
@@ -270,31 +270,31 @@ export default function Interventions({
 }) {
   // Experimental (`[experimental] intervention_outcomes`): did applied interventions work?
   const outcomes = useView().registry.features.intervention_outcomes;
-  const kpi = data.kpis?.[0] ?? {};
-  const findings = data.findings ?? [];
-  const proposals = data.proposals ?? [];
-  const history = data.proposal_events ?? [];
-  const tiers = data.tiers ?? [];
+  const kpi = data["kpis"]?.[0] ?? {};
+  const findings = data["findings"] ?? [];
+  const proposals = data["proposals"] ?? [];
+  const history = data["proposal_events"] ?? [];
+  const tiers = data["tiers"] ?? [];
   return (
     <>
       <Section title="At a glance">
         <Kpi
           title="Active findings"
-          value={fmtCount(num(kpi.findings))}
-          detail={`${num(kpi.actionable)} actionable · current state, not the selected range`}
+          value={fmtCount(num(kpi["findings"]))}
+          detail={`${num(kpi["actionable"])} actionable · current state, not the selected range`}
           signals={["intervene.findings"]}
         />
         <Kpi
           title="Proposals"
-          value={fmtCount(num(kpi.proposals))}
-          detail={`${num(kpi.pending)} pending · current state, not the selected range`}
+          value={fmtCount(num(kpi["proposals"]))}
+          detail={`${num(kpi["pending"])} pending · current state, not the selected range`}
           signals={["intervene.tier_audit"]}
         />
         {outcomes && (
           <Kpi
             title="Applied interventions"
             source={["cluster_daily", "task_daily"]}
-            value={fmtCount(num(kpi.applied))}
+            value={fmtCount(num(kpi["applied"]))}
             detail={appliedDetail(kpi)}
             signals={["intervene.post_recurrence"]}
           />
@@ -314,7 +314,8 @@ export default function Interventions({
                 key: "detector",
                 label: "Detector",
                 render: (row) =>
-                  DETECTOR_LABEL[String(row.detector)] ?? String(row.detector),
+                  DETECTOR_LABEL[String(row["detector"])] ??
+                  String(row["detector"]),
               },
               {
                 key: "subject",
@@ -325,14 +326,14 @@ export default function Interventions({
               {
                 key: "harnesses",
                 label: "Harnesses",
-                render: (row) => <HarnessList value={row.harnesses} />,
+                render: (row) => <HarnessList value={row["harnesses"]} />,
               },
               {
                 key: "impact",
                 label: "Impact",
                 numeric: true,
                 render: (row) =>
-                  row.impact == null ? "—" : fmtCount(num(row.impact)),
+                  row["impact"] == null ? "—" : fmtCount(num(row["impact"])),
               },
               { key: "state", label: "State" },
               { key: "occurrences", label: "Count", numeric: true },
@@ -341,7 +342,7 @@ export default function Interventions({
               {
                 key: "last_seen",
                 label: "Last seen (UTC)",
-                render: (row) => shortTime(row.last_seen),
+                render: (row) => shortTime(row["last_seen"]),
               },
             ]}
             rows={findings}
@@ -361,20 +362,21 @@ export default function Interventions({
               {
                 key: "at",
                 label: "When (UTC)",
-                render: (row) => shortTime(row.at),
+                render: (row) => shortTime(row["at"]),
               },
               { key: "target", label: "Target" },
               { key: "event", label: "Event" },
               {
                 key: "actor",
                 label: "Actor",
-                render: (row) => (row.actor == null ? "—" : String(row.actor)),
+                render: (row) =>
+                  row["actor"] == null ? "—" : String(row["actor"]),
               },
               {
                 key: "summary",
                 label: "Reason / evidence",
                 render: (row) =>
-                  row.summary == null ? "—" : String(row.summary),
+                  row["summary"] == null ? "—" : String(row["summary"]),
               },
             ]}
             rows={history}

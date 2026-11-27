@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 // `AGENT_INTROSPECTION_OMP_PROMPT_EXPORT=1` in `~/.omp/.env` at its prompt-export step.
 
 const shimPath =
-  process.env.AGENT_INTROSPECTION_SHIM ??
+  process.env["AGENT_INTROSPECTION_SHIM"] ??
   join(
     homedir(),
     ".local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh",
@@ -161,9 +161,9 @@ function emit(
 type OtlpValue = { stringValue: string } | { intValue: string };
 
 function otlpLogsUrl(): string | undefined {
-  const logs = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+  const logs = process.env["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"];
   if (logs) return logs;
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const base = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"];
   return base ? `${base.replace(/\/+$/, "")}/v1/logs` : undefined;
 }
 
@@ -172,8 +172,8 @@ function otlpHeaders(): Record<string, string> {
     "Content-Type": "application/json",
   };
   const raw =
-    process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS ??
-    process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    process.env["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] ??
+    process.env["OTEL_EXPORTER_OTLP_HEADERS"];
   for (const pair of (raw ?? "").split(",")) {
     const at = pair.indexOf("=");
     if (at > 0)
@@ -193,7 +193,7 @@ function attribute(
 /** Send one `omp.user_prompt` log to omp's OTLP collector; failures are dropped. */
 function exportPrompt(prompt: unknown, context: OmpContext): void {
   try {
-    if (process.env.AGENT_INTROSPECTION_OMP_PROMPT_EXPORT !== "1") {
+    if (process.env["AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"] !== "1") {
       return;
     }
     const url = otlpLogsUrl();
@@ -213,7 +213,7 @@ function exportPrompt(prompt: unknown, context: OmpContext): void {
           resource: {
             attributes: [
               attribute("service.name", {
-                stringValue: process.env.OTEL_SERVICE_NAME ?? "oh-my-pi",
+                stringValue: process.env["OTEL_SERVICE_NAME"] ?? "oh-my-pi",
               }),
             ],
           },

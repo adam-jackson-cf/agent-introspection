@@ -105,7 +105,7 @@ export function Sidebar({ nav }: { nav: React.ReactNode }) {
 export function Topbar(props: {
   title: string;
   /** The parent view of a detail page, shown as a link in the breadcrumb. */
-  parent?: { title: string; href: string; onOpen: () => void };
+  parent?: { title: string; href: string; onOpen: () => void } | undefined;
   nav: React.ReactNode;
   onRefresh: () => void;
 }) {

@@ -22,15 +22,15 @@ import {
 } from "../format";
 
 /** The server's All row (ROLLUP over harness) carries harness ''. */
-const isAll = (row: Row) => row.harness === "";
+const isAll = (row: Row) => row["harness"] === "";
 
 /** "Measured as" text from the server's counts for each harness's retry route. */
 function retryRoute(row: Row): string {
-  const harness = String(row.harness);
+  const harness = String(row["harness"]);
   if (harness.startsWith("codex"))
-    return `${fmtCount(num(row.attempts))} sampling attempts over ${fmtCount(num(row.steps))} steps`;
+    return `${fmtCount(num(row["attempts"]))} sampling attempts over ${fmtCount(num(row["steps"]))} steps`;
   if (harness === "oh-my-pi") return "auto-retry starts (activity hook)";
-  return `requests with attempt > 1 · ${fmtCount(num(row.failed_attempts))} failed attempts · ${fmtCount(num(row.exhausted))} exhausted`;
+  return `requests with attempt > 1 · ${fmtCount(num(row["failed_attempts"]))} failed attempts · ${fmtCount(num(row["exhausted"]))} exhausted`;
 }
 
 /** Long daily rows to one row per day: error rate (and its n) and TTFT per harness. */
@@ -38,35 +38,38 @@ function dailyByDay(daily: Row[]): { errors: Row[]; ttft: Row[] } {
   const errors: Record<string, Row> = {};
   const ttft: Record<string, Row> = {};
   for (const row of daily) {
-    const day = String(row.day);
-    const harness = String(row.harness);
+    const day = String(row["day"]);
+    const harness = String(row["harness"]);
     errors[day] = {
       ...(errors[day] ?? { day }),
-      [harness]: maybe(row.error_rate),
-      [`${harness}_n`]: num(row.rated_calls),
+      [harness]: maybe(row["error_rate"]),
+      [`${harness}_n`]: num(row["rated_calls"]),
     };
-    ttft[day] = { ...(ttft[day] ?? { day }), [harness]: maybe(row.ttft_p50) };
+    ttft[day] = {
+      ...(ttft[day] ?? { day }),
+      [harness]: maybe(row["ttft_p50"]),
+    };
   }
   return { errors: Object.values(errors), ttft: Object.values(ttft) };
 }
 
 function providerModel(data: Record<string, Row[]>) {
-  const kpi = data.kpi ?? [];
-  const retryAll = data.retries ?? [];
-  const daily = dailyByDay(data.daily ?? []);
+  const kpi = data["kpi"] ?? [];
+  const retryAll = data["retries"] ?? [];
+  const daily = dailyByDay(data["daily"] ?? []);
   return {
     all: kpi.find(isAll) ?? {},
     retries: retryAll
       .filter((row) => !isAll(row))
       .map((row) => ({
-        harness: row.harness,
-        extra: row.extra,
+        harness: row["harness"],
+        extra: row["extra"],
         route: retryRoute(row),
       })),
-    extraAttempts: num(retryAll.find(isAll)?.extra),
+    extraAttempts: num(retryAll.find(isAll)?.["extra"]),
     errorDaily: daily.errors,
     ttftDaily: daily.ttft,
-    latency: data.latency ?? [],
+    latency: data["latency"] ?? [],
   };
 }
 
@@ -87,24 +90,24 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
       <Section title="At a glance">
         <Kpi
           title="Model calls"
-          value={fmtCount(num(all.calls))}
-          detail={`${fmtCount(num(all.failed))} failed · ${fmtCount(num(all.cancelled))} cancelled by the user`}
+          value={fmtCount(num(all["calls"]))}
+          detail={`${fmtCount(num(all["failed"]))} failed · ${fmtCount(num(all["cancelled"]))} cancelled by the user`}
           signals={["provider.calls"]}
           source="kpi"
         />
         <Kpi
           title="Call error rate"
-          value={fmtPct(maybe(all.error_rate), 2)}
-          detail={`failed / model calls not cancelled by the user · n=${fmtCount(num(all.rated_calls))}`}
-          n={num(all.rated_calls)}
+          value={fmtPct(maybe(all["error_rate"]), 2)}
+          detail={`failed / model calls not cancelled by the user · n=${fmtCount(num(all["rated_calls"]))}`}
+          n={num(all["rated_calls"])}
           signals={["provider.error_rate"]}
           source="kpi"
         />
         {disconnectsShown ? (
           <Kpi
             title="Stream disconnects"
-            value={fmtCount(num(all.disconnects))}
-            detail={`of ${fmtCount(num(all.disconnect_den))} response streams`}
+            value={fmtCount(num(all["disconnects"]))}
+            detail={`of ${fmtCount(num(all["disconnect_den"]))} response streams`}
             signals={["provider.stream_disconnects"]}
             source="kpi"
           />
@@ -119,7 +122,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
         )}
         <Kpi
           title="Unknown outcomes"
-          value={fmtCount(num(all.unknown))}
+          value={fmtCount(num(all["unknown"]))}
           detail="calls with no success flag, error, or finish reason"
           signals={["provider.unknown_outcomes"]}
           source="kpi"
@@ -188,38 +191,38 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "model", label: "Model" },
               {
                 key: "calls",
                 label: "Calls",
                 numeric: true,
-                render: (row) => fmtCount(num(row.calls)),
+                render: (row) => fmtCount(num(row["calls"])),
               },
               {
                 key: "p50",
                 label: "P50 latency",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p50)),
+                render: (row) => fmtSeconds(maybe(row["p50"])),
               },
               {
                 key: "p95",
                 label: "P95 latency",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p95)),
+                render: (row) => fmtSeconds(maybe(row["p95"])),
               },
               {
                 key: "ttft_p50",
                 label: "P50 TTFT",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.ttft_p50)),
+                render: (row) => fmtSeconds(maybe(row["ttft_p50"])),
               },
               {
                 key: "ttft_p95",
                 label: "P95 TTFT",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.ttft_p95)),
+                render: (row) => fmtSeconds(maybe(row["ttft_p95"])),
               },
               ...(throughputShown
                 ? [
@@ -228,9 +231,9 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                       label: "P50 tokens/s",
                       numeric: true,
                       render: (row: Row) =>
-                        maybe(row.tps_p50) === null
+                        maybe(row["tps_p50"]) === null
                           ? "—"
-                          : num(row.tps_p50).toFixed(0),
+                          : num(row["tps_p50"]).toFixed(0),
                     },
                   ]
                 : []),
@@ -256,7 +259,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "model", label: "Model" },
               { key: "error_class", label: "Class" },
@@ -264,10 +267,10 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "last_seen",
                 label: "Last seen (UTC)",
-                render: (row) => String(row.last_seen).slice(0, 16),
+                render: (row) => String(row["last_seen"]).slice(0, 16),
               },
             ]}
-            rows={data.errors ?? []}
+            rows={data["errors"] ?? []}
             empty="No failed model calls in the selected range."
           />
           <ViewLink view="friction">Open Friction</ViewLink>
@@ -283,13 +286,13 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "extra",
                 label: "Extra attempts",
                 numeric: true,
-                render: (row) => fmtCount(num(row.extra)),
+                render: (row) => fmtCount(num(row["extra"])),
               },
               { key: "route", label: "Measured as" },
             ]}
@@ -309,7 +312,7 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "with_response_model",
@@ -323,14 +326,14 @@ export default function Provider({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => (
                   <RateValue
-                    pct={maybe(row.mismatch_rate)}
-                    n={num(row.with_response_model)}
+                    pct={maybe(row["mismatch_rate"])}
+                    n={num(row["with_response_model"])}
                     digits={2}
                   />
                 ),
               },
             ]}
-            rows={data.conformance ?? []}
+            rows={data["conformance"] ?? []}
             empty="No calls report a served model in the selected range."
           />
         </Panel>

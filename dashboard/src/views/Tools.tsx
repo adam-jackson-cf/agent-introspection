@@ -24,30 +24,30 @@ import {
 
 /** The server's All row: the rollup row, harness = ''. */
 const allRow = (rows: Row[] | undefined): Row =>
-  (rows ?? []).find((row) => row.harness === "") ?? {};
+  (rows ?? []).find((row) => row["harness"] === "") ?? {};
 
 /** Long daily rows to one row per day, a column per harness; values are copied. */
 function reshapeDaily(rows: Row[], valueKey: string, nKey?: string): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     const out = days.get(day) ?? { day };
-    const harness = String(row.harness);
+    const harness = String(row["harness"]);
     out[harness] = maybe(row[valueKey]);
     if (nKey) out[`${harness}_n`] = num(row[nKey]);
     days.set(day, out);
   }
-  return [...days.values()].sort((a, b) =>
-    String(a.day).localeCompare(String(b.day)),
+  return [...days.values()].toSorted((a, b) =>
+    String(a["day"]).localeCompare(String(b["day"])),
   );
 }
 
 export default function Tools({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const { minRateN } = useView();
-  const kpi = allRow(data.kpi);
-  const repeats = allRow(data.repeat_summary);
-  const daily = data.daily ?? [];
+  const kpi = allRow(data["kpi"]);
+  const repeats = allRow(data["repeat_summary"]);
+  const daily = data["daily"] ?? [];
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
@@ -61,32 +61,32 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Tool calls"
           source="kpi"
-          value={fmtCount(num(kpi.calls))}
-          detail={`${fmtCount(num(kpi.unknown))} without an explicit outcome`}
+          value={fmtCount(num(kpi["calls"]))}
+          detail={`${fmtCount(num(kpi["unknown"]))} without an explicit outcome`}
           signals={["tools.calls"]}
         />
         <Kpi
           title="Tool failure rate"
           source="kpi"
-          value={fmtPct(maybe(kpi.failure_rate))}
-          detail={`${fmtCount(num(kpi.failed))} failed of ${fmtCount(num(kpi.explicit))} with an outcome`}
-          n={num(kpi.explicit)}
+          value={fmtPct(maybe(kpi["failure_rate"]))}
+          detail={`${fmtCount(num(kpi["failed"]))} failed of ${fmtCount(num(kpi["explicit"]))} with an outcome`}
+          n={num(kpi["explicit"])}
           signals={["tools.failure_rate"]}
         />
         <Kpi
           title="Tasks affected by failures"
           source="kpi"
-          value={fmtPct(maybe(kpi.tasks_affected_rate))}
-          detail={`${fmtCount(num(kpi.failed_tasks))} of ${fmtCount(num(kpi.tasks))} tasks with an attributed tool call`}
-          n={num(kpi.tasks)}
+          value={fmtPct(maybe(kpi["tasks_affected_rate"]))}
+          detail={`${fmtCount(num(kpi["failed_tasks"]))} of ${fmtCount(num(kpi["tasks"]))} tasks with an attributed tool call`}
+          n={num(kpi["tasks"])}
           signals={["tools.tasks_affected"]}
         />
         <Kpi
           title="Tasks with repeated attempts"
           source="repeat_summary"
-          value={fmtPct(maybe(repeats.repeat_rate))}
-          detail={`${fmtCount(num(repeats.repeat_tasks))} of ${fmtCount(num(repeats.tasks))} tasks with comparable calls (not waiting or polling) · ${fmtCount(num(repeats.repeated_attempts))} identical calls`}
-          n={num(repeats.tasks)}
+          value={fmtPct(maybe(repeats["repeat_rate"]))}
+          detail={`${fmtCount(num(repeats["repeat_tasks"]))} of ${fmtCount(num(repeats["tasks"]))} tasks with comparable calls (not waiting or polling) · ${fmtCount(num(repeats["repeated_attempts"]))} identical calls`}
+          n={num(repeats["tasks"])}
           signals={["tools.repeats"]}
         />
       </Section>
@@ -151,7 +151,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "tool", label: "Tool" },
               { key: "calls", label: "Calls", numeric: true },
@@ -162,14 +162,14 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => (
                   <RateValue
-                    pct={maybe(row.failure_rate)}
-                    n={num(row.explicit)}
+                    pct={maybe(row["failure_rate"])}
+                    n={num(row["explicit"])}
                   />
                 ),
               },
               { key: "failed_tasks", label: "Failed tasks", numeric: true },
             ]}
-            rows={data.by_tool ?? []}
+            rows={data["by_tool"] ?? []}
           />
         </Panel>
         <Panel
@@ -183,7 +183,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "tool", label: "Tool" },
               { key: "signature", label: "Signature" },
@@ -194,13 +194,13 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
                 label: "Example",
                 render: (row) => (
                   <SessionLink
-                    harness={row.harness}
-                    session={row.example_session}
+                    harness={row["harness"]}
+                    session={row["example_session"]}
                   />
                 ),
               },
             ]}
-            rows={data.signatures ?? []}
+            rows={data["signatures"] ?? []}
           />
           <ViewLink view="friction">Open Friction</ViewLink>
           <ViewLink view="recurrence">Open Recurring failures</ViewLink>
@@ -219,15 +219,15 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "example_session",
                 label: "Session",
                 render: (row) => (
                   <SessionLink
-                    harness={row.harness}
-                    session={row.example_session}
+                    harness={row["harness"]}
+                    session={row["example_session"]}
                   />
                 ),
               },
@@ -235,7 +235,7 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "command",
                 label: "Command",
-                render: (row) => orDash(row.command),
+                render: (row) => orDash(row["command"]),
               },
               { key: "attempts", label: "Attempts", numeric: true },
               { key: "longest_run", label: "Longest run", numeric: true },
@@ -243,10 +243,10 @@ export default function Tools({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "started",
                 label: "Started (UTC)",
-                render: (row) => String(row.started).slice(0, 16),
+                render: (row) => String(row["started"]).slice(0, 16),
               },
             ]}
-            rows={data.repeated_calls ?? []}
+            rows={data["repeated_calls"] ?? []}
           />
           <ViewLink view="friction">Open Friction</ViewLink>
           <ViewLink view="recurrence">Open Recurring failures</ViewLink>

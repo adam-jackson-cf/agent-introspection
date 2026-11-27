@@ -8,19 +8,19 @@ const flag = (value: unknown) =>
 
 /** Head counts come from the uncapped server count query. */
 const headCounts = (data: SessionResponse["data"]) => {
-  const head = data.head_counts?.[0];
+  const head = data["head_counts"]?.[0];
   return {
-    taskTotal: num(head?.tasks),
-    callTotal: num(head?.calls),
-    signalTotal: num(head?.signals),
-    failed: num(head?.failed),
+    taskTotal: num(head?.["tasks"]),
+    callTotal: num(head?.["calls"]),
+    signalTotal: num(head?.["signals"]),
+    failed: num(head?.["failed"]),
   };
 };
 
 export default function Session({ response }: { response: SessionResponse }) {
   const { data } = response;
-  const tasks = data.tasks ?? [];
-  const calls = data.calls ?? [];
+  const tasks = data["tasks"] ?? [];
+  const calls = data["calls"] ?? [];
   const { taskTotal, callTotal, signalTotal, failed } = headCounts(data);
   return (
     <>
@@ -39,60 +39,60 @@ export default function Session({ response }: { response: SessionResponse }) {
                 {
                   key: "started",
                   label: "Started (UTC)",
-                  render: (row) => String(row.started).slice(0, 19),
+                  render: (row) => String(row["started"]).slice(0, 19),
                 },
                 { key: "model", label: "Model" },
                 { key: "effort", label: "Effort" },
                 {
                   key: "task_type",
                   label: "Task type",
-                  render: (row) => String(row.task_type ?? "") || "—",
+                  render: (row) => String(row["task_type"] ?? "") || "—",
                 },
                 {
                   key: "duration_seconds",
                   label: "Duration",
                   numeric: true,
-                  render: (row) => fmtSeconds(maybe(row.duration_seconds)),
+                  render: (row) => fmtSeconds(maybe(row["duration_seconds"])),
                 },
                 { key: "model_steps", label: "Steps", numeric: true },
                 {
                   key: "reasoning_tokens",
                   label: "Reasoning",
                   numeric: true,
-                  render: (row) => fmtCount(maybe(row.reasoning_tokens)),
+                  render: (row) => fmtCount(maybe(row["reasoning_tokens"])),
                 },
                 {
                   key: "interrupted",
                   label: "Interrupted",
-                  render: (row) => flag(row.interrupted),
+                  render: (row) => flag(row["interrupted"]),
                 },
                 {
                   key: "steered",
                   label: "Steered",
-                  render: (row) => flag(row.steered),
+                  render: (row) => flag(row["steered"]),
                 },
                 {
                   key: "errored",
                   label: "Errored",
-                  render: (row) => flag(row.errored),
+                  render: (row) => flag(row["errored"]),
                 },
                 {
                   key: "quick_follow_up",
                   label: "Follow-up",
-                  render: (row) => flag(row.quick_follow_up),
+                  render: (row) => flag(row["quick_follow_up"]),
                 },
                 {
                   key: "clean_completion",
                   label: "Clean",
-                  render: (row) => flag(row.clean_completion),
+                  render: (row) => flag(row["clean_completion"]),
                 },
                 {
                   key: "corrected_next",
                   label: "Corrected next",
                   render: (row) =>
-                    num(row.corrected_next) === 1 && row.correction_kind
-                      ? `yes (${String(row.correction_kind).replaceAll("_", " ")})`
-                      : flag(row.corrected_next),
+                    num(row["corrected_next"]) === 1 && row["correction_kind"]
+                      ? `yes (${String(row["correction_kind"]).replaceAll("_", " ")})`
+                      : flag(row["corrected_next"]),
                 },
                 { key: "observed", label: "Friction observed" },
               ]}
@@ -114,28 +114,28 @@ export default function Session({ response }: { response: SessionResponse }) {
                   key: "input",
                   label: "Input",
                   numeric: true,
-                  render: (row) => fmtCount(num(row.input)),
+                  render: (row) => fmtCount(num(row["input"])),
                 },
                 {
                   key: "cached",
                   label: "Cached",
                   numeric: true,
-                  render: (row) => fmtCount(num(row.cached)),
+                  render: (row) => fmtCount(num(row["cached"])),
                 },
                 {
                   key: "output",
                   label: "Output",
                   numeric: true,
-                  render: (row) => fmtCount(num(row.output)),
+                  render: (row) => fmtCount(num(row["output"])),
                 },
                 {
                   key: "reasoning",
                   label: "Reasoning",
                   numeric: true,
-                  render: (row) => fmtCount(maybe(row.reasoning)),
+                  render: (row) => fmtCount(maybe(row["reasoning"])),
                 },
               ]}
-              rows={data.usage ?? []}
+              rows={data["usage"] ?? []}
               empty="No model usage in this session."
             />
           </div>
@@ -148,17 +148,17 @@ export default function Session({ response }: { response: SessionResponse }) {
                 {
                   key: "error_class",
                   label: "Error",
-                  render: (row) => String(row.error_class) || "—",
+                  render: (row) => String(row["error_class"]) || "—",
                 },
                 { key: "n", label: "Calls", numeric: true },
                 {
                   key: "ttft_p50",
                   label: "TTFT p50",
                   numeric: true,
-                  render: (row) => fmtSeconds(maybe(row.ttft_p50)),
+                  render: (row) => fmtSeconds(maybe(row["ttft_p50"])),
                 },
               ]}
-              rows={data.model_calls ?? []}
+              rows={data["model_calls"] ?? []}
               empty="No model calls in this session."
             />
           </div>
@@ -172,25 +172,25 @@ export default function Session({ response }: { response: SessionResponse }) {
                 {
                   key: "at",
                   label: "At (UTC)",
-                  render: (row) => String(row.at).slice(11, 19),
+                  render: (row) => String(row["at"]).slice(11, 19),
                 },
                 { key: "tool", label: "Tool" },
                 { key: "outcome", label: "Outcome" },
                 {
                   key: "command_head",
                   label: "Command",
-                  render: (row) => String(row.command),
+                  render: (row) => String(row["command"]),
                 },
                 { key: "exit_code", label: "Exit", numeric: true },
                 {
                   key: "failure_signature",
                   label: "Failure signature",
-                  render: (row) => String(row.failure_signature) || "—",
+                  render: (row) => String(row["failure_signature"]) || "—",
                 },
                 {
                   key: "targets",
                   label: "Targets",
-                  render: (row) => String(row.targets) || "—",
+                  render: (row) => String(row["targets"]) || "—",
                 },
               ]}
               rows={calls}
@@ -209,14 +209,14 @@ export default function Session({ response }: { response: SessionResponse }) {
                 {
                   key: "at",
                   label: "At (UTC)",
-                  render: (row) => String(row.at).slice(0, 19),
+                  render: (row) => String(row["at"]).slice(0, 19),
                 },
                 { key: "signal", label: "Signal" },
                 { key: "detail", label: "Detail" },
                 { key: "source", label: "Source" },
                 { key: "tool", label: "Tool" },
               ]}
-              rows={data.signals ?? []}
+              rows={data["signals"] ?? []}
               total={signalTotal}
               empty="No interrupts, steers, approvals, or sandbox outcomes in this session."
             />

@@ -6,7 +6,7 @@
 //         intent, interventions, session (the first loop session from Tools; its ID is never printed).
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import puppeteer from "puppeteer-core";
+import { launch } from "puppeteer-core";
 
 const ROOT = new URL("../../", import.meta.url);
 const BASE = "http://127.0.0.1:4173";
@@ -63,6 +63,7 @@ function sourceChecks(page: string): Record<string, Check> {
  * Runs in the page: every DOM-measured auto check. Self-contained (serialised into the browser), so the
  * check groups are nested functions sharing the measurements taken here.
  */
+/* oxlint-disable unicorn/consistent-function-scoping -- tab.evaluate serialises domChecks into the page, so its helpers must stay nested */
 function domChecks(args: { period: string; states: string[]; session: boolean; fold: number }) {
   const period = new RegExp(args.period, "i");
   const root = document.querySelector<HTMLElement>(".content")!;
@@ -150,7 +151,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   /** A row is filled when its spans add up to the grid's columns and its panels share a height. */
   function rowFilled(row: HTMLElement[], columns: number) {
     const heights = row.map((p) => Math.round(p.getBoundingClientRect().height));
-    const spans = row.reduce((sum, p) => sum + Number(p.dataset.span ?? 6), 0);
+    const spans = row.reduce((sum, p) => sum + Number(p.dataset["span"] ?? 6), 0);
     return Math.max(...heights) - Math.min(...heights) <= 2 && spans === columns;
   }
 
@@ -167,7 +168,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
     const overflow = document.documentElement.scrollWidth > window.innerWidth;
     set("F1", !overflow && gap <= 40, `horizontal overflow: ${overflow}; gap from sidebar ${gap} px`);
     const badRows = [...root.querySelectorAll<HTMLElement>(".grid")].flatMap((grid) =>
-      gridRows(grid).filter((row) => !rowFilled(row, Number(grid.dataset.columns ?? 12))),
+      gridRows(grid).filter((row) => !rowFilled(row, Number(grid.dataset["columns"] ?? 12))),
     );
     set("F2", badRows.length === 0, `rows not filled or unequal: ${badRows.map((row) => row.map(titleOf).join(" + ")).join("; ") || "none"}`);
     const slack = articles.map((a) => ({ a, empty: emptyBelow(a) })).filter((s) => s.empty > 160);
@@ -223,7 +224,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   function readability() {
     const small = [...document.querySelectorAll("body *")].filter(smallText).length;
     set("R1", small <= 10, `${small} visible text elements below 12 px`);
-    result.R2 = { pass: small === 0, evidence: `${small} below 12 px` }; // contrast added by the caller from axe
+    result["R2"] = { pass: small === 0, evidence: `${small} below 12 px` }; // contrast added by the caller from axe
     const tracked = [...root.querySelectorAll("*")].filter(trackedCaps).length;
     const proportional = [...root.querySelectorAll("td.num")].filter((td) => !getComputedStyle(td).fontVariantNumeric.includes("tabular-nums")).length;
     set("R3", tracked === 0 && proportional === 0, `${tracked} tracked-capital elements; ${proportional} numeric cells without tabular figures`);
@@ -263,6 +264,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   const failed = !!root.querySelector(".state-notice[role='alert']");
   return { checks: result, pageHeight: height, title: text(root.querySelector("h1")), path: location.pathname, failed };
 }
+/* oxlint-enable unicorn/consistent-function-scoping */
 
 async function sessionTarget(): Promise<string> {
   const end = new Date();
@@ -283,7 +285,7 @@ if (!outDir || pages.length === 0) {
 }
 await mkdir(outDir, { recursive: true });
 const axeSource = readFileSync(new URL("node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 180_000, defaultViewport: VIEWPORT });
+const browser = await launch({ executablePath: CHROME, headless: true, protocolTimeout: 180_000, defaultViewport: VIEWPORT });
 const tab = await browser.newPage();
 await tab.setBypassCSP(true);
 const autoIds = rubric.criteria.flatMap((c) => c.checks.filter((k) => k.method === "auto").map((k) => k.id));
@@ -299,7 +301,7 @@ for (const page of pages) {
   await tab.screenshot({ path: `${outDir}/${name}-first.png` });
   await tab.screenshot({ path: `${outDir}/${name}-full.png`, fullPage: true });
   const dom = await tab.evaluate(domChecks, {
-    period: rubric.definitions.period_phrase!.trim(),
+    period: rubric.definitions["period_phrase"]!.trim(),
     states: rubric.definitions.state_words,
     session,
     fold: VIEWPORT.height,
@@ -311,7 +313,7 @@ for (const page of pages) {
     return (run.violations as { nodes: unknown[] }[]).reduce((n, v) => n + v.nodes.length, 0);
   });
   const checks: Record<string, Check> = { ...dom.checks, ...sourceChecks(page) };
-  checks.R2 = { pass: checks.R2!.pass && contrast === 0, evidence: `${checks.R2!.evidence}; ${contrast} contrast failures` };
+  checks["R2"] = { pass: checks["R2"]!.pass && contrast === 0, evidence: `${checks["R2"]!.evidence}; ${contrast} contrast failures` };
   const missing = autoIds.filter((id) => !checks[id]);
   if (missing.length) throw new Error(`probe answered no result for ${missing.join(", ")}`);
   const inspect = Object.fromEntries(inspectIds.map((id) => [id, null]));

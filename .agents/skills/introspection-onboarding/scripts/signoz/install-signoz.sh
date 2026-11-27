@@ -66,7 +66,7 @@ foundry_sha256() {
     darwin_arm64) echo "2b3e8d7324044ff49cda9774d120bdb03558cff7b82142f2073153fdaeddf0ec" ;;
     linux_amd64) echo "7555f91ee87a9d0d517009fc859ef64be76ad8b045446b2fe4360b896dc5838d" ;;
     linux_arm64) echo "97d5017b97f163f466216f0680bdaf80d561180ed47cd675544fda283ebc284e" ;;
-    *) return 1 ;;
+    *) die "no pinned foundryctl checksum for $1" ;;
   esac
 }
 
@@ -94,12 +94,18 @@ while (($#)); do
   case "$1" in
     --dry-run) dry_run=true ;;
     --dir)
-      [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" ]] || {
+        usage >&2
+        exit 2
+      }
       dir="$2"
       shift
       ;;
     --tag)
-      [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" ]] || {
+        usage >&2
+        exit 2
+      }
       tag="$2"
       shift
       ;;
@@ -140,15 +146,14 @@ platform() {
   printf '%s_%s\n' "$os" "$arch"
 }
 
-# Whether dotted version $1 is at least $2; a suffix such as -desktop.1 is ignored.
-version_at_least() {
+require_version_at_least() {
   local -a have want
   local i
   IFS=. read -r -a have <<<"${1%%[!0-9.]*}"
   IFS=. read -r -a want <<<"$2"
   for i in 0 1 2; do
     ((${have[i]:-0} > ${want[i]:-0})) && return 0
-    ((${have[i]:-0} < ${want[i]:-0})) && return 1
+    ((${have[i]:-0} < ${want[i]:-0})) && die "$3"
   done
   return 0
 }
@@ -162,8 +167,8 @@ require_tools() {
     || die "sha256sum or shasum is required"
   docker compose version >/dev/null 2>&1 || die "the Docker Compose v2 plugin (docker compose) is required"
   compose="$(docker compose version --short 2>/dev/null)" || compose=""
-  version_at_least "${compose#v}" "$COMPOSE_MINIMUM" \
-    || die "Docker Compose $COMPOSE_MINIMUM or later is required for $OVERRIDE (found ${compose:-no version}); update Docker"
+  require_version_at_least "${compose#v}" "$COMPOSE_MINIMUM" \
+    "Docker Compose $COMPOSE_MINIMUM or later is required for $OVERRIDE (found ${compose:-no version}); update Docker"
   docker info >/dev/null 2>&1 || die "the Docker daemon does not answer (docker info); start it first"
   [[ -f "$script_dir/$OVERRIDE" ]] || die "$OVERRIDE is missing next to this script"
 }
@@ -181,18 +186,13 @@ require_local_docker() {
   esac
 }
 
-# Bash's /dev/tcp: a refused loopback connection fails at once.
-port_in_use() {
-  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
-}
-
-# Appends a finding per SigNoz, ClickHouse, or busy port that `signoz detect` reports,
-# or returns 1 when the CLI or its `signoz detect` command is unavailable.
 findings_from_detect() {
   local report port
-  command -v agent-introspection >/dev/null 2>&1 || return 1
-  report="$(agent-introspection signoz detect 2>/dev/null)" || return 1
-  [[ "$report" == *'"signoz_present":'* ]] || return 1
+  detect_available=false
+  command -v agent-introspection >/dev/null 2>&1 || return 0
+  report="$(agent-introspection signoz detect 2>/dev/null)" || return 0
+  [[ "$report" == *'"signoz_present":'* ]] || return 0
+  detect_available=true
   if [[ "$report" == *'"signoz_present":true'* ]]; then
     findings+=("agent-introspection signoz detect: a SigNoz or ClickHouse is present")
   fi
@@ -206,7 +206,7 @@ findings_from_detect() {
 findings_from_ports() {
   local port
   for port in $PORTS; do
-    if port_in_use "$port"; then
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
       findings+=("port $port on this machine is in use")
     fi
   done
@@ -232,7 +232,8 @@ findings_from_docker() {
 
 check_existing() {
   findings=()
-  if ! findings_from_detect; then
+  findings_from_detect
+  if [[ "$detect_available" == false ]]; then
     printf 'agent-introspection signoz detect is unavailable; probing ports %s directly.\n' "$PORTS"
     findings_from_ports
   fi
@@ -245,7 +246,9 @@ check_existing() {
 check_dir() {
   if [[ -e "$dir" ]]; then
     [[ -d "$dir" ]] || die "--dir $dir exists and is not a directory"
-    [[ -z "$(ls -A "$dir")" ]] || die "--dir $dir is not empty; choose a new or empty directory"
+    local entries
+    entries="$(ls -A "$dir")"
+    [[ -z "$entries" ]] || die "--dir $dir is not empty; choose a new or empty directory"
   fi
 }
 
@@ -317,11 +320,13 @@ compose_up() {
 }
 
 wait_for_clickhouse() {
-  local waited=0
-  until [[ "$(curl -fsS --noproxy '*' --max-time 2 "$CLICKHOUSE_PING" 2>/dev/null)" == "Ok." ]]; do
+  local waited=0 answer
+  answer="$(curl -fsS --noproxy '*' --max-time 2 "$CLICKHOUSE_PING" 2>/dev/null)" || answer=""
+  until [[ "$answer" == "Ok." ]]; do
     ((waited < WAIT_SECONDS)) || die "ClickHouse did not answer $CLICKHOUSE_PING within ${WAIT_SECONDS}s; see: docker compose -f $deployment/compose.yaml ps"
     sleep 5
     waited=$((waited + 5))
+    answer="$(curl -fsS --noproxy '*' --max-time 2 "$CLICKHOUSE_PING" 2>/dev/null)" || answer=""
   done
 }
 
@@ -356,7 +361,7 @@ EOF
 
 main() {
   target="$(platform)"
-  expected_sha256="$(foundry_sha256 "$target")" || die "no pinned foundryctl checksum for $target"
+  expected_sha256="$(foundry_sha256 "$target")"
   require_tools
   require_local_docker
   check_existing

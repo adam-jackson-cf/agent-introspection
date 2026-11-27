@@ -36,8 +36,8 @@ export default function App() {
   const data = useAppData(location, filters);
   const heading = useRef<HTMLHeadingElement>(null);
 
-  const viewHref = (id: ViewPath, next: Filters = filters) =>
-    `/${id}?${filterQuery(next)}`;
+  const viewHref = (id: ViewPath, next?: Filters) =>
+    `/${id}?${filterQuery(next ?? filters)}`;
   const sessionHref = (harness: string, session: string) =>
     `/session?${new URLSearchParams({ ...Object.fromEntries(filterQuery(filters)), harness, session })}`;
 

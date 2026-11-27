@@ -12,7 +12,7 @@ type Rubric = {
 
 const ROOT = new URL("../../", import.meta.url);
 const RUBRIC = new URL("docs/ux/rubrics/ux-page.yaml", ROOT).pathname;
-const SCORER = `${process.env.HOME}/.agents/by-request/setup-ux-standards/scripts/score_rubric.py`;
+const SCORER = `${process.env["HOME"]}/.agents/by-request/setup-ux-standards/scripts/score_rubric.py`;
 const rubric = Bun.YAML.parse(readFileSync(RUBRIC, "utf8")) as Rubric;
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 

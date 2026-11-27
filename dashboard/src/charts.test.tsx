@@ -61,7 +61,7 @@ describe("sortRows", () => {
     { harness: "codex", n: null },
   ];
   const order = (descending: boolean) =>
-    sortRows(rows, { key: "n", descending }).map((row) => row.harness);
+    sortRows(rows, { key: "n", descending }).map((row) => row["harness"]);
 
   test("number strings sort as numbers, and the All row keeps its place", () => {
     expect(order(false)).toEqual(["omp", "", "claude-code", "codex"]);
@@ -93,13 +93,13 @@ describe("DailyChart", () => {
     expect(html).toContain("A daily chart");
   });
   test("arrows stop at the ends; Home and End jump; the first press lands on day 0", () => {
-    expect(DAY_KEYS.ArrowRight!(null, 4)).toBe(0);
-    expect(DAY_KEYS.ArrowRight!(3, 4)).toBe(4);
-    expect(DAY_KEYS.ArrowRight!(4, 4)).toBe(4);
-    expect(DAY_KEYS.ArrowLeft!(0, 4)).toBe(0);
-    expect(DAY_KEYS.ArrowLeft!(3, 4)).toBe(2);
-    expect(DAY_KEYS.Home!(3, 4)).toBe(0);
-    expect(DAY_KEYS.End!(1, 4)).toBe(4);
+    expect(DAY_KEYS["ArrowRight"]!(null, 4)).toBe(0);
+    expect(DAY_KEYS["ArrowRight"]!(3, 4)).toBe(4);
+    expect(DAY_KEYS["ArrowRight"]!(4, 4)).toBe(4);
+    expect(DAY_KEYS["ArrowLeft"]!(0, 4)).toBe(0);
+    expect(DAY_KEYS["ArrowLeft"]!(3, 4)).toBe(2);
+    expect(DAY_KEYS["Home"]!(3, 4)).toBe(0);
+    expect(DAY_KEYS["End"]!(1, 4)).toBe(4);
   });
 });
 
@@ -114,9 +114,10 @@ describe("DailyChart axis", () => {
   });
 });
 
+const format = (value: number | null) => (value === null ? "—" : `${value}%`);
+
 describe("DailyChart markers", () => {
   const entry = { key: "a", label: "A", color: "var(--color-primary)" };
-  const format = (value: number | null) => (value === null ? "—" : `${value}%`);
   const markers = { minN: 20 };
   test("the readout carries n, and says why a day is empty", () => {
     expect(valueText({ day: "d", a: 5, a_n: 12 }, entry, format, markers)).toBe(

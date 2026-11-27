@@ -31,6 +31,6 @@ export function experimentalFeatures(
       ? undefined
       : (Bun.TOML.parse(text) as ConfigDocument).experimental;
   return {
-    intervention_outcomes: experimental?.intervention_outcomes === true,
+    intervention_outcomes: experimental?.["intervention_outcomes"] === true,
   };
 }
