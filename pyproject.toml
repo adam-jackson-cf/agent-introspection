@@ -15,6 +15,7 @@ agent-introspection = "agent_introspection.cli:main"
 [dependency-groups]
 dev = [
   "mypy>=1.19.0",
+  "packaging>=26.3",
   "pre-commit>=4.5.0",
   "pytest>=9.0.0",
   "pytest-cov>=6.0.0",

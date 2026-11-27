@@ -1,0 +1,4 @@
+/proofs.toml @owner
+/scripts/gate.sh @owner
+/.pre-commit-config.yaml @owner
+/.github/ @owner

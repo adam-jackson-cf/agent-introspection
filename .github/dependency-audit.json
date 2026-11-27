@@ -1,0 +1,85 @@
+{
+  "excluded": [
+    {
+      "path": "tests/fixtures/proofs/MYPY.package-coverage/passing/pyproject.toml",
+      "origin": "mypy configuration canary fixture (MYPY.package-coverage); a [tool.mypy]-only pyproject.toml with no dependencies"
+    },
+    {
+      "path": "tests/fixtures/proofs/MYPY.package-coverage/violating/pyproject.toml",
+      "origin": "mypy configuration canary fixture (MYPY.package-coverage); a [tool.mypy]-only pyproject.toml with no dependencies"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/lock-version/dashboard/bun.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/lock-version/dashboard/package.json",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/lock-version/pyproject.toml",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/lock-version/uv.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/package-manager/dashboard/bun.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/package-manager/dashboard/package-lock.json",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/package-manager/dashboard/package.json",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/package-manager/pyproject.toml",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/package-manager/uv.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/passing/dashboard/bun.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/passing/dashboard/package.json",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/passing/pyproject.toml",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/parity.locks/passing/uv.lock",
+      "origin": "canary fixture for PARITY.lock-version and PARITY.package-manager (claim parity.locks), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/security.dependency-audit/advisory/bun.lock",
+      "origin": "canary fixture for SECURITY.dependency-audit (claim security.dependency-audit), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/security.dependency-audit/advisory/package.json",
+      "origin": "canary fixture for SECURITY.dependency-audit (claim security.dependency-audit), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/security.dependency-audit/manifest-without-lock/package.json",
+      "origin": "canary fixture for SECURITY.dependency-audit (claim security.dependency-audit), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/security.dependency-audit/passing/bun.lock",
+      "origin": "canary fixture for SECURITY.dependency-audit (claim security.dependency-audit), run explicitly by its canary"
+    },
+    {
+      "path": "tests/fixtures/proofs/security.dependency-audit/passing/package.json",
+      "origin": "canary fixture for SECURITY.dependency-audit (claim security.dependency-audit), run explicitly by its canary"
+    }
+  ],
+  "exceptions": []
+}

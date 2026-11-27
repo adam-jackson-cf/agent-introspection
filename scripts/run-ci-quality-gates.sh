@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s static|t1|t2|proofs|hook\n       %s check <name> [path ...]\n' "$0" "$0"
+  printf 'Usage: %s static|t1|t2|install|proofs|hook\n       %s check <name> [path ...]\n' "$0" "$0"
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,8 +10,11 @@ cd "$repo_root"
 
 fixtures_exclude=':(exclude)tests/fixtures/**'
 
+hook_modes=(static t1 t2)
+
 static_checks=(
   gate_parity
+  install_guidance
   lock_parity
   skill_metadata
   subprocess_timeouts
@@ -52,11 +55,32 @@ scan() {
   done < <("$@")
 }
 
-check_gate_parity() { bash scripts/check-quality-gate-parity.sh; }
-check_lock_parity() { uv run python scripts/check-lock-parity.py "$@"; }
-check_skill_metadata() { uv run python scripts/check-skill-metadata.py "$@"; }
+check_gate_parity() { uv run python scripts/check-quality-gate-parity.py "${1:-.}"; }
+check_install_guidance() {
+  local guide=README.md installer=scripts/fresh-install/sandbox.sh
+  if (($#)); then
+    guide="$1/README.md"
+    installer="$1/sandbox.sh"
+  fi
+  uv run python scripts/check-install-guidance.py --guide "$guide" --installer "$installer" \
+    --section "Quick Install"
+}
+
+check_hook_installed() { uv run python scripts/check-hook-installed.py .pre-commit-config.yaml; }
+check_lock_parity() {
+  if (($#)); then
+    uv run python scripts/check-lock-parity.py "$@"
+  else
+    uv run python scripts/check-lock-parity.py --exclude "$fixtures_exclude" .
+  fi
+}
+check_skill_metadata() {
+  uv run python scripts/check-skill-metadata.py --schema .agents/skill-metadata.schema.json "$@"
+}
 check_subprocess_timeouts() { uv run python scripts/check-test-subprocess-timeouts.py "$@"; }
-check_dependency_audit() { uv run python scripts/check-dependency-audit.py "$@"; }
+check_dependency_audit() {
+  uv run python scripts/check-dependency-audit.py --policy .github/dependency-audit.json "$@"
+}
 
 check_ruff_format() {
   local files=("$@")
@@ -106,6 +130,7 @@ check_dashboard_build() { bun run --cwd dashboard build; }
 prepare() {
   uv sync --locked --dev
   uv lock --check
+  uv run pre-commit install
   bun install --cwd dashboard --frozen-lockfile
 }
 
@@ -125,9 +150,26 @@ run_t2() {
   uv run pytest -m boundary
 }
 
+run_install() {
+  local root log status=0
+  root="$(bash scripts/fresh-install/sandbox.sh create)"
+  bash scripts/fresh-install/sandbox.sh verify "$root" || status=$?
+  if ((status)); then
+    for log in "$root"/state/verify/*; do
+      if [[ -f "$log" ]]; then
+        printf '== %s\n' "$log" >&2
+        cat "$log" >&2
+      fi
+    done
+  fi
+  bash scripts/fresh-install/sandbox.sh destroy "$root"
+  return "$status"
+}
+
+check_proofs() { uv run python scripts/validate-rule-coverage.py --root "${1:-.}"; }
+
 run_proofs() {
-  uv run python scripts/validate-rule-coverage.py --root . --catalog docs/guardrails/enaible-rules.json \
-    --ledger docs/guardrails/coverage-ledger.json
+  check_proofs
 }
 
 (($#)) || { usage >&2; exit 2; }
@@ -139,12 +181,16 @@ case "$mode" in
     prepare
     "run_$mode"
     ;;
+  install)
+    (($# == 0)) || { usage >&2; exit 2; }
+    run_install
+    ;;
   hook)
     (($# == 0)) || { usage >&2; exit 2; }
     prepare
-    run_static
-    run_t1
-    run_t2
+    for mode in "${hook_modes[@]}"; do
+      "run_$mode"
+    done
     ;;
   check)
     (($#)) || { usage >&2; exit 2; }

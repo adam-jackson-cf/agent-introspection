@@ -1,0 +1,2 @@
+run: sh check.sh
+run: validate --root .

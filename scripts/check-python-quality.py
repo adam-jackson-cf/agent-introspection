@@ -57,13 +57,14 @@ SUBPROCESS_CALLS = frozenset({
 # Tests are out of scope for this rule.
 SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "scripts/check-dependency-audit.py": frozenset({"_run"}),
+    "scripts/check-hook-installed.py": frozenset({"_git_path"}),
+    "scripts/check-lock-parity.py": frozenset({"_git_ls_files"}),
     "scripts/check-python-mypy.py": frozenset({"_mypy"}),
     "scripts/check-runner-failure-propagation.py": frozenset({"_run"}),
     "scripts/check-skill-metadata.py": frozenset({"_git_ls_files"}),
     "scripts/check-test-subprocess-timeouts.py": frozenset({"_git_ls_files"}),
-    "scripts/guardrails-tool-canary.py": frozenset({"_run"}),
     "scripts/lib/python_quality_scope.py": frozenset({"_git_output"}),
-    "scripts/validate-rule-coverage.py": frozenset({"_run"}),
+    "scripts/validate-rule-coverage.py": frozenset({"_spawn"}),
     "src/agent_introspection/classify.py": frozenset({"_run_key_command"}),
     "src/agent_introspection/doctor_harness.py": frozenset({"_run_version"}),
     "src/agent_introspection/drafting.py": frozenset({"run_codex"}),

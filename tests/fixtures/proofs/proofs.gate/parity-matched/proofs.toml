@@ -1,0 +1,25 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[validator]
+status = "proofs"
+file = ".github/workflows/ci.yml"
+ref = "scripts/gate.sh proofs"
+
+[[claim]]
+id = "gate"
+rules = ["GATE.*"]
+control = ["scripts/gate.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/gate.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci.yml"
+ref = "scripts/gate.sh static"
+status = "gate"
