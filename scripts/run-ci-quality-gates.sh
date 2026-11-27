@@ -61,13 +61,13 @@ check_dependency_audit() { uv run python scripts/check-dependency-audit.py "$@";
 check_ruff_format() {
   local files=("$@")
   ((${#files[@]})) || { scan python_scope; files=("${scanned[@]}"); }
-  uv run ruff format --check --force-exclude "${files[@]}"
+  uv run ruff format --check "${files[@]}"
 }
 
 check_ruff() {
   local files=("$@")
   ((${#files[@]})) || { scan python_scope; files=("${scanned[@]}"); }
-  uv run ruff check --no-fix --force-exclude "${files[@]}"
+  uv run ruff check --no-fix "${files[@]}"
 }
 
 check_mypy() { uv run python scripts/check-python-mypy.py "$@"; }
