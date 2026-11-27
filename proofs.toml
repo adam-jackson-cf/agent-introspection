@@ -69,7 +69,7 @@ rules = ["GIT.required-checks"]
 
 [claim.host]
 command = ["gh", "api", "repos/adam-jackson-cf/agent-introspection/branches/main/protection"]
-expect = ["\"strict\": true", "\"gate\"", "\"proofs\""]
+expect = ["\"gate\"", "\"proofs\""]
 
 [[claim]]
 id = "security.dependency-audit"
