@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
+from lib import filesystem
+
 STRUCTURE_RULES = frozenset({
     "NAME.conventions",
     "PREFIX.candidates",
@@ -206,7 +208,7 @@ def _settings(document: dict[str, object]) -> Settings:
 def load_settings(root: Path) -> Settings:
     path = root / "proofs.toml"
     try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
+        document = tomllib.loads(filesystem.read_text(path))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise SettingsError(f"cannot read proofs.toml: {error}") from error
     settings = _settings(document)

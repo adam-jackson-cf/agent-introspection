@@ -11,6 +11,10 @@ from typing import Any
 INSERT = "INSERT INTO signoz_logs.distributed_logs_v2 FORMAT JSONEachRow"
 
 
+def _write_text(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+
+
 def _value(item: dict[str, Any]) -> object:
     value = item.get("value", {})
     for key in ("stringValue", "boolValue", "doubleValue"):
@@ -99,7 +103,7 @@ def main(port: int, clickhouse: str, state: Path) -> None:
                             pass
                     except OSError:
                         status = 503
-            (state / "collector.json").write_text(json.dumps(counts, sort_keys=True))
+            _write_text(state / "collector.json", json.dumps(counts, sort_keys=True))
             answer = b"{}"
             self.send_response(status)
             self.send_header("Content-Type", "application/json")

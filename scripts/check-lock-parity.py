@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
+from lib import filesystem
 from lib.bun_lock import BunLockError, read_bun_lock
 
 _REQUIREMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -80,12 +81,12 @@ def _locked_map(deps: list[dict[str, object]]) -> set[tuple[str, str, str, str]]
 
 def check_python(pyproject_path: Path) -> list[str]:
     lock_path = pyproject_path.with_name("uv.lock")
-    project = tomllib.loads(pyproject_path.read_text(encoding="utf-8")).get("project")
+    project = tomllib.loads(filesystem.read_text(pyproject_path)).get("project")
     if project is None:
         return []
-    if not lock_path.is_file():
+    if not filesystem.is_file(lock_path):
         return [f"{pyproject_path}: {_LOCK}: uv.lock is missing; run uv lock and commit it"]
-    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    lock = tomllib.loads(filesystem.read_text(lock_path))
     name = _normalise(project["name"])
     entries = [pkg for pkg in lock.get("package", []) if _normalise(pkg["name"]) == name]
     if len(entries) != 1:
@@ -99,10 +100,7 @@ def check_python(pyproject_path: Path) -> list[str]:
         )
     declared = _requirement_map(project.get("dependencies", []))
     for group in (
-        tomllib
-        .loads(pyproject_path.read_text(encoding="utf-8"))
-        .get("dependency-groups", {})
-        .values()
+        tomllib.loads(filesystem.read_text(pyproject_path)).get("dependency-groups", {}).values()
     ):
         declared |= _requirement_map([item for item in group if isinstance(item, str)])
     metadata = entry.get("metadata", {})
@@ -123,7 +121,7 @@ def _foreign_locks(package_path: Path) -> list[str]:
         f"{package_path.with_name(name)}: {_MANAGER}: {name} beside a bun manifest; "
         "delete it and keep bun.lock"
         for name in sorted(_FOREIGN_LOCKS)
-        if package_path.with_name(name).exists()
+        if filesystem.exists(package_path.with_name(name))
     ]
 
 
@@ -138,10 +136,10 @@ def _manager_problems(package_path: Path, package: dict[str, object]) -> list[st
 
 
 def check_bun(package_path: Path) -> list[str]:
-    package = json.loads(package_path.read_text(encoding="utf-8"))
+    package = json.loads(filesystem.read_text(package_path))
     lock_path = package_path.with_name("bun.lock")
     problems = _foreign_locks(package_path)
-    if not lock_path.is_file():
+    if not filesystem.is_file(lock_path):
         if any(package.get(section) for section in _PACKAGE_SECTIONS):
             problems.append(
                 f"{package_path}: {_LOCK}: bun.lock is missing; run bun install and commit it"
@@ -180,7 +178,7 @@ def _pins(manifests: list[Path]) -> dict[str, str]:
 
 
 def _mise_problems(mise: Path, pins: dict[str, str]) -> list[str]:
-    tools = tomllib.loads(mise.read_text(encoding="utf-8")).get("tools", {})
+    tools = tomllib.loads(filesystem.read_text(mise)).get("tools", {})
     pinned = tools.get("bun") if isinstance(tools, dict) else None
     if pinned is None:
         return []
@@ -197,7 +195,7 @@ def _mise_problems(mise: Path, pins: dict[str, str]) -> list[str]:
 
 
 def _setup_bun_steps(workflow: Path) -> list[dict[str, object]]:
-    data = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(filesystem.read_text(workflow)) or {}
     jobs = data.get("jobs", {}) if isinstance(data, dict) else {}
     return [
         step
@@ -249,7 +247,7 @@ def check_files(files: list[Path]) -> list[str]:
             problems.extend(check_python(path))
         elif path.name == "package.json":
             problems.extend(check_bun(path))
-        elif path.name in _FOREIGN_LOCKS and not path.with_name("package.json").is_file():
+        elif path.name in _FOREIGN_LOCKS and not filesystem.is_file(path.with_name("package.json")):
             problems.append(f"{path}: {_MANAGER}: {path.name} is a foreign lockfile; delete it")
     pins = _pins(manifests)
     if len(set(pins.values())) > 1:

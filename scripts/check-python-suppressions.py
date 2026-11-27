@@ -11,6 +11,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+from lib import filesystem
 from lib.python_tool_scope import as_list, load_pyproject, maintained_python_files
 
 _DIRECTIVE = re.compile(
@@ -82,7 +83,7 @@ def _mypy_entries(mypy: dict[str, Any]) -> Iterable[tuple[str, str]]:
 
 
 def config_findings(config: Path, document: dict[str, Any]) -> list[str]:
-    lines = config.read_text(encoding="utf-8").splitlines()
+    lines = filesystem.read_text(config).splitlines()
     tool = document.get("tool", {})
     entries = [*_ruff_entries(tool.get("ruff", {})), *_mypy_entries(tool.get("mypy", {}))]
     return [
@@ -116,7 +117,7 @@ def _exclude_patterns(tool: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def exclude_findings(config: Path, document: dict[str, Any], maintained: list[str]) -> list[str]:
-    lines = config.read_text(encoding="utf-8").splitlines()
+    lines = filesystem.read_text(config).splitlines()
     return [
         f'{config.name}{_line(lines, f'"{pattern}"')}: {_EXCLUDE}: {setting} "{pattern}" hides '
         f"maintained file {path}; narrow the pattern to non-maintained paths"
@@ -133,7 +134,7 @@ def repository_findings(config: Path) -> list[str]:
     findings = config_findings(config, document)
     findings.extend(exclude_findings(config, document, maintained))
     for relpath in maintained:
-        findings.extend(comment_findings(relpath, (root / relpath).read_text(encoding="utf-8")))
+        findings.extend(comment_findings(relpath, filesystem.read_text(root / relpath)))
     return findings
 
 

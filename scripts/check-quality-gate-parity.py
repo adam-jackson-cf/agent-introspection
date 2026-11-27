@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from lib import filesystem
+
 _PARITY = "GATE.parity"
 _SELF_CHECK = "GATE.self-check"
 _ARGUMENT = re.compile(r"^[A-Za-z0-9_./=-]+$")
@@ -32,7 +34,7 @@ class Gate:
 
 
 def _yaml(path: Path) -> dict[str, object]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(filesystem.read_text(path)) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{path} is not a YAML mapping")
     return {str(key): value for key, value in data.items()}
@@ -266,7 +268,7 @@ def _check_owners(gate: Gate, entrypoint: str) -> None:
 
 def check(root: Path) -> list[str]:
     try:
-        proofs = tomllib.loads((root / "proofs.toml").read_text(encoding="utf-8"))
+        proofs = tomllib.loads(filesystem.read_text(root / "proofs.toml"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         return [f"proofs.toml: {_PARITY}: cannot read: {error}; restore proofs.toml"]
     gate = Gate(root, proofs)

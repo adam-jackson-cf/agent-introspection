@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.git_changes import GitError, tracked_files
 from lib.proofs_settings import (
     PROOFS_FILE,
@@ -75,7 +76,7 @@ def _links(text: str) -> list[tuple[int, str]]:
 
 
 def _document_problems(repo: Path, path: str, surface: Surface) -> list[str]:
-    text = (repo / path).read_text(encoding="utf-8")
+    text = filesystem.read_text(repo / path)
     headings = _headings(text)
     problems: list[str] = []
     if tuple(title for _, title in headings) != surface.sections:
@@ -87,7 +88,7 @@ def _document_problems(repo: Path, path: str, surface: Surface) -> list[str]:
     targets: list[str] = []
     for number, link in _links(text):
         target = posixpath.normpath(posixpath.join(posixpath.dirname(path), link.split("#", 1)[0]))
-        if target.startswith("../") or not (repo / target).exists():
+        if target.startswith("../") or not filesystem.exists(repo / target):
             problems.append(
                 f"{path}:{number}: {MAP_RULE}: link {link} does not resolve; fix or remove it"
             )
@@ -114,14 +115,14 @@ def feature_map_problems(repo: Path, files: list[str], surface: Surface) -> list
 
 
 def _drives_lever(path: Path, surface: Surface) -> bool:
-    return surface.lever_parts[0] in path.read_text(encoding="utf-8")
+    return surface.lever_parts[0] in filesystem.read_text(path)
 
 
 def journey_problems(repo: Path, files: list[str], surface: Surface) -> list[str]:
     problems: list[str] = []
     for path in files:
         if matches(path, surface.journeys):
-            text = (repo / path).read_text(encoding="utf-8")
+            text = filesystem.read_text(repo / path)
             if not all(part in text for part in surface.lever_parts):
                 problems.append(
                     f"{path}: {JOURNEY_RULE}: journey does not drive the lever; run "
@@ -137,7 +138,7 @@ def journey_problems(repo: Path, files: list[str], surface: Surface) -> list[str
 
 def check(repo: Path, paths: list[str]) -> list[str]:
     surface = load_surface(repo)
-    files = paths or [path for path in tracked_files(repo) if (repo / path).is_file()]
+    files = paths or [path for path in tracked_files(repo) if filesystem.is_file(repo / path)]
     return [*feature_map_problems(repo, files, surface), *journey_problems(repo, files, surface)]
 
 

@@ -50,12 +50,8 @@ def window_for(days: int | None, start: str | None, end: str | None, harness: st
     return Window(_utc(now - timedelta(days=span)), _utc(now), harness)
 
 
-def _url_override() -> str:
-    return os.environ.get(URL_VARIABLE, "")
-
-
 def dashboard_url() -> str:
-    url = _url_override().rstrip("/") or DEFAULT_URL
+    url = os.environ.get(URL_VARIABLE, "").rstrip("/") or DEFAULT_URL
     parts = urlsplit(url)
     if parts.scheme != "http" or not parts.hostname or not is_local_host(parts.hostname):
         raise ValueError(f"{URL_VARIABLE} must be an http URL on loopback, not {url}")

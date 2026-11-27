@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.python_quality_scope import (
     SourceFile,
     candidate_python_relpaths,
@@ -67,7 +68,7 @@ def _normalise_source_roots(repo_root: Path, values: list[str]) -> tuple[SourceR
     roots: list[SourceRoot] = []
     for value in values:
         root_path = (repo_root / value).resolve()
-        if not root_path.is_dir():
+        if not filesystem.is_dir(root_path):
             continue
         relpath = _canonical_relpath(repo_root, root_path)
         if is_excluded_python_path(f"{relpath}/"):
@@ -87,7 +88,7 @@ def discover_python_files(
         in_roots = any(
             root.relpath == "." or relpath.startswith(f"{root.relpath}/") for root in source_roots
         )
-        if in_roots and is_maintained_python_path(relpath) and not path.is_symlink():
+        if in_roots and is_maintained_python_path(relpath) and not filesystem.is_symlink(path):
             discovered.append(path)
     return discovered
 

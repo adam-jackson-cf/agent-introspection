@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from lib import filesystem
 from lib.proofs_settings import (
     SettingsError,
     load_proofs,
@@ -107,7 +108,7 @@ def check_file(path: Path) -> list[str]:
     if path.suffix in {".ts", ".tsx"}:
         return check_typescript(path)
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(filesystem.read_text(path), filename=str(path))
     except (SyntaxError, UnicodeDecodeError) as error:
         return [f"{path}: {RULE} unparsable source fails closed: {error}"]
     modules, callables = _subprocess_aliases(tree)
@@ -139,7 +140,7 @@ def _call_text(source: str, start: int) -> str:
 
 
 def check_typescript(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
+    source = filesystem.read_text(path)
     problems: list[str] = []
     for match in _TS_SPAWN.finditer(source):
         line = source.count("\n", 0, match.start()) + 1

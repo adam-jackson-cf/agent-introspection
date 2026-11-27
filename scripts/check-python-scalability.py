@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.python_quality_scope import (
     SourceFile,
     is_maintained_python_path,
@@ -475,7 +476,7 @@ def ownership_diagnostics(
 ) -> list[Diagnostic]:
     if not analyzer_relpaths:
         return []
-    if any((root / marker).is_file() for marker in settings.ownership_markers):
+    if any(filesystem.is_file(root / marker) for marker in settings.ownership_markers):
         return []
     markers = ", ".join(settings.ownership_markers)
     return [

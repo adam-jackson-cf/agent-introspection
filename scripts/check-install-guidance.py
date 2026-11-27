@@ -8,6 +8,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from lib import filesystem
+
 _RULE = "PARITY.install-guidance"
 _STEP = re.compile(r"^\s*step\s+\S+\s+\S+\s+(?P<quote>['\"])(?P<command>.*)(?P=quote)\s*$")
 _FENCE = re.compile(r"^```(?P<lang>\S*)\s*$")
@@ -15,7 +17,7 @@ _ACQUISITION = ("git", "cd")
 
 
 def documented_commands(guide: Path, section: str) -> list[tuple[int, list[str]]]:
-    lines = guide.read_text(encoding="utf-8").splitlines()
+    lines = filesystem.read_text(guide).splitlines()
     heading = f"## {section}"
     if heading not in lines:
         raise ValueError(f"{guide}: {_RULE}: no '{heading}' section; restore the install section")
@@ -43,7 +45,7 @@ def documented_commands(guide: Path, section: str) -> list[tuple[int, list[str]]
 
 def installer_commands(installer: Path) -> list[list[str]]:
     commands = []
-    for line in installer.read_text(encoding="utf-8").splitlines():
+    for line in filesystem.read_text(installer).splitlines():
         match = _STEP.match(line)
         if match:
             tokens = shlex.split(match.group("command"))

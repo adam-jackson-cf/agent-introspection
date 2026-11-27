@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.proofs_settings import (
     SettingsError,
     load_proofs,
@@ -78,13 +79,13 @@ def _module_source(root: Path, module: str) -> Path | None:
     for base in (root / "src", root, root / "scripts"):
         candidate = base.joinpath(*parts)
         for path in (candidate.with_suffix(".py"), candidate / "__init__.py"):
-            if path.is_file():
+            if filesystem.is_file(path):
                 return path
     return None
 
 
 def _top_level_names(source: Path) -> set[str]:
-    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    tree = ast.parse(filesystem.read_text(source), filename=str(source))
     names: set[str] = set()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -226,7 +227,7 @@ class MockingVisitor(ast.NodeVisitor):
 
 def check_python(layout: Layout, path: Path, shown: str) -> list[str]:
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(filesystem.read_text(path), filename=str(path))
     except (SyntaxError, UnicodeDecodeError) as error:
         return [f"{shown}: {RULE}: cannot parse the test source: {error}; fix the syntax"]
     visitor = MockingVisitor(layout, shown, _bindings(tree))
@@ -236,7 +237,7 @@ def check_python(layout: Layout, path: Path, shown: str) -> list[str]:
 
 def check_typescript(path: Path, shown: str) -> list[str]:
     problems: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(filesystem.read_text(path).splitlines(), start=1):
         if any(pattern.search(line) for pattern in TS_PATTERNS):
             problems.append(
                 f"{shown}:{number}: {RULE}: the test replaces a module or spies on owned code; "
@@ -256,7 +257,7 @@ def default_paths(layout: Layout) -> list[str]:
 
 def check_path(layout: Layout, raw: str) -> list[str]:
     path = Path(raw)
-    if not path.is_file():
+    if not filesystem.is_file(path):
         return [f"{raw}: {RULE}: no such test file; pass an existing path"]
     if path.suffix == ".py":
         return check_python(layout, path, raw)

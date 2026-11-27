@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import isolated_environment, run_command
 from lib.proofs_settings import PROOFS_FILE, SettingsError, load_proofs, string, strings, table
 
@@ -90,7 +91,7 @@ def _run_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
         problems.append(
             f"{lever.command[1]}: {RULE}: evidence directory is empty after cleanup; keep it"
         )
-    if data.exists():
+    if filesystem.exists(data):
         problems.append(
             f"{lever.command[1]}: {RULE}: data directory {data} survives cleanup; delete it"
         )
@@ -127,8 +128,8 @@ def check(repo: Path) -> list[str]:
     lever = load_lever(repo)
     root = Path(tempfile.mkdtemp(prefix="lever-isolation-"))
     print(f"check-lever-isolation: evidence under {root}", file=sys.stderr)
-    (root / "doctor").mkdir()
-    (root / "run").mkdir()
+    filesystem.mkdir(root / "doctor")
+    filesystem.mkdir(root / "run")
     return [
         *_doctor_problems(repo, lever, root / "doctor"),
         *_run_problems(repo, lever, root / "run"),

@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 
+from lib import filesystem
 from lib.structure.finding import Finding
 from lib.structure.path_rules import name_stem
 from lib.structure.repo_git import Change
@@ -41,9 +42,9 @@ def _pattern(name: str) -> re.Pattern[str]:
 
 def _text(root: Path, path: str) -> str | None:
     target = root / path
-    if target.is_symlink() or not target.is_file():
+    if filesystem.is_symlink(target) or not filesystem.is_file(target):
         return None
-    data = target.read_bytes()
+    data = filesystem.read_bytes(target)
     if b"\0" in data:
         return None
     try:

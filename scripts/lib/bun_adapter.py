@@ -4,6 +4,7 @@ import json
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import run_command
 from lib.run_evidence import CaseRecord, EvidenceError, RunReport, StaticCase
 
@@ -43,7 +44,7 @@ def _cases(suite: ElementTree.Element, prefix: str, groups: tuple[str, ...]) -> 
 def report(junit: Path, tier: str, prefix: str) -> RunReport:
     try:
         root = ElementTree.parse(junit).getroot()
-        finished = junit.stat().st_mtime
+        finished = filesystem.modified_time(junit)
     except (OSError, ElementTree.ParseError) as error:
         raise EvidenceError(f"bun report {junit} is unreadable: {error}") from error
     if root.tag != "testsuites":

@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.proofs_settings import (
     SettingsError,
     approved_paths,
@@ -175,9 +176,9 @@ def typescript_findings(path: str, source: str) -> list[Finding]:
 
 def _pytest_option_findings(root: Path) -> list[Finding]:
     pyproject = root / "pyproject.toml"
-    if not pyproject.is_file():
+    if not filesystem.is_file(pyproject):
         return []
-    ini = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    ini = tomllib.loads(filesystem.read_text(pyproject))
     addopts = ini.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", "")
     tokens = addopts.split() if isinstance(addopts, str) else list(addopts)
     return [
@@ -188,7 +189,7 @@ def _pytest_option_findings(root: Path) -> list[Finding]:
 
 
 def _script_option_findings(manifest: Path, shown: str) -> list[Finding]:
-    scripts = json.loads(manifest.read_text(encoding="utf-8")).get("scripts", {})
+    scripts = json.loads(filesystem.read_text(manifest)).get("scripts", {})
     return [
         Finding(shown, 0, f"script {name}", f"selects or reruns tests ({token})")
         for name, command in sorted(scripts.items())
@@ -201,7 +202,7 @@ def config_findings(root: Path, patterns: Iterable[str]) -> list[Finding]:
     findings = _pytest_option_findings(root)
     for package in sorted({pattern.split("/")[0] for pattern in patterns}):
         manifest = root / package / "package.json"
-        if manifest.is_file():
+        if filesystem.is_file(manifest):
             findings.extend(_script_option_findings(manifest, f"{package}/package.json"))
     return findings
 
@@ -273,7 +274,7 @@ def timeout_findings(root: Path, event: str, patterns: list[str], fixtures: str)
         if before is None:
             continue
         old = _timeouts_by_test(path, before)
-        new = _timeouts_by_test(path, (root / path).read_text(encoding="utf-8"))
+        new = _timeouts_by_test(path, filesystem.read_text(root / path))
         for name, value in sorted(new.items()):
             if name in old and value > old[name]:
                 findings.append(
@@ -289,9 +290,9 @@ def timeout_findings(root: Path, event: str, patterns: list[str], fixtures: str)
 
 def source_findings(raw: str) -> list[Finding]:
     path = Path(raw)
-    if not path.is_file():
+    if not filesystem.is_file(path):
         return [Finding(raw, 0, raw, "is not a file")]
-    source = path.read_text(encoding="utf-8")
+    source = filesystem.read_text(path)
     try:
         if path.suffix == ".py":
             return python_findings(raw, source)

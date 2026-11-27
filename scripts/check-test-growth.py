@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from lib import bun_adapter, pytest_adapter
+from lib import bun_adapter, filesystem, pytest_adapter
 from lib.git_changes import GitError, changes_since, file_at, files_at, resolve, tracked_files
 from lib.proofs_settings import (
     PROOFS_FILE,
@@ -53,9 +53,7 @@ def collect(root: Path, files: list[str]) -> Collection:
     unparsable: dict[str, str] = {}
     for path in (item for item in files if item.endswith(".py")):
         try:
-            cases.extend(
-                pytest_adapter.static_cases(path, (root / path).read_text(encoding="utf-8"))
-            )
+            cases.extend(pytest_adapter.static_cases(path, filesystem.read_text(root / path)))
         except (SyntaxError, UnicodeDecodeError) as error:
             unparsable[path] = str(error)
     bun_cases, bun_unparsable = bun_adapter.static_cases(
@@ -70,8 +68,8 @@ def _base_collection(repo: Path, base: str, layout: Layout) -> Collection:
         files = [path for path in files_at(repo, base) if layout.owns(path)]
         for path in files:
             target = snapshot / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(file_at(repo, base, path) or "", encoding="utf-8")
+            filesystem.mkdir(target.parent, parents=True, exist_ok=True)
+            filesystem.write_text(target, file_at(repo, base, path) or "")
         return collect(snapshot, files)
 
 
@@ -111,7 +109,9 @@ def _duplicates(new: list[StaticCase], current: list[StaticCase]) -> list[str]:
 def check(repo: Path, base: str | None, paths: list[str]) -> list[str]:
     layout = load_layout(repo)
     current_files = [
-        path for path in tracked_files(repo) if layout.owns(path) and (repo / path).is_file()
+        path
+        for path in tracked_files(repo)
+        if layout.owns(path) and filesystem.is_file(repo / path)
     ]
     current = collect(repo, current_files)
     if base is None:

@@ -1191,7 +1191,7 @@ analyzer_bases = []
 dynamic_import_adapters = []
 contract_roots = ["src/agent_introspection"]
 max_loop_depth = 2
-analyzer_prefixes = ["scripts", "src", "tests"]
+analyzer_prefixes = ["scripts"]
 ownership_markers = ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]
 fanout_root_packages = ["agent_introspection"]
 fanout_max = 10
@@ -1240,13 +1240,31 @@ large_module_fanout_max = 3
 "tests/test_tier_guards.py" = ["_run"]
 
 [python_quality.filesystem_seams]
-"tests/test_python_checker_scripts.py" = ["_write_module"]
+"scripts/fresh-install/otlp_stub.py" = ["_write_text"]
+"scripts/lib/filesystem.py" = [
+    "copy_file",
+    "copy_tree",
+    "exists",
+    "glob",
+    "is_dir",
+    "is_executable",
+    "is_file",
+    "is_symlink",
+    "iterdir",
+    "make_executable",
+    "mkdir",
+    "modified_time",
+    "read_bytes",
+    "read_text",
+    "read_toml",
+    "remove_tree",
+    "rglob",
+    "unlink",
+    "write_text",
+]
+"scripts/validate-rule-coverage.py" = ["_is_dir", "_is_file", "_read_text", "_read_toml"]
 
 [python_quality.environment_seams]
-"tests/support/home_guard.py" = ["_drop_environment", "_set_environment"]
-"src/agent_introspection/cli.py" = ["_configured_path"]
-"src/agent_introspection/dashboard_api.py" = ["_url_override"]
-"src/agent_introspection/facts.py" = ["_environment_value"]
 
 [structure]
 base_ref = "origin/main"

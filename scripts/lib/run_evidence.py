@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from lib import filesystem
+
 SCHEMA = 1
 OUTCOMES = frozenset({"passed", "failed", "error", "skipped", "xfail", "timeout"})
 
@@ -94,7 +96,7 @@ def report_from_json(raw: dict[str, Any]) -> RunReport:
 
 def read_report(path: Path) -> RunReport:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(filesystem.read_text(path))
     except (OSError, ValueError) as error:
         raise EvidenceError(f"run report is missing or unreadable: {error}") from error
     if not isinstance(raw, dict):
@@ -104,7 +106,7 @@ def read_report(path: Path) -> RunReport:
 
 def write_report(report: RunReport, path: Path) -> None:
     payload = {"schema": SCHEMA, **asdict(report)}
-    path.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    filesystem.write_text(path, json.dumps(payload, indent=1, sort_keys=True) + "\n")
 
 
 def listing_from_ids(tier: str, framework: str, ids: list[str]) -> TierListing:
@@ -118,7 +120,7 @@ def listing_from_ids(tier: str, framework: str, ids: list[str]) -> TierListing:
 
 def read_listing(path: Path) -> TierListing:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(filesystem.read_text(path))
     except (OSError, ValueError) as error:
         raise EvidenceError(f"tier listing is missing or unreadable: {error}") from error
     if (
@@ -132,4 +134,4 @@ def read_listing(path: Path) -> TierListing:
 
 def write_listing(listing: TierListing, path: Path) -> None:
     payload = {"schema": SCHEMA, **asdict(listing)}
-    path.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+    filesystem.write_text(path, json.dumps(payload, indent=1) + "\n")

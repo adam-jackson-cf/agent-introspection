@@ -766,17 +766,13 @@ def _run_local_command(command: Sequence[str]) -> subprocess.CompletedProcess[st
     return subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
 
 
-def _environment_value(name: str) -> str | None:
-    return os.environ.get(name)
-
-
 def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
     return urllib.request.urlopen(request, timeout=timeout)
 
 
 def clickhouse_password(signoz: SigNozConfig) -> str:
     if signoz.clickhouse_password_env is not None:
-        value = _environment_value(signoz.clickhouse_password_env)
+        value = os.environ.get(signoz.clickhouse_password_env)
         if not value:
             raise ConfigurationError(
                 f"environment variable {signoz.clickhouse_password_env} "

@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from lib import filesystem
+
 _TRAILING_COMMA = re.compile(r",(\s*[}\]])")
 
 
@@ -13,7 +15,7 @@ class BunLockError(ValueError):
 
 def read_bun_lock(path: Path) -> dict[str, object]:
     try:
-        data = json.loads(_TRAILING_COMMA.sub(r"\1", path.read_text(encoding="utf-8")))
+        data = json.loads(_TRAILING_COMMA.sub(r"\1", filesystem.read_text(path)))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise BunLockError(f"cannot read {path}: {error}") from error
     if not isinstance(data, dict):

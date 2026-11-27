@@ -261,7 +261,7 @@ def test_scalability_flags_sync_filesystem_calls_in_analyzer_code(
 ) -> None:
     result = _scalability(
         tmp_path,
-        "src/pkg/scan.py",
+        "scripts/check-scan.py",
         "import glob\nimport io\nimport os\nimport shutil\nfrom pathlib import Path\n\n\n"
         f"def scan() -> object:\n    return {call}\n",
     )
@@ -279,45 +279,51 @@ def test_scalability_ignores_calls_on_values_not_known_to_be_paths(
 ) -> None:
     result = _scalability(
         tmp_path,
-        "src/pkg/scan.py",
+        "scripts/check-scan.py",
         f"def scan(text: str, handle: object) -> object:\n    return {call}\n",
     )
 
     assert result.returncode == 0, result.stdout
 
 
-def test_every_maintained_root_is_analyzer_like(tmp_path: Path) -> None:
-    result = _scalability(
-        tmp_path,
-        "tests/test_scan.py",
-        "from pathlib import Path\n\n\ndef test_scan() -> None:\n    assert Path('.').exists()\n",
-    )
+def test_only_the_scripts_root_is_analyzer_like(tmp_path: Path) -> None:
+    body = "from pathlib import Path\n\n\ndef scan() -> bool:\n    return Path('.').exists()\n"
+    test_module = _scalability(tmp_path / "tests", "tests/test_scan.py", body)
+    checker = _scalability(tmp_path / "scripts", "scripts/check-scan.py", body)
 
-    assert result.returncode == 1
-    assert "tests/test_scan.py:5: PYS251" in result.stdout
+    assert test_module.returncode == 0, test_module.stdout
+    assert checker.returncode == 1
+    assert "scripts/check-scan.py:5: PYS251" in checker.stdout
 
 
-def test_listed_seam_functions_may_touch_the_environment_and_subprocesses(
+def test_listed_seam_functions_may_touch_the_filesystem_and_subprocesses(
     tmp_path: Path,
 ) -> None:
+    filesystem = _scalability(
+        tmp_path / "filesystem",
+        "scripts/lib/filesystem.py",
+        "from pathlib import Path\n\n\ndef read_text(path: Path) -> str:\n"
+        "    return path.read_text()\n\n\ndef other(path: Path) -> str:\n"
+        "    return path.read_text()\n",
+    )
     environment = _scalability(
-        tmp_path,
-        "src/agent_introspection/cli.py",
-        "import os\n\n\ndef _configured_path() -> str | None:\n"
-        "    return os.environ.get('X')\n\n\ndef other() -> str | None:\n"
-        "    return os.environ.get('X')\n",
+        tmp_path / "environment",
+        "scripts/check-scan.py",
+        "import os\n\n\ndef other() -> str | None:\n    return os.environ.get('X')\n",
     )
     process = _scalability(
-        tmp_path,
-        "src/agent_introspection/facts.py",
-        "import subprocess\n\n\ndef _run_local_command() -> None:\n    subprocess.run(['true'])\n",
+        tmp_path / "process",
+        "scripts/check-code-integrity.py",
+        "import subprocess\n\n\ndef _git() -> None:\n    subprocess.run(['true'])\n",
     )
 
-    assert environment.returncode == 1
-    assert "cli.py:9: PYS252: direct environment read in analyzer-like code in other" in (
-        environment.stdout
+    assert filesystem.returncode == 1
+    assert "filesystem.py:9: PYS251: synchronous filesystem I/O in analyzer-like code in other" in (
+        filesystem.stdout
     )
-    assert "_configured_path" not in environment.stdout
+    assert "in read_text" not in filesystem.stdout
+    assert environment.returncode == 1
+    assert "check-scan.py:5: PYS252: direct environment read" in environment.stdout
     assert process.returncode == 0, process.stdout
 
 
@@ -333,19 +339,21 @@ def test_listed_seam_functions_may_touch_the_environment_and_subprocesses(
 def test_scalability_flags_aliased_and_alternative_subprocess_calls(
     tmp_path: Path, body: str
 ) -> None:
-    result = _scalability(tmp_path, "src/pkg/scan.py", body)
+    result = _scalability(tmp_path, "scripts/check-scan.py", body)
 
     assert result.returncode == 1
     assert "PYS252: direct subprocess execution" in result.stdout
 
 
 def test_analyzer_like_code_needs_an_ownership_marker(tmp_path: Path) -> None:
-    module = _write_module(tmp_path, "src/pkg/scan.py", "VALUE = 1\n")
+    module = _write_module(tmp_path, "scripts/check-scan.py", "VALUE = 1\n")
 
     result = _run("check-python-scalability.py", str(module))
 
     assert result.returncode == 1
-    assert "src/pkg/scan.py:1: PYS253: analyzer-like code has no ownership marker" in result.stdout
+    assert "scripts/check-scan.py:1: PYS253: analyzer-like code has no ownership marker" in (
+        result.stdout
+    )
 
 
 @pytest.mark.parametrize(("depth", "expected"), [(2, 0), (3, 1)])
