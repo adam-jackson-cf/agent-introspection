@@ -79,8 +79,10 @@ def steps(monkeypatch: pytest.MonkeyPatch) -> Steps:
 
 
 class _Closable:
+    closed = False
+
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 def options(tmp_path: Path, **overrides: Any) -> SetupOptions:
