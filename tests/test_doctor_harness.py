@@ -490,9 +490,15 @@ def test_config_paths_skip_unset_variables_and_take_the_first_path_whose_variabl
     assert doctor_harness.shown_path(other, home) == str(other)
 
 
-def test_guarded_turns_any_exception_into_a_failing_check() -> None:
+def test_guarded_turns_a_callee_error_into_a_failing_check() -> None:
     def explode() -> dict[str, Any]:
         raise ConfigurationError(SECRET)
+
+    def defect() -> dict[str, Any]:
+        raise TypeError(SECRET)
+
+    with pytest.raises(TypeError):
+        doctor_harness.guarded("x", defect)
 
     assert doctor_harness.guarded("x", explode, harness="h") == [
         {

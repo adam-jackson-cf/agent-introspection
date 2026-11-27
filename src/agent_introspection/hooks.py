@@ -538,10 +538,10 @@ def main(producer: str, hook_event: str, config: Path | None = None) -> int:
             raise ValueError("envelope must be a JSON object")
         for item in iter_records(producer, hook_event, envelope):
             write(item)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         log(producer[:32], hook_event[:64], type(exc).__name__)
     try:
         _drain_one_batch(config)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         log("spool", type(exc).__name__, "0")
     return 0

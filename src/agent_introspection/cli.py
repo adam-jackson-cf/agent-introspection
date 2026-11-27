@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -101,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         _fail(EXIT_VALIDATION, exc, log)
     except RuntimeError as exc:
         _fail(EXIT_CONFLICT, exc, log)
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError, http.client.HTTPException) as exc:
         _fail(EXIT_INTERNAL, exc, log)
     _emit(result, log)
     checked = args.command in ("doctor", "setup") or (

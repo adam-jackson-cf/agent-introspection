@@ -184,8 +184,10 @@ path goes in a `config-path` file beside the shim, which the shim exports as
 `AGENT_INTROSPECTION_CONFIG` unless that is already set; with the default file it is
 removed. One home holds one, so the last `harness configure` sets it for every
 harness, and `doctor`'s `hook_config` warns when it names a config other than the one
-doctor checked. Failures are logged by exception type only
-to `~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
+doctor checked. An unreadable or invalid envelope, an unsupported event, and a file or
+delivery error are logged by exception type only to
+`~/.local/share/agent-introspection/hooks.log`. Any other exception is a defect: the
+background normalizer ends with a traceback the shim discards, and the record is lost. On a machine without `facts sync`,
 delivery also needs the `spool sync` timer (see the onboarding skill's
 [additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
 
