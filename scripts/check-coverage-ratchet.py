@@ -111,9 +111,13 @@ def check(repo: Path, base: str) -> list[str]:
             f"{path}:{number}: {RULE}: added coverage exclusion pragma; cover the code with a test "
             "instead of excluding it"
             for number, text in lines
-            if any(pattern.search(text) for pattern in patterns)
+            if _excludes(text, patterns)
         )
     return problems
+
+
+def _excludes(text: str, patterns: list[re.Pattern[str]]) -> bool:
+    return any(pattern.search(text) for pattern in patterns)
 
 
 def main(argv: list[str]) -> int:
