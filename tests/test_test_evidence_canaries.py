@@ -149,7 +149,7 @@ def test_conformance_tier_selection_lists_exactly_its_tests() -> None:
 
 def test_conformance_empty_collection_is_a_finding() -> None:
     adapter = _lib("pytest_adapter")
-    evidence = _lib("test_evidence")
+    evidence = _lib("run_evidence")
 
     with pytest.raises(evidence.EvidenceError, match="collected no tests"):
         adapter.collect(_CONFORMANCE / "empty-collection", "t1", ["-m", "not boundary"], 120)
