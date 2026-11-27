@@ -500,7 +500,12 @@ describe("spool delivery: sent counters against records received", () => {
     const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
     const proc = Bun.spawn(
       ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+      {
+        stdin: new TextEncoder().encode(sql),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60000,
+      },
     );
     const [out, code] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -546,7 +551,12 @@ describe("spool delivery: sent counters against records received", () => {
     const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
     const proc = Bun.spawn(
       ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
+      {
+        stdin: new TextEncoder().encode(sql),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60000,
+      },
     );
     const [out, code] = await Promise.all([
       new Response(proc.stdout).text(),
