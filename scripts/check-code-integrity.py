@@ -387,6 +387,8 @@ _BY_NAME: dict[str, Lexer] = {
         _by_pattern(_HASH_LINE),
     ),
     "CMakeLists.txt": _by_pattern(_HASH_LINE),
+    ".shellcheckrc": _by_pattern(_HASH_LINE),
+    ".editorconfig": _by_pattern(_INI_LINE),
     "uv.lock": _by_pattern(_TOML),
     "bun.lock": _by_pattern(_JSONC),
 }

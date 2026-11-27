@@ -1222,7 +1222,7 @@ large_module_fanout_max = 3
 "src/agent_introspection/schedule.py" = ["launchctl", "systemctl"]
 "src/agent_introspection/signoz_detect.py" = ["_run_docker"]
 "tests/test_command_shape_parity.py" = ["_clickhouse_query"]
-"tests/test_code_integrity.py" = ["_git"]
+"tests/test_code_integrity_git_modes.py" = ["_git"]
 "tests/test_facts_registry_package.py" = ["_run_registry_probe"]
 "tests/test_hook_install_shim_process.py" = ["_run_shim"]
 "tests/test_hooks_runtime_scripts.py" = ["_pause", "_run_activity_shim", "_run_bun_probe"]
@@ -1417,6 +1417,7 @@ interface = [
 ]
 
 [structure.owners]
+".agents/skill-metadata.schema.json" = "skills"
 ".agents/skills/" = "skills"
 ".claude/" = "skills"
 ".codegraph/" = "tooling"

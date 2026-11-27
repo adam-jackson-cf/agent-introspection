@@ -103,6 +103,8 @@ def test_toml_sql_css_jsonc_and_line_comment_formats(checker: ModuleType, repo: 
         "a.jsonc": ('{"u": "http://x", // real\n}\n', [1]),
         "a.service": ("[Unit]\n; real\nDescription=a # b\n", [2]),
         ".gitignore": ("# real\nbuild/\n", [1]),
+        ".shellcheckrc": ("enable=all\n# real\n", [2]),
+        ".editorconfig": ("root = true\n; real\n# real\n", [2, 3]),
     }
     for name, (text, lines) in cases.items():
         assert _comment_lines(checker, repo, name, text) == lines, name
