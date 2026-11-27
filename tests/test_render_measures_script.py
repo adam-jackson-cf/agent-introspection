@@ -10,7 +10,12 @@ import pytest
 pytestmark = pytest.mark.boundary
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
-RENDERERS = ("measures_render.py", "harness_render.py", "capabilities_render.py")
+LIBRARIES = (
+    "measures_render.py",
+    "harness_render.py",
+    "capabilities_render.py",
+    "filesystem.py",
+)
 
 
 def _render(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -29,7 +34,7 @@ def test_render_measures_writes_missing_outputs_and_then_reports_them_current(
 ) -> None:
     (tmp_path / "scripts" / "lib").mkdir(parents=True)
     shutil.copy(SCRIPTS / "render-measures.py", tmp_path / "scripts")
-    for name in RENDERERS:
+    for name in LIBRARIES:
         shutil.copy(SCRIPTS / "lib" / name, tmp_path / "scripts" / "lib")
     (tmp_path / "docs" / "references").mkdir(parents=True)
     (tmp_path / "dashboard" / "src").mkdir(parents=True)
