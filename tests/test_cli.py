@@ -7,7 +7,14 @@ from typing import Any
 import pytest
 
 from agent_introspection import facts, schedule
-from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
+from agent_introspection.cli import (
+    EXIT_CONFIG,
+    EXIT_DATABASE,
+    EXIT_FACTS,
+    EXIT_INTERNAL,
+    EXIT_VALIDATION,
+    main,
+)
 from agent_introspection.facts import FactsError
 from agent_introspection.proposals import (
     ProposalState,
@@ -361,6 +368,26 @@ def test_facts_install_still_creates_the_workflow_store_when_the_install_fails(
     with pytest.raises(SystemExit):
         main(["--config", str(config_file(tmp_path)), "facts", "install"])
     assert (tmp_path / "workflow.sqlite3").exists()
+
+
+def test_an_operating_system_error_exits_internal_and_a_defect_raises(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def unreachable(_sql: str) -> str:
+        raise ConnectionRefusedError("clickhouse refused")
+
+    monkeypatch.setattr(facts, "runner", lambda _config: unreachable)
+    with pytest.raises(SystemExit) as failed:
+        main(["--config", str(config_file(tmp_path)), "facts", "install"])
+    assert failed.value.code == EXIT_INTERNAL
+    assert "ConnectionRefusedError: clickhouse refused" in capsys.readouterr().err
+
+    def defect(_sql: str) -> str:
+        raise TypeError("defect")
+
+    monkeypatch.setattr(facts, "runner", lambda _config: defect)
+    with pytest.raises(TypeError):
+        main(["--config", str(config_file(tmp_path)), "facts", "install"])
 
 
 def test_facts_install_failure_survives_a_workflow_store_error(

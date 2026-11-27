@@ -14,6 +14,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from lib import filesystem
+
 COMMENTS = "CODE.no-comments"
 PLACEHOLDERS = "CODE.no-placeholder-bodies"
 MOCKS = "CODE.no-product-mocks"
@@ -595,14 +597,16 @@ class Layouts:
     def _load(self, directory: PurePosixPath) -> Layout | None:
         if directory not in self.cache:
             config = self.root / directory / PROOFS_FILE
-            self.cache[directory] = parse_layout(config, directory) if config.is_file() else None
+            self.cache[directory] = (
+                parse_layout(config, directory) if filesystem.is_file(config) else None
+            )
         return self.cache[directory]
 
 
 def parse_layout(config: Path, directory: PurePosixPath) -> Layout:
     shown = (directory / PROOFS_FILE).as_posix()
     try:
-        layout = tomllib.loads(config.read_text(encoding="utf-8")).get("layout")
+        layout = tomllib.loads(filesystem.read_text(config)).get("layout")
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
         raise LayoutError(f"{shown} cannot be read ({error}); fix its TOML") from error
     if not isinstance(layout, dict):
@@ -697,19 +701,19 @@ def _diff_targets(staged: bool, base: str | None, pathspec: list[str]) -> list[T
     return [
         (path, _git("show", f"{source}{path}"), lines)
         for path, lines in sorted(added_lines(diff).items())
-        if not Path(path).is_symlink()
+        if not filesystem.is_symlink(Path(path))
     ]
 
 
 def _regular(path: Path) -> bool:
-    return path.is_file() and not path.is_symlink()
+    return filesystem.is_file(path) and not filesystem.is_symlink(path)
 
 
 def _explicit_files(paths: list[str]) -> list[Path]:
     files: list[Path] = []
     for raw in paths:
         path = Path(raw)
-        members = sorted(path.rglob("*")) if path.is_dir() else [path]
+        members = sorted(filesystem.rglob(path, "*")) if filesystem.is_dir(path) else [path]
         files.extend(member for member in members if _regular(member))
     return files
 

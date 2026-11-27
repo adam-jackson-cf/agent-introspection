@@ -96,15 +96,16 @@ def test_retired_keys_are_named_as_safe_to_delete(
         parse_config(document)
 
 
-EXAMPLE = Path(__file__).parents[1] / "config.example.toml"
-COMMENTED_SETTING = re.compile(r"^# (\[[\w.]+\]|\w+ = .*)$")
+REPOSITORY = Path(__file__).parents[1]
+EXAMPLE = REPOSITORY / "config.example.toml"
+SETUP_GUIDE = REPOSITORY / "docs/references/setup.md"
+DOCUMENTED_SETTINGS = re.compile(r"^## Configuration file\n.*?^```toml\n(.*?)^```$", re.M | re.S)
 
 
-def _example_with_every_setting() -> str:
-    return "\n".join(
-        match.group(1) if (match := COMMENTED_SETTING.match(line)) else line
-        for line in EXAMPLE.read_text().splitlines()
-    )
+def _documented_settings() -> str:
+    found = DOCUMENTED_SETTINGS.search(SETUP_GUIDE.read_text())
+    assert found is not None, f"{SETUP_GUIDE} has no toml block under ## Configuration file"
+    return found.group(1)
 
 
 def test_example_configuration_is_valid_and_the_defaults() -> None:
@@ -115,9 +116,9 @@ def test_example_configuration_is_valid_and_the_defaults() -> None:
     assert replace(example, database=DatabaseConfig()) == parse_config({})
 
 
-def test_every_setting_the_example_documents_is_accepted(tmp_path: Path) -> None:
+def test_every_setting_the_setup_guide_documents_is_accepted(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    path.write_text(_example_with_every_setting())
+    path.write_text(_documented_settings())
 
     config = load_config(path)
 

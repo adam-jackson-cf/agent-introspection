@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from lib import filesystem
+
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#|/)", re.IGNORECASE)
@@ -32,7 +34,7 @@ class SchemaError(ValueError):
 
 def load_schema(path: Path) -> dict[str, object]:
     try:
-        schema = json.loads(path.read_text(encoding="utf-8"))
+        schema = json.loads(filesystem.read_text(path))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise SchemaError(f"{path}: {_RULE}: cannot read schema: {error}") from error
     if not isinstance(schema, dict) or set(schema) - _SCHEMA_KEYWORDS:
@@ -106,7 +108,7 @@ def _linked_paths(text: str) -> list[str]:
 
 def check_skill(path: Path, schema: dict[str, object]) -> list[str]:
     problems: list[str] = []
-    text = path.read_text(encoding="utf-8")
+    text = filesystem.read_text(path)
     try:
         fields = parse_frontmatter(text)
     except ValueError as error:
@@ -126,7 +128,7 @@ def check_skill(path: Path, schema: dict[str, object]) -> list[str]:
     if not isinstance(description, str) or not description.lower().startswith("use when"):
         problems.append(f"{path}: {_RULE}: description must start with 'Use when'; reword it")
     for target in _linked_paths(text):
-        if not (path.parent / target).exists():
+        if not filesystem.exists(path.parent / target):
             problems.append(f"{path}: {_RULE}: linked file missing: {target}; fix the link")
     return problems
 

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from lib import filesystem
 from lib.python_tool_scope import as_list, load_pyproject, maintained_python_files
 
 _DESCRIPTION = """Type-check every maintained Python file and fail when the mypy target list drifts.
@@ -32,7 +33,8 @@ def _entries(settings: dict[str, object], root: Path) -> list[str]:
     for item in as_list(settings.get("files")):
         if any(char in item for char in "*?["):
             matches = sorted(
-                match.relative_to(root).as_posix() for match in root.glob(item.removeprefix("./"))
+                match.relative_to(root).as_posix()
+                for match in filesystem.glob(root, item.removeprefix("./"))
             )
             entries.extend(matches or [item])
         else:
@@ -42,7 +44,7 @@ def _entries(settings: dict[str, object], root: Path) -> list[str]:
         matches = [
             _normalise_entry((base / package_path).as_posix())
             for base in bases
-            if (root / base / package_path).exists()
+            if filesystem.exists(root / base / package_path)
         ]
         entries.extend(matches or [f"<package:{package}>"])
     return entries
@@ -68,7 +70,7 @@ def coverage_problems(root: Path, config: Path) -> list[str]:
         f"{config.name}: MYPY.package-coverage: configured entry does not exist: {entry}; "
         "delete the entry or restore its path"
         for entry in entries
-        if entry.startswith("<package:") or not (root / entry).exists()
+        if entry.startswith("<package:") or not filesystem.exists(root / entry)
     ]
     excludes = [re.compile(pattern) for pattern in as_list(settings.get("exclude"))]
     maintained = maintained_python_files(root)

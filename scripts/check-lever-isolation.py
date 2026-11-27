@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import isolated_environment, run_command
 from lib.proofs_settings import PROOFS_FILE, SettingsError, load_proofs, string, strings, table
 
@@ -86,11 +87,11 @@ def _run_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
             "doctor reported blocked infrastructure" if lever.marker in output else "lever failed"
         )
         problems.append(f"{lever.command[1]}: {RULE}: {kind} (exit {code}); see {evidence}")
-    if not evidence.is_dir() or not any(evidence.iterdir()):
+    if not filesystem.is_dir(evidence) or not filesystem.iterdir(evidence):
         problems.append(
             f"{lever.command[1]}: {RULE}: evidence directory is empty after cleanup; keep it"
         )
-    if data.exists():
+    if filesystem.exists(data):
         problems.append(
             f"{lever.command[1]}: {RULE}: data directory {data} survives cleanup; delete it"
         )
@@ -100,14 +101,14 @@ def _run_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
         for line in _leftover_processes(repo, data)
     )
     ports = evidence / lever.ports_file
-    if code == 0 and not ports.is_file():
+    if code == 0 and not filesystem.is_file(ports):
         problems.append(
             f"{lever.command[1]}: {RULE}: evidence lacks {lever.ports_file}; record every port used"
         )
-    elif ports.is_file():
+    elif filesystem.is_file(ports):
         problems.extend(
             f"{lever.command[1]}: {RULE}: port {port} still listens after cleanup; stop its process"
-            for port in (int(item) for item in ports.read_text(encoding="utf-8").split())
+            for port in (int(item) for item in filesystem.read_text(ports).split())
             if _listening(port)
         )
     return problems
@@ -124,17 +125,17 @@ def _doctor_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
 
 
 def _print_evidence(evidence: Path) -> None:
-    for log in sorted(evidence.glob("*.log")):
+    for log in sorted(filesystem.glob(evidence, "*.log")):
         print(f"== {log}", file=sys.stderr)
-        print(log.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+        print(filesystem.read_bytes(log).decode("utf-8", errors="replace"), file=sys.stderr)
 
 
 def check(repo: Path) -> list[str]:
     lever = load_lever(repo)
     root = Path(tempfile.mkdtemp(prefix="lever-isolation-"))
     print(f"check-lever-isolation: evidence under {root}", file=sys.stderr)
-    (root / "doctor").mkdir()
-    (root / "run").mkdir()
+    filesystem.mkdir(root / "doctor")
+    filesystem.mkdir(root / "run")
     problems = [
         *_doctor_problems(repo, lever, root / "doctor"),
         *_run_problems(repo, lever, root / "run"),

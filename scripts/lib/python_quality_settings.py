@@ -6,6 +6,8 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
+from lib import filesystem
+
 PROOFS_FILE = "proofs.toml"
 TABLE = "python_quality"
 OWNING_REPO = Path(__file__).resolve().parents[2]
@@ -147,8 +149,7 @@ def parse_python_quality(table: Table) -> PythonQuality:
 
 def _load(path: Path, hint: str) -> Table:
     try:
-        with path.open("rb") as handle:
-            return tomllib.load(handle)
+        return filesystem.read_toml(path)
     except FileNotFoundError as error:
         raise SettingsError(f"{path}: missing; {hint}") from error
     except tomllib.TOMLDecodeError as error:

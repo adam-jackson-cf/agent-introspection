@@ -18,6 +18,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from lib import filesystem
 from lib.bun_lock import BunLockError, locked_versions, read_bun_lock
 from lib.npm_semver import RangeError, fix_versions, parse_range, parse_version, satisfies
 
@@ -149,7 +150,7 @@ def _run(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
 def load_policy(path: Path) -> Policy:
     policy = Policy(path.as_posix())
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(filesystem.read_text(path))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         policy.failures.append(Failure("exception", policy.path, f"cannot read: {error}"))
         return policy
@@ -186,7 +187,7 @@ def listed_files(paths: Sequence[str]) -> list[str]:
 
 
 def _manifest_has_dependencies(path: Path) -> bool:
-    text = path.read_text(encoding="utf-8")
+    text = filesystem.read_text(path)
     if path.name == "pyproject.toml":
         data = tomllib.loads(text)
         project = data.get("project", {})
@@ -401,7 +402,7 @@ def audit_lock(lock: str) -> tuple[list[Advisory], list[Failure]]:
 
 
 def _uv_versions(lock: Path) -> dict[str, set[str]]:
-    data = tomllib.loads(lock.read_text(encoding="utf-8"))
+    data = tomllib.loads(filesystem.read_text(lock))
     versions: dict[str, set[str]] = {}
     for package in data.get("package", []):
         if isinstance(package.get("name"), str) and isinstance(package.get("version"), str):

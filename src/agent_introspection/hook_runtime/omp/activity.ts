@@ -100,20 +100,28 @@ function exitCodeOf(event: ToolResultEvent): number | undefined {
   return typeof code === "number" && Number.isFinite(code) ? code : undefined;
 }
 
+type LoggedEvent = ActivityEvent | "before_agent_start";
+
+type FailureStage = "spawn" | "emit" | "otlp";
+
 function failureCode(error: unknown): string {
   const code = (error as { code?: unknown })?.code;
   if (typeof code === "string") return code;
   return error instanceof Error ? error.name : "error";
 }
 
-function logFailure(event: string, stage: string, error: unknown): void {
+function logFailure(
+  event: LoggedEvent,
+  stage: FailureStage,
+  error: unknown,
+): void {
   try {
     mkdirSync(dirname(hooksLog), { recursive: true });
     appendFileSync(
       hooksLog,
       `${new Date().toISOString()} omp ${event} ${stage} ${failureCode(error)}\n`,
     );
-    // oxlint-disable-next-line no-empty -- the hooks log is where failures go; when it cannot be written, the hook must still never throw into omp
+    // oxlint-disable-next-line eslint/no-empty -- the hook log is the last place a failure can go, so a failure to write it is dropped
   } catch {}
 }
 
@@ -134,7 +142,7 @@ function emit(
       stdio: ["pipe", "ignore", "ignore"],
     });
     child.on("error", (error) => logFailure(event, "spawn", error));
-    child.stdin?.on("error", (error) => logFailure(event, "stdin", error));
+    child.stdin?.on("error", (error) => logFailure(event, "emit", error));
     child.stdin?.end(envelope);
     child.unref();
   } catch (error) {
@@ -228,9 +236,11 @@ function exportPrompt(prompt: unknown, context: OmpContext): void {
       method: "POST",
       headers: otlpHeaders(),
       body: JSON.stringify(body),
-    }).catch((error: unknown) => logFailure("user_prompt", "otlp", error));
+    }).catch((error: unknown) =>
+      logFailure("before_agent_start", "otlp", error),
+    );
   } catch (error) {
-    logFailure("user_prompt", "otlp", error);
+    logFailure("before_agent_start", "otlp", error);
   }
 }
 

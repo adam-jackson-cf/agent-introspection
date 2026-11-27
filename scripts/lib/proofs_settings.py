@@ -8,6 +8,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from lib import filesystem
+
 PROOFS_FILE = "proofs.toml"
 GIT_TIMEOUT_SECONDS = 30
 
@@ -19,8 +21,7 @@ class SettingsError(ValueError):
 def load_proofs(repo: Path) -> dict[str, Any]:
     path = repo / PROOFS_FILE
     try:
-        with path.open("rb") as handle:
-            return tomllib.load(handle)
+        return filesystem.read_toml(path)
     except OSError as error:
         raise SettingsError(f"{PROOFS_FILE} is unreadable: {error}") from error
     except tomllib.TOMLDecodeError as error:
@@ -149,4 +150,4 @@ def tracked_files(root: Path, patterns: Iterable[str]) -> list[str]:
         return []
     completed = _git_ls_files(root, pathspecs)
     names = sorted({raw.decode("utf-8") for raw in completed.stdout.split(b"\0") if raw})
-    return [name for name in names if (root / name).is_file()]
+    return [name for name in names if filesystem.is_file(root / name)]

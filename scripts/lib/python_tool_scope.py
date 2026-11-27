@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 from typing import Any
 
+from lib import filesystem
 from lib.python_quality_scope import candidate_python_relpaths, is_maintained_python_path
 
 _SKIPPED_DIRECTORIES = frozenset({
@@ -20,8 +20,7 @@ _SKIPPED_DIRECTORIES = frozenset({
 
 
 def load_pyproject(path: Path) -> dict[str, Any]:
-    with path.open("rb") as handle:
-        return tomllib.load(handle)
+    return filesystem.read_toml(path)
 
 
 def as_list(value: object) -> list[str]:
@@ -36,7 +35,7 @@ def as_list(value: object) -> list[str]:
 
 def _walk(root: Path) -> list[str]:
     found: list[str] = []
-    for path in sorted(root.rglob("*.py")):
+    for path in sorted(filesystem.rglob(root, "*.py")):
         relative = path.relative_to(root)
         if _SKIPPED_DIRECTORIES.isdisjoint(relative.parts):
             found.append(relative.as_posix())
@@ -44,7 +43,9 @@ def _walk(root: Path) -> list[str]:
 
 
 def maintained_python_files(root: Path, exclude_patterns: list[str] | None = None) -> list[str]:
-    candidates = candidate_python_relpaths(root) if (root / ".git").exists() else _walk(root)
+    candidates = (
+        candidate_python_relpaths(root) if filesystem.exists(root / ".git") else _walk(root)
+    )
     excludes = [re.compile(pattern) for pattern in exclude_patterns or []]
     return [
         path

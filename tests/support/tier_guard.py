@@ -6,7 +6,7 @@ import pytest
 from pluggy import Result
 
 RULE = "TEST.t1-isolation"
-T2_MARKERS = ("boundary",)
+UNGUARDED_MARKERS = ("boundary", "live")
 PROCESS_EVENTS = frozenset({
     "os.exec",
     "os.fork",
@@ -56,7 +56,7 @@ class TierGuard:
 
     @contextmanager
     def _guarded(self, item: pytest.Item, phase: str) -> Iterator[None]:
-        if any(item.get_closest_marker(name) for name in T2_MARKERS):
+        if any(item.get_closest_marker(name) for name in UNGUARDED_MARKERS):
             yield
             return
         self.item, self.phase = item.nodeid, phase

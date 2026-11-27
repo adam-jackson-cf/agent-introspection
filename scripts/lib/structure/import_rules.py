@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.structure.finding import Finding
 from lib.structure.settings import Settings
 
@@ -98,7 +99,7 @@ def build_graph(root: Path, settings: Settings, head_paths: tuple[str, ...]) -> 
     for part, paths in part_files.items():
         for path in paths:
             try:
-                tree = ast.parse((root / path).read_text(encoding="utf-8"), filename=path)
+                tree = ast.parse(filesystem.read_text(root / path), filename=path)
             except (OSError, SyntaxError, UnicodeDecodeError) as error:
                 unparsable.append(
                     Finding(

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s static|t1|t2|install|proofs|hook\n       %s check <name> [path ...]\n' "$0" "$0"
+  printf 'Usage: %s static|t1|t2|t3|install|proofs|hook\n       %s check <name> [path ...]\n' "$0" "$0"
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,12 +13,15 @@ fixtures_exclude=':(exclude)tests/fixtures/**'
 structure_event=--merge-base
 
 hook_modes=(static t1 t2)
-t1_tier='not boundary and not deferred'
-t2_tier='(boundary or deferred) and not (boundary and deferred)'
-journey_tier='boundary and deferred'
+t1_tier='not boundary and not deferred and not live'
+t2_tier='(boundary or deferred) and not (boundary and deferred) and not live'
+journey_tier='boundary and deferred and not live'
+t3_tier='live'
 t1_selection=(-m "$t1_tier")
 t2_selection=(-m "$t2_tier")
 journey_selection=(-m "$journey_tier")
+t3_selection=(-m "$t3_tier")
+bun_t3_tests=('dashboard/*.live.ts' 'dashboard/**/*.live.ts')
 pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
 collect_timeout_seconds=300
 report_dir=""
@@ -150,7 +153,7 @@ check_test_mocking() { uv run python -B scripts/check-test-mocking.py "$@"; }
 check_test_hooks() { uv run python -B scripts/check-test-hooks.py "$@"; }
 check_test_tiers() {
   uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" \
-    --tier "journey=$journey_tier" "$@"
+    --tier "journey=$journey_tier" --tier "t3=$t3_tier" "$@"
 }
 
 check_test_placement() {
@@ -393,6 +396,19 @@ run_t2() {
   check_test_evasion --report "$report_dir/t2-pytest.xml"
 }
 
+run_t3() {
+  make_report_dir
+  collect_tier t3 "${t3_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/t3-pytest.xml" "${t3_selection[@]}"
+  normalise_report pytest --tier t3 "$report_dir/t3-pytest.xml" "$report_dir/t3-pytest.json"
+  scan tracked "${bun_t3_tests[@]}"
+  local files=("${scanned[@]/#/./}")
+  bun test --reporter=junit --reporter-outfile="$report_dir/t3-bun.xml" "${files[@]}"
+  normalise_report bun --tier t3 "$report_dir/t3-bun.xml" "$report_dir/t3-bun.json"
+  check_test_run --listing "$report_dir/t3-listing.json" "$report_dir/t3-pytest.json" "$report_dir/t3-bun.json"
+  check_test_evasion --report "$report_dir/t3-pytest.xml" --report "$report_dir/t3-bun.xml"
+}
+
 run_install() {
   make_report_dir
   check_lever_isolation --repo .
@@ -416,7 +432,7 @@ run_proofs() {
 mode="$1"
 shift
 case "$mode" in
-  static | t1 | t2 | proofs)
+  static | t1 | t2 | t3 | proofs)
     (($# == 0)) || {
       usage >&2
       exit 2

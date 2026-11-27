@@ -97,7 +97,7 @@ def _repo_path(root: Path, value: object, owner: str, *, directory_ok: bool = Fa
     if Path(relative).is_absolute():
         raise CoverageError(f"{owner}: absolute paths are forbidden: {relative}")
     resolved = (root / relative).resolve()
-    present = resolved.is_file() or (directory_ok and resolved.is_dir())
+    present = _is_file(resolved) or (directory_ok and _is_dir(resolved))
     if not resolved.is_relative_to(root) or not present:
         raise CoverageError(f"{owner}: missing or outside target path: {relative}")
     return resolved
@@ -502,18 +502,34 @@ def validate(
     return sorted(errors), unqueried
 
 
+def _is_file(path: Path) -> bool:
+    return path.is_file()
+
+
+def _is_dir(path: Path) -> bool:
+    return path.is_dir()
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    with path.open("rb") as handle:
+        data: dict[str, Any] = tomllib.load(handle)
+        return data
+
+
 def _load(path: Path) -> dict[str, Any]:
     try:
-        with path.open("rb") as handle:
-            data: dict[str, Any] = tomllib.load(handle)
-            return data
+        return _read_toml(path)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise CoverageError(f"cannot read proofs file: {path.name}: {exc}") from exc
 
 
 def _catalog(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_text(path))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CoverageError(f"cannot read catalog: {path.name}") from exc
     if not isinstance(data, dict):
@@ -534,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = args.root.resolve()
-    if not root.is_dir():
+    if not _is_dir(root):
         print("proofs FAIL: target root is missing", file=sys.stderr)
         return 2
     try:

@@ -45,6 +45,11 @@ never as a test result. It keeps `DIR` evidence after cleanup: the `create`, `ve
 and `destroy` logs, a copy of the sandbox `state/` (with each view's response under
 `state/verify/`), and `ports`, every port it used.
 
+`verify` includes a `facts-verify` step: the installed `agent-introspection facts verify`
+runs against the sandbox ClickHouse, so every facts SQL statement in the checkout builds
+in a scratch database there. When any step fails, `check lever_isolation` prints the
+evidence logs.
+
 ## What the sandbox is
 
 | Part       | What it is                                                                                                                                                                                                                                                                                                                                                  |

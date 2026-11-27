@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from lib import filesystem
 from lib.git_changes import GitError, added_lines, changes_since, file_at, resolve
 from lib.proofs_settings import (
     PROOFS_FILE,
@@ -90,7 +91,7 @@ def check(repo: Path, base: str) -> list[str]:
         string(table(load_proofs(repo), "layout"), "fixtures_dir", "layout").rstrip("/") + "/"
     )
     before = coverage_table(file_at(repo, commit, CONFIG))
-    after = coverage_table((repo / CONFIG).read_text(encoding="utf-8"))
+    after = coverage_table(filesystem.read_text(repo / CONFIG))
     changed = [change.path for change in changes_since(repo, commit) if change.status != "D"]
     problems = [
         f"{path}: {RULE}: coverage configuration file added or changed; keep coverage settings in "

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import run_command
 from lib.machine_probe import machine_id
 
@@ -21,21 +21,25 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _place(tree: Path, repo: Path) -> None:
-    for entry in repo.iterdir():
+    for entry in filesystem.iterdir(repo):
         if entry.name == ".git":
             continue
-        if entry.is_dir():
-            shutil.rmtree(entry)
+        if filesystem.is_dir(entry):
+            filesystem.remove_tree(entry)
         else:
-            entry.unlink()
-    shutil.copytree(tree, repo, dirs_exist_ok=True)
-    token_files = (path for path in repo.rglob("*") if path.is_file() and ".git" not in path.parts)
+            filesystem.unlink(entry)
+    filesystem.copy_tree(tree, repo, dirs_exist_ok=True)
+    token_files = (
+        path
+        for path in filesystem.rglob(repo, "*")
+        if filesystem.is_file(path) and ".git" not in path.parts
+    )
     machine = ""
     for path in token_files:
-        text = path.read_text(encoding="utf-8")
+        text = filesystem.read_text(path)
         if MACHINE_TOKEN in text:
             machine = machine or machine_id()
-            path.write_text(text.replace(MACHINE_TOKEN, machine), encoding="utf-8")
+            filesystem.write_text(path, text.replace(MACHINE_TOKEN, machine))
 
 
 def _commit(repo: Path, message: str) -> str:
@@ -45,12 +49,12 @@ def _commit(repo: Path, message: str) -> str:
 
 
 def build(fixture: Path, repo: Path) -> str:
-    if not (fixture / "head").is_dir() or not (fixture / "argv").is_file():
+    if not filesystem.is_dir(fixture / "head") or not filesystem.is_file(fixture / "argv"):
         raise RuntimeError(f"{fixture} needs a head/ tree and an argv file")
-    repo.mkdir(parents=True)
+    filesystem.mkdir(repo, parents=True)
     _git(repo, "init", "-q")
     base_tree = fixture / "base"
-    if base_tree.is_dir():
+    if filesystem.is_dir(base_tree):
         _place(base_tree, repo)
     base = _commit(repo, "scenario base")
     _place(fixture / "head", repo)

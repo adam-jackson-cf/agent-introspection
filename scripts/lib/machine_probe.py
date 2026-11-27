@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 
+from lib import filesystem
 from lib.command_runner import run_command
 
 PROBE_TIMEOUT_SECONDS = 20
@@ -21,8 +22,8 @@ def cpu_model() -> str:
     if sys.platform == "darwin":
         return _output(["sysctl", "-n", "machdep.cpu.brand_string"])
     cpuinfo = Path("/proc/cpuinfo")
-    if cpuinfo.is_file():
-        for line in cpuinfo.read_text(encoding="utf-8").splitlines():
+    if filesystem.is_file(cpuinfo):
+        for line in filesystem.read_text(cpuinfo).splitlines():
             if line.startswith("model name"):
                 return line.split(":", 1)[1].strip()
     return platform.processor() or "unknown-cpu"

@@ -480,6 +480,19 @@ def test_write_is_atomic_and_main_never_fails(
     assert PROMPT not in log
 
 
+def test_main_lets_a_normalizer_defect_raise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def defect() -> str:
+        raise TypeError("normalizer defect")
+
+    monkeypatch.setattr(hooks, "read_stdin", defect)
+
+    with pytest.raises(TypeError):
+        hooks.main("claude-code", "PreToolUse", tmp_path / "missing.toml")
+    assert not hooks.log_file().exists()
+
+
 def test_home_directories_redact_on_every_platform() -> None:
     assert hooks.redact_home("/Users/me/a /home/adam-ai/b /root/c") == "~/a ~/b ~/c"
     assert hooks.redact_home("--dir=/root") == "--dir=~"

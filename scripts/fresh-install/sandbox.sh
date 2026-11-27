@@ -413,6 +413,7 @@ cmd_verify() {
   fi
   check "dashboard built in the clone" test -f "$ROOT/repo/dashboard/dist/index.html"
   check "facts store created in ClickHouse" clickhouse_count introspection.hook_events
+  step facts-verify 0 'agent-introspection facts verify'
   check "dashboard config names port $port" grep -q "^port = $port$" "$home/.config/agent-introspection/config.toml"
   check "dashboard service answers on $port" wait_for_dashboard
   check "every dashboard view queries cleanly" dashboard_views_clean

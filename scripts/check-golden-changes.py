@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from lib import filesystem
 from lib.git_changes import GitError, added_lines, changes_since, resolve
 from lib.proofs_settings import (
     PROOFS_FILE,
@@ -23,7 +24,7 @@ def check(repo: Path, base: str) -> list[str]:
     golden = table(load_proofs(repo), "golden")
     globs = strings(golden, "globs", "golden")
     record = string(golden, "change_record", "golden")
-    if not (repo / record).is_file():
+    if not filesystem.is_file(repo / record):
         return [f"{PROOFS_FILE}: {RULE}: [golden] change_record {record} does not exist; create it"]
     commit = resolve(repo, base)
     changed = sorted({

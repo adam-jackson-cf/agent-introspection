@@ -34,6 +34,7 @@ addopts = "-ra --strict-markers"
 markers = [
   "boundary: T2 test that drives a local process, build, socket or loopback seam",
   "deferred: test over its tier's approved time limit, run with T2 under an approved exception",
+  "live: T3 test that needs a service outside the checkout (the local SigNoz ClickHouse); only the by-hand live job runs it",
 ]
 testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]

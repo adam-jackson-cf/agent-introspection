@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -12,15 +11,7 @@ from agent_introspection import facts
 CASES = json.loads((Path(__file__).parent / "fixtures" / "command_shape.json").read_text())
 CONTAINER = "signoz-clickhouse"
 
-
-def _live_clickhouse_requested() -> bool:
-    return os.environ.get("AGENT_INTROSPECTION_LIVE_CLICKHOUSE") == "1"
-
-
-pytestmark = pytest.mark.skipif(
-    not _live_clickhouse_requested(),
-    reason="set AGENT_INTROSPECTION_LIVE_CLICKHOUSE=1 to run against the local ClickHouse",
-)
+pytestmark = pytest.mark.live
 
 
 def _literal(text: str) -> str:

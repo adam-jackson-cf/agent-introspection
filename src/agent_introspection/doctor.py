@@ -234,7 +234,7 @@ class _Doctor:
                 "config",
                 "fail",
                 f"{exc}; the checks below use the defaults",
-                "fix the file; config.example.toml documents every key",
+                "fix the file; docs/references/setup.md documents every key",
                 path=str(shown),
             )
         if not shown.is_file():
@@ -242,7 +242,8 @@ class _Doctor:
                 "config",
                 "info",
                 f"no file at {shown}: the defaults are in use",
-                "copy config.example.toml there to choose harnesses and endpoints",
+                "run `agent-introspection setup`, or write the file as docs/references/setup.md "
+                "documents, to choose harnesses and endpoints",
                 path=str(shown),
             )
         return check("config", "pass", f"loaded {shown}", path=str(shown))
@@ -306,7 +307,7 @@ class _Doctor:
             "skill's guided script, scripts/signoz/install-signoz.sh, with --dry-run first "
             "(it refuses when SigNoz exists). An additional machine, which sends to "
             'the host\'s collector, has no SigNoz by design: set [machine] role = "additional" '
-            "and export_endpoint (config.example.toml)"
+            "and export_endpoint (docs/references/setup.md)"
         )
 
     def collector_checks(self) -> list[Check]:

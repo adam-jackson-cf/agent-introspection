@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -37,6 +38,14 @@ RAISED_FIX: Final = (
     "the check could not run: fix the cause its error class names, then rerun doctor"
 )
 MISSING: Final = "missing"
+CHECK_ERRORS: Final = (
+    OSError,
+    ValueError,
+    KeyError,
+    RuntimeError,
+    subprocess.SubprocessError,
+    http.client.HTTPException,
+)
 _RANK = {"pass": 0, "info": 1, "off": 2, "warn": 3, "fail": 4}
 _DAY_SECONDS = 86_400
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
@@ -66,7 +75,7 @@ def check(name: str, status: str, detail: str, fix: str = "", **extra: object) -
 def guarded(name: str, produce: Callable[[], Check | list[Check]], **extra: object) -> list[Check]:
     try:
         result = produce()
-    except Exception as exc:
+    except CHECK_ERRORS as exc:
         return [check(name, "fail", f"the check raised {type(exc).__name__}", RAISED_FIX, **extra)]
     return [{**item, **extra} for item in (result if isinstance(result, list) else [result])]
 

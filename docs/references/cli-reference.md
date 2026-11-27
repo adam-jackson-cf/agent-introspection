@@ -303,22 +303,38 @@ enabled` that sent rows this week); then `spool`, `schedule`, `schedule_legacy`,
 
 ## Hooks
 
-| Command                   | What it does                                                                                                                                                                                                                | When to use it                                    |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `hook <producer> <event>` | Reads one activity-hook envelope from stdin and writes normalized records to the hook inbox; `<producer>` is `claude-code` or `omp`. Always exits 0 and prints nothing; failures go to the hook log by exception type only. | Run by the installed activity hooks, not by hand. |
+| Command                   | What it does                                                                                                                                                                                                                                                                                                                                                                                      | When to use it                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `hook <producer> <event>` | Reads one activity-hook envelope from stdin and writes normalized records to the hook inbox; `<producer>` is `claude-code` or `omp`. Exits 0 and prints nothing; an unreadable or invalid envelope, an unsupported event, and a file or delivery error go to the hook log by exception type only. Any other exception is a defect: it ends the process with a traceback, which the shim discards. | Run by the installed activity hooks, not by hand. |
 
 ## Exit codes
 
 | Code | Meaning             | What triggers it                                                                                                                                                                                                                                                                                                                     |
 | ---- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Success             | The command finished, and any check it reports passed. `hook` and `signoz detect` always exit 0.                                                                                                                                                                                                                                     |
+| 0    | Success             | The command finished, and any check it reports passed. `signoz detect` always exits 0, and `hook` does unless a defect raises.                                                                                                                                                                                                       |
 | 2    | Usage error         | An unknown command or option, a missing argument, or a `producers` `--days` below 1 (argparse prints the usage).                                                                                                                                                                                                                     |
 | 10   | Configuration error | The config file does not load, or `[harnesses] enabled` names an unknown harness, for every command that reads it except `doctor`, which reports it as a failing check and exits 30.                                                                                                                                                 |
 | 30   | Facts error         | ClickHouse cannot be reached or rejects a statement, including the `producers` queries and a refresh still running after 30 minutes. Also any failing check of `facts verify` or `doctor`, after the full report prints.                                                                                                             |
 | 40   | Database error      | The workflow store (SQLite) fails.                                                                                                                                                                                                                                                                                                   |
 | 50   | Validation error    | Input the command refuses: an unknown refresher or harness profile, a candidate given to `harness configure`, a `--root` that is not a directory, a config file that cannot be parsed or edited safely, an invalid profile file, a `--write` refusal, a fingerprint service name that cannot be a file name, or an invalid proposal. |
 | 60   | Conflict            | A state that blocks the command: a proposal that changed while a transition was being written, a `proposal draft` run that fails, `facts schedule` on a platform other than macOS or Linux, a scheduler that refuses the job, a missing executable to schedule, or `clickhouse_password_env` given to `facts schedule install`.      |
-| 70   | Internal error      | Anything unexpected, including a `launchctl` or `systemctl` call that times out after 30 seconds.                                                                                                                                                                                                                                    |
+| 70   | Internal error      | An operating-system, network or HTTP protocol error no other code covers, or a `launchctl` or `systemctl` call that times out after 30 seconds. Any other exception is a defect: Python prints its traceback and exits 1.                                                                                                            |
+
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- Commands other than `setup` refuse retired keys so a stale setting never looks active. The error names each one as safe to delete.
+- `setup` checks each `--harness` key against the facts registry at the `config` step. The registry knows fewer keys than the profiles (omp is `oh-my-pi` there). Without this check a dry run would pass and the real run would stop at `facts`.
+- A dry run skips `doctor` because a machine not yet set up would only fail it.
+- A symlinked config file is resolved and written through, so the link is never replaced by a plain file.
+- `facts install` creates and migrates the workflow store even when a refresh failed after the ClickHouse store was created, because the dashboard reads that store. An error from the workflow store never replaces the install failure in the output.
+- `facts schedule install` validates the selected config at install time and records its resolved path, so the scheduled job reads the same file later.
+- `install` refuses `clickhouse_password_env` because the scheduler cannot pass that variable to the job. A password must come from `clickhouse_password_command`, whose executable the job's `PATH` includes.
+- When `sync.log` cannot be written, `facts sync --log` writes to stderr instead, so the scheduler's own capture still gets the line.
+- `launchctl` refuses to load a label that is already loaded.
+- `export_settings` only warns about a missing or different service name, because each producer names its own service by default. Any other export setting turns export on or routes it, so a mismatch fails.
+- `harness list` never runs a binary whose profile has no `version_args`, so listing never starts a harness session.
 
 ## Notes
 

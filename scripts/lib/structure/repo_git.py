@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from lib import filesystem
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _SCENARIO_IDENTITY = [
@@ -99,14 +100,14 @@ def worktree_changes(root: Path) -> list[Change]:
 
 
 def _replace_tree(source: Path, target: Path) -> None:
-    for child in target.iterdir():
+    for child in filesystem.iterdir(target):
         if child.name == ".git":
             continue
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
+        if filesystem.is_dir(child) and not filesystem.is_symlink(child):
+            filesystem.remove_tree(child)
         else:
-            child.unlink()
-    shutil.copytree(source, target, dirs_exist_ok=True, symlinks=True)
+            filesystem.unlink(child)
+    filesystem.copy_tree(source, target, dirs_exist_ok=True, symlinks=True)
 
 
 def build_scenario(fixture: Path, workdir: Path) -> Path:
@@ -114,7 +115,7 @@ def build_scenario(fixture: Path, workdir: Path) -> Path:
     if not base.is_dir() or not head.is_dir():
         raise GitError(f"scenario {fixture} needs base/ and head/ directories")
     repo = workdir / "repo"
-    shutil.copytree(base, repo, symlinks=True)
+    filesystem.copy_tree(base, repo, symlinks=True)
     git_text(repo, ["init", "-q", "-b", "main"])
     git_text(repo, ["add", "-A"])
     tree = git_text(repo, ["write-tree"]).strip()

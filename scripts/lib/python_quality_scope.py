@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib import filesystem
 from lib.python_quality_settings import PROOFS_FILE, TABLE, SettingsError, python_quality
 
 _BUNDLED_EXCLUDED_PREFIXES = (
@@ -79,7 +80,7 @@ def candidate_python_relpaths(repo_root: Path) -> list[str]:
     return [
         relpath
         for relpath in listed_relpaths(repo_root, ["*.py"])
-        if (repo_root / relpath).is_file() and not is_excluded_python_path(relpath)
+        if filesystem.is_file(repo_root / relpath) and not is_excluded_python_path(relpath)
     ]
 
 
@@ -102,10 +103,10 @@ def _is_fixture_target(repo_root: Path, target: Path) -> bool:
 
 
 def _fixture_sources(target: Path) -> list[SourceFile]:
-    files = [target] if target.is_file() else sorted(target.rglob("*.py"))
+    files = [target] if filesystem.is_file(target) else sorted(filesystem.rglob(target, "*.py"))
     sources: list[SourceFile] = []
     for path in files:
-        if path.suffix != ".py" or path.is_symlink():
+        if path.suffix != ".py" or filesystem.is_symlink(path):
             continue
         root, relpath = fixture_location(str(path))
         if not _is_bundled_exclusion(relpath):
@@ -125,7 +126,7 @@ def select_sources(repo_root: Path, raw_paths: Sequence[str]) -> tuple[list[Sour
     for raw_path in raw_paths:
         target = (repo_root / raw_path).resolve()
         if _is_fixture_target(repo_root, target):
-            matched = _fixture_sources(target) if target.exists() else []
+            matched = _fixture_sources(target) if filesystem.exists(target) else []
         else:
             matched = [
                 source
@@ -145,7 +146,7 @@ def report_settings_error(error: SettingsError, label: str) -> None:
 def tracked_python_files() -> list[str]:
     output = _git_output(Path.cwd(), ["ls-files", "-z", "--", "*.py"])
     paths = sorted(raw_path.decode("utf-8") for raw_path in output.split(b"\0") if raw_path)
-    paths = [path for path in paths if Path(path).is_file()]
+    paths = [path for path in paths if filesystem.is_file(Path(path))]
     unclassified = [
         path
         for path in paths
