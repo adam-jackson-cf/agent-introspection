@@ -16,8 +16,10 @@ control = [
   "scripts/check-quality-gate-parity.py",
   "scripts/check-hook-installed.py",
   "scripts/run-ci-quality-gates.sh",
+  "scripts/ci",
   ".pre-commit-config.yaml",
   ".github/workflows/ci-quality-gates.yml",
+  ".github/workflows/live-tests.yml",
   ".github/CODEOWNERS",
 ]
 
@@ -28,14 +30,14 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
-ref = "scripts/run-ci-quality-gates.sh proofs"
+file = "scripts/ci"
+ref = "uv run python -B scripts/validate-rule-coverage.py --root ."
 status = "proofs"
 
 [[claim.canary]]
@@ -79,7 +81,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -111,7 +113,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -141,13 +143,13 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh install"
 status = "gate"
 
@@ -170,7 +172,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -193,7 +195,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -248,7 +250,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -280,7 +282,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -432,7 +434,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -488,7 +490,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -520,7 +522,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -551,7 +553,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -573,7 +575,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -595,7 +597,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -625,7 +627,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -638,7 +640,7 @@ expect = "+    -h | --help)"
 [[claim]]
 id = "structure"
 rules = ["STRUCT.*", "NAME.conventions", "RENAME.residue", "PREFIX.candidates"]
-control = ["scripts/check-structure.py", "scripts/lib/structure", "proofs.toml"]
+control = ["scripts/check-structure.py", "scripts/lib/structure", "scripts/list-typescript-imports.ts", "tsconfig.json", "proofs.toml"]
 
 [[claim.enforced_by]]
 point = "hook"
@@ -647,7 +649,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -664,6 +666,20 @@ passing = "tests/fixtures/proofs/structure/compliant"
 violating = "tests/fixtures/proofs/structure/unmapped-module"
 expect = "STRUCT.dependency-direction: module part 'orders' has no tier"
 rule = "STRUCT.dependency-direction"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/ts-compliant"
+violating = "tests/fixtures/proofs/structure/ts-reversed-import"
+expect = "web/rates.ts:1: STRUCT.dependency-direction: web/rates (contract) imports web/main (entry)"
+rule = "STRUCT.dependency-direction"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/ts-compliant"
+violating = "tests/fixtures/proofs/structure/ts-sibling-import"
+expect = "web/invoice.ts:1: STRUCT.sibling-isolation: web/invoice imports its 'view' sibling web/view"
+rule = "STRUCT.sibling-isolation"
 
 [[claim.canary]]
 command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
@@ -747,19 +763,19 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t1"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t2"
 status = "gate"
 
@@ -791,7 +807,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -823,7 +839,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -855,7 +871,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -879,14 +895,14 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "later"
 file = ".github/workflows/live-tests.yml"
-ref = "scripts/run-ci-quality-gates.sh t3"
+ref = "scripts/ci t3"
 
 [[claim.canary]]
 command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_tiers", "{fixture}"]
@@ -908,7 +924,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t1"
 status = "gate"
 
@@ -940,13 +956,13 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t1"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t2"
 status = "gate"
 
@@ -970,7 +986,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -993,7 +1009,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1016,19 +1032,19 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t1"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh t2"
 status = "gate"
 
@@ -1051,7 +1067,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1081,7 +1097,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1111,7 +1127,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1174,7 +1190,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1198,7 +1214,7 @@ ref = "scripts/run-ci-quality-gates.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
@@ -1225,7 +1241,7 @@ control = ["scripts/check-lever-isolation.py", "scripts/fresh-install/sandbox.sh
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci-quality-gates.yml"
+file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh install"
 status = "gate"
 
@@ -1494,6 +1510,7 @@ large_module_fanout_max = 3
 "src/agent_introspection/signoz_detect.py" = ["_run_docker"]
 "tests/test_command_shape_parity.py" = ["_clickhouse_query"]
 "tests/test_code_integrity_git_modes.py" = ["_git"]
+"tests/test_diff_base_checks.py" = ["_run"]
 "tests/test_facts_registry_package.py" = ["_run_registry_probe"]
 "tests/test_hook_install_shim_process.py" = ["_run_shim"]
 "tests/test_hooks_runtime_scripts.py" = ["_pause", "_run_activity_shim", "_run_bun_probe"]
@@ -1705,6 +1722,71 @@ interface = [
   "cli_proposals",
   "cli_setup",
   "cli_signoz",
+]
+
+[structure.typescript]
+tsconfig = "tsconfig.json"
+tiers = ["primitive", "contract", "model", "component", "view", "route", "app", "entry"]
+
+[structure.typescript.tier_modules]
+primitive = [
+  "dashboard/server/assets",
+  "dashboard/src/harnesses.generated",
+  "dashboard/src/tokens",
+  "dashboard/src/type-guards",
+  "dashboard/swap-dist",
+]
+contract = ["dashboard/src/contracts", "dashboard/src/format"]
+model = [
+  "dashboard/server/clickhouse",
+  "dashboard/server/interventions",
+  "dashboard/server/record-route",
+  "dashboard/server/refreshers",
+  "dashboard/server/views",
+  "dashboard/server/workflow",
+  "dashboard/src/app-state",
+  "dashboard/src/charts",
+  "dashboard/src/harness-scope",
+]
+component = [
+  "dashboard/server/features",
+  "dashboard/server/pipeline",
+  "dashboard/src/charts-interval",
+  "dashboard/src/components",
+]
+view = [
+  "dashboard/src/views/Cache",
+  "dashboard/src/views/Effort",
+  "dashboard/src/views/Friction",
+  "dashboard/src/views/Guardrails",
+  "dashboard/src/views/Intent",
+  "dashboard/src/views/Interventions",
+  "dashboard/src/views/Pipeline",
+  "dashboard/src/views/PipelineCoverage",
+  "dashboard/src/views/Provider",
+  "dashboard/src/views/Recurrence",
+  "dashboard/src/views/Session",
+  "dashboard/src/views/Tools",
+]
+route = ["dashboard/src/routes", "dashboard/src/routes-health", "dashboard/src/routes-outcomes"]
+app = [
+  "dashboard/src/App",
+  "dashboard/src/app-data",
+  "dashboard/src/app-parts",
+  "dashboard/src/views/Glossary",
+]
+entry = [
+  "dashboard/build",
+  "dashboard/server",
+  "dashboard/src/main",
+  "dashboard/t1-guard",
+  "oxlint.config",
+  "scripts/check-typescript-limits",
+  "scripts/list-bun-test-cases",
+  "scripts/list-typescript-imports",
+  "scripts/ux-probe/probe",
+  "scripts/ux-probe/score",
+  "src/agent_introspection/hook_runtime/omp/activity",
 ]
 
 [structure.owners]
