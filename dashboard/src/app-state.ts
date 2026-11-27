@@ -62,20 +62,20 @@ export const apiQuery = (filters: Filters) =>
 
 export const isViewResponse = (value: unknown): value is ViewResponse =>
   isRecord(value) &&
-  typeof value.view === "string" &&
-  isRecord(value.data) &&
-  isRecord(value.errors) &&
-  isRecord(value.contributions) &&
-  isRecord(value.filters);
+  typeof value["view"] === "string" &&
+  isRecord(value["data"]) &&
+  isRecord(value["errors"]) &&
+  isRecord(value["contributions"]) &&
+  isRecord(value["filters"]);
 export const isRegistry = (value: unknown): value is Registry =>
   isRecord(value) &&
-  Array.isArray(value.signals) &&
-  Array.isArray(value.support) &&
-  Array.isArray(value.routes) &&
-  Array.isArray(value.strays) &&
-  Array.isArray(value.exclusions) &&
-  Array.isArray(value.harnesses) &&
-  Array.isArray(value.hidden);
+  Array.isArray(value["signals"]) &&
+  Array.isArray(value["support"]) &&
+  Array.isArray(value["routes"]) &&
+  Array.isArray(value["strays"]) &&
+  Array.isArray(value["exclusions"]) &&
+  Array.isArray(value["harnesses"]) &&
+  Array.isArray(value["hidden"]);
 
 export async function getJson(
   url: string,
@@ -85,8 +85,8 @@ export async function getJson(
   const body: unknown = await response.json();
   if (!response.ok)
     throw new Error(
-      isRecord(body) && typeof body.error === "string"
-        ? body.error
+      isRecord(body) && typeof body["error"] === "string"
+        ? body["error"]
         : "Request failed",
     );
   return body;

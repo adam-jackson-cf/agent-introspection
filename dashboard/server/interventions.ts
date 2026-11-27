@@ -44,7 +44,7 @@ const between = (from: string, to: string) =>
  */
 const withKind = (row: Row): Row => ({
   ...row,
-  kind: row.detector === CORRECTION_DETECTOR ? "correction" : "cluster",
+  kind: row["detector"] === CORRECTION_DETECTOR ? "correction" : "cluster",
 });
 
 /**
@@ -54,9 +54,11 @@ const withKind = (row: Row): Row => ({
  */
 const inScope = (row: Row, harness: string) =>
   harness === "" ||
-  (strings(row.metric_harnesses) ?? strings(row.harnesses) ?? []).includes(
-    harness,
-  );
+  (
+    strings(row["metric_harnesses"]) ??
+    strings(row["harnesses"]) ??
+    []
+  ).includes(harness);
 
 const total = (rows: Row[], key: string) =>
   rows.reduce((sum, row) => sum + Number(row[key]), 0);
@@ -79,22 +81,22 @@ function windowCounts(
   last: string,
 ) {
   const harnesses =
-    strings(proposal.metric_harnesses) ?? strings(proposal.harnesses);
+    strings(proposal["metric_harnesses"]) ?? strings(proposal["harnesses"]);
   const within = (rows: Row[]) =>
     rows.filter((row) => {
-      const day = String(row.day);
+      const day = String(row["day"]);
       return (
         day >= first &&
         day <= last &&
-        (harnesses === null || harnesses.includes(String(row.harness)))
+        (harnesses === null || harnesses.includes(String(row["harness"])))
       );
     });
   const matched = total(
     within(
       daily.clusters.filter(
         (row) =>
-          row.tool_family === proposal.tool_family &&
-          row.failure_class === proposal.failure_class,
+          row["tool_family"] === proposal["tool_family"] &&
+          row["failure_class"] === proposal["failure_class"],
       ),
     ),
     "tasks",
@@ -125,7 +127,7 @@ export function prePost(
   start: string,
   end: string,
 ): Row {
-  const appliedDay = londonDay(Date.parse(String(proposal.applied_at)));
+  const appliedDay = londonDay(Date.parse(String(proposal["applied_at"])));
   // The shorter side of the range around the application day sets both windows.
   const days = Math.max(
     Math.min(
@@ -149,7 +151,7 @@ export function prePost(
   const tagged = withKind(proposal);
   const unmeasured = { matched: null, tasks: null, rate: null };
   const [before, after] =
-    tagged.kind === "cluster" ? [pre, post] : [unmeasured, unmeasured];
+    tagged["kind"] === "cluster" ? [pre, post] : [unmeasured, unmeasured];
   return {
     ...tagged,
     days,
@@ -160,8 +162,8 @@ export function prePost(
     post_tasks: after.tasks,
     post_rate: after.rate,
     change_pct: rateChange(before.rate, after.rate),
-    verdict: proposal.verdict ?? null,
-    evaluated_ratio: proposal.evaluated_ratio ?? null,
+    verdict: proposal["verdict"] ?? null,
+    evaluated_ratio: proposal["evaluated_ratio"] ?? null,
   };
 }
 
@@ -169,7 +171,7 @@ export function prePost(
 function tierCounts(proposals: Row[]): Row[] {
   const counts = new Map<string, number>();
   for (const row of proposals) {
-    const tier = row.tier == null ? "not recorded" : String(row.tier);
+    const tier = row["tier"] == null ? "not recorded" : String(row["tier"]);
     counts.set(tier, (counts.get(tier) ?? 0) + 1);
   }
   return [...counts].map(([tier, count]) => ({ tier, proposals: count }));
@@ -183,18 +185,18 @@ function kpiRow(
   inRange: number,
 ): Row {
   const verdicts = (verdict: string | null) =>
-    applied.filter((row) => (row.verdict ?? null) === verdict).length;
+    applied.filter((row) => (row["verdict"] ?? null) === verdict).length;
   return {
     findings: findings.length,
-    actionable: findings.filter((row) => row.state === "actionable").length,
+    actionable: findings.filter((row) => row["state"] === "actionable").length,
     proposals: proposals.length,
-    pending: proposals.filter((row) => row.state === "pending").length,
+    pending: proposals.filter((row) => row["state"] === "pending").length,
     applied: applied.length,
     applied_in_range: inRange,
     validated: verdicts("validated"),
     regressed: verdicts("regressed"),
     inconclusive: verdicts("inconclusive"),
-    not_evaluated: applied.filter((row) => row.verdict == null).length,
+    not_evaluated: applied.filter((row) => row["verdict"] == null).length,
   };
 }
 
@@ -213,25 +215,25 @@ export function interventionsData(
   scope: InterventionScope,
   outcomes: boolean,
 ): Record<string, Row[]> {
-  const findings = (workflow.findings ?? [])
+  const findings = (workflow["findings"] ?? [])
     .filter((row) => inScope(row, scope.harness))
     .map(withKind);
-  const proposals = (workflow.proposals ?? [])
+  const proposals = (workflow["proposals"] ?? [])
     .filter((row) => inScope(row, scope.harness))
     .map(withKind);
-  const ids = new Set(proposals.map((row) => row.id));
-  const events = (workflow.proposal_events ?? []).filter((event) =>
-    ids.has(event.proposal_id),
+  const ids = new Set(proposals.map((row) => row["id"]));
+  const events = (workflow["proposal_events"] ?? []).filter((event) =>
+    ids.has(event["proposal_id"]),
   );
   if (!outcomes) {
     const counts = kpiRow(findings, proposals, [], 0);
     return {
       kpis: [
         {
-          findings: counts.findings,
-          actionable: counts.actionable,
-          proposals: counts.proposals,
-          pending: counts.pending,
+          findings: counts["findings"],
+          actionable: counts["actionable"],
+          proposals: counts["proposals"],
+          pending: counts["pending"],
         },
       ],
       findings,
@@ -240,20 +242,20 @@ export function interventionsData(
           Object.entries(row).filter(([key]) => !OUTCOME_FIELDS.includes(key)),
         ),
       ),
-      proposal_events: events.filter((event) => event.event !== "evaluated"),
+      proposal_events: events.filter((event) => event["event"] !== "evaluated"),
       tiers: tierCounts(proposals),
     };
   }
-  const applied = proposals.filter((row) => row.applied_at);
+  const applied = proposals.filter((row) => row["applied_at"]);
   const start = Date.parse(scope.start);
   const end = Date.parse(scope.end);
   const daily: DailyFacts = {
-    clusters: clickhouse.cluster_daily ?? [],
-    tasks: clickhouse.task_daily ?? [],
+    clusters: clickhouse["cluster_daily"] ?? [],
+    tasks: clickhouse["task_daily"] ?? [],
   };
   const comparisons = applied
     .filter((row) => {
-      const at = Date.parse(String(row.applied_at));
+      const at = Date.parse(String(row["applied_at"]));
       return at > start && at < end;
     })
     .map((row) => prePost(row, daily, scope.start, scope.end));

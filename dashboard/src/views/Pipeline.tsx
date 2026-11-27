@@ -30,9 +30,10 @@ const UNRESOLVED_LABEL = "unresolved (Codex hook)";
 export function dailyByHarness(rows: Row[]) {
   const daily = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     const entry = daily.get(day) ?? { day };
-    entry[row.harness === "" ? UNRESOLVED_KEY : String(row.harness)] = row.n;
+    entry[row["harness"] === "" ? UNRESOLVED_KEY : String(row["harness"])] =
+      row["n"];
     daily.set(day, entry);
   }
   return daily;
@@ -44,7 +45,7 @@ function dailySeriesOf(selected: readonly Harness[], dailyRows: Row[]) {
     label: HARNESS_LABEL[harness] as string,
     color: HARNESS_COLOR[harness] as string,
   }));
-  if (dailyRows.some((row) => row.harness === ""))
+  if (dailyRows.some((row) => row["harness"] === ""))
     series.push({
       key: UNRESOLVED_KEY,
       label: UNRESOLVED_LABEL,
@@ -65,14 +66,14 @@ const PERIOD = {
 
 function CoverageKpi({ data }: { data: Data }) {
   const { filters } = useView();
-  const summary = data.coverage_summary?.[0] ?? {};
-  const unrouted = data.unrouted_summary?.[0] ?? {};
-  const unroutedText = `${fmtCount(num(unrouted.rows))} unrouted rows, not used by any signal`;
+  const summary = data["coverage_summary"]?.[0] ?? {};
+  const unrouted = data["unrouted_summary"]?.[0] ?? {};
+  const unroutedText = `${fmtCount(num(unrouted["rows"]))} unrouted rows, not used by any signal`;
   return (
     <Kpi
       title="Coverage"
-      value={`${num(summary.unexplained)} unexplained`}
-      detail={`${num(summary.cells)} signal × harness cells · ${unroutedText} · ${presetFor(filters).toLowerCase()}`}
+      value={`${num(summary["unexplained"])} unexplained`}
+      detail={`${num(summary["cells"])} signal × harness cells · ${unroutedText} · ${presetFor(filters).toLowerCase()}`}
       signals={["pipeline.coverage"]}
       source={["coverage", "unrouted"]}
       span={1}
@@ -88,22 +89,22 @@ function GlanceBand({ data }: { data: Data }) {
   const freshnessSummary = summaryOf("freshness_summary");
   const paritySummary = summaryOf("parity_summary");
   const sanitizationAll =
-    (data.sanitization ?? []).find((row) => row.source === "") ?? {};
-  const missingFacts = num(freshnessSummary.missing_facts);
+    (data["sanitization"] ?? []).find((row) => row["source"] === "") ?? {};
+  const missingFacts = num(freshnessSummary["missing_facts"]);
   const maxLag =
-    freshnessSummary.max_lag_seconds == null
+    freshnessSummary["max_lag_seconds"] == null
       ? null
-      : num(freshnessSummary.max_lag_seconds);
-  const compared = num(paritySummary.harnesses);
+      : num(freshnessSummary["max_lag_seconds"]);
+  const compared = num(paritySummary["harnesses"]);
   return (
     <Section title="At a glance" columns={5}>
       <Kpi
         title="Loaders and snapshots"
-        value={`${num(loaderSummary.ok)} / ${num(loaderSummary.total)}`}
+        value={`${num(loaderSummary["ok"])} / ${num(loaderSummary["total"])}`}
         detail={`${
-          num(loaderSummary.failing) === 0
+          num(loaderSummary["failing"]) === 0
             ? "on schedule, no errors"
-            : `${num(loaderSummary.failing)} stale or failing`
+            : `${num(loaderSummary["failing"])} stale or failing`
         } · ${PERIOD.loaders}`}
         signals={["pipeline.loader_refresh"]}
         source={["loaders", "loader_summary"]}
@@ -127,7 +128,9 @@ function GlanceBand({ data }: { data: Data }) {
       <Kpi
         title="Source parity"
         value={
-          compared === 0 ? "—" : `${num(paritySummary.matching)} / ${compared}`
+          compared === 0
+            ? "—"
+            : `${num(paritySummary["matching"])} / ${compared}`
         }
         detail={`${
           compared === 0
@@ -142,7 +145,7 @@ function GlanceBand({ data }: { data: Data }) {
       </Kpi>
       <Kpi
         title="Sanitization"
-        value={`${fmtCount(num(sanitizationAll.violations))} violations`}
+        value={`${fmtCount(num(sanitizationAll["violations"]))} violations`}
         detail={`flagged stored rows · ${PERIOD.sanitization}`}
         signals={["pipeline.sanitization"]}
         source="sanitization"
@@ -189,13 +192,13 @@ const LOADER_COLUMNS: Column[] = [
     key: "age_seconds",
     label: "Age",
     numeric: true,
-    render: (row) => fmtSeconds(num(row.age_seconds)),
+    render: (row) => fmtSeconds(num(row["age_seconds"])),
   },
   { key: "written_rows", label: "Rows written", numeric: true },
   {
     key: "exception",
     label: "Error",
-    render: (row) => String(row.exception) || "—",
+    render: (row) => String(row["exception"]) || "—",
   },
 ];
 
@@ -203,40 +206,40 @@ const FRESHNESS_COLUMNS: Column[] = [
   {
     key: "harness",
     label: "Harness",
-    render: (row) => <HarnessName value={row.harness} />,
+    render: (row) => <HarnessName value={row["harness"]} />,
   },
   { key: "source", label: "Source" },
   {
     key: "source_latest",
     label: "SigNoz latest",
-    render: (row) => String(row.source_latest).slice(0, 19),
+    render: (row) => String(row["source_latest"]).slice(0, 19),
   },
   {
     key: "lag_seconds",
     label: "Fact lag",
     numeric: true,
     render: (row) =>
-      num(row.facts_missing) === 1
+      num(row["facts_missing"]) === 1
         ? "no facts"
-        : fmtSeconds(num(row.lag_seconds)),
+        : fmtSeconds(num(row["lag_seconds"])),
   },
   {
     key: "source_age_seconds",
     label: "Last activity",
     numeric: true,
-    render: (row) => `${fmtSeconds(num(row.source_age_seconds))} ago`,
+    render: (row) => `${fmtSeconds(num(row["source_age_seconds"]))} ago`,
   },
 ];
 
 /** Server summary figures as the one-line summaries above the exception rows. */
 const loaderSummaryText = (summary: Row) => {
-  const failing = num(summary.failing);
-  return `${num(summary.ok)} on schedule${failing > 0 ? `, ${failing} stale or failing` : ""}`;
+  const failing = num(summary["failing"]);
+  return `${num(summary["ok"])} on schedule${failing > 0 ? `, ${failing} stale or failing` : ""}`;
 };
 
 const freshnessSummaryText = (summary: Row) => {
-  const sources = num(summary.sources);
-  const missing = num(summary.missing_facts);
+  const sources = num(summary["sources"]);
+  const missing = num(summary["missing_facts"]);
   return `${sources} sources, ${missing === 0 ? "all with facts" : `${sources - missing} with facts`}`;
 };
 
@@ -255,49 +258,49 @@ const SPOOL_COLUMNS: Column[] = [
     key: "pending",
     label: "Pending",
     numeric: true,
-    render: (row) => dash(row.pending, fmtCount),
+    render: (row) => dash(row["pending"], fmtCount),
   },
   {
     key: "rejected",
     label: "Rejected",
     numeric: true,
-    render: (row) => dash(row.rejected, fmtCount),
+    render: (row) => dash(row["rejected"], fmtCount),
   },
   {
     key: "oldest_pending_seconds",
     label: "Oldest pending",
     numeric: true,
-    render: (row) => dash(row.oldest_pending_seconds, fmtSeconds),
+    render: (row) => dash(row["oldest_pending_seconds"], fmtSeconds),
   },
   {
     key: "hooks_received",
     label: "Hooks received / sent (24h)",
     numeric: true,
-    render: (row) => delivery(row.hooks_received, row.hooks_sent),
+    render: (row) => delivery(row["hooks_received"], row["hooks_sent"]),
   },
   {
     key: "delivery_gap",
     label: "Delivery",
     render: (row) =>
-      num(row.delivery_gap) === 1 ? "records lost after send" : "ok",
+      num(row["delivery_gap"]) === 1 ? "records lost after send" : "ok",
   },
   {
     key: "last_error_class",
     label: "Last error",
-    render: (row) => String(row.last_error_class ?? "") || "—",
+    render: (row) => String(row["last_error_class"] ?? "") || "—",
   },
   { key: "cli_version", label: "CLI version" },
   {
     key: "age_seconds",
     label: "Reported",
     numeric: true,
-    render: (row) => `${fmtSeconds(num(row.age_seconds))} ago`,
+    render: (row) => `${fmtSeconds(num(row["age_seconds"]))} ago`,
   },
 ];
 
 const spoolSummaryText = (summary: Row) => {
-  const unknown = num(summary.unknown);
-  return `${num(summary.reporting)} hosts reporting${unknown > 0 ? `, ${unknown} unknown` : ""}`;
+  const unknown = num(summary["unknown"]);
+  return `${num(summary["reporting"])} hosts reporting${unknown > 0 ? `, ${unknown} unknown` : ""}`;
 };
 
 function SpoolPanel({ data }: { data: Data }) {
@@ -310,10 +313,10 @@ function SpoolPanel({ data }: { data: Data }) {
       source="spool_status"
     >
       <ExceptionTable
-        summary={spoolSummaryText(data.spool_summary?.[0] ?? {})}
+        summary={spoolSummaryText(data["spool_summary"]?.[0] ?? {})}
         columns={SPOOL_COLUMNS}
-        exceptions={data.spool_exceptions ?? []}
-        all={data.spool_status ?? []}
+        exceptions={data["spool_exceptions"] ?? []}
+        all={data["spool_status"] ?? []}
         empty="No host reported a spool status."
       />
     </Panel>
@@ -331,10 +334,10 @@ function FreshnessBand({ data }: { data: Data }) {
         source={["loaders", "loader_summary"]}
       >
         <ExceptionTable
-          summary={loaderSummaryText(data.loader_summary?.[0] ?? {})}
+          summary={loaderSummaryText(data["loader_summary"]?.[0] ?? {})}
           columns={LOADER_COLUMNS}
-          exceptions={data.loader_exceptions ?? []}
-          all={data.loaders ?? []}
+          exceptions={data["loader_exceptions"] ?? []}
+          all={data["loaders"] ?? []}
           empty="No loader reported."
         />
       </Panel>
@@ -346,10 +349,10 @@ function FreshnessBand({ data }: { data: Data }) {
         source={["freshness", "freshness_summary"]}
       >
         <ExceptionTable
-          summary={freshnessSummaryText(data.freshness_summary?.[0] ?? {})}
+          summary={freshnessSummaryText(data["freshness_summary"]?.[0] ?? {})}
           columns={FRESHNESS_COLUMNS}
-          exceptions={data.freshness_exceptions ?? []}
-          all={data.freshness ?? []}
+          exceptions={data["freshness_exceptions"] ?? []}
+          all={data["freshness"] ?? []}
           empty="No harness produced rows in the last day."
         />
       </Panel>
@@ -359,7 +362,7 @@ function FreshnessBand({ data }: { data: Data }) {
 
 function DailyPanel({ data }: { data: Data; signals: string[] }) {
   const selected = useSelectedHarnesses();
-  const dailyRows = data.daily_rows ?? [];
+  const dailyRows = data["daily_rows"] ?? [];
   const daily = dailyByHarness(dailyRows);
   const dailySeries = dailySeriesOf(selected, dailyRows);
   return (
@@ -392,7 +395,7 @@ function DailyPanel({ data }: { data: Data; signals: string[] }) {
 }
 
 function checksPanels(data: Data) {
-  const window = String(data.parity_summary?.[0]?.window_label ?? "");
+  const window = String(data["parity_summary"]?.[0]?.["window_label"] ?? "");
   return (
     <>
       <Panel
@@ -407,7 +410,7 @@ function checksPanels(data: Data) {
             {
               key: "harness",
               label: "Harness",
-              render: (row) => <HarnessName value={row.harness} />,
+              render: (row) => <HarnessName value={row["harness"]} />,
             },
             { key: "raw_operations", label: "Raw ops", numeric: true },
             { key: "fact_operations", label: "Fact ops", numeric: true },
@@ -415,25 +418,25 @@ function checksPanels(data: Data) {
               key: "raw_input",
               label: "Raw input",
               numeric: true,
-              render: (row) => fmtCount(num(row.raw_input)),
+              render: (row) => fmtCount(num(row["raw_input"])),
             },
             {
               key: "fact_input",
               label: "Fact input",
               numeric: true,
-              render: (row) => fmtCount(num(row.fact_input)),
+              render: (row) => fmtCount(num(row["fact_input"])),
             },
             {
               key: "ok",
               label: "Match",
               render: (row) => (
                 <StateChip
-                  state={num(row.ok) === 1 ? "healthy" : "possible break"}
+                  state={num(row["ok"]) === 1 ? "healthy" : "possible break"}
                 />
               ),
             },
           ]}
-          rows={data.parity ?? []}
+          rows={data["parity"] ?? []}
         />
       </Panel>
       <Panel
@@ -452,11 +455,11 @@ function checksPanels(data: Data) {
               key: "ok",
               label: "Match",
               render: (row) => (
-                <StateChip state={row.ok ? "healthy" : "possible break"} />
+                <StateChip state={row["ok"] ? "healthy" : "possible break"} />
               ),
             },
           ]}
-          rows={data.recombination ?? []}
+          rows={data["recombination"] ?? []}
         />
       </Panel>
     </>
@@ -480,7 +483,9 @@ function sanitizationPanel(data: Data) {
           { key: "long_status", label: "Text > 160", numeric: true },
           { key: "home_paths", label: "Home paths", numeric: true },
         ]}
-        rows={(data.sanitization ?? []).filter((row) => row.source !== "")}
+        rows={(data["sanitization"] ?? []).filter(
+          (row) => row["source"] !== "",
+        )}
       />
     </Panel>
   );
@@ -515,12 +520,12 @@ function RegistryLists({ data }: { data: Data }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "source", label: "Source" },
               { key: "reason", label: "Explanation" },
             ]}
-            rows={data.strays ?? []}
+            rows={data["strays"] ?? []}
             label="Stray and unrouted rows: registered strays"
           />
           <DataTable
@@ -529,22 +534,22 @@ function RegistryLists({ data }: { data: Data }) {
                 key: "harness",
                 label: "Harness",
                 render: (row) =>
-                  row.harness === "" ? (
+                  row["harness"] === "" ? (
                     UNRESOLVED_LABEL
                   ) : (
-                    <HarnessName value={row.harness} />
+                    <HarnessName value={row["harness"]} />
                   ),
               },
               { key: "source", label: "Source" },
               {
                 key: "name",
                 label: "Span or event",
-                render: (row) => String(row.name) || "(no event name)",
+                render: (row) => String(row["name"]) || "(no event name)",
               },
               { key: "n", label: "Rows", numeric: true },
             ]}
-            rows={data.unrouted ?? []}
-            total={num(data.unrouted_summary?.[0]?.names)}
+            rows={data["unrouted"] ?? []}
+            total={num(data["unrouted_summary"]?.[0]?.["names"])}
             empty="Every row is claimed by a route or a registered stray."
           />
         </Panel>
@@ -560,12 +565,12 @@ function RegistryLists({ data }: { data: Data }) {
               {
                 key: "view",
                 label: "View",
-                render: (row) => <SignalView view={String(row.view)} />,
+                render: (row) => <SignalView view={String(row["view"])} />,
               },
               { key: "missing", label: "Missing for" },
               { key: "reason", label: "Reason" },
             ]}
-            rows={data.exclusions ?? []}
+            rows={data["exclusions"] ?? []}
             empty="No signal is excluded: some harness produces every signal."
           />
         </Panel>
@@ -581,12 +586,12 @@ function RegistryLists({ data }: { data: Data }) {
               {
                 key: "view",
                 label: "View",
-                render: (row) => <SignalView view={String(row.view)} />,
+                render: (row) => <SignalView view={String(row["view"])} />,
               },
               { key: "missing", label: "Not emitted by" },
               { key: "note", label: "Why" },
             ]}
-            rows={data.hidden ?? []}
+            rows={data["hidden"] ?? []}
             empty="No signal is hidden: every enabled harness reaches every signal."
           />
         </Panel>

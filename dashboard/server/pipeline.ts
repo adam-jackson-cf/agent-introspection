@@ -123,11 +123,11 @@ function harnessCounts(rows: Row[], index: number) {
   const rest = new Map<string, number>();
   const first = new Map<string, string>();
   for (const row of rows) {
-    totals.set(String(row.harness), Number(row[`t${index}`]));
-    rest.set(String(row.harness), Number(row[`u${index}`]));
+    totals.set(String(row["harness"]), Number(row[`t${index}`]));
+    rest.set(String(row["harness"]), Number(row[`u${index}`]));
     const day = String(row[`f${index}`] ?? "");
     if (Number(row[`t${index}`]) > 0 && day !== "")
-      first.set(String(row.harness), day);
+      first.set(String(row["harness"]), day);
   }
   return [totals, rest, first] as const;
 }
@@ -634,8 +634,10 @@ export function recombine(
       });
     }
   }
-  return rows.sort((a, b) =>
-    `${a.check}${a.measure}`.localeCompare(`${b.check}${b.measure}`),
+  return rows.toSorted((a, b) =>
+    `${a["check"]}${a["measure"]}`.localeCompare(
+      `${b["check"]}${b["measure"]}`,
+    ),
   );
 }
 
@@ -689,7 +691,7 @@ const UNEXPLAINED: Record<string, true> = {
 
 const coverageSummary = (rows: Row[]): Row => ({
   cells: rows.length,
-  unexplained: rows.filter((row) => UNEXPLAINED[String(row.state)] === true)
+  unexplained: rows.filter((row) => UNEXPLAINED[String(row["state"])] === true)
     .length,
 });
 
@@ -714,46 +716,46 @@ const STATE_DEFINITIONS: Record<CoverageState, string> = {
 const coverageStates = (rows: Row[]): Row[] =>
   (Object.keys(STATE_DEFINITIONS) as CoverageState[]).map((state) => ({
     state,
-    cells: rows.filter((row) => row.state === state).length,
+    cells: rows.filter((row) => row["state"] === state).length,
     definition: STATE_DEFINITIONS[state],
   }));
 
 /** One row per view in registry order: cells, healthy cells and unexplained cells. */
 function coverageByView(registry: Registry, rows: Row[]): Row[] {
-  const views = [...new Set(rows.map((row) => String(row.view)))];
+  const views = [...new Set(rows.map((row) => String(row["view"])))];
   return views.map((view) => {
-    const cells = rows.filter((row) => row.view === view);
+    const cells = rows.filter((row) => row["view"] === view);
     return {
       view,
       view_title:
         registry.signals.find((entry) => entry.view === view)?.view_title ??
         view,
       cells: cells.length,
-      healthy: cells.filter((row) => row.state === "healthy").length,
-      unexplained: coverageSummary(cells).unexplained,
+      healthy: cells.filter((row) => row["state"] === "healthy").length,
+      unexplained: coverageSummary(cells)["unexplained"],
     };
   });
 }
 
 /** Exact unrouted names and rows for the selected harness, from the uncapped totals. */
 const unroutedSummary = (totals: Row[]): Row => ({
-  names: totals.reduce((sum, row) => sum + Number(row.names ?? 0), 0),
-  rows: totals.reduce((sum, row) => sum + Number(row.rows ?? 0), 0),
+  names: totals.reduce((sum, row) => sum + Number(row["names"] ?? 0), 0),
+  rows: totals.reduce((sum, row) => sum + Number(row["rows"] ?? 0), 0),
 });
 
 /** Stale or failing loaders only: the exceptions of the refresh table. */
 const loaderExceptions = (rows: Row[]): Row[] =>
-  rows.filter((row) => Number(row.stale) === 1);
+  rows.filter((row) => Number(row["stale"]) === 1);
 
 /** Sources with SigNoz rows but no fact rows: the only freshness rule the server has. */
 const freshnessExceptions = (rows: Row[]): Row[] =>
-  rows.filter((row) => Number(row.facts_missing) === 1);
+  rows.filter((row) => Number(row["facts_missing"]) === 1);
 
 /** Keeps the selected harness's rows; All (empty) keeps every row. */
 const selectedHarness = (params: Params) => {
-  const harness = params.harness ?? "";
+  const harness = params["harness"] ?? "";
   return (rows: Row[]): Row[] =>
-    harness === "" ? rows : rows.filter((row) => row.harness === harness);
+    harness === "" ? rows : rows.filter((row) => row["harness"] === harness);
 };
 
 const DAILY_ROWS = `SELECT toString(toDate(ts)) AS day, harness, count() AS n FROM (
@@ -846,26 +848,29 @@ export async function pipelineData(
   const selected = selectedHarness(params);
   const coverage = selected(routes ? coverageGrid(registry, routes) : []);
   // A failed delivery query leaves the counts empty (shown as unknown), not a clean bill.
-  const spool = withDelivery(results.spool_status!, results.spool_delivery!);
+  const spool = withDelivery(
+    results["spool_status"]!,
+    results["spool_delivery"]!,
+  );
   const noUnrouted: Unrouted = { list: [], totals: [] };
   const missed = unrouted ?? noUnrouted;
   return {
     data: {
-      loaders: results.loaders!,
-      loader_summary: results.loader_summary!,
-      freshness: results.freshness!,
-      freshness_summary: results.freshness_summary!,
-      parity: results.parity!,
-      parity_summary: results.parity_summary!,
+      loaders: results["loaders"]!,
+      loader_summary: results["loader_summary"]!,
+      freshness: results["freshness"]!,
+      freshness_summary: results["freshness_summary"]!,
+      parity: results["parity"]!,
+      parity_summary: results["parity_summary"]!,
       recombination: recombine(results, settled.errors),
       sanitization: sanitization ?? [],
-      daily_rows: results.daily_rows!,
+      daily_rows: results["daily_rows"]!,
       coverage,
       coverage_summary: [coverageSummary(coverage)],
       coverage_states: coverageStates(coverage),
       coverage_by_view: coverageByView(registry, coverage),
-      loader_exceptions: loaderExceptions(results.loaders!),
-      freshness_exceptions: freshnessExceptions(results.freshness!),
+      loader_exceptions: loaderExceptions(results["loaders"]!),
+      freshness_exceptions: freshnessExceptions(results["freshness"]!),
       unrouted: selected(missed.list),
       unrouted_summary: [unroutedSummary(selected(missed.totals))],
       spool_status: spool,

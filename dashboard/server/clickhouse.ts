@@ -29,8 +29,8 @@ export type Credentials = { user: string; password: string };
 export function credentialsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): Credentials | undefined {
-  const user = env.INTROSPECTION_CLICKHOUSE_USER;
-  const password = env.INTROSPECTION_CLICKHOUSE_PASSWORD;
+  const user = env["INTROSPECTION_CLICKHOUSE_USER"];
+  const password = env["INTROSPECTION_CLICKHOUSE_PASSWORD"];
   if (!user && !password) return undefined;
   return { user: user || "default", password: password ?? "" };
 }
@@ -42,8 +42,8 @@ export const readConfigFile = (path: string): string | undefined =>
 /** The config path the CLI reads: `AGENT_INTROSPECTION_CONFIG`, else the default. */
 export function configPath(env: Record<string, string | undefined>): string {
   return (
-    env.AGENT_INTROSPECTION_CONFIG ||
-    join(env.HOME ?? homedir(), ".config/agent-introspection/config.toml")
+    env["AGENT_INTROSPECTION_CONFIG"] ||
+    join(env["HOME"] ?? homedir(), ".config/agent-introspection/config.toml")
   );
 }
 
@@ -92,7 +92,8 @@ export function clickhouseUrl(
   env: Record<string, string | undefined> = process.env,
   readConfig: (path: string) => string | undefined = readConfigFile,
 ): string {
-  if (env.INTROSPECTION_CLICKHOUSE_URL) return env.INTROSPECTION_CLICKHOUSE_URL;
+  if (env["INTROSPECTION_CLICKHOUSE_URL"])
+    return env["INTROSPECTION_CLICKHOUSE_URL"];
   const url = configuredUrl(readConfig(configPath(env)));
   return typeof url === "string" && url !== "" ? url : DEFAULT_CLICKHOUSE_URL;
 }

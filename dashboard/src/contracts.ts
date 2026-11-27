@@ -36,11 +36,11 @@ export type Filters = {
    * Browser only: a live preset in days. The window always ends now, so Refresh
    * and a reopened link move it forward. Absent for a custom range.
    */
-  range?: number;
+  range?: number | undefined;
 };
 
 export type Scalar = string | number | boolean | null;
-export type Row = Record<string, Scalar | Scalar[]>;
+export type Row = Record<string, Scalar | Scalar[] | undefined>;
 
 /**
  * `not applicable`: the signal cannot exist for the harness by construction.

@@ -60,26 +60,27 @@ export function asOfFor(
   scope: string[] | null,
 ): ViewResponse["asOf"] {
   const inScope = rows.filter(
-    (row) => scope === null || scope.includes(String(row.view)),
+    (row) => scope === null || scope.includes(String(row["view"])),
   );
   // A refresher that has never succeeded reports no time (null) or the epoch.
   const times = inScope
     .filter(
-      (row) => !HISTORY.test(String(row.view)) && !SWEEP.test(String(row.view)),
+      (row) =>
+        !HISTORY.test(String(row["view"])) && !SWEEP.test(String(row["view"])),
     )
-    .map((row) => row.as_of)
+    .map((row) => row["as_of"])
     .filter(
       (at): at is string =>
         typeof at === "string" && at !== "" && !at.startsWith("1970"),
     );
   if (times.length === 0) return null;
-  const failing = inScope.filter((row) => Number(row.stale) === 1);
+  const failing = inScope.filter((row) => Number(row["stale"]) === 1);
   const named = (history: boolean) =>
-    failing.some((row) => HISTORY.test(String(row.view)) === history);
+    failing.some((row) => HISTORY.test(String(row["view"])) === history);
   return {
     at: times.reduce((a, b) => (a < b ? a : b)).replace(" ", "T") + "Z",
     stale: named(false),
     historyStale: named(true),
-    failing: failing.map((row) => String(row.view)).sort(),
+    failing: failing.map((row) => String(row["view"])).toSorted(),
   };
 }

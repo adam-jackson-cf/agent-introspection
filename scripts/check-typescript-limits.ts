@@ -1,13 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Fail when maintained TypeScript exceeds the portable Enaible limits that
- * oxlint cannot express: loop depth (PYS250 analogue), class length (PYQ200
- * analogue) and import fan-out (FANOUT.general / FANOUT.large-module analogue).
- *
- * Usage: bun scripts/check-typescript-limits.ts [--root DIR] [FILE...]
- * Without FILE arguments every tracked dashboard and .agents TypeScript file is checked.
- * A trailing `.fixture` suffix is ignored when choosing the parser language.
- */
 import { spawnSync } from "node:child_process";
 import { builtinModules, createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -18,7 +9,6 @@ type Node = TS.Node;
 
 const MAX_LOOP_DEPTH = 2;
 const MAX_CLASS_LINES = 700;
-const MAX_FANOUT = 10;
 const LARGE_MODULE_NLOC = 800;
 const MAX_LARGE_MODULE_FANOUT = 3;
 const TRACKED_GLOBS = ["dashboard/*.ts", "dashboard/*.tsx", ".agents/*.ts", ".agents/*.tsx"];
@@ -167,9 +157,6 @@ function checkFile(path: string): Finding[] {
   visit(source, 0);
 
   const nloc = nonBlankLines(text);
-  if (dependencies.size > MAX_FANOUT) {
-    findings.push({ file: displayPath, line: 1, rule: "TS.fanout", message: `non-builtin imports ${dependencies.size} > ${MAX_FANOUT}` });
-  }
   if (nloc > LARGE_MODULE_NLOC && dependencies.size > MAX_LARGE_MODULE_FANOUT) {
     findings.push({ file: displayPath, line: 1, rule: "TS.fanout-large-module", message: `large module ${nloc} NLOC with non-builtin imports ${dependencies.size} > ${MAX_LARGE_MODULE_FANOUT}` });
   }

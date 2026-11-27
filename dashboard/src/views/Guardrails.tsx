@@ -28,21 +28,21 @@ import {
 
 /** The All row of a summary query (`harness === ''`); empty result reads as no data. */
 const allRow = (rows: Row[] | undefined): Row =>
-  rows?.find((row) => row.harness === "") ?? {};
+  rows?.find((row) => row["harness"] === "") ?? {};
 
 /** Reshapes long daily rows into one row per day with a column per harness (values copied from `field`, plus `<harness>_n` from `nField`). */
 function wideDaily(rows: Row[], field: string, nField?: string): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     const out = days.get(day) ?? { day };
-    const key = String(row.harness);
+    const key = String(row["harness"]);
     out[key] = row[field] ?? null;
     if (nField) out[`${key}_n`] = row[nField];
     days.set(day, out);
   }
-  return [...days.values()].sort((a, b) =>
-    String(a.day).localeCompare(String(b.day)),
+  return [...days.values()].toSorted((a, b) =>
+    String(a["day"]).localeCompare(String(b["day"])),
   );
 }
 
@@ -61,8 +61,8 @@ function SandboxOrDecisionsKpi(props: {
       <Kpi
         title="Sandbox denials"
         source="sandbox_kpi"
-        value={fmtCount(num(sandbox.denied))}
-        detail={`${fmtCount(num(sandbox.outcomes))} sandbox outcomes`}
+        value={fmtCount(num(sandbox["denied"]))}
+        detail={`${fmtCount(num(sandbox["outcomes"]))} sandbox outcomes`}
         signals={["guard.sandbox"]}
       />
     );
@@ -70,8 +70,8 @@ function SandboxOrDecisionsKpi(props: {
     <Kpi
       title="Approval decisions"
       source="decision_kpi"
-      value={fmtCount(num(decisions.decided))}
-      detail={`${fmtCount(num(decisions.by_user))} decided by the user`}
+      value={fmtCount(num(decisions["decided"]))}
+      detail={`${fmtCount(num(decisions["by_user"]))} decided by the user`}
       signals={["guard.decisions"]}
     />
   );
@@ -88,7 +88,7 @@ const NO_SHAPE =
 
 /** "All" for the rollup row, else the harness name. */
 const harnessOrAll = (row: Row) =>
-  row.harness === "" ? "All" : <HarnessName value={row.harness} />;
+  row["harness"] === "" ? "All" : <HarnessName value={row["harness"]} />;
 
 /** Verification by kind: bars keyed kind · harness in the server's fixed order, then the exact figures. */
 function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
@@ -99,11 +99,11 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
       ) : (
         <BarList
           items={kinds.map((entry) => ({
-            key: `${String(entry.kind)} · ${String(entry.harness)}`,
-            label: `${VERIFICATION_LABEL[String(entry.kind)] ?? String(entry.kind)} · ${harnessLabel(entry.harness)}`,
-            value: num(entry.runs),
-            color: isHarness(entry.harness)
-              ? HARNESS_COLOR[entry.harness]
+            key: `${String(entry["kind"])} · ${String(entry["harness"])}`,
+            label: `${VERIFICATION_LABEL[String(entry["kind"])] ?? String(entry["kind"])} · ${harnessLabel(entry["harness"])}`,
+            value: num(entry["runs"]),
+            color: isHarness(entry["harness"])
+              ? HARNESS_COLOR[entry["harness"]]
               : OTHER_TOKEN,
           }))}
           format={fmtCount}
@@ -115,12 +115,12 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
             key: "kind",
             label: "Kind",
             render: (row) =>
-              VERIFICATION_LABEL[String(row.kind)] ?? String(row.kind),
+              VERIFICATION_LABEL[String(row["kind"])] ?? String(row["kind"]),
           },
           {
             key: "harness",
             label: "Harness",
-            render: (row) => <HarnessName value={row.harness} />,
+            render: (row) => <HarnessName value={row["harness"]} />,
           },
           { key: "runs", label: "Runs", numeric: true },
           { key: "failed", label: "Failed", numeric: true },
@@ -129,7 +129,10 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
             label: "Failed rate",
             numeric: true,
             render: (row) => (
-              <RateValue pct={maybe(row.failed_rate)} n={num(row.explicit)} />
+              <RateValue
+                pct={maybe(row["failed_rate"])}
+                n={num(row["explicit"])}
+              />
             ),
           },
           { key: "caught", label: "Caught", numeric: true },
@@ -137,7 +140,7 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
           {
             key: "last_seen",
             label: "Last seen (UTC)",
-            render: (row) => String(row.last_seen).slice(0, 16),
+            render: (row) => String(row["last_seen"]).slice(0, 16),
           },
         ]}
         rows={kinds}
@@ -150,7 +153,7 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
             {
               key: "harness",
               label: "Harness",
-              render: (row) => <HarnessName value={row.harness} />,
+              render: (row) => <HarnessName value={row["harness"]} />,
             },
             { key: "runs", label: "Runs", numeric: true },
             { key: "failed", label: "Failed", numeric: true },
@@ -164,17 +167,17 @@ function VerificationKinds({ kinds, gates }: { kinds: Row[]; gates: Row[] }) {
 }
 
 function VerificationSection({ data }: { data: Record<string, Row[]> }) {
-  const kpi = allRow(data.verification_kpi);
-  const observed = num(kpi.shell_calls) > 0;
+  const kpi = allRow(data["verification_kpi"]);
+  const observed = num(kpi["shell_calls"]) > 0;
   return (
     <Section title="Does the agent verify its work?">
       <Kpi
         title="Verification runs"
         source="verification_kpi"
-        value={observed ? fmtCount(num(kpi.runs)) : "—"}
+        value={observed ? fmtCount(num(kpi["runs"])) : "—"}
         detail={
           observed
-            ? `${fmtCount(num(kpi.failed))} failed · ${fmtCount(num(kpi.gate_runs))} full gate runs · in ${fmtCount(num(kpi.tasks))} tasks`
+            ? `${fmtCount(num(kpi["failed"]))} failed · ${fmtCount(num(kpi["gate_runs"]))} full gate runs · in ${fmtCount(num(kpi["tasks"]))} tasks`
             : "no shell call carries the command shape yet"
         }
         signals={["guard.verification"]}
@@ -187,8 +190,8 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
         span={5}
       >
         <VerificationKinds
-          kinds={data.verification_kinds ?? []}
-          gates={data.gate_runs ?? []}
+          kinds={data["verification_kinds"] ?? []}
+          gates={data["gate_runs"] ?? []}
         />
       </Panel>
       <Panel
@@ -209,8 +212,8 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
               numeric: true,
               render: (row) => (
                 <RateValue
-                  pct={maybe(row.caught_rate)}
-                  n={num(row.failed_kinds)}
+                  pct={maybe(row["caught_rate"])}
+                  n={num(row["failed_kinds"])}
                 />
               ),
             },
@@ -218,10 +221,10 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
               key: "p50",
               label: "P50 to catch",
               numeric: true,
-              render: (row) => fmtSeconds(maybe(row.p50_caught_seconds)),
+              render: (row) => fmtSeconds(maybe(row["p50_caught_seconds"])),
             },
           ]}
-          rows={data.verification_caught ?? []}
+          rows={data["verification_caught"] ?? []}
           empty="No failed verification with a task in the selected range."
         />
       </Panel>
@@ -231,19 +234,19 @@ function VerificationSection({ data }: { data: Record<string, Row[]> }) {
 
 function guardrailsModel(data: Record<string, Row[]>) {
   return {
-    decisions: data.decisions ?? [],
-    decisionKpi: allRow(data.decision_kpi),
-    sandboxKpi: allRow(data.sandbox_kpi),
-    bypass: allRow(data.bypass),
-    churn: allRow(data.churn_summary),
+    decisions: data["decisions"] ?? [],
+    decisionKpi: allRow(data["decision_kpi"]),
+    sandboxKpi: allRow(data["sandbox_kpi"]),
+    bypass: allRow(data["bypass"]),
+    churn: allRow(data["churn_summary"]),
     rejectionDaily: wideDaily(
-      data.decisions_daily ?? [],
+      data["decisions_daily"] ?? [],
       "rejection_rate",
       "decisions",
     ),
-    deniedDaily: wideDaily(data.sandbox_daily ?? [], "denied"),
-    sandbox: data.sandbox ?? [],
-    sources: data.decision_sources ?? [],
+    deniedDaily: wideDaily(data["sandbox_daily"] ?? [], "denied"),
+    sandbox: data["sandbox"] ?? [],
+    sources: data["decision_sources"] ?? [],
   };
 }
 
@@ -273,9 +276,9 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Rejected tool calls"
           source="decision_kpi"
-          value={fmtPct(maybe(decisionKpi.rejection_rate), 2)}
-          detail={`${fmtCount(num(decisionKpi.rejected))} of ${fmtCount(num(decisionKpi.decided))} approval decisions`}
-          n={num(decisionKpi.decided)}
+          value={fmtPct(maybe(decisionKpi["rejection_rate"]), 2)}
+          detail={`${fmtCount(num(decisionKpi["rejected"]))} of ${fmtCount(num(decisionKpi["decided"]))} approval decisions`}
+          n={num(decisionKpi["decided"])}
           signals={["guard.rejections", "guard.decisions"]}
         />
         <SandboxOrDecisionsKpi
@@ -286,15 +289,15 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Quality-gate bypass"
           source="bypass"
-          value={fmtCount(num(bypass.bypass))}
-          detail={`commands in ${fmtCount(num(bypass.tasks))} tasks, of ${fmtCount(num(bypass.commands))} shell commands`}
+          value={fmtCount(num(bypass["bypass"]))}
+          detail={`commands in ${fmtCount(num(bypass["tasks"]))} tasks, of ${fmtCount(num(bypass["commands"]))} shell commands`}
           signals={["guard.gate_bypass"]}
         />
         <Kpi
           title="Command churn"
           source="churn_summary"
-          value={fmtCount(num(churn.tasks))}
-          detail={`tasks with ≥ 3 distinct commands on one file (${fmtCount(num(churn.pairs))} files)`}
+          value={fmtCount(num(churn["tasks"]))}
+          detail={`tasks with ≥ 3 distinct commands on one file (${fmtCount(num(churn["pairs"]))} files)`}
           signals={["guard.command_churn"]}
         />
       </Section>
@@ -357,11 +360,11 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
         >
           <BarList
             items={sources.map((entry) => ({
-              key: `${String(entry.harness)} · ${String(entry.source_label)}`,
-              label: `${harnessLabel(entry.harness)} · ${String(entry.source_label)}`,
-              value: num(entry.n),
-              color: isHarness(entry.harness)
-                ? HARNESS_COLOR[entry.harness]
+              key: `${String(entry["harness"])} · ${String(entry["source_label"])}`,
+              label: `${harnessLabel(entry["harness"])} · ${String(entry["source_label"])}`,
+              value: num(entry["n"]),
+              color: isHarness(entry["harness"])
+                ? HARNESS_COLOR[entry["harness"]]
                 : OTHER_TOKEN,
             }))}
             format={fmtCount}
@@ -371,7 +374,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "decision", label: "Decision" },
               { key: "source", label: "Source" },
@@ -390,7 +393,7 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "outcome", label: "Outcome" },
               { key: "tool", label: "Tool" },
@@ -416,24 +419,27 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               {
                 key: "command",
                 label: "Command",
-                render: (row) => String(row.command) || "—",
+                render: (row) => String(row["command"]) || "—",
               },
               { key: "outcome", label: "Outcome" },
             ]}
-            rows={data.bypass_calls ?? []}
-            total={num(bypass.bypass)}
+            rows={data["bypass_calls"] ?? []}
+            total={num(bypass["bypass"])}
             empty="No quality-gate bypass in the selected range."
           />
           <ViewLink view="tools">Open Tool failures</ViewLink>
@@ -449,13 +455,16 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               { key: "target", label: "File" },
@@ -463,8 +472,8 @@ export default function Guardrails({ data }: { data: Record<string, Row[]> }) {
               { key: "calls", label: "Calls", numeric: true },
               { key: "failed", label: "Failed", numeric: true },
             ]}
-            rows={data.churn ?? []}
-            total={num(churn.pairs)}
+            rows={data["churn"] ?? []}
+            total={num(churn["pairs"])}
             empty="No file was hit by three or more distinct commands in one task."
           />
           <ViewLink view="tools">Open Tool failures</ViewLink>

@@ -35,17 +35,17 @@ function CoverageRow(props: {
   const { row, harnesses, cell } = props;
   return (
     <tr>
-      <th scope="row">{String(row.title)}</th>
+      <th scope="row">{String(row["title"])}</th>
       {harnesses.map((harness) => {
-        const entry = cell(row.signal, harness);
+        const entry = cell(row["signal"], harness);
         return (
           <td key={harness}>
             {entry && (
               <details className="cell-detail">
                 <summary>
-                  <StateChip state={String(entry.state)} />
+                  <StateChip state={String(entry["state"])} />
                 </summary>
-                <small>{`${String(entry.route) || "no route"} · ${fmtCount(num(entry.own))} own rows · ${fmtCount(num(entry.foreign))} rows on other routes (${fmtCount(num(entry.unexplained))} unexplained)`}</small>
+                <small>{`${String(entry["route"]) || "no route"} · ${fmtCount(num(entry["own"]))} own rows · ${fmtCount(num(entry["foreign"]))} rows on other routes (${fmtCount(num(entry["unexplained"]))} unexplained)`}</small>
               </details>
             )}
           </td>
@@ -60,10 +60,12 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
   const { filters } = useView();
   const harnesses: readonly Harness[] =
     filters.harness === "" ? HARNESSES : [filters.harness];
-  const signals = [...new Map(rows.map((row) => [row.signal, row])).values()];
-  const views = [...new Set(signals.map((row) => String(row.view)))];
+  const signals = [
+    ...new Map(rows.map((row) => [row["signal"], row])).values(),
+  ];
+  const views = [...new Set(signals.map((row) => String(row["view"])))];
   const cell: CoverageCell = (signal, harness) =>
-    rows.find((row) => row.signal === signal && row.harness === harness);
+    rows.find((row) => row["signal"] === signal && row["harness"] === harness);
   return (
     <div className="table-wrap coverage">
       <table>
@@ -83,10 +85,10 @@ function CoverageGrid({ rows }: { rows: Row[] }) {
               <th colSpan={harnesses.length + 1}>{view}</th>
             </tr>
             {signals
-              .filter((row) => row.view === view)
+              .filter((row) => row["view"] === view)
               .map((row) => (
                 <CoverageRow
-                  key={String(row.signal)}
+                  key={String(row["signal"])}
                   row={row}
                   harnesses={harnesses}
                   cell={cell}
@@ -112,11 +114,13 @@ export function CoverageSummary(props: {
   signals?: string[];
 }) {
   const { data, span, linked } = props;
-  const cells = num(data.coverage_summary?.[0]?.cells);
-  const states = data.coverage_states ?? [];
-  const healthy = num(states.find((row) => row.state === "healthy")?.cells);
+  const cells = num(data["coverage_summary"]?.[0]?.["cells"]);
+  const states = data["coverage_states"] ?? [];
+  const healthy = num(
+    states.find((row) => row["state"] === "healthy")?.["cells"],
+  );
   const others = states.filter(
-    (row) => row.state !== "healthy" && num(row.cells) > 0,
+    (row) => row["state"] !== "healthy" && num(row["cells"]) > 0,
   );
   return (
     <Panel
@@ -133,9 +137,9 @@ export function CoverageSummary(props: {
       {others.length > 0 && (
         <ul className="coverage-states" aria-label="Cells by state">
           {others.map((row) => (
-            <li key={String(row.state)}>
-              <StateChip state={String(row.state)} />
-              <span>{fmtCount(num(row.cells))}</span>
+            <li key={String(row["state"])}>
+              <StateChip state={String(row["state"])} />
+              <span>{fmtCount(num(row["cells"]))}</span>
             </li>
           ))}
         </ul>
@@ -149,10 +153,10 @@ export function CoverageSummary(props: {
               render: (row) =>
                 linked ? (
                   <ViewLink view="pipeline/coverage">
-                    {String(row.view_title)}
+                    {String(row["view_title"])}
                   </ViewLink>
                 ) : (
-                  String(row.view_title)
+                  String(row["view_title"])
                 ),
             },
             {
@@ -160,11 +164,11 @@ export function CoverageSummary(props: {
               label: "Healthy",
               numeric: true,
               render: (row) =>
-                `${fmtCount(num(row.healthy))} / ${fmtCount(num(row.cells))}`,
+                `${fmtCount(num(row["healthy"]))} / ${fmtCount(num(row["cells"]))}`,
             },
             { key: "unexplained", label: "Unexplained", numeric: true },
           ]}
-          rows={data.coverage_by_view ?? []}
+          rows={data["coverage_by_view"] ?? []}
           label="Coverage by view"
         />
       </div>
@@ -192,14 +196,14 @@ export default function PipelineCoverage({
           span={12}
         >
           <ul className="state-legend" aria-label="Coverage states">
-            {(data.coverage_states ?? []).map((row) => (
-              <li key={String(row.state)}>
-                <StateChip state={String(row.state)} />
-                <small>{String(row.definition)}</small>
+            {(data["coverage_states"] ?? []).map((row) => (
+              <li key={String(row["state"])}>
+                <StateChip state={String(row["state"])} />
+                <small>{String(row["definition"])}</small>
               </li>
             ))}
           </ul>
-          <CoverageGrid rows={data.coverage ?? []} />
+          <CoverageGrid rows={data["coverage"] ?? []} />
           <ViewLink view="pipeline">Open Pipeline</ViewLink>
         </Panel>
       </Section>

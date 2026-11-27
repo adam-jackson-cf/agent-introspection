@@ -56,6 +56,9 @@ describe("live presets", () => {
   });
 });
 
+const loc = (session: string) =>
+  ({ kind: "session", harness: "oh-my-pi", session }) as never;
+
 describe("matchingSession", () => {
   const response: SessionResponse = {
     harness: "oh-my-pi",
@@ -63,8 +66,6 @@ describe("matchingSession", () => {
     queriedAt: "2026-10-01T00:00:00Z",
     data: {},
   };
-  const loc = (session: string) =>
-    ({ kind: "session", harness: "oh-my-pi", session }) as never;
   test("accepts the requested session", () => {
     expect(matchingSession(loc("a"), response)).toBe(response);
   });

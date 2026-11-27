@@ -317,11 +317,11 @@ class Boundary extends Component<
   { children: ReactNode; label: string },
   { failed: boolean }
 > {
-  state = { failed: false };
+  override state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
-  render() {
+  override render() {
     return this.state.failed ? (
       <div className="state-notice" role="alert">
         <b>{this.props.label} could not be displayed.</b>
@@ -448,7 +448,7 @@ export function Panel({
   subtitle?: string;
   signals: string[];
   /** The `data` keys this panel shows; any of them in the view's `errors` fails the panel. */
-  source?: string | string[];
+  source?: string | string[] | undefined;
   span?: 1 | 3 | 4 | 5 | 6 | 7 | 8 | 12;
   /** Anchor for in-page links such as a KPI's "Show …" link. */
   id?: string;

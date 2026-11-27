@@ -66,8 +66,8 @@ export function Legend({ series }: { series: Series[] }) {
 /** Fills every UTC day between the first and last row so gaps stay visible. */
 function continuousDays(rows: Row[]): Row[] {
   if (rows.length === 0) return rows;
-  const byDay = new Map(rows.map((row) => [String(row.day), row]));
-  const days = [...byDay.keys()].sort();
+  const byDay = new Map(rows.map((row) => [String(row["day"]), row]));
+  const days = [...byDay.keys()].toSorted();
   const out: Row[] = [];
   for (
     let day = Date.parse(`${days[0]}T00:00:00Z`);
@@ -97,7 +97,7 @@ function runs(
 }
 
 /** Column path with a 4px rounded data end and a square baseline. */
-const column = (x: number, y: number, width: number, height: number) => {
+const columnPath = (x: number, y: number, width: number, height: number) => {
   const r = Math.min(4, width / 2, height);
   return `M${x},${y + height}V${y + r}Q${x},${y} ${x + r},${y}H${x + width - r}Q${x + width},${y} ${x + width},${y + r}V${y + height}Z`;
 };
@@ -110,7 +110,7 @@ const cellValue = (row: Row, key: string) => {
 };
 
 /** The y-axis ceiling: a cap on the fitted axis, or the whole axis when `fixed`. */
-type Axis = { max?: number; fixed?: boolean };
+type Axis = { max?: number | undefined; fixed?: boolean | undefined };
 
 /** Line markers: one on every point, hollow where a day's sample is under `minN`. */
 export type Markers = { minN: number };
@@ -210,12 +210,12 @@ function DayLabels({ rows, plot }: { rows: Row[]; plot: Plot }) {
   return rows.map((row, index) =>
     index % labelEvery === 0 ? (
       <text
-        key={`label-${String(row.day)}`}
+        key={`label-${String(row["day"])}`}
         x={plot.x(index)}
         y={HEIGHT - 6}
         textAnchor="middle"
       >
-        {String(row.day).slice(5)}
+        {String(row["day"]).slice(5)}
       </text>
     ) : null,
   );
@@ -243,7 +243,7 @@ function DayColumn(props: {
     return partIndex === parts.length - 1 ? (
       <path
         key={`${index}-${part.entry.key}`}
-        d={column(left, y1, plot.barWidth, height)}
+        d={columnPath(left, y1, plot.barWidth, height)}
         fill={part.entry.color}
       />
     ) : (
@@ -264,7 +264,7 @@ function LineSeries(props: {
   rows: Row[];
   plot: Plot;
   hover: number | null;
-  markers?: Markers;
+  markers?: Markers | undefined;
 }) {
   const { entry, rows, plot, hover, markers } = props;
   const points = rows.map(
@@ -331,7 +331,7 @@ function HitTargets(props: {
   const { rows, plot, setHover } = props;
   return rows.map((row, index) => (
     <rect
-      key={`hit-${String(row.day)}`}
+      key={`hit-${String(row["day"])}`}
       className="hit"
       x={PAD.left + plot.band * index}
       y={PAD.top}
@@ -350,7 +350,7 @@ function DailySvg(props: {
   plot: Plot;
   shown: number | null;
   active: number | null;
-  markers?: Markers;
+  markers?: Markers | undefined;
   setHover: (index: number | null) => void;
 }) {
   const { rows, series, kind, format, plot, shown, active, markers, setHover } =
@@ -413,7 +413,7 @@ const readout = (
   format: Format,
   markers?: Markers,
 ) =>
-  `${String(row.day)}: ${series
+  `${String(row["day"])}: ${series
     .map((entry) => `${entry.label} ${valueText(row, entry, format, markers)}`)
     .join(", ")}`;
 
@@ -423,7 +423,7 @@ function DayTooltip(props: {
   series: Series[];
   format: Format;
   plot: Plot;
-  markers?: Markers;
+  markers?: Markers | undefined;
 }) {
   const { row, index, series, format, plot, markers } = props;
   return (
@@ -437,7 +437,7 @@ function DayTooltip(props: {
       }}
       aria-hidden="true"
     >
-      <b>{String(row.day)}</b>
+      <b>{String(row["day"])}</b>
       {series.map((entry) => (
         <span key={entry.key}>
           <i style={{ background: entry.color }} aria-hidden="true" />
@@ -689,17 +689,18 @@ function compareCells(
 const isBlank = (value: Scalar | Scalar[] | undefined) =>
   value === null || value === undefined;
 
+const pinned = (row: Row) => row["harness"] === "";
+
 /**
  * Rows ordered by one column. The server's All row (harness '') keeps its
  * position; every other row is reordered around it.
  */
 export function sortRows(rows: Row[], sort: Sort | null): Row[] {
   if (!sort) return rows;
-  const pinned = (row: Row) => row.harness === "";
   const sign = sort.descending ? -1 : 1;
   const sorted = rows
     .filter((row) => !pinned(row))
-    .sort((a, b) => {
+    .toSorted((a, b) => {
       const x = a[sort.key];
       const y = b[sort.key];
       if (isBlank(x) || isBlank(y))
@@ -707,7 +708,7 @@ export function sortRows(rows: Row[], sort: Sort | null): Row[] {
       return sign * compareCells(x, y);
     });
   let next = 0;
-  return rows.map((row) => (pinned(row) ? row : sorted[next++]));
+  return rows.map((row) => (pinned(row) ? row : sorted[next++]!));
 }
 
 /** A column header that sorts its table: numbers start largest first, text A to Z. */
@@ -752,7 +753,7 @@ export function DataTable({
   columns,
   rows,
   empty = "No rows for the selected range.",
-  total = num(rows[0]?.total_rows),
+  total = num(rows[0]?.["total_rows"]),
   label,
 }: {
   columns: Column[];

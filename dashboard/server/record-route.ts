@@ -49,15 +49,15 @@ export const NS_AGO = (interval: string) =>
 export const spoolExceptions = (rows: Row[]): Row[] =>
   rows.filter(
     (row) =>
-      row.state === "unknown" ||
-      Number(row.delivery_gap) === 1 ||
-      Number(row.rejected) > 0 ||
-      String(row.last_error_class ?? "") !== "",
+      row["state"] === "unknown" ||
+      Number(row["delivery_gap"]) === 1 ||
+      Number(row["rejected"]) > 0 ||
+      String(row["last_error_class"] ?? "") !== "",
   );
 
 /** Hosts reporting and hosts unknown: the one-line summary of the spool panel. */
 export const spoolSummary = (rows: Row[]): Row => {
-  const unknown = rows.filter((row) => row.state === "unknown").length;
+  const unknown = rows.filter((row) => row["state"] === "unknown").length;
   return { reporting: rows.length - unknown, unknown };
 };
 
@@ -195,8 +195,8 @@ const DELIVERY_COLUMNS = {
 /** Whether a family received fewer records than it sent beyond the tolerance. */
 const hasGap = (entry: Row | undefined): boolean =>
   entry !== undefined &&
-  Number(entry.sent) - Number(entry.received) >
-    Math.max(GAP_FLOOR, Math.ceil(Number(entry.sent) * GAP_FRACTION));
+  Number(entry["sent"]) - Number(entry["received"]) >
+    Math.max(GAP_FLOOR, Math.ceil(Number(entry["sent"]) * GAP_FRACTION));
 
 /**
  * Adds each host's sent and received counts per family to its spool status row,
@@ -208,14 +208,14 @@ export const withDelivery = (status: Row[], delivery: Row[]): Row[] =>
 
 const hostDelivery = (row: Row, delivery: Row[]): Row => {
   const merged: Row = { ...row, delivery_gap: 0 };
-  const mine = delivery.filter((entry) => entry.host === row.host);
+  const mine = delivery.filter((entry) => entry["host"] === row["host"]);
   const entries: [readonly string[], Row | undefined][] = [];
   for (const [family, keys] of Object.entries(DELIVERY_COLUMNS))
-    entries.push([keys, mine.find((entry) => entry.family === family)]);
+    entries.push([keys, mine.find((entry) => entry["family"] === family)]);
   for (const [[sentKey, receivedKey], entry] of entries) {
-    merged[sentKey!] = entry ? Number(entry.sent) : null;
-    merged[receivedKey!] = entry ? Number(entry.received) : null;
-    if (hasGap(entry)) merged.delivery_gap = 1;
+    merged[sentKey!] = entry ? Number(entry["sent"]) : null;
+    merged[receivedKey!] = entry ? Number(entry["received"]) : null;
+    if (hasGap(entry)) merged["delivery_gap"] = 1;
   }
   return merged;
 };
