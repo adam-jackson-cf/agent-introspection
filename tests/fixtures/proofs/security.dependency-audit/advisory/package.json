@@ -1,0 +1,8 @@
+{
+  "name": "audit-fixture",
+  "private": true,
+  "packageManager": "bun@1.3.0",
+  "dependencies": {
+    "zod": "3.25.76"
+  }
+}
