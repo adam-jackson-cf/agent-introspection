@@ -56,6 +56,7 @@ _SQL = re.compile(
 _CSS = re.compile(r"'(?:\\.|[^'\\\n])*'|" r'"(?:\\.|[^"\\\n])*"' r"|(?P<c>/\*.*?\*/)", re.S)
 _JSONC = re.compile(r'"(?:\\.|[^"\\\n])*"' r"|(?P<c>//[^\n]*|/\*.*?\*/)", re.S)
 _MARKUP = re.compile(r"(?P<c><!--.*?-->)", re.S)
+_SHELL_SHEBANG = re.compile(r"#![^\n]*[/ \t](?:ba|da|k|z)?sh(?:[ \t]|$)", re.M)
 _HASH_LINE = re.compile(r"^[ \t]*(?P<c>#[^\n]*)", re.M)
 _INI_LINE = re.compile(r"^[ \t]*(?P<c>[#;][^\n]*)", re.M)
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -396,8 +397,11 @@ _BY_NAME: dict[str, Lexer] = {
 }
 
 
-def lexer_for(path: PurePosixPath) -> Lexer | None:
-    return _BY_NAME.get(path.name) or _BY_SUFFIX.get(path.suffix)
+def lexer_for(path: PurePosixPath, text: str = "") -> Lexer | None:
+    found = _BY_NAME.get(path.name) or _BY_SUFFIX.get(path.suffix)
+    if found is None and not path.suffix and _SHELL_SHEBANG.match(text):
+        return _shell_spans
+    return found
 
 
 def is_directive(text: str, span: Span) -> bool:
@@ -413,7 +417,7 @@ def is_directive(text: str, span: Span) -> bool:
 
 
 def comment_spans(path: PurePosixPath, text: str) -> list[Span]:
-    lexer = lexer_for(path)
+    lexer = lexer_for(path, text)
     if lexer is None:
         raise LookupError(path.as_posix())
     return [span for span in lexer(text) if not is_directive(text, span)]

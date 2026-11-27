@@ -87,6 +87,15 @@ def test_shell_lexer_skips_quotes_parameter_lengths_and_heredocs(
     assert _comment_lines(checker, repo, "run.sh", text) == [7, 8]
 
 
+def test_an_extensionless_shell_script_uses_the_shell_lexer(
+    checker: ModuleType, repo: Path
+) -> None:
+    text = '#!/bin/sh\nset -eu\nprintf "%s\\n" "a # b"\n# real\n'
+
+    assert _comment_lines(checker, repo, "scripts/ci", text) == [4]
+    assert _findings(checker, repo, "scripts/notes", "plain text\n") != []
+
+
 def test_yaml_lexer_skips_block_scalars_and_quoted_values(checker: ModuleType, repo: Path) -> None:
     text = (
         "a: \"x # y\"\nb: 'it''s # z'\nc: don't # real\nrun: |\n  # data\n  echo\n"
