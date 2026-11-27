@@ -1,7 +1,7 @@
 """The record spool and its one route to the facts store: OTLP/HTTP logs.
 
 Every machine writes its records (activity-hook events and spool status) as one JSON
-file each into the spool, ``hooks.INBOX``. ``drain`` ships them in batches of at most
+file each into the spool, ``hooks.inbox_dir()``. ``drain`` ships them in batches of at most
 ``BATCH_SIZE`` to the logs endpoint (``AppConfig.otlp_logs_endpoint``: ``[hooks]
 otlp_logs_endpoint``, else the collector's ``/v1/logs``), where SigNoz keeps them and the
 ``facts`` loaders read them back into ClickHouse. ``sync`` is the whole periodic step:
@@ -80,8 +80,12 @@ def cli_version() -> str:
         return "unknown"
 
 
+def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def _directory(inbox: Path | None) -> Path:
-    return inbox if inbox is not None else hooks.INBOX
+    return inbox if inbox is not None else hooks.inbox_dir()
 
 
 def _state_path(inbox: Path) -> Path:
@@ -244,7 +248,7 @@ def send(endpoint: str, body: bytes, timeout: float = CONNECT_TIMEOUT_SECONDS) -
         endpoint, data=body, method="POST", headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _urlopen(request, timeout) as response:
             return classify_response(response.status, response.read(_MAX_RESPONSE_BYTES))
     except urllib.error.HTTPError as exc:
         with exc:

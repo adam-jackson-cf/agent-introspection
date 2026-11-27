@@ -28,7 +28,7 @@ from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
 from agent_introspection import config_writers, facts, preflight, profiles
-from agent_introspection.config import DEFAULT_CONFIG_PATH, AppConfig
+from agent_introspection.config import AppConfig, default_config_path
 from agent_introspection.json_types import JsonMapping
 
 STATUSES: Final = ("pass", "warn", "fail", "off", "info")
@@ -711,7 +711,7 @@ def pointed_config(config_path: Path | None) -> str | None:
     if config_path is None:
         return None
     selected = config_path.expanduser().resolve(strict=False)
-    return None if selected == DEFAULT_CONFIG_PATH.resolve(strict=False) else str(selected)
+    return None if selected == default_config_path().resolve(strict=False) else str(selected)
 
 
 def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Check:
@@ -720,7 +720,7 @@ def pointer_check(home: Path, profile_key: str, config_path: Path | None) -> Che
     read = pointer.read_text("utf-8").strip() if pointer.is_file() else None
     expected = pointed_config(config_path)
     if read == expected:
-        shown = read or f"the default {shown_path(DEFAULT_CONFIG_PATH, home)}"
+        shown = read or f"the default {shown_path(default_config_path(), home)}"
         return check("hook_config", "pass", f"the hooks read {shown}")
     selected = f" --config {expected}" if expected else ""
     return check(

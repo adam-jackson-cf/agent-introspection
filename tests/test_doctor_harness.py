@@ -4,7 +4,6 @@ import json
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -27,7 +26,7 @@ from tests.support.doctor_machine import (
     telemetry_rows,
     write,
 )
-from tests.test_producers import FakeClickHouse, FakeService
+from tests.support.producer_clickhouse import FakeClickHouse, FakeService
 
 
 @pytest.fixture
@@ -415,12 +414,6 @@ def test_a_binary_off_path_or_hanging_warns() -> None:
 
     found = doctor_harness.binary_check(profile, replace(probes, which=lambda _b: "/bin/omp"))
     assert (found["status"], found["detail"]) == ("warn", "omp printed no version (TimeoutExpired)")
-
-
-def test_installed_version_runs_the_binary_and_reads_its_version() -> None:
-    version = doctor_harness.installed_version([sys.executable, "--version"])
-
-    assert version == ".".join(map(str, sys.version_info[:3]))
 
 
 def test_idle_harnesses_warn_and_a_failed_telemetry_query_fails(machine: Machine) -> None:

@@ -304,24 +304,24 @@ def test_verify_uses_a_scratch_database_per_run_and_drops_only_stale_ones() -> N
     assert ran.count(f"DROP DATABASE IF EXISTS {first['database']} SYNC") == 2
 
 
-def test_refresh_with_retry_does_not_requeue_a_refresh_that_is_still_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_refresh_with_retry_does_not_requeue_a_refresh_that_is_still_running() -> None:
     attempts: list[str] = []
     slept: list[float] = []
 
-    def refresh_view(_run: object, name: str) -> None:
-        attempts.append(name)
+    def run(sql: str) -> str:
+        name = sql.rsplit(".", 1)[1]
+        if sql.startswith("SYSTEM REFRESH VIEW"):
+            attempts.append(name)
+            return ""
         raise facts.RefreshStillRunningError(f"refresh of {name} failed: still running")
 
-    monkeypatch.setattr(facts, "refresh_view", refresh_view)
     with pytest.raises(facts.RefreshStillRunningError):
-        facts.refresh_with_retry(lambda _sql: "", "load_spans", slept.append)
+        facts.refresh_with_retry(run, "load_spans", slept.append)
     assert attempts == ["load_spans"]
     assert slept == []
 
     with pytest.raises(facts.FactsError, match="refresh of load_spans failed: still running"):
-        facts.refresh_all(lambda _sql: "", [("load_spans", "")], slept.append)
+        facts.refresh_all(run, [("load_spans", "")], slept.append)
     assert attempts == ["load_spans", "load_spans"]
 
 

@@ -30,7 +30,11 @@ dev = [
 packages = ["src/agent_introspection"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+markers = [
+  "boundary: T2 test that drives a local process, build, socket or loopback seam",
+  "deferred: test over its tier's approved time limit, run with T2 under an approved exception",
+]
 testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]
 pythonpath = ["src", "scripts", "."]

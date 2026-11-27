@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -228,46 +227,7 @@ def test_a_selected_config_is_pointed_at_and_the_default_removes_the_pointer(
         "warn",
         "`agent-introspection harness configure omp` points them at it",
     )
-    default = HookOptions(home=tmp_path, config_path=config.DEFAULT_CONFIG_PATH)
+    default = HookOptions(home=tmp_path, config_path=config.default_config_path())
     assert hook_install.install_runtime(default, "claude-code")[-1]["action"] == "remove"
     assert not pointer.exists()
     assert doctor_harness.pointer_check(tmp_path, "omp", None)["status"] == "pass"
-
-
-def _run_shim(shim: Path, environment: dict[str, str]) -> None:
-    subprocess.run(
-        ["/bin/sh", str(shim), "omp", "tool_call"],
-        input="{}",
-        env=environment,
-        text=True,
-        timeout=10,
-        check=True,
-    )
-
-
-def test_the_shim_exports_the_pointed_config_unless_one_is_set(tmp_path: Path) -> None:
-    hook_install.install_runtime(
-        HookOptions(home=tmp_path, config_path=tmp_path / "c.toml"), "claude-code"
-    )
-    shim = tmp_path / doctor_harness.MANAGED_RUNTIME / doctor_harness.SHIM
-    seen = tmp_path / "seen"
-    fake = tmp_path / "bin/agent-introspection"
-    fake.parent.mkdir()
-    fake.write_text(f'#!/bin/sh\nprintf %s "$AGENT_INTROSPECTION_CONFIG" > "{seen}"\n')
-    fake.chmod(0o755)
-
-    for preset, expected in ((None, str((tmp_path / "c.toml").resolve())), ("/x.toml", "/x.toml")):
-        seen.unlink(missing_ok=True)
-        environment = {
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "AGENT_INTROSPECTION_BIN": str(fake),
-        }
-        if preset is not None:
-            environment["AGENT_INTROSPECTION_CONFIG"] = preset
-        _run_shim(shim, environment)
-        for _ in range(100):
-            if seen.exists():
-                break
-            time.sleep(0.05)
-        assert seen.read_text() == expected

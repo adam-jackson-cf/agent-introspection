@@ -13,8 +13,10 @@ fixtures_exclude=':(exclude)tests/fixtures/**'
 structure_event=--merge-base
 
 hook_modes=(static t1 t2)
-t1_selection=(-m "not boundary")
-t2_selection=(-m boundary)
+t1_tier='not boundary and not deferred'
+t2_tier='boundary or deferred'
+t1_selection=(-m "$t1_tier")
+t2_selection=(-m "$t2_tier")
 pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
 collect_timeout_seconds=300
 report_dir=""
@@ -26,6 +28,9 @@ static_checks=(
   lock_parity
   skill_metadata
   subprocess_timeouts
+  test_placement
+  test_mocking
+  test_tiers
   dependency_audit
   ruff_format
   ruff
@@ -48,6 +53,8 @@ static_checks=(
   test_growth
   coverage_ratchet
   identity_artefacts
+  test_hooks
+  test_evasion
 )
 
 tracked() {
@@ -132,6 +139,46 @@ check_structure() {
   else
     uv run python -B scripts/check-structure.py "$structure_event"
   fi
+}
+
+check_test_mocking() { uv run python -B scripts/check-test-mocking.py "$@"; }
+check_test_hooks() { uv run python -B scripts/check-test-hooks.py "$@"; }
+check_test_tiers() { uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" "$@"; }
+
+check_test_placement() {
+  if (($#)); then
+    uv run python -B scripts/check-test-placement.py "$@"
+  else
+    uv run python -B scripts/check-test-placement.py "$structure_event"
+  fi
+}
+
+check_test_evasion() {
+  if (($#)); then
+    uv run python -B scripts/check-test-evasion.py "$@"
+  else
+    uv run python -B scripts/check-test-evasion.py "$structure_event"
+  fi
+}
+
+pytest_tier() {
+  local selector="$1"
+  shift
+  uv run pytest -p no:cacheprovider -m "$selector" "$@"
+}
+
+check_t1_isolation() { pytest_tier "$t1_tier" "$@"; }
+check_user_data_guard() { uv run pytest -p no:cacheprovider "$@"; }
+
+check_bun_t1_isolation() {
+  (($#)) || { bun run --cwd dashboard test; return; }
+  local files=()
+  local file
+  for file in "$@"; do
+    [[ "$file" == /* ]] || file="$repo_root/$file"
+    files+=("$file")
+  done
+  (cd dashboard && bun test "${files[@]}")
 }
 
 check_ruff_format() {
@@ -310,6 +357,7 @@ run_t1() {
   bun run --cwd dashboard test --reporter=junit --reporter-outfile="$report_dir/t1-bun.xml"
   normalise_report bun --tier t1 --prefix dashboard/ "$report_dir/t1-bun.xml" "$report_dir/t1-bun.json"
   check_test_run --listing "$report_dir/t1-listing.json" "$report_dir/t1-pytest.json" "$report_dir/t1-bun.json"
+  check_test_evasion --report "$report_dir/t1-pytest.xml" --report "$report_dir/t1-bun.xml"
 }
 
 run_t2() {
@@ -318,6 +366,7 @@ run_t2() {
   uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/t2-pytest.xml" "${t2_selection[@]}"
   normalise_report pytest --tier t2 "$report_dir/t2-pytest.xml" "$report_dir/t2-pytest.json"
   check_test_run --listing "$report_dir/t2-listing.json" "$report_dir/t2-pytest.json"
+  check_test_evasion --report "$report_dir/t2-pytest.xml"
 }
 
 run_install() {

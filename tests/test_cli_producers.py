@@ -9,7 +9,7 @@ import pytest
 
 from agent_introspection import facts, producers
 from agent_introspection.cli import EXIT_VALIDATION, main
-from tests.test_producers import FakeClickHouse, FakeService, fake_services
+from tests.support.producer_clickhouse import FakeClickHouse, FakeService, fake_services
 
 
 def _config(tmp_path: Path, enabled: tuple[str, ...] = ("claude-code", "codex")) -> Path:
@@ -28,10 +28,8 @@ def clickhouse(monkeypatch: pytest.MonkeyPatch) -> FakeClickHouse:
 
 
 @pytest.fixture
-def fingerprints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    directory = tmp_path / "fingerprints"
-    monkeypatch.setattr(producers, "FINGERPRINT_DIR", directory)
-    return directory
+def fingerprints() -> Path:
+    return producers.fingerprint_dir()
 
 
 def _run(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[dict[str, Any], str]:
@@ -200,17 +198,23 @@ def test_fingerprint_logs_lists_the_limit_cut(
     monkeypatch: pytest.MonkeyPatch,
     fingerprints: Path,
 ) -> None:
-    monkeypatch.setattr(producers, "FINGERPRINT_LIMIT", 1)
-    monkeypatch.setattr(facts, "runner", lambda _config: FakeClickHouse(fake_services()))
+    limit = producers.FINGERPRINT_LIMIT
+    toolbox = FakeService(
+        spans={f"span.{index:04d}": 1 for index in range(limit + 3)},
+        events={f"event.{index:04d}": 1 for index in range(limit + 1)},
+        span_keys={("string", f"key.{index:04d}"): 1 for index in range(limit + 4)},
+        span_rows=1,
+    )
+    monkeypatch.setattr(facts, "runner", lambda _config: FakeClickHouse({"toolbox": toolbox}))
 
     _result, err = _run(
         capsys, "--config", str(_config(tmp_path)), "producers", "fingerprint", "toolbox"
     )
 
     assert err.splitlines() == [
-        "toolbox span_names: 3 names past the limit of 1 dropped",
-        "toolbox event_names: 1 names past the limit of 1 dropped",
-        "toolbox attribute_keys: 4 names past the limit of 1 dropped",
+        f"toolbox span_names: 3 names past the limit of {limit} dropped",
+        f"toolbox event_names: 1 names past the limit of {limit} dropped",
+        f"toolbox attribute_keys: 4 names past the limit of {limit} dropped",
     ]
 
 

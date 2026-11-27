@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.boundary
+
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 PROOF_FIXTURES = REPO_ROOT / "tests/fixtures/proofs"

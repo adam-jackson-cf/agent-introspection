@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import os
 import re
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_introspection import command_shape, facts, hooks, spool
+from agent_introspection import command_shape, facts, hooks
 from agent_introspection.cli import main
-from tests.support.otlp_collector import Collector, names, spool_records
 
-RUNTIME = Path(__file__).parents[1] / "src/agent_introspection/hook_runtime"
 NOW = datetime(2026, 9, 30, 12, 0, 0, 123456, tzinfo=UTC)
 PROMPT = "please fix the flaky login test, my token=supersecret123 is in .env"
 SESSION = "sess-1"
@@ -485,19 +480,16 @@ def test_no_raw_argument_or_output_text_in_records(tmp_path: Path) -> None:
 def test_write_is_atomic_and_main_never_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    hook_inbox = tmp_path / "inbox"
-    monkeypatch.setattr(hooks, "INBOX", hook_inbox)
-    monkeypatch.setattr(hooks, "LOG", tmp_path / "hooks.log")
     envelope = {"session_id": SESSION, "tool_name": "Bash", "tool_input": {"command": "ls"}}
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(envelope)))
+    monkeypatch.setattr(hooks, "read_stdin", lambda: json.dumps(envelope))
     assert hooks.main("claude-code", "PreToolUse", tmp_path / "missing.toml") == 0
-    (written,) = hook_inbox.iterdir()
+    (written,) = hooks.inbox_dir().iterdir()
     assert json.loads(written.read_text())["schema"] == hooks.SCHEMA
     assert written.name == json.loads(written.read_text())["event_id"] + ".json"
 
-    monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "' + PROMPT + '"'))
+    monkeypatch.setattr(hooks, "read_stdin", lambda: '{"prompt": "' + PROMPT + '"')
     assert hooks.main("claude-code", "UserPromptSubmit", tmp_path / "missing.toml") == 0
-    log = (tmp_path / "hooks.log").read_text()
+    log = hooks.log_file().read_text()
     assert "claude-code UserPromptSubmit JSONDecodeError" in log
     assert PROMPT not in log
 
@@ -510,189 +502,6 @@ def test_home_directories_redact_on_every_platform() -> None:
     assert "adam-ai" not in signature
     assert "/root" not in signature
     assert signature.startswith("FileNotFoundError: ~/p/x.py and ~")
-
-
-def hook_config(tmp_path: Path, endpoint: str | None) -> Path:
-    config = tmp_path / "config.toml"
-    config.write_text("" if endpoint is None else f'[hooks]\notlp_logs_endpoint = "{endpoint}"\n')
-    return config
-
-
-def feed_envelope(monkeypatch: pytest.MonkeyPatch, **fields: object) -> None:
-    envelope = {"session_id": SESSION, "tool_name": "Bash", "tool_input": {"command": "ls"}}
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(envelope | fields)))
-
-
-def test_a_hook_drains_one_batch_of_the_spool_and_leaves_the_rest(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
-) -> None:
-    spool_records(inbox, 60)
-    feed_envelope(monkeypatch)
-
-    assert hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, collector.url)) == 0
-
-    assert len(collector.bodies) == 1
-    assert len(collector.records) == spool.BATCH_SIZE
-    assert len(names(inbox)) == 61 - spool.BATCH_SIZE
-
-
-def test_a_hook_without_hooks_config_sends_to_the_collectors_logs_url(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
-) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text(f'[signoz]\notlp_endpoint = "{collector.base}"\n')
-    feed_envelope(monkeypatch)
-
-    assert hooks.main("claude-code", "PreToolUse", config) == 0
-
-    assert len(collector.records) == 1
-    assert names(inbox) == set()
-
-
-def test_the_otel_environment_never_redirects_records(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path, collector: Collector
-) -> None:
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.base)
-    feed_envelope(monkeypatch)
-
-    assert (
-        hooks.main("claude-code", "PreToolUse", hook_config(tmp_path, "http://127.0.0.1:9/v1/logs"))
-        == 0
-    )
-
-    assert collector.bodies == []
-    assert len(names(inbox)) == 1
-
-
-def test_a_hook_survives_an_unreachable_collector_and_an_invalid_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inbox: Path
-) -> None:
-    config = hook_config(tmp_path, "http://127.0.0.1:9/v1/logs")
-    feed_envelope(monkeypatch)
-    assert hooks.main("claude-code", "PreToolUse", config) == 0
-    assert len(names(inbox)) == 1
-    assert " spool ConnectionRefusedError 1" in hooks.LOG.read_text()
-
-    config.write_text("[hooks\n")
-    feed_envelope(monkeypatch, tool_name="Read")
-    assert hooks.main("claude-code", "PreToolUse", config) == 0
-    assert " spool ConfigurationError 0" in hooks.LOG.read_text()
-    assert len(names(inbox)) == 2
-
-
-# --- Shim and omp plugin ----------------------------------------------------------
-
-
-def _run_activity_shim(fake: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["/bin/sh", str(RUNTIME / "activity-shim.sh"), "claude-code", "PreToolUse"],
-        input='{"session_id": "s"}',
-        capture_output=True,
-        text=True,
-        env={**os.environ, "AGENT_INTROSPECTION_BIN": str(fake)},
-        timeout=10,
-        check=False,
-    )
-
-
-def _pause() -> None:
-    subprocess.run(["sleep", "0.05"], check=True, timeout=10)
-
-
-def _run_bun_probe(probe: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bun", str(probe)], env=env, capture_output=True, text=True, timeout=60, check=True
-    )
-
-
-def test_shim_hands_stdin_to_a_detached_cli_and_prints_nothing(tmp_path: Path) -> None:
-    received = tmp_path / "received"
-    fake = tmp_path / "fake-cli"
-    fake.write_text(f'#!/bin/sh\ncat > "{received}.part"; mv "{received}.part" "{received}"\n')
-    fake.chmod(0o755)
-    result = _run_activity_shim(fake)
-    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
-    for _ in range(100):
-        if received.exists():
-            break
-        _pause()
-    assert received.read_text() == '{"session_id": "s"}'
-
-
-OMP_PROBE = """
-import register from "%s";
-let sent = 0;
-globalThis.fetch = (() => { sent += 1; return Promise.resolve(new Response("")); }) as any;
-const handlers: Record<string, any> = {};
-register({ on: (name: string, fn: any) => { handlers[name] = fn; } } as any);
-handlers.before_agent_start(
-  { prompt: "secret prompt" },
-  { sessionManager: { getSessionId: () => "s1" } },
-);
-console.log(sent);
-"""
-
-
-OMP_RESULT_PROBE = """
-import register from "%s";
-const handlers: Record<string, any> = {};
-register({ on: (name: string, fn: any) => { handlers[name] = fn; } } as any);
-const context = { sessionManager: { getSessionId: () => "s1" }, cwd: "/Users/me/p" };
-handlers.tool_result({ toolCallId: "c0", toolName: "bash", isError: false, content: [] }, context);
-handlers.tool_result(
-  { toolCallId: "c1", toolName: "bash", isError: undefined, content: [] },
-  context,
-);
-handlers.tool_result(
-  {
-    toolCallId: "c2",
-    toolName: "bash",
-    isError: true,
-    content: [{ type: "text", text: "boom: ModuleNotFoundError" }, { type: "image" }],
-    details: { exitCode: 2 },
-  },
-  context,
-);
-await new Promise((resolve) => setTimeout(resolve, 1500));
-"""
-
-
-def test_omp_tool_result_spawns_the_shim_only_for_errors(tmp_path: Path) -> None:
-    shim = tmp_path / "shim.sh"
-    sink = tmp_path / "sink"
-    shim.write_text(f'echo "$2" >> {sink}\ncat >> {sink}\necho >> {sink}\n')
-    probe = tmp_path / "probe.ts"
-    probe.write_text(OMP_RESULT_PROBE % (RUNTIME / "omp/activity.ts"))
-    env = {**os.environ, "AGENT_INTROSPECTION_SHIM": str(shim)}
-    _run_bun_probe(probe, env)
-
-    lines = sink.read_text().split()
-    assert lines.count("tool_result") == 1
-    (envelope,) = [
-        json.loads(line) for line in sink.read_text().splitlines() if line.startswith("{")
-    ]
-    assert envelope["tool_use_id"] == "c2"
-    assert envelope["error"] == "boom: ModuleNotFoundError\n"
-    assert envelope["exit_code"] == 2
-
-
-@pytest.mark.parametrize(("opt_in", "expected"), [(None, "0"), ("1", "1")])
-def test_omp_prompt_is_exported_only_after_opt_in(
-    tmp_path: Path, opt_in: str | None, expected: str
-) -> None:
-    probe = tmp_path / "probe.ts"
-    probe.write_text(OMP_PROBE % (RUNTIME / "omp/activity.ts"))
-    env = {
-        **os.environ,
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
-        "AGENT_INTROSPECTION_SHIM": "/nonexistent",
-    }
-    env.pop("AGENT_INTROSPECTION_OMP_PROMPT_EXPORT", None)
-    if opt_in is not None:
-        env["AGENT_INTROSPECTION_OMP_PROMPT_EXPORT"] = opt_in
-    result = _run_bun_probe(probe, env)
-    assert result.stdout.strip() == expected
 
 
 def test_every_home_path_in_one_argument_is_redacted() -> None:

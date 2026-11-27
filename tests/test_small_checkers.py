@@ -2,25 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
-_SCRIPTS = Path(__file__).parents[1] / "scripts"
-
-
-def _load(name: str) -> ModuleType:
-    if str(_SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(_SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), _SCRIPTS / f"{name}.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from tests.support.script_loader import load_script as _load
 
 
 def test_timeout_none_counts_as_missing(tmp_path: Path) -> None:
@@ -215,22 +201,46 @@ def test_skill_metadata_uses_real_yaml(tmp_path: Path) -> None:
     assert any("invalid YAML" in problem for problem in checker.check_skill(skill, schema))
 
 
-def test_render_measures_handles_missing_outputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import subprocess\nsubprocess.run(['a'], timeout=0)\n", "positive timeout"),
+        ("import subprocess\nsubprocess.run(['a'], timeout=-1)\n", "positive timeout"),
+        ("import os\nos.system('true')\n", "os.system has no bound"),
+        (
+            "import asyncio\nasync def go() -> None:\n"
+            "    await asyncio.create_subprocess_exec('true')\n",
+            "asyncio.wait_for",
+        ),
+    ],
+)
+def test_an_unbounded_or_non_positive_process_call_is_reported(
+    tmp_path: Path, source: str, expected: str
 ) -> None:
-    script = _load("render-measures")
-    monkeypatch.setattr(script, "DOC", tmp_path / "measure.md")
-    monkeypatch.setattr(script, "GAPS", tmp_path / "gaps.md")
-    monkeypatch.setattr(script, "HARNESSES_MODULE", tmp_path / "harnesses.generated.ts")
-    monkeypatch.setattr(script, "CAPABILITIES_DOC", tmp_path / "capabilities.md")
-    monkeypatch.setattr(script, "render_gaps", lambda: "gaps")
-    monkeypatch.setattr(script, "render_harnesses", lambda: "harnesses")
-    monkeypatch.setattr(script, "render_capabilities", lambda: "capabilities")
-    monkeypatch.setattr(script, "updated", lambda _text, content=None: f"rendered {content}")
-    assert script.main(["--check"]) == 1
-    assert "out of date" in capsys.readouterr().out
-    assert script.main([]) == 0
-    assert (tmp_path / "gaps.md").exists()
-    assert (tmp_path / "harnesses.generated.ts").read_text() == "harnesses"
-    assert (tmp_path / "capabilities.md").read_text() == "rendered capabilities"
-    assert script.main(["--check"]) == 0
+    checker = _load("check-test-subprocess-timeouts")
+    path = tmp_path / "test_x.py"
+    path.write_text(source, encoding="utf-8")
+    (problem,) = checker.check_file(path)
+    assert "TEST.subprocess-timeouts" in problem
+    assert expected in problem
+
+
+def test_a_bounded_async_process_wait_is_accepted(tmp_path: Path) -> None:
+    checker = _load("check-test-subprocess-timeouts")
+    path = tmp_path / "test_x.py"
+    path.write_text(
+        "import asyncio\nasync def go() -> None:\n"
+        "    await asyncio.wait_for(asyncio.create_subprocess_exec('true'), 5)\n",
+        encoding="utf-8",
+    )
+    assert checker.check_file(path) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "problems"),
+    [("passing/bounded.test.ts", 0), ("violating/unbounded.test.ts", 1)],
+)
+def test_a_bun_process_call_needs_a_timeout_option(name: str, problems: int) -> None:
+    checker = _load("check-test-subprocess-timeouts")
+    path = Path(__file__).parent / "fixtures" / "proofs" / "tests.subprocess-timeouts" / name
+    assert len(checker.check_file(path)) == problems

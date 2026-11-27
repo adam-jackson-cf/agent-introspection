@@ -880,13 +880,6 @@ def backfill_statement(target: str, lower: datetime, upper: datetime) -> str:
     )
 
 
-def backfill_statements(target: str, start: datetime, end: datetime) -> list[str]:
-    """Return one INSERT per backfill window covering ``[start, end)`` for ``target``."""
-    return [
-        backfill_statement(target, lower, upper) for lower, upper in backfill_windows(start, end)
-    ]
-
-
 _QUOTES = frozenset("'\"`")
 
 
@@ -957,6 +950,10 @@ def _environment_value(name: str) -> str | None:
     return os.environ.get(name)
 
 
+def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def clickhouse_password(signoz: SigNozConfig) -> str:
     """Return the HTTP-mode password from its environment variable or command.
 
@@ -1006,7 +1003,7 @@ def http_runner(config: AppConfig) -> SqlRunner:
             headers={"Authorization": f"Basic {token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=_QUERY_TIMEOUT_SECONDS) as response:
+            with _urlopen(request, _QUERY_TIMEOUT_SECONDS) as response:
                 return cast(bytes, response.read()).decode()
         except urllib.error.HTTPError as exc:
             with exc:

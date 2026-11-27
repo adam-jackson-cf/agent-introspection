@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
+from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
 from typing import Any
 
 PROOFS_FILE = "proofs.toml"
+GIT_TIMEOUT_SECONDS = 30
 
 
 class SettingsError(ValueError):
@@ -83,5 +86,67 @@ def _glob(pattern: str) -> re.Pattern[str]:
     return re.compile("".join(parts))
 
 
-def matches(path: str, patterns: list[str]) -> bool:
+def matches(path: str, patterns: Iterable[str]) -> bool:
     return any(_glob(pattern).fullmatch(path) for pattern in patterns)
+
+
+def base_ref(root: Path) -> str:
+    return string(table(load_proofs(root), "structure"), "base_ref", "structure")
+
+
+def _git_lines(root: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, stdout=subprocess.PIPE, timeout=GIT_TIMEOUT_SECONDS
+    )
+
+
+def git_text(root: Path, args: list[str]) -> str:
+    return _git_lines(root, args).stdout.decode("utf-8")
+
+
+def event_base(root: Path, event: str) -> str:
+    if event == "--staged":
+        return "HEAD"
+    if event == "--merge-base":
+        return git_text(root, ["merge-base", "HEAD", base_ref(root)]).strip()
+    raise SettingsError(f"unknown event {event}; use --staged or --merge-base")
+
+
+def changed_paths(root: Path, event: str, filters: str) -> list[str]:
+    base = event_base(root, event)
+    scope = ["--cached"] if event == "--staged" else []
+    output = git_text(
+        root, ["diff", *scope, "--name-only", "-z", f"--diff-filter={filters}", "-M", base]
+    )
+    return sorted(name for name in output.split("\0") if name)
+
+
+def base_text(root: Path, event: str, path: str) -> str | None:
+    base = event_base(root, event)
+    listed = git_text(root, ["ls-tree", "--name-only", base, "--", path]).strip()
+    if not listed:
+        return None
+    return git_text(root, ["show", f"{base}:{path}"])
+
+
+def under(path: str, directory: str) -> bool:
+    return path == directory or path.startswith(directory.rstrip("/") + "/")
+
+
+def _git_ls_files(root: Path, pathspecs: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *pathspecs],
+        cwd=root,
+        check=True,
+        stdout=subprocess.PIPE,
+        timeout=GIT_TIMEOUT_SECONDS,
+    )
+
+
+def tracked_files(root: Path, patterns: Iterable[str]) -> list[str]:
+    pathspecs = [f":(glob){pattern}" for pattern in patterns]
+    if not pathspecs:
+        return []
+    completed = _git_ls_files(root, pathspecs)
+    names = sorted({raw.decode("utf-8") for raw in completed.stdout.split(b"\0") if raw})
+    return [name for name in names if (root / name).is_file()]

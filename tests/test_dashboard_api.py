@@ -12,6 +12,8 @@ import pytest
 from agent_introspection.cli import main
 from agent_introspection.dashboard_api import URL_VARIABLE
 
+pytestmark = pytest.mark.boundary
+
 REGISTRY = {
     "signals": [
         {

@@ -17,7 +17,6 @@ from __future__ import annotations
 import plistlib
 import shutil
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -28,10 +27,19 @@ from agent_introspection.config import AppConfig, require_host
 LABEL: Final = "dev.agent-introspection.dashboard"
 UNIT: Final = "agent-introspection-dashboard"
 PORT: Final = 4173
-PLIST: Final = schedule.LAUNCH_AGENTS / f"{LABEL}.plist"
-SERVICE: Final = schedule.SYSTEMD_UNITS / f"{UNIT}.service"
-LOG: Final = schedule.LOG.with_name("dashboard.log")
 BUILD_TIMEOUT_SECONDS: Final = 600
+
+
+def plist_file() -> Path:
+    return schedule.launch_agents_dir() / f"{LABEL}.plist"
+
+
+def service_file() -> Path:
+    return schedule.systemd_units_dir() / f"{UNIT}.service"
+
+
+def log_file() -> Path:
+    return schedule.log_file().with_name("dashboard.log")
 
 
 def _run_bun(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -103,8 +111,8 @@ def plist(settings: AppConfig, directory: Path, bun: Path, config: Path | None =
         "RunAtLoad": True,
         "KeepAlive": True,
         "EnvironmentVariables": _environment(settings, bun, config),
-        "StandardOutPath": str(LOG),
-        "StandardErrorPath": str(LOG),
+        "StandardOutPath": str(log_file()),
+        "StandardErrorPath": str(log_file()),
     })
 
 
@@ -140,28 +148,30 @@ def service_unit(
 def _start_launchd(content: bytes) -> None:
     """Replace the agent; when the new one will not start, put the running one back."""
     domain = schedule.launchd_domain()
+    agent = plist_file()
     previous: bytes | None = None
     if schedule.launchd_loaded(LABEL):
-        previous = PLIST.read_bytes() if PLIST.exists() else None
+        previous = agent.read_bytes() if agent.exists() else None
         stopped = schedule.launchctl("bootout", f"{domain}/{LABEL}")
         if stopped.returncode != 0:
             raise RuntimeError(f"could not stop {LABEL}: {stopped.stderr.strip()}")
-    PLIST.parent.mkdir(parents=True, exist_ok=True)
-    PLIST.write_bytes(content)
-    started = schedule.launchctl("bootstrap", domain, str(PLIST))
+    agent.parent.mkdir(parents=True, exist_ok=True)
+    agent.write_bytes(content)
+    started = schedule.launchctl("bootstrap", domain, str(agent))
     if started.returncode != 0:
         restored = ""
         if previous is not None:
-            PLIST.write_bytes(previous)
-            back = schedule.launchctl("bootstrap", domain, str(PLIST)).returncode == 0
+            agent.write_bytes(previous)
+            back = schedule.launchctl("bootstrap", domain, str(agent)).returncode == 0
             restored = "; the previous service was restored" if back else ""
         raise RuntimeError(f"launchctl bootstrap failed: {started.stderr.strip()}{restored}")
 
 
 def _start_systemd(content: str) -> None:
-    SERVICE.parent.mkdir(parents=True, exist_ok=True)
-    SERVICE.write_text(content, encoding="utf-8")
-    for command in (("daemon-reload",), ("enable", SERVICE.name), ("restart", SERVICE.name)):
+    service = service_file()
+    service.parent.mkdir(parents=True, exist_ok=True)
+    service.write_text(content, encoding="utf-8")
+    for command in (("daemon-reload",), ("enable", service.name), ("restart", service.name)):
         result = schedule.systemctl(*command)
         if result.returncode != 0:
             raise RuntimeError(
@@ -197,27 +207,30 @@ def remove() -> dict[str, Any]:
     if schedule.platform_scheduler() == "launchd":
         if schedule.launchd_loaded(LABEL):
             schedule.launchctl("bootout", f"{schedule.launchd_domain()}/{LABEL}")
-        existed = PLIST.exists()
-        PLIST.unlink(missing_ok=True)
+        agent = plist_file()
+        existed = agent.exists()
+        agent.unlink(missing_ok=True)
         return {"removed": existed, "scheduler": "launchd"}
-    existed = SERVICE.exists()
+    service = service_file()
+    existed = service.exists()
     if existed:
-        schedule.systemctl("disable", "--now", SERVICE.name)
-        SERVICE.unlink()
+        schedule.systemctl("disable", "--now", service.name)
+        service.unlink()
         schedule.systemctl("daemon-reload")
     return {"removed": existed, "scheduler": "systemd"}
 
 
 def status() -> dict[str, Any]:
     """Report whether the dashboard service is installed and running (read-only)."""
-    scheduler = schedule.SCHEDULERS.get(sys.platform)
+    scheduler = schedule.SCHEDULERS.get(schedule.platform_name())
     if scheduler == "launchd":
         return {
             "scheduler": scheduler,
-            "installed": PLIST.exists(),
+            "installed": plist_file().exists(),
             "loaded": schedule.launchd_loaded(LABEL),
         }
     if scheduler == "systemd":
-        active = schedule.systemctl("is-active", SERVICE.name).stdout.strip() == "active"
-        return {"scheduler": scheduler, "installed": SERVICE.exists(), "loaded": active}
+        service = service_file()
+        active = schedule.systemctl("is-active", service.name).stdout.strip() == "active"
+        return {"scheduler": scheduler, "installed": service.exists(), "loaded": active}
     return {"scheduler": None, "installed": False, "loaded": False}

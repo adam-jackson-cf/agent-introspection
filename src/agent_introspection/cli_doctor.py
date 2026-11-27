@@ -25,7 +25,7 @@ from agent_introspection.cli_common import diagnostic
 def _drift_report(
     run: facts.SqlRunner, saved_dir: Path | None, services: Sequence[str]
 ) -> dict[str, Any]:
-    return producers.drift_report(run, saved_dir or producers.FINGERPRINT_DIR, services)
+    return producers.drift_report(run, saved_dir or producers.fingerprint_dir(), services)
 
 
 def default_probes() -> doctor.Probes:

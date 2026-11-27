@@ -18,8 +18,14 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import doctor, doctor_harness, facts, hook_install, profiles
-from tests.test_preflight import fake_clickhouse
+from agent_introspection import doctor, doctor_harness, facts, hook_install, hooks, schedule
+from tests.support.host_probes import (
+    fake_network,
+    fake_systemd,
+    fake_version_probe,
+    verified_versions,
+)
+from tests.support.preflight_clickhouse import fake_clickhouse
 
 SECRET = "sk-sentinel-SECRET-7f3a"
 
@@ -78,10 +84,6 @@ def write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return path
-
-
-def verified_versions() -> dict[str, str]:
-    return {profile.binary: profile.verified_versions[0] for profile in profiles.load_profiles()}
 
 
 def telemetry_rows(counts: Mapping[str, tuple[int, int]], last_seen: int) -> str:
@@ -204,7 +206,7 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
     )
     # The hooks read this config, as `harness configure --config` points them.
     write(runtime / doctor_harness.CONFIG_POINTER, f"{config_path.resolve()}\n")
-    built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)
+    built = Machine(home=home, config=config_path, inbox=hooks.inbox_dir(), orca=orca)
     built.probes = fake_probes(built)
     return built
 
@@ -281,3 +283,12 @@ def make_additional(machine: Machine) -> None:
         spool_sync_status=lambda: dict(SPOOL_SYNC),
         dashboard_status=host_only,
     )
+
+
+def through_seams(machine: Machine, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(facts, "runner", lambda _config: machine.run_sql())
+    machine.posted = fake_network(monkeypatch)
+    fake_systemd(monkeypatch)
+    fake_version_probe(monkeypatch)
+    for unit in (schedule.service_file(), schedule.timer_file()):
+        write(unit, "[Unit]\n")

@@ -52,10 +52,10 @@ from agent_introspection import (
     schedule,
 )
 from agent_introspection.config import (
-    DEFAULT_CONFIG_PATH,
     DEFAULT_HARNESSES,
     AppConfig,
     ConfigurationError,
+    default_config_path,
     parse_config,
     require_host,
     retired_paths,
@@ -162,7 +162,7 @@ def write_config(options: SetupOptions) -> tuple[AppConfig, dict[str, Any]]:
     without editing the file by hand (the change shows in the diff and the backup).
     """
     # Resolved, so a symlinked config is written through, never replaced.
-    path = (options.config_path or DEFAULT_CONFIG_PATH).expanduser().resolve()
+    path = (options.config_path or default_config_path()).expanduser().resolve()
     before = path.read_text("utf-8") if path.exists() else ""
     text = before
     retired: list[tuple[str, ...]] = []

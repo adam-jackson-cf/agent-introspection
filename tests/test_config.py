@@ -8,10 +8,10 @@ from typing import Any
 import pytest
 
 from agent_introspection.config import (
-    DEFAULT_DATABASE_PATH,
     ConfigurationError,
     DatabaseConfig,
     MachineRole,
+    default_database_path,
     load_config,
     parse_config,
     require_host,
@@ -21,8 +21,8 @@ from agent_introspection.config import (
 def test_documented_defaults_are_canonical() -> None:
     config = parse_config({})
 
-    assert config.database.path == DEFAULT_DATABASE_PATH
-    assert DEFAULT_DATABASE_PATH.parts[-4:] == (
+    assert config.database.path == default_database_path()
+    assert default_database_path().parts[-4:] == (
         ".local",
         "share",
         "agent-introspection",
@@ -111,8 +111,8 @@ def _example_with_every_setting() -> str:
 def test_example_configuration_is_valid_and_the_defaults() -> None:
     example = load_config(EXAMPLE)
     # The example spells the database path with ~, which expands to this test's home.
-    assert example.database.path == Path.home() / DEFAULT_DATABASE_PATH.relative_to(
-        DEFAULT_DATABASE_PATH.parents[3]
+    assert example.database.path == Path.home() / default_database_path().relative_to(
+        default_database_path().parents[3]
     )
     assert replace(example, database=DatabaseConfig()) == parse_config({})
 

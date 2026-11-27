@@ -45,10 +45,10 @@ from agent_introspection import (
     spool,
 )
 from agent_introspection.config import (
-    DEFAULT_CONFIG_PATH,
     DEFAULT_OTLP_ENDPOINT,
     AppConfig,
     ConfigurationError,
+    default_config_path,
     is_local_host,
     load_config,
 )
@@ -136,10 +136,24 @@ class Probes:
     harness: doctor_harness.HarnessProbes
 
 
+def _connect(host: str, port: int) -> socket.socket:
+    return socket.create_connection((host, port), timeout=CONNECT_TIMEOUT_SECONDS)
+
+
+def _urlopen(request: urllib.request.Request) -> http.client.HTTPResponse:
+    return cast(
+        http.client.HTTPResponse, urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS)
+    )
+
+
+def _open_local(url: str) -> http.client.HTTPResponse:
+    return cast(http.client.HTTPResponse, _LOCAL_OPENER.open(url, timeout=HTTP_TIMEOUT_SECONDS))
+
+
 def tcp_open(host: str, port: int) -> bool:
     """Return whether something accepts a TCP connection on ``host:port``."""
     try:
-        with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT_SECONDS):
+        with _connect(host, port):
             return True
     except OSError:
         return False
@@ -151,7 +165,7 @@ def post_json(url: str, body: bytes) -> int:
         url, data=body, method="POST", headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        with _urlopen(request) as response:
             return int(response.status)
     except urllib.error.HTTPError as exc:
         with exc:
@@ -161,8 +175,8 @@ def post_json(url: str, body: bytes) -> int:
 def http_get(url: str) -> tuple[int, bytes]:
     """GET a local URL without a proxy; return the status and the start of the body."""
     try:
-        with _LOCAL_OPENER.open(url, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            return int(response.status), cast(bytes, response.read(64))
+        with _open_local(url) as response:
+            return int(response.status), response.read(64)
     except urllib.error.HTTPError as exc:
         with exc:
             return exc.code, b""
@@ -269,7 +283,9 @@ class _Doctor:
 
     def config_check(self) -> Check:
         path = self.options.config_path
-        shown = path.expanduser().resolve(strict=False) if path is not None else DEFAULT_CONFIG_PATH
+        shown = (
+            path.expanduser().resolve(strict=False) if path is not None else default_config_path()
+        )
         try:
             self.config = load_config(path)
         except ConfigurationError as exc:
@@ -526,7 +542,7 @@ class _Doctor:
     # --- Spool and schedule ----------------------------------------------------------
 
     def spool_check(self) -> Check:
-        inbox = self.options.inbox or hooks.INBOX
+        inbox = self.options.inbox or hooks.inbox_dir()
         pending, rejected = spool.backlog(inbox), spool.rejected_count(inbox)
         last = str(spool.read_state(inbox)["last_error_class"])
         home = self.probes.harness.home
@@ -695,7 +711,7 @@ class _Doctor:
                 "dashboard_service",
                 "warn",
                 f"the dashboard service runs, but nothing answers on 127.0.0.1:{port}",
-                f"read {dashboard_service.LOG}, then {install}",
+                f"read {dashboard_service.log_file()}, then {install}",
             )
         return check(
             "dashboard_service", "pass", f"the dashboard answers on http://127.0.0.1:{port}"

@@ -506,3 +506,102 @@ doctor_failure_env = { DOCKER_HOST = "unix:///nonexistent/docker.sock" }
 "src/agent_introspection/facts_sql/00*_*.sql" = "facts store DDL: the tables and views every installed ClickHouse holds"
 "src/agent_introspection/workflow.sql" = "workflow store schema: every existing SQLite workflow store was created from it"
 "src/agent_introspection/facts_sql/signal_support.toml" = "signal registry: the signal IDs findings, proposals and the dashboard name"
+
+[structure]
+base_ref = "origin/main"
+
+[structure.ownership_areas]
+"dashboard/**" = "dashboard"
+"tests/test_candidates.py" = "findings"
+"tests/test_capabilities.py" = "producers"
+"tests/test_classify.py" = "labels"
+"tests/test_cli.py" = "cli"
+"tests/test_cli_producers.py" = "producers"
+"tests/test_cli_spool*.py" = "spool"
+"tests/test_cli_sync.py" = "cli"
+"tests/test_command_shape*.py" = "facts"
+"tests/test_config*.py" = "config"
+"tests/test_dashboard_*.py" = "dashboard"
+"tests/test_doctor*.py" = "doctor"
+"tests/test_drafting.py" = "proposals"
+"tests/test_evaluation.py" = "interventions"
+"tests/test_facts*.py" = "facts"
+"tests/test_findings.py" = "findings"
+"tests/test_harness_*.py" = "harnesses"
+"tests/test_hook*.py" = "hooks"
+"tests/test_inbox.py" = "spool"
+"tests/test_interventions.py" = "interventions"
+"tests/test_measures_doc.py" = "facts"
+"tests/test_preflight*.py" = "doctor"
+"tests/test_producers.py" = "producers"
+"tests/test_profiles.py" = "harnesses"
+"tests/test_proposals.py" = "proposals"
+"tests/test_review.py" = "proposals"
+"tests/test_report_summary.py" = "interventions"
+"tests/test_schedule.py" = "schedule"
+"tests/test_setup_flow.py" = "setup"
+"tests/test_signoz_*.py" = "signoz"
+"tests/test_spool*.py" = "spool"
+"tests/test_python_*.py" = "quality-gates"
+"tests/test_quality_scripts.py" = "quality-gates"
+"tests/test_render_measures_script.py" = "quality-gates"
+"tests/test_small_checkers.py" = "quality-gates"
+"tests/test_*_check.py" = "quality-gates"
+"tests/test_*_checks.py" = "quality-gates"
+"tests/test_tier_guards.py" = "quality-gates"
+
+[layout]
+support_dir = "tests/support"
+support_files = ["dashboard/server/test-fixtures.ts"]
+fixtures_dir = "tests/fixtures"
+canary_fixtures_dir = "tests/fixtures/proofs"
+test_file_patterns = [
+  "tests/test_*.py",
+  "dashboard/*.test.ts",
+  "dashboard/**/*.test.ts",
+  "dashboard/**/*.test.tsx",
+]
+test_like_patterns = ["**/test*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
+test_marker_tokens = ["jest", "pytest", "test", "testing", "tests", "vitest"]
+adapter_seams = [
+  "agent_introspection.classify:_run_key_command",
+  "agent_introspection.classify:_urlopen",
+  "agent_introspection.dashboard_service:_bun",
+  "agent_introspection.dashboard_service:_run_bun",
+  "agent_introspection.doctor:_connect",
+  "agent_introspection.doctor:_open_local",
+  "agent_introspection.doctor:_urlopen",
+  "agent_introspection.doctor_harness:_run_version",
+  "agent_introspection.facts:_run_local_command",
+  "agent_introspection.facts:_urlopen",
+  "agent_introspection.facts:runner",
+  "agent_introspection.hook_install:_run_omp",
+  "agent_introspection.hook_install:_which",
+  "agent_introspection.hooks:read_stdin",
+  "agent_introspection.schedule:_linger_file_exists",
+  "agent_introspection.schedule:_python_executable",
+  "agent_introspection.schedule:_which",
+  "agent_introspection.schedule:launchctl",
+  "agent_introspection.schedule:launchd_domain",
+  "agent_introspection.schedule:platform_name",
+  "agent_introspection.schedule:systemctl",
+  "agent_introspection.signoz_detect:_docker_cli",
+  "agent_introspection.signoz_detect:_run_docker",
+  "agent_introspection.signoz_detect:clickhouse_answers",
+  "agent_introspection.signoz_detect:port_open",
+  "agent_introspection.spool:_urlopen",
+  "agent_introspection.spool:cli_version",
+  "agent_introspection.spool:host_name",
+]
+
+[layout.test_names]
+ignored = ["test", "tests", "spec"]
+ticket = '^(?:\d+|(?:issue|bug|ticket|pr|gh|jira)\d+)$'
+version = '^(?:v\d+|[a-z]+v\d+)$'
+date = '^(?:(?:19|20)\d{2}(?:\d{4})?)$'
+trailing_number = '^[a-z]+\d+$'
+numbered_allowlist = [
+  "base32", "base64", "float32", "float64", "http2", "http3", "int16", "int32", "int64", "int8",
+  "ipv4", "ipv6", "md5", "oauth2", "s3", "sha1", "sha256", "sha512", "uint8", "utf16", "utf8",
+  "x509",
+]

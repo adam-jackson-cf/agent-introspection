@@ -6,16 +6,12 @@ import ipaddress
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
 
-DEFAULT_DATABASE_PATH: Final[Path] = Path(
-    "~/.local/share/agent-introspection/introspection.sqlite3"
-).expanduser()
-DEFAULT_CONFIG_PATH: Final[Path] = Path("~/.config/agent-introspection/config.toml").expanduser()
 # The collector's OTLP ports. A collector endpoint harnesses export to is OTLP/HTTP.
 OTLP_HTTP_PORT: Final = 4318
 OTLP_GRPC_PORT: Final = 4317
@@ -32,11 +28,19 @@ class ConfigurationError(ValueError):
     """Raised when configuration is malformed or contains unsupported keys."""
 
 
+def default_database_path() -> Path:
+    return Path("~/.local/share/agent-introspection/introspection.sqlite3").expanduser()
+
+
+def default_config_path() -> Path:
+    return Path("~/.config/agent-introspection/config.toml").expanduser()
+
+
 @dataclass(frozen=True, slots=True)
 class DatabaseConfig:
     """SQLite workflow store."""
 
-    path: Path = DEFAULT_DATABASE_PATH
+    path: Path = field(default_factory=default_database_path)
     busy_timeout_ms: int = 5_000
 
 
@@ -93,7 +97,7 @@ class MachineConfig:
 class AppConfig:
     """Complete application configuration."""
 
-    database: DatabaseConfig = DatabaseConfig()
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
     signoz: SigNozConfig = SigNozConfig()
     machine: MachineConfig = MachineConfig()
     # Registry harness keys this machine uses (`codex` names the three Codex surfaces);
@@ -461,7 +465,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     explicitly supplied path must exist.
     """
     config_path = (
-        path.expanduser().resolve(strict=False) if path is not None else DEFAULT_CONFIG_PATH
+        path.expanduser().resolve(strict=False) if path is not None else default_config_path()
     )
     if not config_path.exists():
         if path is not None:
