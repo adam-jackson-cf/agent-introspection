@@ -55,7 +55,9 @@ def test_unbound_reference_is_reported_against_the_claim(tmp_path: Path) -> None
 def test_ci_point_requires_a_self_check_claim(tmp_path: Path) -> None:
     root = _copy(tmp_path, "bound")
     proofs = _proofs(root)
-    proofs["claim"][0]["rules"] = ["A.rule"]
+    claims = proofs["claim"]
+    assert isinstance(claims, list)
+    claims[0]["rules"] = ["A.rule"]
 
     errors, _ = validator.validate(root, proofs, structure_only=True)
 

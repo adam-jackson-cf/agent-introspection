@@ -158,7 +158,7 @@ def test_the_dashboard_port_defaults_to_4173_and_must_be_a_tcp_port() -> None:
     assert parse_config({}).dashboard.port == DEFAULT_DASHBOARD_PORT == 4173
     assert parse_config({"dashboard": {"port": 5174}}).dashboard.port == 5174
     for port in (0, 65_536, True, "5174"):
-        with pytest.raises(ConfigurationError, match="dashboard.port must be a TCP port"):
+        with pytest.raises(ConfigurationError, match=r"dashboard\.port must be a TCP port"):
             parse_config({"dashboard": {"port": port}})
     with pytest.raises(ConfigurationError, match="unsupported keys in dashboard: host"):
         parse_config({"dashboard": {"host": "0.0.0.0"}})

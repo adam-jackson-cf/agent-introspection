@@ -198,12 +198,16 @@ def _check_ci_points(gate: Gate, entrypoint: str) -> None:
             )
 
 
+def _covers_self_check(claim: dict[str, object]) -> bool:
+    rules = claim.get("rules")
+    return isinstance(rules, list) and any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in rules)
+
+
 def _self_check_points(gate: Gate) -> list[dict[str, str]]:
     return [
         point
         for claim in _claims(gate)
-        if isinstance(claim.get("rules"), list)
-        and any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in claim["rules"])
+        if _covers_self_check(claim)
         for point in _points(claim)
         if point.get("point") == "ci"
     ]

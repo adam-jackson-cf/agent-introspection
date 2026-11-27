@@ -21,11 +21,12 @@ Reads proofs.toml (default <root>/proofs.toml) and the repo files it names. For 
 it checks that each enforcement point's file invokes the control and runs every canary through
 the enforcement entrypoint; it runs the hook installation check once. When any claim names a ci
 point, a claim covering GATE.self-check must name one too. A later point names no status, so it
-never sets a required merge status. Command-evidence exclusions run every time, except host = true ones,
-which run with host claims only under --live-host-query. With --catalog it also proves that
-every catalogue rule is covered by exactly one claim, with the enforcement point its evidence
-kind needs and, for a bespoke rule, a canary naming it, or by one approved exclusion of a
-conditional rule. --structure-only checks every field and path without running canaries or the hook check.
+never sets a required merge status. Command-evidence exclusions run every time, except
+host = true ones, which run with host claims only under --live-host-query. With --catalog it
+also proves that every catalogue rule is covered by exactly one claim, with the enforcement
+point its evidence kind needs and, for a bespoke rule, a canary naming it, or by one approved
+exclusion of a conditional rule. --structure-only checks every field and path without running
+canaries or the hook check.
 Writes nothing.
 Exit 0: prints proofs PASS, proofs PASS_WITH_APPROVED_EXCLUSIONS or proofs STRUCTURE_ONLY,
 preceded by proofs HOST_NOT_QUERIED: <claim ids> when host checks were not queried.
