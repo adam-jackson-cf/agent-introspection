@@ -805,8 +805,11 @@ def test_split_statements_matches_the_statement_count_of_every_install_file() ->
         heads = re.findall(r"^(?:CREATE|DROP|INSERT|ALTER)\b", text, flags=re.MULTILINE)
 
         assert len(facts.split_statements(text)) == len(heads)
+    whole_files = {
+        facts._sql(name) for name in ("001_tables.sql", "002_registry.sql", *facts.VIEW_FILES)
+    }
     for statement in facts.install_statements():
-        if not statement.startswith("--"):
+        if statement not in whole_files:
             assert facts.split_statements(statement) == [statement.strip()]
 
 

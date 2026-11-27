@@ -135,8 +135,9 @@ def test_checked_columns_and_services_are_the_ones_the_projections_read() -> Non
 
     for column in preflight.SPAN_COLUMNS:
         assert column in spans
+    windows = " ".join(loader.window for loader in facts.LOADERS)
     for column in preflight.LOG_COLUMNS:
-        assert column in logs + hook_events
+        assert column in logs + hook_events + windows
     assert "resources_string" in hook_events
     checked: list[str] = []
 
