@@ -119,7 +119,6 @@ max-statements = 50
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
-docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.12"

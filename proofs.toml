@@ -605,3 +605,11 @@ numbered_allowlist = [
   "ipv4", "ipv6", "md5", "oauth2", "s3", "sha1", "sha256", "sha512", "uint8", "utf16", "utf8",
   "x509",
 ]
+
+[scope]
+mode = "whole"
+
+[layout]
+support_dir = "tests/support"
+fixtures_dir = "tests/fixtures"
+test_file_patterns = ["tests/test_*.py", "dashboard/**/*.test.ts", "dashboard/**/*.test.tsx"]

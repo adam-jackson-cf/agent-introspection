@@ -1,0 +1,5 @@
+key = "a # b"
+multi = """
+# multi-line string text
+"""
+literal = 'c # d'

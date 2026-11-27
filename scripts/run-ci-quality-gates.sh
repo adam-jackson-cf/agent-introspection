@@ -39,6 +39,7 @@ static_checks=(
   python_quality
   python_scalability
   python_fanout
+  code_integrity
   oxlint
   markdownlint
   prettier
@@ -204,6 +205,14 @@ check_python_suppressions() { uv run python -B scripts/check-python-suppressions
 check_python_quality() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-quality.py "$@"; }
 check_python_scalability() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-scalability.py "$@"; }
 check_python_fanout() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-fanout.py "$@"; }
+
+check_code_integrity() {
+  if (($#)); then
+    uv run python scripts/check-code-integrity.py "$@"
+  else
+    uv run python scripts/check-code-integrity.py --all -- "$fixtures_exclude"
+  fi
+}
 
 check_oxlint() {
   local files=("$@")
