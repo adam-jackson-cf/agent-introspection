@@ -149,6 +149,9 @@ def placement_problems(layout: Layout, path: str) -> list[str]:
 
 
 def judged_path(layout: Layout, raw: str) -> str:
+    path = Path(raw)
+    if path.is_absolute() and path.resolve().is_relative_to(layout.root.resolve()):
+        raw = path.resolve().relative_to(layout.root.resolve()).as_posix()
     parts = PurePosixPath(raw).parts
     if under(raw, layout.fixtures_dir) and FIXTURE_ROOT in parts:
         index = len(parts) - 1 - parts[::-1].index(FIXTURE_ROOT)

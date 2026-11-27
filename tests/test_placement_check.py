@@ -70,3 +70,9 @@ def test_a_canary_fixture_is_judged_at_its_virtual_repository_path() -> None:
     fixture = CANARIES / "tests.placement" / "violating-name" / "repo" / "tests"
     raw = (fixture / "test_spool_batches_v2.py").relative_to(REPO_ROOT).as_posix()
     assert checker.judged_path(LAYOUT, raw) == "tests/test_spool_batches_v2.py"
+
+
+def test_an_absolute_canary_path_is_judged_at_its_virtual_repository_path() -> None:
+    fixture = CANARIES / "tests.placement" / "violating-name" / "repo" / "tests"
+    absolute = str(fixture / "test_spool_batches_v2.py")
+    assert checker.judged_path(LAYOUT, absolute) == "tests/test_spool_batches_v2.py"

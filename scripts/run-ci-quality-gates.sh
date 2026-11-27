@@ -104,7 +104,8 @@ check_bun_t1_isolation() {
   local files=()
   local file
   for file in "$@"; do
-    files+=("$repo_root/$file")
+    [[ "$file" == /* ]] || file="$repo_root/$file"
+    files+=("$file")
   done
   (cd dashboard && bun test "${files[@]}")
 }
