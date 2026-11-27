@@ -1441,7 +1441,7 @@ script_names = [
     "validate-rule-coverage.py",
 ]
 test_root_files = ["tests/__init__.py", "tests/conftest.py"]
-test_groups = ["integration", "seams", "unit"]
+test_groups = ["integration", "journeys", "seams", "unit"]
 non_package_directories = [".github", "fixtures", "scripts", "src", "tests"]
 generic_name_allowlist = []
 class_max_lines = 700

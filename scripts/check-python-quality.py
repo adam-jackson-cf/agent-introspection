@@ -179,13 +179,12 @@ def _module_name_diagnostics(relpath: str) -> list[Diagnostic]:
     path = Path(relpath)
     if _is_snake_case_name(path.stem):
         return []
-    kind = "test module" if path.stem.startswith("test-") else "Python module"
     return [
         Diagnostic(
             "PYQ107",
             relpath,
             1,
-            f"{kind} '{path.name}' must use snake_case",
+            f"Python module '{path.name}' must use snake_case",
             f"rename it to '{_snake_case(path.stem)}.py'",
         )
     ]
@@ -263,7 +262,8 @@ def structure_diagnostics_for_relpath(relpath: str, settings: PythonQuality) -> 
     diagnostics.extend(_test_group_diagnostics(normalized, settings))
     diagnostics.extend(_package_dir_diagnostics(normalized, settings))
     diagnostics.extend(_skill_name_diagnostics(normalized, settings))
-    diagnostics.extend(_module_name_diagnostics(normalized))
+    if not path_matches_prefix(normalized, settings.test_root):
+        diagnostics.extend(_module_name_diagnostics(normalized))
     diagnostics.extend(_generic_name_diagnostics(normalized, settings))
     return diagnostics
 

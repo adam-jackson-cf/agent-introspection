@@ -138,6 +138,17 @@ def test_quality_diagnostic_names_file_line_rule_problem_and_fix(tmp_path: Path)
     )
 
 
+def test_test_module_names_are_left_to_the_test_placement_check(tmp_path: Path) -> None:
+    test = _write_module(tmp_path, "tests/unit/Test-Case.py", "VALUE = 1\n")
+    module = _write_module(tmp_path, "src/pkg/BadModule.py", "VALUE = 1\n")
+
+    result = _run("check-python-quality.py", str(test), str(module))
+
+    assert result.returncode == 1
+    assert "Test-Case.py:1: PYQ107" not in result.stderr
+    assert "src/pkg/BadModule.py:1: PYQ107: Python module 'BadModule.py'" in result.stderr
+
+
 @pytest.mark.parametrize("word", ["compat", "fallback", "legacy", "manager", "new", "old", "utils"])
 def test_every_house_style_banned_word_fails_as_module_and_directory(
     tmp_path: Path, word: str
