@@ -117,9 +117,14 @@ def test_a_tier_selector_lists_exactly_the_tests_it_selects() -> None:
     assert t1 == [
         f"{passing}/test_in_memory_sum.py::test_the_sum_of_two_numbers_is_computed_in_memory"
     ]
-    t2, failure = checker.collect("boundary or deferred", [passing])
+    t2, failure = checker.collect(
+        "(boundary or deferred) and not (boundary and deferred)", [passing]
+    )
     assert failure is None
     assert t2 == [f"{passing}/test_process_exit.py::test_a_real_process_exits_cleanly"]
+    journey, failure = checker.collect("boundary and deferred", [passing])
+    assert failure is None
+    assert journey == [f"{passing}/test_lever_journey.py::test_the_journey_tier_holds_a_journey"]
 
 
 def _git(repo: Path, *args: str) -> None:
