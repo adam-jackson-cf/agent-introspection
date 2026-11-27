@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from agent_introspection import (
     spool,
 )
 from agent_introspection.cli_common import app_config, diagnostic, open_store
-from agent_introspection.config import AppConfig, load_config
+from agent_introspection.config import AppConfig, ConfigurationError, load_config
 
 
 def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -61,7 +62,7 @@ def _install(args: argparse.Namespace, config: AppConfig, run: facts.SqlRunner) 
         # A store error here must not hide the install failure that is propagating.
         try:
             open_store(args).close()
-        except Exception as store_error:
+        except (ConfigurationError, sqlite3.Error, OSError) as store_error:
             diagnostic(f"workflow store setup also failed: {store_error}")
         raise
     open_store(args).close()

@@ -70,9 +70,9 @@ repository-owned checkers in `scripts/`:
 
 - `check-python-quality.py`, `check-python-scalability.py` and `check-python-fanout.py`
   enforce structure, class shape, subprocess seams and fan-out limits.
-- `check-python-suppressions.py` fails when `noqa`, `type: ignore` or Ruff/mypy
-  ignore settings grow past `scripts/python-suppression-baseline.json`. Fix the code;
-  update the baseline only to record a reviewed removal.
+- `check-python-suppressions.py` fails on every `noqa`, `type: ignore` or Ruff/mypy
+  ignore setting, and on a Ruff exclude that hides a maintained file. Fix the code
+  instead of suppressing the finding.
 - `check-coverage-slice.py`, `check-lock-parity.py`, `check-skill-metadata.py`,
   `check-test-subprocess-timeouts.py` and `check-typescript-limits.ts` cover the
   remaining rules.

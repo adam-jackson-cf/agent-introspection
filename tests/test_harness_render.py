@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from agent_introspection import facts
-from scripts.lib.harness_render import render_harnesses
+from lib.harness_render import render_harnesses
 
 _REGISTRY = facts.Registry(signals=[], routes=[], support=[], strays=[], excluded=[])
 
