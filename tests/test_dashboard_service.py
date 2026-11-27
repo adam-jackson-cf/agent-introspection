@@ -27,6 +27,7 @@ class Recorder:
 
     def __init__(self, code: int = 0) -> None:
         self.code = code
+        self.loaded = False
         self.bun: list[tuple[tuple[str, ...], Path]] = []
         self.scheduler: list[tuple[str, ...]] = []
 
@@ -36,19 +37,17 @@ class Recorder:
 
     def control(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.scheduler.append(args)
-        return subprocess.CompletedProcess(list(args), 0, "", "")
+        code = 0 if args[0] != "list" or self.loaded else 113
+        return subprocess.CompletedProcess(list(args), code, "", "")
 
 
 @pytest.fixture
-def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
     recorded = Recorder()
     monkeypatch.setattr(dashboard_service, "_run_bun", recorded.run_bun)
     monkeypatch.setattr(dashboard_service, "_bun", lambda: BUN)
-    monkeypatch.setattr(dashboard_service, "PLIST", tmp_path / "agents/dashboard.plist")
-    monkeypatch.setattr(dashboard_service, "SERVICE", tmp_path / "units/dashboard.service")
     monkeypatch.setattr(schedule, "launchctl", recorded.control)
     monkeypatch.setattr(schedule, "systemctl", recorded.control)
-    monkeypatch.setattr(schedule, "launchd_loaded", lambda _label: False)
     monkeypatch.setattr(schedule, "launchd_domain", lambda: "gui/501")
     return recorded
 
@@ -56,7 +55,7 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
 def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
     recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "launchd")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
     config = Path("/etc/ai.toml")
 
     result = dashboard_service.install(AppConfig(), REPO, config)
@@ -66,7 +65,7 @@ def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
         ((str(BUN), "install", "--frozen-lockfile"), directory),
         ((str(BUN), "run", "build"), directory),
     ]
-    agent = plistlib.loads(dashboard_service.PLIST.read_bytes())
+    agent = plistlib.loads(dashboard_service.plist_file().read_bytes())
     assert agent["ProgramArguments"] == [str(BUN), "server.ts"]
     assert agent["WorkingDirectory"] == str(directory)
     assert agent["KeepAlive"] is True
@@ -75,7 +74,10 @@ def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
         "INTROSPECTION_WORKFLOW_DB": str(AppConfig().database.path),
         "AGENT_INTROSPECTION_CONFIG": str(config),
     }
-    assert recorder.scheduler == [("bootstrap", "gui/501", str(dashboard_service.PLIST))]
+    assert recorder.scheduler == [
+        ("list", dashboard_service.LABEL),
+        ("bootstrap", "gui/501", str(dashboard_service.plist_file())),
+    ]
     assert result == {
         "installed": True,
         "scheduler": "launchd",
@@ -87,7 +89,7 @@ def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
 def test_install_restarts_a_systemd_user_service(
     recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "systemd")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "linux")
 
     settings = AppConfig(
         signoz=SigNozConfig(clickhouse_user="reader"),
@@ -96,7 +98,7 @@ def test_install_restarts_a_systemd_user_service(
 
     dashboard_service.install(settings, REPO)
 
-    unit = dashboard_service.SERVICE.read_text()
+    unit = dashboard_service.service_file().read_text()
     # systemd takes WorkingDirectory= as a bare path; a quoted one fails to load.
     assert f"WorkingDirectory={REPO / 'dashboard'}\n" in unit
     assert 'Environment="INTROSPECTION_WORKFLOW_DB=/srv/ai/workflow.sqlite3"\n' in unit
@@ -104,37 +106,36 @@ def test_install_restarts_a_systemd_user_service(
     assert f'ExecStart="{BUN}" server.ts\n' in unit
     assert "Restart=on-failure\n" in unit
     assert "AGENT_INTROSPECTION_CONFIG" not in unit
-    name = dashboard_service.SERVICE.name
+    name = dashboard_service.service_file().name
     assert recorder.scheduler == [("daemon-reload",), ("enable", name), ("restart", name)]
 
 
 def test_a_failed_build_stops_before_the_service(
     recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "launchd")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
     recorder.code = 1
 
     with pytest.raises(RuntimeError, match="bun install --frozen-lockfile failed: bun: lockfile"):
         dashboard_service.install(AppConfig(), REPO)
 
     assert recorder.scheduler == []
-    assert not dashboard_service.PLIST.exists()
+    assert not dashboard_service.plist_file().exists()
 
 
 def test_a_replacement_that_will_not_start_puts_the_running_agent_back(
     recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "launchd")
-    monkeypatch.setattr(schedule, "launchd_loaded", lambda _label: True)
-    dashboard_service.PLIST.parent.mkdir(parents=True)
-    dashboard_service.PLIST.write_bytes(b"previous")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
+    dashboard_service.plist_file().parent.mkdir(parents=True)
+    dashboard_service.plist_file().write_bytes(b"previous")
     bootstraps: list[bytes] = []
 
     def control(*args: str) -> subprocess.CompletedProcess[str]:
         recorder.scheduler.append(args)
         if args[0] != "bootstrap":
             return subprocess.CompletedProcess(list(args), 0, "", "")
-        bootstraps.append(dashboard_service.PLIST.read_bytes())
+        bootstraps.append(dashboard_service.plist_file().read_bytes())
         code = 5 if len(bootstraps) == 1 else 0
         return subprocess.CompletedProcess(list(args), code, "", "Bootstrap failed: 5")
 
@@ -144,13 +145,13 @@ def test_a_replacement_that_will_not_start_puts_the_running_agent_back(
         dashboard_service.install(AppConfig(), REPO)
 
     assert bootstraps[1] == b"previous"
-    assert dashboard_service.PLIST.read_bytes() == b"previous"
+    assert dashboard_service.plist_file().read_bytes() == b"previous"
 
 
 def test_install_refuses_a_path_that_is_not_a_checkout(
     recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "launchd")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
 
     with pytest.raises(ValueError, match="is not an agent-introspection checkout"):
         dashboard_service.install(AppConfig(), tmp_path)
@@ -172,14 +173,14 @@ def test_install_refuses_a_password_and_an_additional_machine(recorder: Recorder
 def test_remove_stops_and_deletes_the_service(
     recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(schedule, "platform_scheduler", lambda: "systemd")
-    dashboard_service.SERVICE.parent.mkdir(parents=True)
-    dashboard_service.SERVICE.write_text("[Unit]\n")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "linux")
+    dashboard_service.service_file().parent.mkdir(parents=True)
+    dashboard_service.service_file().write_text("[Unit]\n")
 
     assert dashboard_service.remove() == {"removed": True, "scheduler": "systemd"}
 
-    assert not dashboard_service.SERVICE.exists()
-    name = dashboard_service.SERVICE.name
+    assert not dashboard_service.service_file().exists()
+    name = dashboard_service.service_file().name
     assert recorder.scheduler == [("disable", "--now", name), ("daemon-reload",)]
 
 

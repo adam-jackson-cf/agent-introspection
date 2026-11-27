@@ -176,6 +176,10 @@ def api_key(key_command: Sequence[str] | None) -> str:
     return _command_key(key_command, "labels.openrouter_key_command printed no OpenRouter key")
 
 
+def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def http_poster(body: bytes, key: str) -> dict[str, Any]:
     """POST one decision request; HTTP errors carry no provider body (it can echo input)."""
     request = urllib.request.Request(
@@ -185,7 +189,7 @@ def http_poster(body: bytes, key: str) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with _urlopen(request, TIMEOUT_SECONDS) as response:
             return dict(json.load(response))
     except urllib.error.HTTPError as exc:
         with exc:

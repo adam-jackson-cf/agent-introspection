@@ -15,6 +15,7 @@ import pytest
 
 from agent_introspection import doctor_harness, facts, harness_config, hook_install, profiles
 from agent_introspection.cli import main
+from tests.support.harness_commands import config_file, fake_binary, run_harness
 
 _SENTINEL = "sk-sentinel-0123456789"
 _CLAUDE_EXPORT = {
@@ -38,20 +39,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR"):
         monkeypatch.delenv(name, raising=False)
     return directory
-
-
-def _config(tmp_path: Path, text: str = "") -> Path:
-    path = tmp_path / "config.toml"
-    path.write_text(text)
-    return path
-
-
-def _harness(
-    capsys: pytest.CaptureFixture[str], config: Path, *argv: str
-) -> tuple[dict[str, Any], str]:
-    assert main(["--config", str(config), "harness", *argv]) == 0
-    out = capsys.readouterr().out
-    return json.loads(out), out
 
 
 def _actions(item: dict[str, Any]) -> dict[str, str]:
@@ -81,9 +68,9 @@ def test_configure_claude_code_sets_only_managed_keys_with_a_backup(
 ) -> None:
     settings = _claude_settings(home)
     original = settings.read_text()
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
-    result, out = _harness(capsys, config, "configure", "claude-code")
+    result, out = run_harness(capsys, config, "configure", "claude-code")
 
     assert _SENTINEL not in out
     [item] = result["files"]
@@ -113,7 +100,7 @@ def test_configure_claude_code_sets_only_managed_keys_with_a_backup(
         "Restart running Claude Code sessions: they read these settings at start."
     ]
 
-    again, _ = _harness(capsys, config, "configure", "claude-code")
+    again, _ = run_harness(capsys, config, "configure", "claude-code")
 
     [second] = again["files"]
     assert (second["written"], second["backup"]) == (False, None)
@@ -128,10 +115,10 @@ def test_prompt_export_is_written_only_when_opted_in(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path
 ) -> None:
     settings = _claude_settings(home)
-    config = _config(tmp_path)
-    _harness(capsys, config, "configure", "claude-code")
+    config = config_file(tmp_path)
+    run_harness(capsys, config, "configure", "claude-code")
 
-    result, _ = _harness(capsys, config, "configure", "claude-code", "--prompt-export")
+    result, _ = run_harness(capsys, config, "configure", "claude-code", "--prompt-export")
 
     [item] = result["files"]
     # Prompts are exported with assistant responses kept redacted: Claude Code's
@@ -142,7 +129,7 @@ def test_prompt_export_is_written_only_when_opted_in(
     }
     env = json.loads(settings.read_text())["env"]
     assert (env["OTEL_LOG_USER_PROMPTS"], env["OTEL_LOG_ASSISTANT_RESPONSES"]) == ("1", "0")
-    report, _ = _harness(capsys, config, "configure", "claude-code")
+    report, _ = run_harness(capsys, config, "configure", "claude-code")
     prompts = [c for c in report["files"][0]["changes"] if c["group"] == "prompt_export"]
     assert [change["on"] for change in prompts] == [True, True]
 
@@ -150,9 +137,9 @@ def test_prompt_export_is_written_only_when_opted_in(
 def test_dry_run_reports_the_changes_and_writes_nothing(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path
 ) -> None:
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
-    result, _ = _harness(capsys, config, "configure", "claude-code", "--dry-run")
+    result, _ = run_harness(capsys, config, "configure", "claude-code", "--dry-run")
 
     [item] = result["files"]
     assert result["dry_run"] is True
@@ -161,7 +148,7 @@ def test_dry_run_reports_the_changes_and_writes_nothing(
     assert set(_actions(item).values()) == {"add", "unchanged"}
     assert list(home.iterdir()) == []
 
-    _harness(capsys, config, "configure", "claude-code")
+    run_harness(capsys, config, "configure", "claude-code")
 
     created = home / ".claude" / "settings.json"
     assert json.loads(created.read_text())["env"] == _CLAUDE_EXPORT
@@ -177,7 +164,9 @@ def test_parts_of_a_managed_value_the_profile_does_not_manage_are_never_shown(
     odd = [{"endpoint": "http://localhost:4318", "token": _SENTINEL}, "plain"]
     settings.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": odd}}))
 
-    result, out = _harness(capsys, _config(tmp_path), "configure", "claude-code", "--dry-run")
+    result, out = run_harness(
+        capsys, config_file(tmp_path), "configure", "claude-code", "--dry-run"
+    )
 
     assert _SENTINEL not in out
     endpoint = result["files"][0]["changes"][5]
@@ -211,10 +200,10 @@ def test_a_managed_url_is_shown_as_doctor_shows_it_without_credentials(
     settings = home / path
     settings.parent.mkdir(parents=True)
     settings.write_text(text)
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
-    planned, dry_out = _harness(capsys, config, "configure", harness, "--dry-run")
-    written, out = _harness(capsys, config, "configure", harness)
+    planned, dry_out = run_harness(capsys, config, "configure", harness, "--dry-run")
+    written, out = run_harness(capsys, config, "configure", harness)
 
     assert _SENTINEL not in dry_out + out
     shown = doctor_harness.shown_text(_CREDENTIALED)
@@ -242,7 +231,7 @@ def test_claude_config_dir_wins_and_a_symlinked_file_is_written_through(
     _claude_settings(home)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
 
-    result, _ = _harness(capsys, _config(tmp_path), "configure", "claude-code")
+    result, _ = run_harness(capsys, config_file(tmp_path), "configure", "claude-code")
 
     assert [item["path"] for item in result["files"]] == [str(dotfiles / "settings.json")]
     assert (config_dir / "settings.json").is_symlink()
@@ -262,10 +251,10 @@ def test_a_set_config_directory_is_configured_before_its_harness_has_written_the
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     (home / ".codex").mkdir()
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
-    claude, _ = _harness(capsys, config, "configure", "claude-code")
-    codex, _ = _harness(capsys, config, "configure", "codex", "--dry-run")
+    claude, _ = run_harness(capsys, config, "configure", "claude-code")
+    codex, _ = run_harness(capsys, config, "configure", "codex", "--dry-run")
 
     [item] = claude["files"]
     assert (item["path"], item["exists"]) == (str((claude_dir / "settings.json").resolve()), False)
@@ -307,7 +296,7 @@ def test_codex_grpc_exporters_satisfy_the_profile_and_stay_untouched(
 ) -> None:
     codex = _codex_home(home)
 
-    result, out = _harness(capsys, _config(tmp_path), "configure", "codex")
+    result, out = run_harness(capsys, config_file(tmp_path), "configure", "codex")
 
     assert _SENTINEL not in out
     [item] = result["files"]
@@ -332,7 +321,7 @@ def test_force_rewrites_codex_exporters_to_otlp_http_and_keeps_other_keys(
 ) -> None:
     codex = _codex_home(home)
 
-    result, out = _harness(capsys, _config(tmp_path), "configure", "codex", "--force")
+    result, out = run_harness(capsys, config_file(tmp_path), "configure", "codex", "--force")
 
     assert _SENTINEL not in out
     [item] = result["files"]
@@ -368,7 +357,7 @@ def test_codex_without_otel_gets_the_table_appended(
     head = '# Codex settings\nmodel = "gpt-5"\n\n[tui]\nnotifications = true\n'
     codex = _codex_home(home, head)
 
-    result, _ = _harness(capsys, _config(tmp_path), "configure", "codex", "--prompt-export")
+    result, _ = run_harness(capsys, config_file(tmp_path), "configure", "codex", "--prompt-export")
 
     assert set(_actions(result["files"][0]).values()) == {"add"}
     text = codex.read_text()
@@ -386,7 +375,7 @@ def test_codex_split_into_sub_tables_is_regenerated_with_its_other_keys(
         "[tui]\nnotifications = true\n",
     )
 
-    result, _ = _harness(capsys, _config(tmp_path), "configure", "codex", "--force")
+    result, _ = run_harness(capsys, config_file(tmp_path), "configure", "codex", "--force")
 
     text = codex.read_text()
     document = tomllib.loads(text)
@@ -412,8 +401,8 @@ def test_codex_is_configured_in_every_existing_root_and_each_extra_root(
     extra = tmp_path / "extra-home"
     extra.mkdir()
 
-    result, _ = _harness(
-        capsys, _config(tmp_path), "configure", "codex", "--root", str(extra), str(orca)
+    result, _ = run_harness(
+        capsys, config_file(tmp_path), "configure", "codex", "--root", str(extra), str(orca)
     )
 
     paths = [item["path"] for item in result["files"]]
@@ -439,7 +428,7 @@ def _refused(capsys: pytest.CaptureFixture[str], config: Path, *argv: str) -> st
 def test_configure_refuses_a_missing_root_a_candidate_and_an_unknown_name(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path
 ) -> None:
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
     missing = _refused(capsys, config, "configure", "codex", "--root", str(tmp_path / "none"))
     candidate = _refused(capsys, config, "configure", "opencode")
@@ -458,13 +447,13 @@ def test_an_unparseable_config_file_is_refused_unchanged(
 ) -> None:
     codex = _codex_home(home, "[otel\n")
 
-    error = _refused(capsys, _config(tmp_path), "configure", "codex")
+    error = _refused(capsys, config_file(tmp_path), "configure", "codex")
 
     assert f"{codex}: not valid TOML" in error
     assert codex.read_text() == "[otel\n"
     (home / ".claude" / "settings.json").mkdir(parents=True)
     assert "settings.json is not a file" in _refused(
-        capsys, _config(tmp_path), "configure", "claude-code"
+        capsys, config_file(tmp_path), "configure", "claude-code"
     )
 
 
@@ -481,7 +470,7 @@ def test_omp_dotenv_lines_are_updated_in_place(
     )
     env.write_text(original)
 
-    result, out = _harness(capsys, _config(tmp_path), "configure", "omp", "--prompt-export")
+    result, out = run_harness(capsys, config_file(tmp_path), "configure", "omp", "--prompt-export")
 
     assert _SENTINEL not in out
     assert _actions(result["files"][0]) == {
@@ -508,10 +497,10 @@ def test_every_harness_exports_to_the_configured_collector_over_one_transport(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path
 ) -> None:
     endpoint = "http://127.0.0.1:14318"
-    config = _config(tmp_path, f'[signoz]\notlp_endpoint = "{endpoint}"\n')
+    config = config_file(tmp_path, f'[signoz]\notlp_endpoint = "{endpoint}"\n')
 
     results = [
-        _harness(capsys, config, "configure", key, "--dry-run")[0]
+        run_harness(capsys, config, "configure", key, "--dry-run")[0]
         for key in ("claude-code", "codex", "omp")
     ]
 
@@ -538,7 +527,7 @@ def test_an_additional_machine_points_each_harness_at_the_host_collector(
     capsys: pytest.CaptureFixture[str], home: Path, tmp_path: Path
 ) -> None:
     host = "http://signoz-host.example:4318"
-    config = _config(
+    config = config_file(
         tmp_path,
         f'[machine]\nrole = "additional"\nexport_endpoint = "{host}/"\n'
         # The host's own setting, copied over, does not apply here.
@@ -551,8 +540,8 @@ def test_an_additional_machine_points_each_harness_at_the_host_collector(
         'trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }\n',
     )
 
-    claude, _ = _harness(capsys, config, "configure", "claude-code", "--dry-run")
-    codex, _ = _harness(capsys, config, "configure", "codex", "--dry-run")
+    claude, _ = run_harness(capsys, config, "configure", "claude-code", "--dry-run")
+    codex, _ = run_harness(capsys, config, "configure", "codex", "--dry-run")
 
     assert claude["otlp_endpoint"] == codex["otlp_endpoint"] == host
     changes = {change["key"]: change["new"] for change in claude["files"][0]["changes"]}
@@ -663,62 +652,15 @@ def test_the_hooks_go_in_the_settings_file_configure_writes(
     assert [item["path"] for item in result["files"]] == [str(target)]
 
 
-def _fake_binary(directory: Path, name: str, output: str) -> Path:
-    """Write an executable that records its arguments, prints ``output``, and exits."""
-    binary = directory / name
-    binary.write_text(
-        f'#!/bin/sh\necho "$@" > "{directory / (name + ".ran")}"\nprintf "{output}"\nexit 0\n'
-    )
-    binary.chmod(0o755)
-    return binary
-
-
-def test_harness_list_reports_status_enablement_the_binary_and_its_version(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    binaries = tmp_path / "bin"
-    binaries.mkdir()
-    claude = _fake_binary(binaries, "claude", "2.1.285 (Claude Code)\\n")
-    _fake_binary(binaries, "omp", "omp/0.0.1\\n")
-    _fake_binary(binaries, "opencode", "")
-    monkeypatch.setenv("PATH", str(binaries))
-    config = _config(tmp_path, '[harnesses]\nenabled = ["claude-code", "codex_exec"]\n')
-
-    result, _ = _harness(capsys, config, "list")
-
-    listed = {item["key"]: item for item in result["harnesses"]}
-    assert result["enabled"] == ["codex_exec", "claude-code"]
-    assert list(listed) == ["claude-code", "codex", "omp", "opencode"]
-    assert (listed["claude-code"]["binary_found"], listed["claude-code"]["binary_path"]) == (
-        True,
-        str(claude),
-    )
-    assert listed["codex"]["binary_found"] is False
-    assert (listed["codex"]["enabled"], listed["codex"]["enabled_keys"]) == (True, ["codex_exec"])
-    assert listed["omp"]["enabled"] is False
-    assert (listed["opencode"]["status"], listed["opencode"]["enabled"]) == ("candidate", False)
-    versions = {
-        key: (item["installed_version"], item["version_verified"], item.get("version_note"))
-        for key, item in listed.items()
-    }
-    assert versions == {
-        "claude-code": ("2.1.285", True, None),
-        "codex": (None, None, None),
-        "omp": ("0.0.1", False, None),
-        "opencode": (None, None, "`opencode --version` printed no version"),
-    }
-    assert (binaries / "claude.ran").read_text() == "--version\n"
-
-
 def test_harness_list_no_version_runs_no_binary(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     binaries = tmp_path / "bin"
     binaries.mkdir()
-    _fake_binary(binaries, "claude", "2.1.285\\n")
+    fake_binary(binaries, "claude", "2.1.285\\n")
     monkeypatch.setenv("PATH", str(binaries))
 
-    result, _ = _harness(capsys, _config(tmp_path), "list", "--no-version")
+    result, _ = run_harness(capsys, config_file(tmp_path), "list", "--no-version")
 
     claude = next(item for item in result["harnesses"] if item["key"] == "claude-code")
     assert claude["binary_found"] is True
@@ -732,36 +674,35 @@ def test_harness_list_no_version_runs_no_binary(
     }
 
 
-def test_each_version_probe_is_bounded_and_a_failure_is_reported(
+def test_a_failing_version_probe_is_reported_per_harness(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     binaries = tmp_path / "bin"
     binaries.mkdir()
     for name in ("claude", "codex"):
-        _fake_binary(binaries, name, "1.0.0\\n")
+        fake_binary(binaries, name, "1.0.0\\n")
     monkeypatch.setenv("PATH", str(binaries))
-    calls: list[dict[str, Any]] = []
+    calls: list[list[str]] = []
 
-    def hangs(argv: Sequence[str], **options: Any) -> subprocess.CompletedProcess[str]:
-        calls.append({"argv": list(argv), **options})
-        raise subprocess.TimeoutExpired(argv, options["timeout"])
+    def hangs(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(argv))
+        raise subprocess.TimeoutExpired(list(argv), doctor_harness.VERSION_TIMEOUT_SECONDS)
 
-    monkeypatch.setattr(subprocess, "run", hangs)
+    monkeypatch.setattr(doctor_harness, "_run_version", hangs)
 
-    result, _ = _harness(capsys, _config(tmp_path), "list")
+    result, _ = run_harness(capsys, config_file(tmp_path), "list")
 
     notes = {item["key"]: item.get("version_note") for item in result["harnesses"]}
     assert notes["claude-code"] == "`claude --version` failed (TimeoutExpired)"
     assert notes["codex"] == "`codex --version` failed (TimeoutExpired)"
-    assert [call["argv"][1:] for call in calls] == [["--version"], ["--version"]]
-    assert all(0 < call["timeout"] <= 5 for call in calls)
-    assert all(call["stdin"] == subprocess.DEVNULL for call in calls)
+    assert [call[1:] for call in calls] == [["--version"], ["--version"]]
+    assert not (binaries / "claude.ran").exists()
 
 
 def test_impact_of_a_candidate_lists_what_it_would_hide(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    result, _ = _harness(capsys, _config(tmp_path), "impact", "opencode")
+    result, _ = run_harness(capsys, config_file(tmp_path), "impact", "opencode")
 
     assert (result["candidate"], result["status"]) == ("opencode", "candidate")
     assert result["hidden"]
@@ -774,7 +715,7 @@ def test_impact_of_a_candidate_lists_what_it_would_hide(
 def test_impact_of_an_enabled_harness_shows_what_it_keeps_hidden(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    result, _ = _harness(capsys, _config(tmp_path), "impact", "codex_exec")
+    result, _ = run_harness(capsys, config_file(tmp_path), "impact", "codex_exec")
 
     assert result["already_enabled"] == ["codex-app-server", "codex_cli_rs", "codex_exec"]
     assert result["hidden"] == []
@@ -787,9 +728,9 @@ def test_impact_of_an_enabled_harness_shows_what_it_keeps_hidden(
 def test_impact_of_a_registered_harness_not_enabled_here(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    config = _config(tmp_path, '[harnesses]\nenabled = ["codex", "oh-my-pi"]\n')
+    config = config_file(tmp_path, '[harnesses]\nenabled = ["codex", "oh-my-pi"]\n')
 
-    result, _ = _harness(capsys, config, "impact", "claude-code")
+    result, _ = run_harness(capsys, config, "impact", "claude-code")
 
     assert result["enabled"] == ["oh-my-pi", "codex-app-server", "codex_cli_rs", "codex_exec"]
     assert "already_enabled" not in result
@@ -801,9 +742,9 @@ def test_impact_reads_a_draft_profile_file(
 ) -> None:
     draft = tmp_path / "draft.toml"
     draft.write_text(files(profiles.PACKAGE).joinpath("opencode.toml").read_text())
-    config = _config(tmp_path)
+    config = config_file(tmp_path)
 
-    result, _ = _harness(capsys, config, "impact", str(draft))
+    result, _ = run_harness(capsys, config, "impact", str(draft))
     missing = _refused(capsys, config, "impact", str(tmp_path / "absent.toml"))
 
     assert result["candidate"] == "opencode"

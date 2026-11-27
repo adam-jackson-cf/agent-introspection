@@ -2,15 +2,18 @@ import io
 import json
 import subprocess
 import urllib.error
-import urllib.request
 from collections.abc import Sequence
 from email.message import Message
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_introspection import classify, cli_facts
+from agent_introspection import classify, cli_facts, facts
+from agent_introspection.cli import main
 from agent_introspection.config import parse_config
+from tests.support.cli_config import config_file
+from tests.support.http_response import CannedResponse
 
 PROMPT = "no, you ignored me: use uv, not pip. token=supersecret123"
 
@@ -153,7 +156,7 @@ def test_http_poster_closes_the_error_response_and_withholds_its_body(
     def failing(request: object, timeout: float) -> None:
         raise urllib.error.HTTPError("http://jev", status, "err", Message(), body)
 
-    monkeypatch.setattr(urllib.request, "urlopen", failing)
+    monkeypatch.setattr(classify, "_urlopen", failing)
 
     with pytest.raises(error, match=str(status)) as raised:
         classify.http_poster(b"{}", "key")
@@ -227,29 +230,37 @@ def test_no_key_command_names_the_setting_even_with_a_key_in_the_environment(
 
 
 def test_labels_resolve_the_key_with_the_configured_command(
-    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    asked: list[Sequence[str] | None] = []
+    commands = KeyCommands(security=printed("k\n"))
+    sent: list[tuple[str | None, float]] = []
 
-    def run(_run_sql: object, *, days: int, limit: int, key: classify.KeySource) -> dict[str, Any]:
-        return {"key": key(), "days": days, "limit": limit}
+    def post(request: Any, timeout: float) -> CannedResponse:
+        sent.append((request.get_header("Authorization"), timeout))
+        return CannedResponse(json.dumps(jev_response()).encode())
 
-    def api_key(key_command: Sequence[str] | None = None) -> str:
-        asked.append(key_command)
-        return "k"
+    ch = FakeClickHouse(pending("a"))
+    monkeypatch.setattr(facts, "runner", lambda _config: ch)
+    monkeypatch.setattr(classify, "_run_key_command", commands)
+    monkeypatch.setattr(classify, "_urlopen", post)
+    config = config_file(tmp_path)
+    config.write_text(
+        config.read_text() + '[labels]\nopenrouter_key_command = ["security", "-w"]\n'
+    )
 
-    monkeypatch.setattr(classify, "run", run)
-    monkeypatch.setattr(classify, "api_key", api_key)
-    config = parse_config({"labels": {"openrouter_key_command": ["security", "-w"]}})
+    assert main(["--config", str(config), "facts", "classify", "--days", "5", "--limit", "7"]) == 0
 
-    labels = cli_facts._labels(FakeClickHouse(), config, days=5, limit=7)
-    assert labels == {"key": "k", "days": 5, "limit": 7}
-    assert asked == [("security", "-w")]
+    assert json.loads(capsys.readouterr().out)["labelled"] == 1
+    assert "INTERVAL 5 DAY" in ch.statements[0]
+    assert "LIMIT 7\n" in ch.statements[0]
+    assert commands.ran == [("security", "-w")]
+    assert sent == [("Bearer k", classify.TIMEOUT_SECONDS)]
 
 
-def test_labels_are_off_without_a_key_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(classify, "run", lambda *_args, **_kwargs: pytest.fail("ran"))
+def test_labels_are_off_without_a_key_command() -> None:
+    ch = FakeClickHouse(pending("a"))
 
-    labels = cli_facts._labels(FakeClickHouse(), parse_config({}))
+    labels = cli_facts._labels(ch, parse_config({}))
 
     assert labels["status"] == "off"
+    assert ch.statements == []

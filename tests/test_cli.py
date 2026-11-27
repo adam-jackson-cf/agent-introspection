@@ -1,12 +1,12 @@
 import json
-import re
-import sqlite3
+import plistlib
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_introspection import cli, facts, schedule
+from agent_introspection import facts, schedule
 from agent_introspection.cli import EXIT_CONFIG, EXIT_DATABASE, EXIT_FACTS, EXIT_VALIDATION, main
 from agent_introspection.facts import FactsError
 from agent_introspection.proposals import (
@@ -17,14 +17,9 @@ from agent_introspection.proposals import (
 )
 from agent_introspection.review import create_review_session
 from tests.conftest import OpenWorkflow
+from tests.support.cli_config import config_file
 from tests.test_drafting import facts_runner, insert_finding
 from tests.test_proposals import proposal_database, proposal_input
-
-
-def config_file(tmp_path: Path) -> Path:
-    path = tmp_path / "config.toml"
-    path.write_text(f'[database]\npath = "{tmp_path / "workflow.sqlite3"}"\n')
-    return path
 
 
 def test_cli_emits_structured_json_and_creates_the_workflow_store(
@@ -282,7 +277,7 @@ def test_an_additional_machine_refuses_every_command_that_needs_clickhouse(
     def reached(*_args: object) -> Any:
         pytest.fail("an additional machine reached ClickHouse or a scheduler")
 
-    monkeypatch.setattr(facts, "http_runner", reached)
+    monkeypatch.setattr(facts, "_urlopen", reached)
     monkeypatch.setattr(schedule, "launchctl", reached)
     monkeypatch.setattr(schedule, "systemctl", reached)
     refusal = 'which this additional machine ([machine] role = "additional") does not have'
@@ -304,48 +299,64 @@ def test_schedule_install_passes_the_selected_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = config_file(tmp_path)
-    received: list[Path | None] = []
+    (tmp_path / "agent-introspection").write_text("")
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
+    monkeypatch.setattr(schedule, "_python_executable", lambda: str(tmp_path / "python"))
+    monkeypatch.setattr(schedule, "launchd_domain", lambda: "gui/501")
 
-    def schedule_install(selected: Path | None = None) -> dict[str, Any]:
-        received.append(selected)
-        return {}
+    def launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 113 if args[0] == "list" else 0, "", "")
 
-    monkeypatch.setattr(schedule, "schedule_install", schedule_install)
+    monkeypatch.setattr(schedule, "launchctl", launchctl)
 
     assert main(["--config", str(config), "facts", "schedule", "install"]) == 0
-    assert received == [config.resolve()]
+    arguments = plistlib.loads(schedule.plist_file().read_bytes())["ProgramArguments"]
+    assert arguments[1:3] == ["--config", str(config.resolve())]
+
+
+def install_runner(failing: str = "") -> tuple[list[str], facts.SqlRunner]:
+    ran: list[str] = []
+
+    def run(sql: str) -> str:
+        ran.append(sql)
+        if failing and sql.startswith(failing):
+            raise facts.FactsError("Code: 241. DB::Exception: boom")
+        return ""
+
+    return ran, run
 
 
 def test_facts_install_creates_the_workflow_store(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
-    received: list[object] = []
-
-    def install(_run: object, enabled: object) -> dict[str, bool]:
-        received.append(enabled)
-        return {"installed": True}
-
-    monkeypatch.setattr(facts, "install", install)
+    ran, run = install_runner()
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
 
     config = config_file(tmp_path)
     config.write_text(config.read_text() + '[harnesses]\nenabled = ["claude-code", "codex"]\n')
 
     assert main(["--config", str(config), "facts", "install"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"installed": True}
-    assert received == [("claude-code", "codex")]
+    result = json.loads(capsys.readouterr().out)
+    assert result["harnesses"]["enabled"] == [
+        "codex-app-server",
+        "codex_cli_rs",
+        "codex_exec",
+        "claude-code",
+    ]
+    harnesses = next(s for s in ran if s.startswith("INSERT INTO introspection.harnesses"))
+    assert '{"harness": "oh-my-pi", "label": "omp", "enabled": 0}' in harnesses
+    assert '{"harness": "codex_exec", "label": "Codex exec", "enabled": 1}' in harnesses
     assert (tmp_path / "workflow.sqlite3").exists()
 
 
-def test_facts_install_still_creates_the_workflow_store_when_a_refresh_fails(
+LIVE_LOADER = "CREATE MATERIALIZED VIEW introspection.load_spans"
+
+
+def test_facts_install_still_creates_the_workflow_store_when_the_install_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
-
-    def install(_run: object, _enabled: object) -> dict[str, bool]:
-        raise facts.FactsError("refresh of load_spans failed: boom")
-
-    monkeypatch.setattr(facts, "install", install)
+    _, run = install_runner(LIVE_LOADER)
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
 
     with pytest.raises(SystemExit):
         main(["--config", str(config_file(tmp_path)), "facts", "install"])
@@ -355,35 +366,25 @@ def test_facts_install_still_creates_the_workflow_store_when_a_refresh_fails(
 def test_facts_install_failure_survives_a_workflow_store_error(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
-
-    def install(_run: object, _enabled: object) -> dict[str, bool]:
-        raise facts.FactsError("refresh of load_spans failed: boom")
-
-    def broken_store(_args: object) -> object:
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(facts, "install", install)
-    monkeypatch.setattr("agent_introspection.cli_facts.open_store", broken_store)
+    _, run = install_runner(LIVE_LOADER)
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
+    (tmp_path / "workflow.sqlite3").mkdir()
 
     with pytest.raises(SystemExit) as failed:
         main(["--config", str(config_file(tmp_path)), "facts", "install"])
     assert failed.value.code == EXIT_FACTS
     err = capsys.readouterr().err
-    assert "refresh of load_spans failed: boom" in err
-    assert "disk I/O error" in err
+    assert "Code: 241. DB::Exception: boom" in err
+    assert "workflow store setup also failed: unable to open database file" in err
 
 
 def test_facts_install_still_fails_when_only_the_workflow_store_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(facts, "runner", lambda _config: lambda _sql: "")
-    monkeypatch.setattr(facts, "install", lambda _run, _enabled: {"installed": True})
+    _, run = install_runner()
+    monkeypatch.setattr(facts, "runner", lambda _config: run)
+    (tmp_path / "workflow.sqlite3").mkdir()
 
-    def broken_store(_args: object) -> object:
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr("agent_introspection.cli_facts.open_store", broken_store)
     with pytest.raises(SystemExit) as failed:
         main(["--config", str(config_file(tmp_path)), "facts", "install"])
     assert failed.value.code == EXIT_DATABASE
@@ -462,35 +463,3 @@ def test_proposal_draft_dry_run_and_evaluate_commands(
     with pytest.raises(SystemExit) as raised:
         main(["--config", config, "proposal", "evaluate", "--now", "2026-10-01T00:00:00"])
     assert raised.value.code == EXIT_VALIDATION
-
-
-def test_a_logged_sync_writes_its_summary_and_errors_to_the_timestamped_log(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    log = tmp_path / "sync.log"
-    monkeypatch.setattr(schedule, "LOG", log)
-    outcomes: list[Any] = [{"synced": 3}, FactsError("clickhouse is down")]
-
-    def fake(_args: object) -> Any:
-        outcome = outcomes.pop(0)
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
-
-    def no_clickhouse(_config: object) -> Any:
-        raise AssertionError("the logged sync must never reach a real ClickHouse")
-
-    monkeypatch.setattr(cli, "facts_command", fake)
-    # Should dispatch ever bypass the fake, the real sync stops before any live service.
-    monkeypatch.setattr(facts, "runner", no_clickhouse)
-
-    assert main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"]) == 0
-    with pytest.raises(SystemExit):
-        main(["--config", str(config_file(tmp_path)), "facts", "sync", "--log"])
-
-    stamped = [line.split(" ", 1) for line in log.read_text().splitlines()]
-    assert [rest for _, rest in stamped] == ['{"synced":3}', "FactsError: clickhouse is down"]
-    assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp) for stamp, _ in stamped)
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""

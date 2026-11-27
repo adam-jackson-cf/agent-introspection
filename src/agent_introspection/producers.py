@@ -39,7 +39,6 @@ DEFAULT_DAYS = 7
 NAME_LIMIT = 200
 FINGERPRINT_LIMIT = 5000
 EVIDENCE_LIMIT = 10
-FINGERPRINT_DIR = hooks.DATA_DIR / "fingerprints"
 FINGERPRINT_SCHEMA = "agent-introspection.producer-fingerprint/1"
 FINGERPRINT_KINDS = ("span_names", "event_names", "attribute_keys")
 # Discovery order: harnesses first, the tool's own records next to last.
@@ -698,6 +697,10 @@ def write_draft(draft: Mapping[str, Any], path: Path, *, force: bool = False) ->
 
 
 # --- Fingerprints and drift ------------------------------------------------------------
+
+
+def fingerprint_dir() -> Path:
+    return hooks.data_dir() / "fingerprints"
 
 
 def _fingerprint_of(telemetry: Telemetry, service: str, days: int) -> dict[str, Any]:

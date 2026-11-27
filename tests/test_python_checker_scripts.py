@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.boundary
+
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 

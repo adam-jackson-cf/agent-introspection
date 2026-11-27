@@ -13,7 +13,7 @@ turn was running); their text reaches the Jev classifier through the producers' 
 OTLP prompt events, which ``facts sync`` labels (``classify.py``).
 
 Turn state: Claude Code and omp have no native "a turn is running" flag on the
-prompt hook, so a small per-session marker file under ``STATE_DIR`` is created
+prompt hook, so a small per-session marker file under ``state_dir()`` is created
 when a prompt is submitted and removed when the turn stops (Claude ``Stop`` /
 ``StopFailure``). A marker older than
 ``TURN_STALE_SECONDS`` counts as closed (the harness may have exited mid-turn).
@@ -38,10 +38,6 @@ from typing import Any
 from agent_introspection.command_shape import command_shape, command_tokens
 
 SCHEMA = "agent-introspection.hook-event/1"
-DATA_DIR = Path.home() / ".local/share/agent-introspection"
-INBOX = DATA_DIR / "hook-inbox"
-STATE_DIR = DATA_DIR / "hook-state"
-LOG = DATA_DIR / "hooks.log"
 TURN_STALE_SECONDS = 6 * 3600
 MAX_TARGETS = 20
 TARGET_CHARS = 300
@@ -51,6 +47,27 @@ PRODUCERS = ("claude-code", "omp")
 type Record = dict[str, Any]
 type Attrs = dict[str, Any]
 type Envelope = dict[str, Any]
+
+
+def data_dir() -> Path:
+    return Path.home() / ".local/share/agent-introspection"
+
+
+def inbox_dir() -> Path:
+    return data_dir() / "hook-inbox"
+
+
+def state_dir() -> Path:
+    return data_dir() / "hook-state"
+
+
+def log_file() -> Path:
+    return data_dir() / "hooks.log"
+
+
+def read_stdin() -> str:
+    return sys.stdin.read()
+
 
 # --- Derivations mirrored from facts_sql/select_logs.sql -------------------------
 
@@ -225,7 +242,7 @@ type Clock = Callable[[], datetime]
 class Context:
     """Where turn state lives, and the clock records are stamped with."""
 
-    state_dir: Path = field(default_factory=lambda: STATE_DIR)
+    state_dir: Path = field(default_factory=state_dir)
     now: Clock = field(default=lambda: datetime.now(UTC))
 
 
@@ -565,7 +582,7 @@ def atomic_write(destination: Path, content: str) -> None:
 
 def write(item: Record, inbox: Path | None = None) -> Path:
     """Write one record to the inbox atomically (temporary file, then rename)."""
-    inbox = inbox or INBOX
+    inbox = inbox or inbox_dir()
     inbox.mkdir(parents=True, exist_ok=True)
     destination = inbox / f"{item['event_id']}.json"
     atomic_write(destination, json.dumps(item, separators=(",", ":")) + "\n")
@@ -575,8 +592,9 @@ def write(item: Record, inbox: Path | None = None) -> Path:
 def log(producer: str, hook_event: str, problem: str) -> None:
     """Append ``<UTC> <producer> <hook_event> <problem>`` to the hook log; never raises."""
     try:
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as handle:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{timestamp(datetime.now(UTC))} {producer} {hook_event} {problem}\n")
     except OSError:
         pass
@@ -599,7 +617,7 @@ def main(producer: str, hook_event: str, config: Path | None = None) -> int:
     timeout.
     """
     try:
-        envelope = json.loads(sys.stdin.read())
+        envelope = json.loads(read_stdin())
         if not isinstance(envelope, dict):
             raise ValueError("envelope must be a JSON object")
         for item in iter_records(producer, hook_event, envelope):

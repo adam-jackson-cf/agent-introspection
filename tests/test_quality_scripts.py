@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.boundary
+
 _SCRIPTS = Path(__file__).parents[1] / "scripts"
 _PRE_COMMIT = """repos:
   - repo: local

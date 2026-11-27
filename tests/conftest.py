@@ -87,13 +87,10 @@ def collector() -> Iterator[Collector]:
 
 
 @pytest.fixture
-def inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def inbox(monkeypatch: pytest.MonkeyPatch) -> Path:
     """An isolated record spool and hook log, with no OTEL endpoint in the environment."""
     from agent_introspection import hooks
 
-    directory = tmp_path / "data" / "hook-inbox"
-    monkeypatch.setattr(hooks, "INBOX", directory)
-    monkeypatch.setattr(hooks, "LOG", tmp_path / "data" / "hooks.log")
     for name in (
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
@@ -101,4 +98,4 @@ def inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
     ):
         monkeypatch.delenv(name, raising=False)
-    return directory
+    return hooks.inbox_dir()

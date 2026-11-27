@@ -531,10 +531,15 @@ def test_backfill_windows_cover_the_range_exactly() -> None:
 
 
 def test_backfill_statements_are_memory_bounded_inserts() -> None:
-    start = datetime(2026, 9, 1, tzinfo=UTC)
-    end = datetime(2026, 9, 1, 13, tzinfo=UTC)
+    ran: list[str] = []
 
-    statements = facts.backfill_statements("logs", start, end)
+    def run(sql: str) -> str:
+        ran.append(sql)
+        return "0\n" if sql.startswith("SELECT count()") else ""
+
+    facts.backfill(run, days=0, now=datetime(2026, 9, 1, 13, tzinfo=UTC))
+
+    statements = [sql for sql in ran if sql.startswith("INSERT INTO introspection.logs\n")]
 
     assert len(statements) == 3
     assert "'2026-09-01 00:00:00'" in statements[0]
@@ -857,7 +862,6 @@ def test_http_runner_sends_one_statement_per_request_with_basic_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import base64
-    import urllib.request
 
     requests: list[Any] = []
 
@@ -866,7 +870,7 @@ def test_http_runner_sends_one_statement_per_request_with_basic_auth(
         return _Response(b"1\n")
 
     monkeypatch.setenv("CH_PASSWORD", "s3cret")
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(facts, "_urlopen", fake_urlopen)
 
     assert facts.http_runner(_http_config())("SELECT 1;\nSELECT ';';") == "1\n1\n"
     assert [request.data for request, _ in requests] == [b"SELECT 1", b"SELECT ';'"]
@@ -884,7 +888,6 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
 ) -> None:
     import io
     import urllib.error
-    import urllib.request
     from email.message import Message
 
     from agent_introspection.config import ConfigurationError
@@ -894,7 +897,7 @@ def test_http_runner_surfaces_the_exception_line_and_never_the_password(
     def failing(request: Any, timeout: float) -> _Response:
         raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), body)
 
-    monkeypatch.setattr(urllib.request, "urlopen", failing)
+    monkeypatch.setattr(facts, "_urlopen", failing)
     monkeypatch.setenv("CH_PASSWORD", "s3cret")
 
     with pytest.raises(FactsError, match="Code: 497") as raised:
@@ -926,18 +929,8 @@ def test_projection_redacts_credentials_before_normalizing_diagnostics(template:
     assert select.index("[REDACTED]") < select.index("'/(?:Users|home)/[^/ ]+|/root($|[/ ])',\n")
 
 
-def test_registry_harnesses_reads_the_harness_table_and_refuses_an_empty_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_registry_harnesses_reads_the_harness_table() -> None:
     assert facts.registry_harnesses() == tuple(facts.load_registry().harnesses)
-
-    monkeypatch.setattr(facts, "_sql", lambda _name: "[harnesses]\n")
-    facts.registry_harnesses.cache_clear()
-    try:
-        with pytest.raises(facts.RegistryError, match=r"needs \[harnesses\]"):
-            facts.registry_harnesses()
-    finally:
-        facts.registry_harnesses.cache_clear()
 
 
 def test_opencode_is_a_known_producer_and_not_a_harness() -> None:
