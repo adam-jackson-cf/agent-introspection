@@ -24,4 +24,3 @@ Start at the root [README](../README.md) for install and first run.
 - [features/](features/pipeline.md): one page per dashboard feature, how to reach and drive it, and the tests that prove it (anyone checking a feature).
 - [ux/](ux/AGENTS.md): design and UX standards; `ux/AGENTS.md` is the index.
 - [todo/](todo/decision-models-plan.md): proposed, unscheduled plans.
-- [guardrails/](guardrails/): machine JSON read by `validate-rule-coverage.py`, the repo's lint-rule ledger; not the dashboard's Guardrails page.
