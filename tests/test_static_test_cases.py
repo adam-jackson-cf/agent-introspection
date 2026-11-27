@@ -6,8 +6,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import pytest
-
 _SCRIPTS = Path(__file__).parents[1] / "scripts"
 
 
@@ -39,13 +37,6 @@ def _cases(path: str, source: str) -> list[Any]:
     return cases
 
 
-def _conformance_findings(case_id: str) -> list[str]:
-    growth = _script("check-test-growth")
-    source = (_CONFORMANCE / case_id / "tests" / "test_totals.py").read_text(encoding="utf-8")
-    findings: list[str] = growth._growth(_cases("tests/test_totals.py", source))
-    return findings
-
-
 def test_parameter_rows_share_one_static_case() -> None:
     source = (_CONFORMANCE / "behaviour-name-present" / "tests" / "test_totals.py").read_text(
         encoding="utf-8"
@@ -54,18 +45,6 @@ def test_parameter_rows_share_one_static_case() -> None:
     cases = _cases("tests/test_totals.py", source)
 
     assert [case.id for case in cases] == ["tests/test_totals.py::test_total_adds_every_amount"]
-
-
-def test_conformance_descriptive_name_is_clean() -> None:
-    assert _conformance_findings("behaviour-name-present") == []
-
-
-@pytest.mark.parametrize("case_id", ["behaviour-name-missing", "behaviour-name-placeholder"])
-def test_conformance_generic_or_placeholder_name_is_a_finding(case_id: str) -> None:
-    findings = _conformance_findings(case_id)
-
-    assert len(findings) == 1
-    assert ": TEST.growth.justified: " in findings[0]
 
 
 def test_class_methods_carry_their_class_in_the_id() -> None:

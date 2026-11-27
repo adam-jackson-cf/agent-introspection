@@ -54,15 +54,19 @@ def tokens(name: str) -> set[str]:
     return {part.lower() for part in WORD_SPLIT.split(name) if part}
 
 
+def marker_tokens(layout_table: dict[str, object]) -> frozenset[str]:
+    return frozenset(
+        token.lower() for token in strings(layout_table, "test_marker_tokens", "layout")
+    )
+
+
 def load_scope(root: Path) -> Scope:
     layout_table = table(load_proofs(root), "layout")
     patterns = strings(layout_table, "test_file_patterns", "layout")
     support = string(layout_table, "support_dir", "layout")
     fixtures = string(layout_table, "fixtures_dir", "layout")
     support_files = strings(layout_table, "support_files", "layout")
-    markers = frozenset(
-        token.lower() for token in strings(layout_table, "test_marker_tokens", "layout")
-    )
+    markers = marker_tokens(layout_table)
     test_root = support.rsplit("/", 1)[0]
 
     def is_test(path: str) -> bool:

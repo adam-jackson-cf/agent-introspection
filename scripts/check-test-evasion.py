@@ -303,6 +303,11 @@ def source_findings(raw: str) -> list[Finding]:
     return [Finding(raw, 0, raw, "is not a Python or TypeScript test source")]
 
 
+def unapproved(findings: list[Finding], document: dict[str, object]) -> list[Finding]:
+    approved = approved_paths(document, RULE)
+    return [finding for finding in findings if finding.test_id not in approved]
+
+
 def _split(argv: list[str]) -> tuple[list[str], list[str], str | None]:
     reports: list[str] = []
     paths: list[str] = []
@@ -340,10 +345,7 @@ def collect(root: Path, argv: list[str]) -> tuple[list[Finding], int]:
             findings.extend(config_findings(root, patterns))
         for raw in paths:
             findings.extend(source_findings(raw))
-    approved = approved_paths(load_proofs(root), RULE)
-    return [finding for finding in findings if finding.test_id not in approved], len(paths) + len(
-        reports
-    )
+    return unapproved(findings, load_proofs(root)), len(paths) + len(reports)
 
 
 def main(argv: list[str]) -> int:
