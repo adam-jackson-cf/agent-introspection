@@ -1,0 +1,8 @@
+{
+  "name": "fixture-dashboard",
+  "packageManager": "bun@1.3.0",
+  "version": "1.0.0",
+  "dependencies": {
+    "react": "19.1.1"
+  }
+}
