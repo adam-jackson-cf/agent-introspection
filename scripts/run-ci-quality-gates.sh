@@ -40,7 +40,7 @@ tracked() {
 }
 
 python_scope() {
-  uv run python scripts/list-python-scope.py
+  uv run python -B scripts/list-python-scope.py
 }
 
 scanned=()
@@ -61,17 +61,17 @@ check_dependency_audit() { uv run python scripts/check-dependency-audit.py "$@";
 check_ruff_format() {
   local files=("$@")
   ((${#files[@]})) || { scan python_scope; files=("${scanned[@]}"); }
-  uv run ruff format --check "${files[@]}"
+  uv run ruff format --check --no-cache "${files[@]}"
 }
 
 check_ruff() {
   local files=("$@")
   ((${#files[@]})) || { scan python_scope; files=("${scanned[@]}"); }
-  uv run ruff check --no-fix "${files[@]}"
+  uv run ruff check --no-fix --no-cache "${files[@]}"
 }
 
-check_mypy() { uv run python scripts/check-python-mypy.py "$@"; }
-check_python_suppressions() { uv run python scripts/check-python-suppressions.py "$@"; }
+check_mypy() { uv run python -B scripts/check-python-mypy.py "$@"; }
+check_python_suppressions() { uv run python -B scripts/check-python-suppressions.py "$@"; }
 check_python_quality() { uv run python scripts/check-python-quality.py "$@"; }
 check_python_scalability() { uv run python scripts/check-python-scalability.py "$@"; }
 

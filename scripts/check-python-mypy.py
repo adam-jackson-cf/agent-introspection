@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import re
 import subprocess
 import sys
@@ -91,7 +92,16 @@ def coverage_problems(root: Path, config: Path) -> list[str]:
 
 
 def _mypy(config: Path, root: Path, targets: list[str]) -> int:
-    command = [sys.executable, "-m", "mypy", "--config-file", str(config), *targets]
+    command = [
+        sys.executable,
+        "-m",
+        "mypy",
+        "--config-file",
+        str(config),
+        "--cache-dir",
+        os.devnull,
+        *targets,
+    ]
     return subprocess.run(command, cwd=root, check=False).returncode
 
 
