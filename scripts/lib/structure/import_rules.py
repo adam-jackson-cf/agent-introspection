@@ -8,7 +8,7 @@ from pathlib import Path
 
 from lib import filesystem
 from lib.structure.finding import Finding
-from lib.structure.settings import Settings
+from lib.structure.settings import Layering, Settings
 
 DIRECTION = "STRUCT.dependency-direction"
 SIBLING = "STRUCT.sibling-isolation"
@@ -120,9 +120,9 @@ def build_graph(root: Path, settings: Settings, head_paths: tuple[str, ...]) -> 
     )
 
 
-def _unmapped(settings: Settings, graph: ImportGraph, parts: set[str]) -> Iterator[Finding]:
-    tiers = ", ".join(settings.tiers)
-    for part in sorted(parts - set(settings.tier_of)):
+def _unmapped(layering: Layering, graph: ImportGraph, parts: set[str]) -> Iterator[Finding]:
+    tiers = ", ".join(layering.tiers)
+    for part in sorted(parts - set(layering.tier_of)):
         if part in graph.part_files:
             yield Finding(
                 graph.part_files[part][0],
@@ -130,19 +130,19 @@ def _unmapped(settings: Settings, graph: ImportGraph, parts: set[str]) -> Iterat
                 DIRECTION,
                 "unmapped",
                 f"module part '{part}' has no tier",
-                f"have the owner add '{part}' to one [structure].tier_modules list ({tiers})",
+                f"have the owner add '{part}' to one {layering.table} list ({tiers})",
             )
 
 
-def _sibling_fix(settings: Settings, rank: int) -> str:
+def _sibling_fix(layering: Layering, rank: int) -> str:
     if rank:
-        return f"move the shared code into '{settings.tiers[rank - 1]}' and import it from both"
+        return f"move the shared code into '{layering.tiers[rank - 1]}' and import it from both"
     return "merge the two parts, or move the shared code into a lower tier both read"
 
 
-def _edge_finding(settings: Settings, edge: Edge) -> Iterator[Finding]:
-    rank = {tier: index for index, tier in enumerate(settings.tiers)}
-    source, target = settings.tier_of[edge.source], settings.tier_of[edge.target]
+def _edge_finding(layering: Layering, edge: Edge) -> Iterator[Finding]:
+    rank = {tier: index for index, tier in enumerate(layering.tiers)}
+    source, target = layering.tier_of[edge.source], layering.tier_of[edge.target]
     if rank[source] < rank[target]:
         yield Finding(
             edge.path,
@@ -160,17 +160,17 @@ def _edge_finding(settings: Settings, edge: Edge) -> Iterator[Finding]:
             SIBLING,
             "same-tier",
             f"{edge.source} imports its '{source}' sibling {edge.target}",
-            _sibling_fix(settings, rank[source]),
+            _sibling_fix(layering, rank[source]),
         )
 
 
-def _reader_findings(settings: Settings, graph: ImportGraph, part: str) -> Iterator[Finding]:
-    tier = settings.tier_of[part]
+def _reader_findings(layering: Layering, graph: ImportGraph, part: str) -> Iterator[Finding]:
+    tier = layering.tier_of[part]
     path = graph.part_files[part][0]
     tier_readers = sorted({
         edge.source
         for edge in graph.edges
-        if settings.tier_of.get(edge.target) == tier and settings.tier_of.get(edge.source) != tier
+        if layering.tier_of.get(edge.target) == tier and layering.tier_of.get(edge.source) != tier
     })
     if len(tier_readers) < 2:
         yield Finding(
@@ -182,7 +182,7 @@ def _reader_findings(settings: Settings, graph: ImportGraph, part: str) -> Itera
             f"keep the '{tier}' modules flat under their reader until a second part reads the tier",
         )
     readers = sorted(graph.readers(part))
-    if len(readers) == 1:
+    if len(readers) == 1 and not part.startswith(f"{readers[0]}/"):
         yield Finding(
             path,
             0,
@@ -197,21 +197,21 @@ def touched_parts(settings: Settings, judged: tuple[str, ...]) -> set[str]:
     return {part for part in (part_of(settings, path) for path in judged) if part is not None}
 
 
-def import_findings(settings: Settings, graph: ImportGraph, touched: set[str]) -> set[Finding]:
+def import_findings(layering: Layering, graph: ImportGraph, touched: set[str]) -> set[Finding]:
     findings: set[Finding] = set()
     judged_edges = [edge for edge in graph.edges if {edge.source, edge.target} & touched]
     endpoints = touched | {part for edge in judged_edges for part in (edge.source, edge.target)}
-    findings.update(_unmapped(settings, graph, endpoints))
+    findings.update(_unmapped(layering, graph, endpoints))
     findings.update(
         finding
         for edge in judged_edges
-        if edge.source in settings.tier_of and edge.target in settings.tier_of
-        for finding in _edge_finding(settings, edge)
+        if edge.source in layering.tier_of and edge.target in layering.tier_of
+        for finding in _edge_finding(layering, edge)
     )
-    top = settings.tiers[-1]
+    top = layering.tiers[-1]
     for part in sorted(touched):
-        if settings.tier_of.get(part, top) != top:
-            findings.update(_reader_findings(settings, graph, part))
+        if part in graph.part_files and layering.tier_of.get(part, top) != top:
+            findings.update(_reader_findings(layering, graph, part))
     touched_files = {path for part in touched for path in graph.part_files.get(part, ())}
     findings.update(finding for finding in graph.unparsable if finding.path in touched_files)
     return findings

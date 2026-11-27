@@ -13,6 +13,11 @@ from lib.structure.rename_rules import residue_findings
 from lib.structure.repo_git import GitError, build_scenario, repo_root
 from lib.structure.scope import EVENTS, Scope, event_scope, explicit_scope, full_scope
 from lib.structure.settings import Settings, SettingsError, load_settings
+from lib.structure.typescript_imports import (
+    ImportListingError,
+    build_graph as build_typescript_graph,
+    touched_parts as typescript_parts,
+)
 
 
 def _arguments(argv: list[str]) -> argparse.Namespace:
@@ -40,6 +45,14 @@ def _scope(root: Path, settings: Settings, event: str | None, paths: list[str]) 
     return full_scope(root, settings)
 
 
+def _typescript_findings(root: Path, settings: Settings, scope: Scope) -> set[Finding]:
+    touched = typescript_parts(settings, scope.judged)
+    if settings.typescript is None or not touched:
+        return set()
+    graph = build_typescript_graph(root, settings, scope.head_paths)
+    return import_findings(settings.typescript.layering, graph, touched)
+
+
 def judge(root: Path, event: str | None, paths: list[str]) -> tuple[Scope, list[Finding]]:
     settings = load_settings(root)
     scope = _scope(root, settings, event, paths)
@@ -48,8 +61,9 @@ def judge(root: Path, event: str | None, paths: list[str]) -> tuple[Scope, list[
         naming_findings(settings, scope)
         | placement_findings(settings, scope)
         | prefix_findings(settings, scope)
-        | import_findings(settings, graph, touched_parts(settings, scope.judged))
+        | import_findings(settings.layering, graph, touched_parts(settings, scope.judged))
         | residue_findings(root, scope)
+        | _typescript_findings(root, settings, scope)
     )
     kept = sorted(
         finding
@@ -78,7 +92,7 @@ def main(argv: list[str]) -> int:
                 repo = build_scenario(arguments.scenario.resolve(), Path(workdir))
                 return _report(repo, "staged", [])
         return _report(repo_root(Path.cwd()), arguments.event, arguments.paths)
-    except (GitError, SettingsError) as error:
+    except (GitError, SettingsError, ImportListingError) as error:
         print(f"check-structure: {error}", file=sys.stderr)
         return 2
 

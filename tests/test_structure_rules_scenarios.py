@@ -37,11 +37,16 @@ _VIOLATIONS = {
     "version-suffix": "NAME.conventions: 'publish-v2' carries a version token",
     "rename-residue": "docs/guide.md:3: RENAME.residue: retired name 'export-report'",
     "prefix-cluster-member": "scripts/check-gamma.sh: PREFIX.candidates: 'check-gamma.sh' joins",
+    "ts-reversed-import": "STRUCT.dependency-direction: web/rates (contract) imports web/main",
+    "ts-sibling-import": "STRUCT.sibling-isolation: web/invoice imports its 'view' sibling",
 }
 
 
-def test_compliant_scenario_passes(checker: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
-    assert checker.main(["--scenario", str(_SCENARIOS / "compliant")]) == 0
+@pytest.mark.parametrize("name", ["compliant", "ts-compliant"])
+def test_compliant_scenario_passes(
+    checker: ModuleType, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    assert checker.main(["--scenario", str(_SCENARIOS / name)]) == 0
     assert capsys.readouterr().out == ""
 
 

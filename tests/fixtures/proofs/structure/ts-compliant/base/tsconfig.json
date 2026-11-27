@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true
+  }
+}

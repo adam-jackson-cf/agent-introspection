@@ -173,3 +173,56 @@ def test_retired_names_keep_unchanged_segments(git: ModuleType) -> None:
     rename = sys.modules["lib.structure.rename_rules"]
     change = git.Change(path="scripts/gate/effort_gate.py", old_path="scripts/gate/gate_effort.py")
     assert rename.retired_names(change) == [("gate_effort", "effort_gate")]
+
+
+def test_typescript_settings_map_module_paths_to_their_tiers(settings_module: ModuleType) -> None:
+    settings = settings_module.load_settings(_SCENARIOS / "ts-compliant" / "head")
+    imports = sys.modules["lib.structure.typescript_imports"]
+
+    assert settings.typescript.layering.tier_of["web/format"] == "contract"
+    assert imports.part_of(settings, "web/view.ts") == "web/view"
+    assert imports.part_of(settings, "web/view.test.ts") is None
+    assert imports.part_of(settings, "web/shapes.d.ts") is None
+    assert imports.part_of(settings, "src/shop/api.py") is None
+
+
+def test_typescript_settings_reject_unknown_keys(
+    settings_module: ModuleType, tmp_path: Path
+) -> None:
+    text = (_SCENARIOS / "ts-compliant" / "head" / "proofs.toml").read_text(encoding="utf-8")
+    (tmp_path / "proofs.toml").write_text(
+        text.replace('tsconfig = "tsconfig.json"', 'tsconfig = "tsconfig.json"\nroots = []'),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        settings_module.SettingsError, match=r"\[structure\.typescript\] has unknown"
+    ):
+        settings_module.load_settings(tmp_path)
+
+
+def test_a_module_inside_its_one_readers_folder_already_sits_under_its_owner(
+    settings_module: ModuleType,
+) -> None:
+    rules = sys.modules["lib.structure.import_rules"]
+    layering = settings_module.Layering(
+        "[structure.typescript].tier_modules",
+        ("model", "entry"),
+        {"web/server/assets": "model", "web/rates": "model", "web/server": "entry"},
+    )
+    graph = rules.ImportGraph(
+        part_files={
+            "web/server/assets": ("web/server/assets.ts",),
+            "web/rates": ("web/rates.ts",),
+            "web/server": ("web/server.ts",),
+        },
+        edges=(
+            rules.Edge("web/server", "web/server/assets", "web/server.ts", 1),
+            rules.Edge("web/server", "web/rates", "web/server.ts", 2),
+        ),
+        unparsable=(),
+    )
+
+    findings = rules.import_findings(layering, graph, {"web/server/assets", "web/rates"})
+
+    owners = [finding.path for finding in findings if finding.rule == rules.SINGLE_OWNER]
+    assert owners == ["web/rates.ts"]

@@ -6,6 +6,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from lib import filesystem
+from lib.proofs_settings import matches
 
 STRUCTURE_RULES = frozenset({
     "NAME.conventions",
@@ -33,7 +34,9 @@ _STRUCTURE_KEYS = frozenset({
     "test_name_patterns",
     "tier_modules",
     "tiers",
+    "typescript",
 })
+_TYPESCRIPT_KEYS = frozenset({"tier_modules", "tiers", "tsconfig"})
 _SKILL_LAYOUT_KEYS = frozenset({"files", "marker", "root"})
 _EXCEPTION_KEYS = frozenset({"approved_by", "check", "path", "reason", "rule"})
 
@@ -65,6 +68,23 @@ class SkillLayout:
 
 
 @dataclass(frozen=True)
+class Layering:
+    table: str
+    tiers: tuple[str, ...]
+    tier_of: dict[str, str]
+
+
+@dataclass(frozen=True)
+class TypeScriptSettings:
+    tsconfig: str
+    layering: Layering
+    test_patterns: tuple[str, ...]
+
+    def is_test(self, path: str) -> bool:
+        return matches(path, self.test_patterns)
+
+
+@dataclass(frozen=True)
 class Settings:
     base_ref: str
     package_dir: str
@@ -83,6 +103,11 @@ class Settings:
     skill_layout: SkillLayout
     fixtures_dir: str
     exceptions: tuple[StructureException, ...]
+    typescript: TypeScriptSettings | None
+
+    @property
+    def layering(self) -> Layering:
+        return Layering("[structure].tier_modules", self.tiers, self.tier_of)
 
     def excepted(self, rule: str, path: str, check: str) -> bool:
         return any(entry.covers(rule, path, check) for entry in self.exceptions)
@@ -128,17 +153,36 @@ def _reject_unknown(table: dict[str, object], allowed: frozenset[str], where: st
         raise SettingsError(f"{where} has unknown keys: {', '.join(unknown)}")
 
 
-def _tier_of(structure: dict[str, object], tiers: tuple[str, ...]) -> dict[str, str]:
-    modules = _table(structure, "tier_modules", "[structure]")
+def _tier_of(
+    structure: dict[str, object], tiers: tuple[str, ...], where: str = "[structure]"
+) -> dict[str, str]:
+    modules = _table(structure, "tier_modules", where)
     if set(modules) != set(tiers):
-        raise SettingsError("[structure].tier_modules must have exactly one list per tier")
+        raise SettingsError(f"{where}.tier_modules must have exactly one list per tier")
     tier_of: dict[str, str] = {}
     for tier in tiers:
-        for part in _strings(modules, tier, "[structure].tier_modules"):
+        for part in _strings(modules, tier, f"{where}.tier_modules"):
             if part in tier_of:
-                raise SettingsError(f"[structure].tier_modules lists '{part}' in two tiers")
+                raise SettingsError(f"{where}.tier_modules lists '{part}' in two tiers")
             tier_of[part] = tier
     return tier_of
+
+
+def _typescript(document: dict[str, object]) -> TypeScriptSettings | None:
+    structure = _table(document, "structure", "proofs.toml")
+    if "typescript" not in structure:
+        return None
+    where = "[structure.typescript]"
+    table = _table(structure, "typescript", "[structure]")
+    _reject_unknown(table, _TYPESCRIPT_KEYS, where)
+    tiers = _strings(table, "tiers", where)
+    layout = _table(document, "layout", "proofs.toml")
+    support = _strings(layout, "support_files", "[layout]") if "support_files" in layout else ()
+    return TypeScriptSettings(
+        tsconfig=_string(table, "tsconfig", where),
+        layering=Layering(f"{where}.tier_modules", tiers, _tier_of(table, tiers, where)),
+        test_patterns=(*_strings(layout, "test_file_patterns", "[layout]"), *support),
+    )
 
 
 def _skill_layout(structure: dict[str, object]) -> SkillLayout:
@@ -201,6 +245,7 @@ def _settings(document: dict[str, object]) -> Settings:
         skill_layout=_skill_layout(structure),
         fixtures_dir=_string(_table(document, "layout", "proofs.toml"), "fixtures_dir", "[layout]"),
         exceptions=_exceptions(document),
+        typescript=_typescript(document),
     )
 
 
