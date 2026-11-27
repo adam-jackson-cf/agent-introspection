@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  quality-gates:
+  static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,8 +18,49 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.0
-      - name: Run quality gates
-        run: bash scripts/run-ci-quality-gates.sh
+      - run: bash scripts/run-ci-quality-gates.sh static
+  t1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+      - run: bash scripts/run-ci-quality-gates.sh t1
+  t2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+      - run: bash scripts/run-ci-quality-gates.sh t2
+  proofs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+      - run: bash scripts/run-ci-quality-gates.sh proofs
+  gate:
+    needs: [static, t1, t2]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "${{ needs.static.result }}" = success
+          test "${{ needs.t1.result }}" = success
+          test "${{ needs.t2.result }}" = success
 
   # The install of this commit on a fresh Linux machine: scripts/fresh-install/sandbox.sh
   # with a disposable ClickHouse (GitHub's macOS runners have no Docker).
