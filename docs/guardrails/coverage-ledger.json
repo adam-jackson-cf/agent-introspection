@@ -10,7 +10,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-fanout.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-fanout.py",
@@ -18,15 +20,14 @@
       "ci_marker": "scripts/check-python-fanout.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-fanout.py",
-          "--root-package",
-          "agent_introspection",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_fanout",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/FANOUT.general/passing/repo/src/pkg/wide.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/FANOUT.general/violating/repo/src/pkg/wide.py",
+        "passing": "tests/fixtures/proofs/python.fanout/FANOUT.general/passing/repo/src/pkg/wide.py",
+        "violating": "tests/fixtures/proofs/python.fanout/FANOUT.general/violating/repo/src/pkg/wide.py",
         "diagnostic": "FANOUT.general",
         "timeout_seconds": 30
       }
@@ -36,7 +37,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-fanout.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-fanout.py",
@@ -44,15 +47,14 @@
       "ci_marker": "scripts/check-python-fanout.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-fanout.py",
-          "--root-package",
-          "agent_introspection",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_fanout",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/FANOUT.large-module/passing/repo/src/pkg/large.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/FANOUT.large-module/violating/repo/src/pkg/large.py",
+        "passing": "tests/fixtures/proofs/python.fanout/FANOUT.large-module/passing/repo/src/pkg/large.py",
+        "violating": "tests/fixtures/proofs/python.fanout/FANOUT.large-module/violating/repo/src/pkg/large.py",
         "diagnostic": "FANOUT.large-module",
         "timeout_seconds": 30
       }
@@ -460,7 +462,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -468,13 +472,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ100/passing/repo/src/pkg/mod.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ100/violating/repo/tools/loose.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ100/passing/repo/src/pkg/mod.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ100/violating/repo/tools/loose.py",
         "diagnostic": "PYQ100",
         "timeout_seconds": 30
       }
@@ -484,7 +489,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -492,13 +499,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ101/passing/repo/scripts/render-measures.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ101/violating/repo/scripts/unapproved_tool.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ101/passing/repo/scripts/render-measures.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ101/violating/repo/scripts/unapproved-tool.py",
         "diagnostic": "PYQ101",
         "timeout_seconds": 30
       }
@@ -508,7 +516,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -516,13 +526,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ102/passing/repo/tests/unit/case_ok.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ102/violating/repo/tests/flat_case.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ102/passing/repo/tests/unit/case_ok.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ102/violating/repo/tests/flat_case.py",
         "diagnostic": "PYQ102",
         "timeout_seconds": 30
       }
@@ -532,7 +543,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -540,13 +553,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ103/passing/repo/src/pkg/services/mod.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ103/violating/repo/src/pkg/helpers/mod.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ103/passing/repo/src/pkg/services/mod.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ103/violating/repo/src/pkg/helpers/mod.py",
         "diagnostic": "PYQ103",
         "timeout_seconds": 30
       }
@@ -556,7 +570,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -564,13 +580,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ104/passing/repo/src/pkg/domain.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ104/violating/repo/src/pkg/misc.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ104/passing/repo/src/pkg/domain.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ104/violating/repo/src/pkg/misc.py",
         "diagnostic": "PYQ104",
         "timeout_seconds": 30
       }
@@ -580,7 +597,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -588,13 +607,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ105/passing/repo/src/good_pkg/mod.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ105/violating/repo/src/BadPkg/mod.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ105/passing/repo/src/good_pkg/mod.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ105/violating/repo/src/BadPkg/mod.py",
         "diagnostic": "PYQ105",
         "timeout_seconds": 30
       }
@@ -604,7 +624,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -612,13 +634,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ106/passing/repo/.agents/skills/good-skill/scripts/tool.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ106/violating/repo/.agents/skills/Bad_Skill/scripts/tool.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ106/passing/repo/.agents/skills/good-skill/scripts/tool.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ106/violating/repo/.agents/skills/Bad_Skill/scripts/tool.py",
         "diagnostic": "PYQ106",
         "timeout_seconds": 30
       }
@@ -628,7 +651,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -636,13 +661,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ107/passing/repo/src/pkg/good_module.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ107/violating/repo/src/pkg/BadModule.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ107/passing/repo/src/pkg/good_module.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ107/violating/repo/src/pkg/BadModule.py",
         "diagnostic": "PYQ107",
         "timeout_seconds": 30
       }
@@ -652,7 +678,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -660,13 +688,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ200/passing/repo/src/pkg/big.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ200/violating/repo/src/pkg/big.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ200/passing/repo/src/pkg/big.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ200/violating/repo/src/pkg/big.py",
         "diagnostic": "PYQ200",
         "timeout_seconds": 30
       }
@@ -676,7 +705,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -684,13 +715,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ202/passing/repo/src/pkg/widget.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ202/violating/repo/src/pkg/widget.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ202/passing/repo/src/pkg/widget.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ202/violating/repo/src/pkg/widget.py",
         "diagnostic": "PYQ202",
         "timeout_seconds": 30
       }
@@ -700,7 +732,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -708,13 +742,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ203/passing/repo/src/pkg/holder.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ203/violating/repo/src/pkg/holder.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ203/passing/repo/src/pkg/holder.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ203/violating/repo/src/pkg/holder.py",
         "diagnostic": "PYQ203",
         "timeout_seconds": 30
       }
@@ -724,7 +759,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -732,13 +769,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ210/passing/repo/src/pkg/scan.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ210/violating/repo/src/pkg/scan.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ210/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ210/violating/repo/src/pkg/scan.py",
         "diagnostic": "PYQ210",
         "timeout_seconds": 30
       }
@@ -772,7 +810,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -780,13 +820,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ220/passing/repo/src/agent_introspection/drafting.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ220/violating/repo/src/pkg/runner.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ220/passing/repo/src/agent_introspection/drafting.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ220/violating/repo/src/pkg/runner.py",
         "diagnostic": "PYQ220",
         "timeout_seconds": 30
       }
@@ -796,7 +837,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -804,13 +847,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ221/passing/repo/src/pkg/loader.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ221/violating/repo/src/pkg/loader.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ221/passing/repo/src/pkg/loader.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ221/violating/repo/src/pkg/loader.py",
         "diagnostic": "PYQ221",
         "timeout_seconds": 30
       }
@@ -820,7 +864,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -828,13 +874,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ230/passing/repo/src/agent_introspection/contracts.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ230/violating/repo/src/agent_introspection/contracts.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ230/passing/repo/src/agent_introspection/contracts.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ230/violating/repo/src/agent_introspection/contracts.py",
         "diagnostic": "PYQ230",
         "timeout_seconds": 30
       }
@@ -844,7 +891,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -852,13 +901,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ231/passing/repo/src/agent_introspection/contracts.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ231/violating/repo/src/agent_introspection/contracts.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ231/passing/repo/src/agent_introspection/contracts.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ231/violating/repo/src/agent_introspection/contracts.py",
         "diagnostic": "PYQ231",
         "timeout_seconds": 30
       }
@@ -868,7 +918,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-quality.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-quality.py",
@@ -876,13 +928,14 @@
       "ci_marker": "scripts/check-python-quality.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-quality.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_quality",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYQ299/passing/repo/src/pkg/decodable.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYQ299/violating/repo/src/pkg/undecodable.py",
+        "passing": "tests/fixtures/proofs/python.quality/PYQ299/passing/repo/src/pkg/decodable.py",
+        "violating": "tests/fixtures/proofs/python.quality/PYQ299/violating/repo/src/pkg/undecodable.py",
         "diagnostic": "PYQ299",
         "timeout_seconds": 30
       }
@@ -892,7 +945,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-scalability.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-scalability.py",
@@ -900,13 +955,14 @@
       "ci_marker": "scripts/check-python-scalability.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-scalability.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_scalability",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYS000/passing/repo/src/pkg/parsed.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYS000/violating/repo/src/pkg/broken.py",
+        "passing": "tests/fixtures/proofs/python.scalability/PYS000/passing/repo/src/pkg/parsed.py",
+        "violating": "tests/fixtures/proofs/python.scalability/PYS000/violating/repo/src/pkg/broken.py",
         "diagnostic": "PYS000",
         "timeout_seconds": 30
       }
@@ -916,7 +972,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-scalability.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-scalability.py",
@@ -924,13 +982,14 @@
       "ci_marker": "scripts/check-python-scalability.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-scalability.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_scalability",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYS250/passing/repo/src/pkg/loops.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYS250/violating/repo/src/pkg/loops.py",
+        "passing": "tests/fixtures/proofs/python.scalability/PYS250/passing/repo/src/pkg/loops.py",
+        "violating": "tests/fixtures/proofs/python.scalability/PYS250/violating/repo/src/pkg/loops.py",
         "diagnostic": "PYS250",
         "timeout_seconds": 30
       }
@@ -940,7 +999,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-scalability.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-scalability.py",
@@ -948,13 +1009,14 @@
       "ci_marker": "scripts/check-python-scalability.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-scalability.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_scalability",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYS251/passing/repo/src/pkg/scan.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYS251/violating/repo/src/pkg/scan.py",
+        "passing": "tests/fixtures/proofs/python.scalability/PYS251/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/proofs/python.scalability/PYS251/violating/repo/src/pkg/scan.py",
         "diagnostic": "PYS251",
         "timeout_seconds": 30
       }
@@ -964,7 +1026,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-scalability.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-scalability.py",
@@ -972,13 +1036,14 @@
       "ci_marker": "scripts/check-python-scalability.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-scalability.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_scalability",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYS252/passing/repo/src/pkg/scan.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYS252/violating/repo/src/pkg/scan.py",
+        "passing": "tests/fixtures/proofs/python.scalability/PYS252/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/proofs/python.scalability/PYS252/violating/repo/src/pkg/scan.py",
         "diagnostic": "PYS252",
         "timeout_seconds": 30
       }
@@ -988,7 +1053,9 @@
       "status": "implemented",
       "implementation_paths": [
         "scripts/check-python-scalability.py",
-        "scripts/lib/python_quality_scope.py"
+        "scripts/lib/python_quality_scope.py",
+        "scripts/lib/python_quality_settings.py",
+        "proofs.toml"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
       "local_marker": "scripts/check-python-scalability.py",
@@ -996,13 +1063,14 @@
       "ci_marker": "scripts/check-python-scalability.py",
       "canary": {
         "command": [
-          "python3",
-          "scripts/check-python-scalability.py",
-          "--fixture",
+          "bash",
+          "scripts/run-ci-quality-gates.sh",
+          "check",
+          "python_scalability",
           "{fixture}"
         ],
-        "passing": "tests/fixtures/guardrails/python-bespoke/PYS253/passing/repo/src/pkg/scan.py",
-        "violating": "tests/fixtures/guardrails/python-bespoke/PYS253/violating/repo/src/pkg/scan.py",
+        "passing": "tests/fixtures/proofs/python.scalability/PYS253/passing/repo/src/pkg/scan.py",
+        "violating": "tests/fixtures/proofs/python.scalability/PYS253/violating/repo/src/pkg/scan.py",
         "diagnostic": "PYS253",
         "timeout_seconds": 30
       }

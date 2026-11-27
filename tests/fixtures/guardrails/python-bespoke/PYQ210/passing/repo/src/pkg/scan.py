@@ -1,2 +1,0 @@
-class ScanAnalyzer(BaseAnalyzer):
-    pass

@@ -1,0 +1,98 @@
+schema = 1
+
+[python_quality]
+maintained_roots = ["scripts", "src", "tests"]
+skill_roots = [".agents/skills"]
+script_root = "scripts"
+script_module_directory = "scripts/lib"
+script_names = [
+    "check-coverage-slice.py",
+    "check-dependency-audit.py",
+    "check-lock-parity.py",
+    "check-python-fanout.py",
+    "check-python-mypy.py",
+    "check-python-quality.py",
+    "check-python-scalability.py",
+    "check-python-suppressions.py",
+    "check-runner-failure-propagation.py",
+    "check-skill-metadata.py",
+    "check-test-subprocess-timeouts.py",
+    "guardrails-tool-canary.py",
+    "list-python-scope.py",
+    "render-measures.py",
+    "validate-rule-coverage.py",
+]
+test_root = "tests"
+test_root_files = ["tests/__init__.py", "tests/conftest.py"]
+test_groups = ["fixtures", "integration", "seams", "support", "unit"]
+non_package_directories = [".github", "fixtures", "scripts", "src", "tests"]
+generic_name_parts = [
+    "common",
+    "compat",
+    "fallback",
+    "helpers",
+    "legacy",
+    "manager",
+    "misc",
+    "new",
+    "old",
+    "stuff",
+    "temp",
+    "utils",
+]
+generic_name_allowlist = []
+class_max_lines = 700
+class_max_init_args = 8
+class_max_instance_attributes = 12
+analyzer_bases = []
+dynamic_import_adapters = []
+contract_roots = ["src/agent_introspection"]
+max_loop_depth = 2
+analyzer_prefixes = ["scripts", "src", "tests"]
+ownership_markers = ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]
+fanout_root_packages = ["agent_introspection"]
+fanout_max = 10
+large_module_nloc = 800
+large_module_fanout_max = 3
+
+[python_quality.excluded_paths]
+"tests/fixtures" = "canary fixtures: deliberately violating inputs that checkers judge only when passed explicitly"
+
+[python_quality.flat_test_groups]
+unit = "test_*.py"
+
+[python_quality.project_analyzer_entrypoints]
+
+[python_quality.subprocess_wrappers]
+"scripts/check-dependency-audit.py" = ["_run"]
+"scripts/check-python-mypy.py" = ["_mypy"]
+"scripts/check-runner-failure-propagation.py" = ["_run"]
+"scripts/check-skill-metadata.py" = ["_git_ls_files"]
+"scripts/check-test-subprocess-timeouts.py" = ["_git_ls_files"]
+"scripts/guardrails-tool-canary.py" = ["_run"]
+"scripts/lib/python_quality_scope.py" = ["_git_output"]
+"scripts/validate-rule-coverage.py" = ["_run"]
+"src/agent_introspection/classify.py" = ["_run_key_command"]
+"src/agent_introspection/dashboard_service.py" = ["_run_bun"]
+"src/agent_introspection/doctor_harness.py" = ["_run_version"]
+"src/agent_introspection/drafting.py" = ["run_codex"]
+"src/agent_introspection/facts.py" = ["run", "_run_local_command"]
+"src/agent_introspection/hook_install.py" = ["_run_omp"]
+"src/agent_introspection/schedule.py" = ["launchctl", "systemctl"]
+"src/agent_introspection/signoz_detect.py" = ["_run_docker"]
+"tests/test_command_shape_parity.py" = ["_clickhouse_query"]
+"tests/test_hook_install.py" = ["_run_shim"]
+"tests/test_hooks.py" = ["_pause", "_run_activity_shim", "_run_bun_probe"]
+"tests/test_preflight.py" = ["_run_python"]
+"tests/test_python_checker_scripts.py" = ["_run"]
+"tests/test_quality_scripts.py" = ["_git", "_run", "_validate"]
+"tests/test_signoz_detect.py" = ["_run_install"]
+
+[python_quality.filesystem_seams]
+"tests/test_python_checker_scripts.py" = ["_repository_table", "_write_module"]
+
+[python_quality.environment_seams]
+"src/agent_introspection/cli.py" = ["_configured_path"]
+"src/agent_introspection/dashboard_api.py" = ["_url_override"]
+"src/agent_introspection/facts.py" = ["_environment_value"]
+"tests/test_command_shape_parity.py" = ["_live_clickhouse_requested"]
