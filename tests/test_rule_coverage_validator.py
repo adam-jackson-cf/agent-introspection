@@ -52,14 +52,14 @@ def test_unbound_reference_is_reported_against_the_claim(tmp_path: Path) -> None
     assert errors == ["check: ci.yml lacks ref: sh absent.sh"]
 
 
-def test_ci_point_requires_the_validator_job(tmp_path: Path) -> None:
+def test_ci_point_requires_a_self_check_claim(tmp_path: Path) -> None:
     root = _copy(tmp_path, "bound")
     proofs = _proofs(root)
-    del proofs["validator"]
+    proofs["claim"][0]["rules"] = ["A.rule"]
 
     errors, _ = validator.validate(root, proofs, structure_only=True)
 
-    assert errors == ["validator: required when a claim names a ci point"]
+    assert errors == ["validator: no claim with a ci point covers GATE.self-check"]
 
 
 def test_unknown_top_level_key_is_rejected(tmp_path: Path) -> None:
@@ -76,7 +76,7 @@ def test_catalogue_rule_needs_exactly_one_owner(tmp_path: Path) -> None:
     catalog = {
         "schema_version": 1,
         "rules": [
-            {"id": "A.rule", "kind": "process", "applicability": "always"},
+            {"id": "GATE.self-check", "kind": "process", "applicability": "always"},
             {"id": "B.rule", "kind": "process", "applicability": "always"},
         ],
     }

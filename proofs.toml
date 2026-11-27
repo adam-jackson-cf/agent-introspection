@@ -3,11 +3,6 @@ schema = 1
 [scope]
 mode = "whole"
 
-[validator]
-status = "proofs"
-file = ".github/workflows/ci-quality-gates.yml"
-ref = "scripts/run-ci-quality-gates.sh proofs"
-
 [hooks]
 check = ["bash", "scripts/run-ci-quality-gates.sh", "check", "hook_installed"]
 expect = "pre-commit hook installed"
