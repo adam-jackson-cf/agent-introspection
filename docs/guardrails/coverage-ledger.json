@@ -429,21 +429,20 @@
         "scripts/run-ci-quality-gates.sh"
       ],
       "local_runner": "scripts/run-ci-quality-gates.sh",
-      "local_marker": "prettier@3.6.2",
+      "local_marker": "dashboard_tool prettier",
       "ci_runner": "scripts/run-ci-quality-gates.sh",
-      "ci_marker": "prettier@3.6.2",
+      "ci_marker": "dashboard_tool prettier",
       "configuration": {
         "path": "scripts/run-ci-quality-gates.sh",
         "contains": [
-          "prettier@3.6.2",
+          "dashboard_tool prettier",
           "git ls-files"
         ]
       },
       "canary": {
         "command": [
-          "bunx",
-          "--bun",
-          "prettier@3.6.2",
+          "bun",
+          "dashboard/node_modules/.bin/prettier",
           "--check",
           "--parser",
           "markdown",

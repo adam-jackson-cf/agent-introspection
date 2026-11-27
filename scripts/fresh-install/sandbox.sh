@@ -174,18 +174,18 @@ SYSTEMD
   write_fake launchctl "exec python3 -I \"$ROOT/fakebin/launchd.py\" \"\$@\""
   write_fake systemctl "exec python3 -I \"$ROOT/fakebin/systemd.py\" \"\$@\""
   write_fake docker 'echo "docker is disabled in the fresh-install sandbox" >&2; exit 1'
-  write_fake claude 'case "$1" in --version) echo "2.1.285 (Claude Code)"; exit 0 ;; esac
-echo "claude is a stand-in in the fresh-install sandbox" >&2; exit 1'
-  write_fake codex 'case "$1" in --version) echo "codex-cli 0.156.1"; exit 0 ;; esac
-echo "codex is a stand-in in the fresh-install sandbox" >&2; exit 1'
+  write_fake claude "case \"\$1\" in --version) echo \"2.1.285 (Claude Code)\"; exit 0 ;; esac
+echo \"claude is a stand-in in the fresh-install sandbox\" >&2; exit 1"
+  write_fake codex "case \"\$1\" in --version) echo \"codex-cli 0.156.1\"; exit 0 ;; esac
+echo \"codex is a stand-in in the fresh-install sandbox\" >&2; exit 1"
   # omp's `plugin link` records the plugin as a link in its plugin directory.
-  write_fake omp 'link="$HOME/.omp/plugins/node_modules/agent-introspection-activity"
-case "$1 $2" in
-  "plugin link") mkdir -p "${link%/*}" && ln -sfn "$3" "$link" ;;
-  "plugin uninstall") rm -f "$link" ;;
-  --version*) echo "18.4.4" ;;
+  write_fake omp "link=\"\$HOME/.omp/plugins/node_modules/agent-introspection-activity\"
+case \"\$1 \$2\" in
+  \"plugin link\") mkdir -p \"\${link%/*}\" && ln -sfn \"\$3\" \"\$link\" ;;
+  \"plugin uninstall\") rm -f \"\$link\" ;;
+  --version*) echo \"18.4.4\" ;;
 esac
-exit 0'
+exit 0"
 }
 
 link_tools() {
@@ -294,14 +294,25 @@ cmd_create() {
   ROOT="$REPO/.tmp/fresh-install/$STAMP"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --root) ROOT=$2; shift 2 ;;
-      --no-clickhouse) clickhouse=false; shift ;;
-      --docker-ssh) DOCKER_SSH=$2; shift 2 ;;
+      --root)
+        ROOT=$2
+        shift 2
+        ;;
+      --no-clickhouse)
+        clickhouse=false
+        shift
+        ;;
+      --docker-ssh)
+        DOCKER_SSH=$2
+        shift 2
+        ;;
       *) die "unknown option $1" ;;
     esac
   done
   [ ! -e "$ROOT" ] || die "$ROOT exists"
-  if [ -n "$(git -C "$REPO" status --porcelain)" ]; then
+  local changes head
+  changes="$(git -C "$REPO" status --porcelain)"
+  if [ -n "$changes" ]; then
     printf 'sandbox: note: uncommitted changes are not in the sandbox (it clones HEAD)\n' >&2
   fi
   mkdir -p "$ROOT/state" "$ROOT/home" "$ROOT/tmp"
@@ -310,7 +321,8 @@ cmd_create() {
   (cd "$ROOT" && pwd -P) >"$ROOT/state/root"
   : >"$ROOT/state/calls.log"
   git clone --quiet --no-local "$REPO" "$ROOT/repo"
-  git -C "$ROOT/repo" checkout --quiet --detach "$(git -C "$REPO" rev-parse HEAD)"
+  head="$(git -C "$REPO" rev-parse HEAD)"
+  git -C "$ROOT/repo" checkout --quiet --detach "$head"
   # A machine where Claude Code and Codex have run once: their config directories exist.
   mkdir -p "$ROOT/home/.claude" "$ROOT/home/.codex"
   make_fakes
@@ -337,7 +349,8 @@ step() {
   shift 2
   STEP=$((STEP + 1))
   # stdout (the JSON report) and stderr (progress, diagnostics) are kept apart.
-  local log="$ROOT/state/verify/$(printf '%02d' "$STEP")-$name.log"
+  local log
+  log="$ROOT/state/verify/$(printf '%02d' "$STEP")-$name.log"
   (cd "$ROOT/repo" && "$ROOT/run" "$@") >"$log" 2>"${log%.log}.err" || code=$?
   if [ "$expect" = any ] || [ "$code" = "$expect" ]; then
     printf '  ok    %-28s exit %s\n' "$name" "$code"
@@ -364,8 +377,16 @@ json_field() {
   python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"
 }
 
+fresh_hook_recorded() {
+  local count
+  count="$(clickhouse_count "introspection.hook_events WHERE session_id = 'fresh-1'")"
+  test "$count" -ge 1
+}
+
 clickhouse_count() {
-  curl -fsS "$(cat "$ROOT/state/clickhouse_url")/" --data-binary "SELECT count() FROM $1"
+  local url
+  url="$(cat "$ROOT/state/clickhouse_url")"
+  curl -fsS "$url/" --data-binary "SELECT count() FROM $1"
 }
 
 wait_for_dashboard() {
@@ -378,12 +399,17 @@ wait_for_dashboard() {
 
 dashboard_views_clean() {
   # Every view answers 200 with no failed dataset (`errors` empty).
-  local view window
-  window="start=$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)&end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local view window since now
+  since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  window="start=$since&end=$now"
   for view in pipeline cache effort tools friction guardrails provider recurrence intent interventions; do
     curl -fsS -m 30 "http://127.0.0.1:4173/api/view?view=$view&$window" >"$ROOT/state/verify/view-$view.json" || return 1
     python3 -I -c 'import json, sys; sys.exit(1 if json.load(open(sys.argv[1])).get("errors") else 0)' \
-      "$ROOT/state/verify/view-$view.json" || { echo "view $view has errors" >&2; return 1; }
+      "$ROOT/state/verify/view-$view.json" || {
+      echo "view $view has errors" >&2
+      return 1
+    }
   done
 }
 
@@ -405,13 +431,16 @@ cmd_verify() {
   check "dry run wrote no config" test ! -e "$home/.config/agent-introspection/config.toml"
   check "dry run installed no hooks" test ! -e "$home/.claude/settings.json"
   step setup 0 "agent-introspection setup $options"
-  local setup_log=$logs/$(printf '%02d' "$STEP")-setup.log
+  local setup_log
+  setup_log=$logs/$(printf '%02d' "$STEP")-setup.log
   check "setup: every step ran" json_field "$setup_log" 'd.get("stopped_at") is None or sys.exit(1)'
   check "config written" test -f "$home/.config/agent-introspection/config.toml"
   check "claude-code hooks registered" grep -q activity-shim.sh "$home/.claude/settings.json"
   check "codex export configured" grep -q otel "$home/.codex/config.toml"
   check "shim installed executable" test -x "$home/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh"
-  if [ "$(uname -s)" = Darwin ]; then
+  local system
+  system="$(uname -s)"
+  if [ "$system" = Darwin ]; then
     check "sync job bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.sync" "$ROOT/state/calls.log"
     check "dashboard service bootstrapped (fake launchd)" grep -q "launchctl bootstrap .*dev.agent-introspection.dashboard" "$ROOT/state/calls.log"
   else
@@ -429,9 +458,10 @@ cmd_verify() {
   # One Claude Code tool call through the installed hook, then the minute sync.
   step hook-event 0 "printf '%s' '{\"session_id\":\"fresh-1\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"},\"tool_use_id\":\"fresh-tool-1\",\"cwd\":\"/srv/work\"}' | /bin/sh \"\$HOME/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh\" claude-code PreToolUse; sleep 3"
   step facts-sync 0 'agent-introspection facts sync'
-  check "hook record reached the facts store" test "$(clickhouse_count "introspection.hook_events WHERE session_id = 'fresh-1'")" -ge 1
+  check "hook record reached the facts store" fresh_hook_recorded
   step doctor any 'agent-introspection doctor'
-  local doctor_log=$logs/$(printf '%02d' "$STEP")-doctor.log
+  local doctor_log
+  doctor_log=$logs/$(printf '%02d' "$STEP")-doctor.log
   check "doctor: no failing check" json_field "$doctor_log" 'd["summary"].get("fail", 0) == 0 or sys.exit(1)'
   step setup-rerun 0 "agent-introspection setup $options"
   step remove-hooks 0 'agent-introspection harness remove-hooks claude-code'
@@ -463,24 +493,37 @@ cmd_agent() {
   local model=sonnet budget=5 allow_local=false
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --model) model=$2; shift 2 ;;
-      --budget) budget=$2; shift 2 ;;
-      --allow-local-signoz) allow_local=true; shift ;;
+      --model)
+        model=$2
+        shift 2
+        ;;
+      --budget)
+        budget=$2
+        shift 2
+        ;;
+      --allow-local-signoz)
+        allow_local=true
+        shift
+        ;;
       *) die "unknown option $1" ;;
     esac
   done
   command -v claude >/dev/null || die "claude is not installed"
   # The CLI's defaults name a SigNoz on this machine's loopback ports. A session that
   # leaves out the sandbox's addresses would install into it, so refuse while one answers.
-  if ! $allow_local && { curl -fsS -m 2 http://127.0.0.1:8123/ping >/dev/null 2>&1 ||
-    curl -sS -m 2 -o /dev/null http://127.0.0.1:4318/ 2>/dev/null; }; then
+  if ! $allow_local && { curl -fsS -m 2 http://127.0.0.1:8123/ping >/dev/null 2>&1 \
+    || curl -sS -m 2 -o /dev/null http://127.0.0.1:4318/ 2>/dev/null; }; then
     die "a SigNoz answers on 127.0.0.1:8123 or :4318; stop it, or pass --allow-local-signoz"
   fi
   [ -f "$ROOT/state/clickhouse_url" ] || die "agent needs the sandbox ClickHouse"
   local prompt=$ROOT/state/agent-prompt.txt transcript=$ROOT/state/agent-transcript.jsonl
-  sed -e "s|{{CLICKHOUSE_URL}}|$(cat "$ROOT/state/clickhouse_url")|g" \
-    -e "s|{{OTLP_ENDPOINT}}|$(cat "$ROOT/state/otlp_endpoint")|g" \
+  local clickhouse_url otlp_endpoint prompt_text
+  clickhouse_url="$(cat "$ROOT/state/clickhouse_url")"
+  otlp_endpoint="$(cat "$ROOT/state/otlp_endpoint")"
+  sed -e "s|{{CLICKHOUSE_URL}}|$clickhouse_url|g" \
+    -e "s|{{OTLP_ENDPOINT}}|$otlp_endpoint|g" \
     "$HERE/agent-prompt.txt" >"$prompt"
+  prompt_text="$(cat "$prompt")"
   echo "agent: a fresh Claude Code session installs from $ROOT/repo; transcript: $transcript"
   # Every Bash command the session runs goes through the sandbox runner, and it cannot
   # edit files directly. It loads no user settings (so none of this machine's hooks or
@@ -496,7 +539,7 @@ cmd_agent() {
   (
     cd "$ROOT/repo"
     env ${unset[@]+"${unset[@]}"} CLAUDE_CODE_ENABLE_TELEMETRY=0 \
-      CLAUDE_CODE_SHELL_PREFIX="$ROOT/run" claude -p "$(cat "$prompt")" \
+      CLAUDE_CODE_SHELL_PREFIX="$ROOT/run" claude -p "$prompt_text" \
       --model "$model" --max-budget-usd "$budget" \
       --permission-mode bypassPermissions \
       --setting-sources project,local --strict-mcp-config --no-session-persistence \
@@ -520,35 +563,46 @@ print(result.get("result", "") if result else "no result event; see the transcri
 
 # --- destroy ---------------------------------------------------------------------------
 
-sandbox_process() {
-  # sandbox_process PID PATTERN: whether PID still runs a command naming PATTERN, so a
-  # pid reused since the sandbox started is never signalled.
-  [ "${1:-0}" -gt 0 ] && ps -p "$1" -o command= 2>/dev/null | grep -qF -- "$2"
+signal_sandbox_process() {
+  local pid="$1" pattern="$2"
+  shift 2
+  if [ "${pid:-0}" -gt 0 ] && ps -p "$pid" -o command= 2>/dev/null | grep -qF -- "$pattern"; then
+    kill "$@" 2>/dev/null || true
+  fi
 }
 
 cmd_destroy() {
   ROOT=$(need_root "${1-}")
   # Only the directory `create` recorded as its own is ever deleted.
-  [ "$(cat "$ROOT/state/root" 2>/dev/null)" = "$ROOT" ] || die "refusing to delete $ROOT: not created as this sandbox"
+  local recorded
+  recorded="$(cat "$ROOT/state/root" 2>/dev/null)" || recorded=""
+  [ "$recorded" = "$ROOT" ] || die "refusing to delete $ROOT: not created as this sandbox"
   for job in "$ROOT"/state/launchd/* "$ROOT"/state/systemd/*.active; do
     [ -f "$job" ] || continue
     pid=$(cat "$job")
-    if sandbox_process "$pid" "$ROOT"; then kill -TERM -- "-$pid" 2>/dev/null || true; fi
+    signal_sandbox_process "$pid" "$ROOT" -TERM -- "-$pid"
   done
   if [ -f "$ROOT/state/collector.pid" ]; then
     pid=$(cat "$ROOT/state/collector.pid")
-    if sandbox_process "$pid" otlp_stub.py; then kill "$pid" 2>/dev/null || true; fi
+    signal_sandbox_process "$pid" otlp_stub.py "$pid"
   fi
-  if [ -f "$ROOT/state/docker_host" ]; then export DOCKER_HOST; DOCKER_HOST=$(cat "$ROOT/state/docker_host"); fi
+  if [ -f "$ROOT/state/docker_host" ]; then
+    export DOCKER_HOST
+    DOCKER_HOST=$(cat "$ROOT/state/docker_host")
+  fi
   if [ -f "$ROOT/state/container" ]; then
     docker rm -f "$(cat "$ROOT/state/container")" >/dev/null 2>&1 || true
   fi
   for tunnel_pid in "$ROOT"/state/*-tunnel.pid; do
     [ -f "$tunnel_pid" ] || continue
     pid=$(cat "$tunnel_pid")
-    if sandbox_process "$pid" "ssh -N"; then kill "$pid" 2>/dev/null || true; fi
+    signal_sandbox_process "$pid" "ssh -N" "$pid"
   done
-  if [ -f "$ROOT/state/docker_host" ]; then rm -f "$(sed 's|^unix://||' "$ROOT/state/docker_host")"; fi
+  if [ -f "$ROOT/state/docker_host" ]; then
+    local socket
+    socket="$(sed 's|^unix://||' "$ROOT/state/docker_host")"
+    rm -f "$socket"
+  fi
   rm -rf "$ROOT"
   echo "destroyed $ROOT"
 }

@@ -7,13 +7,9 @@ runner_pattern='scripts/run-ci-quality-gates\.sh'
 # for a pre-commit hook entry and a workflow step run command that invoke the
 # runner directly, not merely mention it. Only the runner's own arguments may
 # follow it; shell operators that can mask its exit status are rejected.
-active_config() {
-  sed -E 's/(^|[[:space:]])#.*$//' "$1"
-}
-
 require_invocation() {
   local file="$1" key="$2"
-  if ! active_config "$file" \
+  if ! sed -E 's/(^|[[:space:]])#.*$//' "$file" \
     | grep -Eq "^[[:space:]]*(-[[:space:]]+)?${key}:[[:space:]]+(bash[[:space:]]+)?(\./)?${runner_pattern}([[:space:]]+[A-Za-z0-9_./=-]+)*[[:space:]]*$"; then
     printf '%s: no active %s invokes %s\n' "$file" "$key" 'scripts/run-ci-quality-gates.sh' >&2
     exit 1
