@@ -9,6 +9,7 @@ import pytest
 from agent_introspection import hooks, spool
 from tests.support.otlp_collector import hook_record
 
+
 def test_the_body_is_one_resource_with_a_compact_record_per_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
