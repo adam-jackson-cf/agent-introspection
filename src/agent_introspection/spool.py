@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent_introspection import hooks
-from agent_introspection.config import AppConfig, load_config
+from agent_introspection.config import AppConfig, ConfigurationError, load_config
 
 STATUS_SCHEMA = "agent-introspection.spool-status/1"
 SERVICE_NAME = "agent-introspection"
@@ -440,7 +440,7 @@ def hook_endpoint(config: Path | None = None) -> str | None:
     """
     try:
         return load_config(config).otlp_logs_endpoint
-    except Exception as exc:
+    except ConfigurationError as exc:
         hooks.log("spool", type(exc).__name__, "0")
         return None
 

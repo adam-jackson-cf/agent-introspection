@@ -1,6 +1,6 @@
-from scripts.lib.capabilities_render import CAPABILITIES_DOC, render_capabilities
-from scripts.lib.harness_render import HARNESSES_MODULE, render_harnesses
-from scripts.lib.measures_render import rendered, updated
+from lib.capabilities_render import CAPABILITIES_DOC, render_capabilities
+from lib.harness_render import HARNESSES_MODULE, render_harnesses
+from lib.measures_render import rendered, updated
 
 
 def test_generated_docs_match_the_signal_registry() -> None:

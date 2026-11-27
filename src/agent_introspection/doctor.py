@@ -335,7 +335,7 @@ class _Doctor:
     def _unreachable_fix(self) -> str:
         try:
             present = bool(self.probes.detect().get("signoz_present"))
-        except Exception as exc:
+        except OSError as exc:
             return (
                 f"`signoz detect` raised {type(exc).__name__}: check that SigNoz is running "
                 "and that [signoz] in the config names it"
@@ -467,7 +467,7 @@ class _Doctor:
             return doctor_harness.Telemetry(
                 counts=doctor_harness.telemetry_counts(self.run, tuple(registry.harnesses))
             )
-        except Exception as exc:
+        except (facts.FactsError, ValueError, KeyError) as exc:
             return doctor_harness.Telemetry(error=type(exc).__name__)
 
     def _disabled_check(
