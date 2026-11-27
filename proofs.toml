@@ -1130,6 +1130,276 @@ violating = "tests/fixtures/proofs/code-integrity/no-product-mocks/violating"
 expect = "CODE.no-product-mocks"
 rule = "CODE.no-product-mocks"
 
+[[claim]]
+id = "tests.budget"
+rules = ["TEST.budget.t1-time", "TEST.budget.per-test-time"]
+control = ["scripts/check-test-budget.py", "scripts/lib/machine_probe.py", "scripts/build-scenario-repo.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_budget","{fixture}"]
+passing = "tests/fixtures/proofs/tests.budget/passing"
+violating = "tests/fixtures/proofs/tests.budget/violating-wall"
+expect = "TEST.budget.t1-time"
+rule = "TEST.budget.t1-time"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_budget","{fixture}"]
+passing = "tests/fixtures/proofs/tests.budget/passing"
+violating = "tests/fixtures/proofs/tests.budget/violating-per-test"
+expect = "TEST.budget.per-test-time"
+rule = "TEST.budget.per-test-time"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.golden-change-record"
+rules = ["TEST.golden-change-record"]
+control = ["scripts/check-golden-changes.py", "docs/references/golden-changes.md"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","golden_changes","{fixture}"]
+passing = "tests/fixtures/proofs/tests.golden-change-record/passing"
+violating = "tests/fixtures/proofs/tests.golden-change-record/violating"
+expect = "TEST.golden-change-record"
+rule = "TEST.golden-change-record"
+timeout_seconds = 60
+
+[[claim]]
+id = "surface.feature-map"
+rules = ["SURFACE.feature-map", "SURFACE.journeys"]
+control = ["scripts/check-verification-surface.py", "docs/features", "tests/journeys/test_install_journey.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","verification_surface","{fixture}"]
+passing = "tests/fixtures/proofs/surface.feature-map/passing"
+violating = "tests/fixtures/proofs/surface.feature-map/violating-map"
+expect = "SURFACE.feature-map"
+rule = "SURFACE.feature-map"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","verification_surface","{fixture}"]
+passing = "tests/fixtures/proofs/surface.feature-map/passing"
+violating = "tests/fixtures/proofs/surface.feature-map/violating-journey"
+expect = "SURFACE.journeys"
+rule = "SURFACE.journeys"
+timeout_seconds = 60
+
+[[claim]]
+id = "surface.lever"
+rules = ["SURFACE.lever-isolation"]
+control = ["scripts/check-lever-isolation.py", "scripts/fresh-install/sandbox.sh"]
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci-quality-gates.yml"
+ref = "scripts/run-ci-quality-gates.sh install"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","lever_isolation","{fixture}"]
+passing = "tests/fixtures/proofs/surface.lever/passing"
+violating = "tests/fixtures/proofs/surface.lever/violating"
+expect = "SURFACE.lever-isolation"
+rule = "SURFACE.lever-isolation"
+timeout_seconds = 90
+
+[[not_applicable]]
+rule = "GOLANGCI.*"
+reason = "The repository maintains no Go code: git ls-files lists no .go file, no go.mod and no golangci-lint config."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { absent = ["*.go", "**/*.go", "go.mod", "**/go.mod", "go.sum", ".golangci*"] }
+
+[[not_applicable]]
+rule = "PARITY.dependency-inventory"
+reason = "No optional analyzer dependencies: pyproject.toml declares dependencies = [] and no optional-dependencies; the only group is dev, installed by uv sync --locked --dev in the entrypoint."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { path = "pyproject.toml", contains = "dependencies = []" }
+
+[[not_applicable]]
+rule = "TEST.property-seed"
+reason = "No property-based tests: no hypothesis or fast-check import or dependency in owned code."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E '^(from|import) hypothesis|fast-check' -- . ':!tests/fixtures' ':!proofs.toml' || echo no-property-tests"], expect = "no-property-tests" }
+
+[[not_applicable]]
+rule = "TEST.mutation-sensitivity"
+reason = "No mutation tool or mutation later job: no mutmut, cosmic-ray or stryker in any manifest or lock."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E 'mutmut|cosmic-ray|stryker' -- pyproject.toml uv.lock dashboard/package.json scripts/ux-probe/package.json || echo no-mutation-tool"], expect = "no-mutation-tool" }
+
+[[not_applicable]]
+rule = "PYQ201"
+reason = "Ruff PLR0904 enforces the public-method limit (max-public-methods = 20 in pyproject.toml) under the ruff claim, so the bespoke copy would duplicate it."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { path = "pyproject.toml", contains = "max-public-methods = 20" }
+
+[[not_applicable]]
+rule = "PYQ211"
+reason = "No project analyzer exists: no *Analyzer class in src, scripts or .agents and [python_quality] analyzer_bases is empty, so no class has a project entrypoint to implement."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E 'class [A-Za-z]*Analyzer' -- src scripts .agents || echo no-project-analyzers"], expect = "no-project-analyzers" }
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/check-*"
+reason = "One command script per checker, named check-<check>; the gate entrypoint calls each as check_<name>, so the shared prefix is the naming convention, not a hidden concept."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/lib/bun_*"
+reason = "Library modules for the scripts, each named for the Bun artefact it reads (the bun test report adapter, bun.lock); a bun folder would hold two unrelated readers."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/lib/python_*"
+reason = "Library modules shared by the Python quality checkers, named for the checker family they serve; scripts/lib already is their folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/list-*"
+reason = "Two unrelated command scripts that each print a list (bun test cases, the Python scope); the verb names what they do."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/run-*"
+reason = "The gate entrypoint and the run-evidence collector are separate commands; the verb names what they do."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = ".agents/skills/introspection-*"
+reason = "User-facing skill names: the product prefix names the skill catalogue users invoke by name, and skill folders must match their names."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_cli_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_code_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_command_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_dashboard_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_doctor_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_facts_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_harness_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_hook_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_hooks_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_python_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_quality_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_signoz_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_structure_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_test_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_tier_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
+[[exception]]
+rule = "NAME.conventions"
+check = "child-repeats-parent"
+path = ".agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh"
+reason = "User-facing install command named in the onboarding skill and twelve documents; renaming it would break the commands users run."
+approved_by = "adam-jackson-cf, 2026-11-27"
+
 [python_quality]
 maintained_roots = ["scripts", "src", "tests"]
 skill_roots = [".agents/skills"]
@@ -1228,6 +1498,7 @@ large_module_fanout_max = 3
 "tests/test_signoz_install_script.py" = ["_run_install"]
 "tests/test_test_evidence_canaries.py" = ["_gate", "_run_fixture"]
 "tests/test_tier_guards.py" = ["_run"]
+"tests/journeys/test_install_journey.py" = ["_lever"]
 
 [python_quality.filesystem_seams]
 "tests/test_python_checker_scripts.py" = ["_write_module"]
@@ -1235,7 +1506,7 @@ large_module_fanout_max = 3
 [python_quality.environment_seams]
 "tests/support/home_guard.py" = ["_drop_environment", "_set_environment"]
 "src/agent_introspection/cli.py" = ["_configured_path"]
-"src/agent_introspection/dashboard_api.py" = ["_url_override"]
+"src/agent_introspection/cli_dashboard.py" = ["_url_override"]
 "src/agent_introspection/facts.py" = ["_environment_value"]
 "tests/test_command_shape_parity.py" = ["_live_clickhouse_requested"]
 
@@ -1265,11 +1536,15 @@ catalogue_plurals = [
   "docs",
   "experiments",
   "extensions",
+  "features",
   "fixtures",
+  "journeys",
   "problems",
+  "profiles",
   "references",
   "rules",
   "scripts",
+  "signals",
   "skills",
   "stages",
   "templates",
@@ -1387,7 +1662,6 @@ domain = [
 service = [
   "classify",
   "cli_common",
-  "dashboard_api",
   "dashboard_service",
   "doctor",
   "doctor_harness",
@@ -1492,6 +1766,7 @@ files = ["SKILL.md", "README.md", "references/*.md", "assets/**", "scripts/**"]
 "tests/test_test_budget_limits.py" = "quality-gates"
 "tests/test_test_evidence_canaries.py" = "quality-gates"
 "tests/test_verification_surface_rules.py" = "quality-gates"
+"tests/journeys/test_*.py" = "setup"
 
 [layout]
 support_dir = "tests/support"
@@ -1500,6 +1775,7 @@ fixtures_dir = "tests/fixtures"
 canary_fixtures_dir = "tests/fixtures/proofs"
 test_file_patterns = [
   "tests/test_*.py",
+  "tests/journeys/test_*.py",
   "dashboard/*.test.ts",
   "dashboard/**/*.test.ts",
   "dashboard/**/*.test.tsx",
@@ -1550,6 +1826,9 @@ numbered_allowlist = [
 ]
 
 [surface]
+lever_name = "sandbox.sh lever"
+feature_map_path = "docs/features"
+journey_file_pattern = "tests/journeys/test_*.py"
 lever_command = ["bash", "scripts/fresh-install/sandbox.sh", "lever"]
 data_dir_arg = "--data-dir"
 evidence_dir_arg = "--evidence-dir"
@@ -1557,6 +1836,10 @@ doctor_marker = "LEVER DOCTOR FAILED"
 evidence_ports_file = "ports"
 lever_timeout_s = 1500
 doctor_failure_env = { DOCKER_HOST = "unix:///nonexistent/docker.sock" }
+
+[golden]
+globs = ["tests/fixtures/command_shape.json", "docs/ux/feature-audit/titles.json"]
+change_record = "docs/references/golden-changes.md"
 
 [identity_artefacts]
 "src/agent_introspection/facts_sql/00*_*.sql" = "facts store DDL: the tables and views every installed ClickHouse holds"

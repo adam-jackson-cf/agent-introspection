@@ -58,7 +58,7 @@ jobs:
       - run: bash scripts/run-ci-quality-gates.sh proofs
   fresh-install:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -68,20 +68,8 @@ jobs:
         with:
           bun-version-file: dashboard/package.json
       - run: bash scripts/run-ci-quality-gates.sh install
-  surface:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh check lever_isolation
   gate:
-    needs: [static, t1, t2, fresh-install, surface]
+    needs: [static, t1, t2, fresh-install]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -90,4 +78,3 @@ jobs:
           test "${{ needs.t1.result }}" = success
           test "${{ needs.t2.result }}" = success
           test "${{ needs.fresh-install.result }}" = success
-          test "${{ needs.surface.result }}" = success

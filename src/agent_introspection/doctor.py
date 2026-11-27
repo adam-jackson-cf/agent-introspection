@@ -625,7 +625,7 @@ class _Doctor:
                 "the dashboard service is installed but not running",
                 install,
             )
-        port = dashboard_service.PORT
+        port = self.config.dashboard.port
         if not self.probes.tcp_open("127.0.0.1", port):
             return check(
                 "dashboard_service",

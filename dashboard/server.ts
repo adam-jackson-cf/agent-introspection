@@ -18,6 +18,7 @@ import {
   clickhouse,
   clickhouseUrl,
   credentialsFromEnv,
+  dashboardPort,
   live,
   shortMessage,
   SNAPSHOT_DAYS,
@@ -41,7 +42,6 @@ import { sqliteWorkflow, type WorkflowReader } from "./server/workflow";
 import { loadAssets } from "./server/assets";
 
 const ADDRESS = "127.0.0.1";
-const PORT = 4173;
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
 const SHARED_TTL_MS = 600_000;
@@ -61,6 +61,7 @@ type Dependencies = {
   assets: Map<string, Response>;
   now: () => Date;
   features: Features;
+  port: number;
 };
 
 function json(body: unknown, status = 200): Response {
@@ -76,9 +77,9 @@ function json(body: unknown, status = 200): Response {
 
 const badRequest = (message: string) => json({ error: message }, 400);
 
-function isTrustedRequest(request: Request): boolean {
+function isTrustedRequest(request: Request, port: number): boolean {
   const url = new URL(request.url);
-  const expectedHost = `${ADDRESS}:${url.port || PORT}`;
+  const expectedHost = `${ADDRESS}:${url.port || port}`;
   if (url.hostname !== ADDRESS || request.headers.get("host") !== expectedHost)
     return false;
   const origin = request.headers.get("origin");
@@ -180,6 +181,7 @@ export function createApp(
     assets: new Map(),
     now: () => new Date(),
     features: overrides.features ?? experimentalFeatures(),
+    port: overrides.port ?? dashboardPort(),
     ...overrides,
   };
   const { query, features } = dependencies;
@@ -360,7 +362,7 @@ export function createApp(
   }
 
   return async (request) => {
-    if (!isTrustedRequest(request))
+    if (!isTrustedRequest(request, dependencies.port))
       return json({ error: "untrusted host or origin" }, 403);
     if (request.method !== "GET" && request.method !== "HEAD")
       return json({ error: "method not allowed" }, 405);
@@ -371,12 +373,13 @@ export function createApp(
 
 if (import.meta.main) {
   const assets = await loadAssets(securityHeaders);
-  const app = createApp({ assets });
-  Bun.serve({ hostname: ADDRESS, port: PORT, fetch: app });
+  const port = dashboardPort();
+  const app = createApp({ assets, port });
+  Bun.serve({ hostname: ADDRESS, port, fetch: app });
   void app(
-    new Request(`http://${ADDRESS}:${PORT}/api/registry`, {
-      headers: { host: `${ADDRESS}:${PORT}` },
+    new Request(`http://${ADDRESS}:${port}/api/registry`, {
+      headers: { host: `${ADDRESS}:${port}` },
     }),
   );
-  console.log(`Dashboard listening on http://${ADDRESS}:${PORT}`);
+  console.log(`Dashboard listening on http://${ADDRESS}:${port}`);
 }

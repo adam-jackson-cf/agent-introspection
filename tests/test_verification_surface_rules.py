@@ -106,6 +106,20 @@ def test_a_journey_that_skips_the_lever_is_a_finding(tmp_path: Path) -> None:
     ]
 
 
+def test_a_test_naming_only_the_lever_script_does_not_drive_it(tmp_path: Path) -> None:
+    checker = _script("check-verification-surface")
+    surface = checker.Surface(
+        "docs/features",
+        tuple(_SECTIONS),
+        ("scripts/sandbox.sh", "lever"),
+        ["tests/journeys/test_*.py"],
+        ["tests/**/test_*.py"],
+    )
+    test = _write(tmp_path, "tests/test_install.py", "INSTALLER = 'scripts/sandbox.sh'\n")
+
+    assert checker.journey_problems(tmp_path, [test], surface) == []
+
+
 def test_a_test_driving_the_lever_outside_the_pattern_is_a_finding(tmp_path: Path) -> None:
     checker = _script("check-verification-surface")
     test = _write(tmp_path, "tests/test_cache.py", "LEVER = 'scripts/lever.sh'\n")

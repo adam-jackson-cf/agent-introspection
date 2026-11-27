@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from agent_introspection.config import (
+    DEFAULT_DASHBOARD_PORT,
     ConfigurationError,
     DatabaseConfig,
     MachineRole,
@@ -85,7 +86,7 @@ def test_load_config_uses_defaults_only_for_the_absent_canonical_file(tmp_path: 
         ({"sessions": {"roots": {"codex": ["~/x"]}}}, "sessions"),
         ({"signoz": {"clickhouse_container": "signoz-clickhouse"}}, "clickhouse_container"),
         ({"signoz": {"docker_context": "desktop-linux"}}, "docker_context"),
-        ({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123"}}, "dashboard"),
+        ({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123"}}, "clickhouse_url"),
     ],
 )
 def test_retired_keys_are_named_as_safe_to_delete(
@@ -151,6 +152,16 @@ def test_experimental_features_are_off_unless_set_true() -> None:
         parse_config({"experimental": {"intervention_outcomes": "yes"}})
     with pytest.raises(ConfigurationError, match="unsupported keys in experimental: outcomes"):
         parse_config({"experimental": {"outcomes": True}})
+
+
+def test_the_dashboard_port_defaults_to_4173_and_must_be_a_tcp_port() -> None:
+    assert parse_config({}).dashboard.port == DEFAULT_DASHBOARD_PORT == 4173
+    assert parse_config({"dashboard": {"port": 5174}}).dashboard.port == 5174
+    for port in (0, 65_536, True, "5174"):
+        with pytest.raises(ConfigurationError, match="dashboard.port must be a TCP port"):
+            parse_config({"dashboard": {"port": port}})
+    with pytest.raises(ConfigurationError, match="unsupported keys in dashboard: host"):
+        parse_config({"dashboard": {"host": "0.0.0.0"}})
 
 
 def test_signoz_reads_url_user_and_password_variable_name() -> None:
