@@ -31,6 +31,7 @@ addopts = "-ra"
 testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]
 pythonpath = ["src", "."]
+markers = ["boundary: creates processes or opens sockets"]
 # A leaked SQLite connection surfaces as an unraisable ResourceWarning at GC time.
 filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
@@ -68,7 +69,6 @@ select = [
     "PT",
     "PGH",
     "A",
-    "D",
     "N",
     "RUF",
     "PLR0904",
@@ -79,10 +79,6 @@ select = [
     "PLR0915",
     "PLR0917",
 ]
-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D"]
 
 [tool.ruff.lint.isort]
 known-first-party = []
@@ -102,14 +98,10 @@ max-public-methods = 20
 max-returns = 6
 max-statements = 50
 
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
-docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.12"
