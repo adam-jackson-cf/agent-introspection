@@ -117,7 +117,7 @@ Show the user the hidden list. The user decides:
 - **Hooks:** a hook or plugin adapter in the CLI package's `hook_runtime/`, installed
   by `hook_install.py`, with its events in `hooks.py` and
   `docs/references/hook-events.md`, turns `hook_available` into `hook`.
-- **Registration:** follow the `introspection-operations` change workflow, "Add a
+- **Registration:** follow the `introspection-signals` change workflow, "Add a
   harness". The profile becomes `registered`, and the registry and dashboard changes
   ship in one change.
 
@@ -149,7 +149,7 @@ Producers change with upgrades: names are renamed, added, or dropped.
   a warning in `doctor --drift`. Explore it as above, then decide whether it joins an existing
   profile and the registry as another surface (a change) or is a separate producer.
 - **Renames.** A route going quiet while a similar name appears is a rename: fix the
-  route with the `introspection-operations` change workflow, bump `verified_versions`
+  route with the `introspection-signals` change workflow, bump `verified_versions`
   in the profile, and save the fingerprint again.
 
 ## Done when

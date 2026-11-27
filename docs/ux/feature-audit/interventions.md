@@ -154,3 +154,9 @@ Removed since baseline: none found.
 - Repeated corrections KPI (INTV-F05) and Uncodified practice recurrence table (INTV-F12) removed; signal `intervene.practice_recurrence` removed from the registry. The repeated-correction detector is retired: its findings go dormant and stay listed, labelled project · correction kind.
 - Post-intervention recurrence compares failure clusters only (`correction_daily` removed). An applied proposal of the retired detector shows its task counts with Before, After, and Rate change empty, not a measured 0.
 - The corrections baseline series counts corrected tasks per 100 tasks with a next-prompt label (Intent's corrected rate), over all tasks rather than tasks with a project.
+
+## Intervention outcomes behind an experimental switch (2026-11-18, DC12)
+
+- Off unless `[experimental] intervention_outcomes = true`: the Applied interventions KPI (INTV-F04), the "Did an intervention reduce what it targeted?" section with Post-intervention recurrence (INTV-F06, F25) and Recurrence baseline (INTV-F07, F08, F24), and the Proposals table's Verdict, Ratio and Baseline → evaluation rate columns (INTV-S02, S15, S16). Signals INTV-S09 to S18 and S24 show only when it is on.
+- Off, `/api/view` omits `comparisons` and `baseline_daily`, the KPI's applied and verdict counts, each proposal's evaluation fields, and `evaluated` events in Approval history; the before/after queries do not run. The Proposals panel's chips cover `intervene.tier_audit` only and its subtitle drops "and its latest recorded evaluation".
+- No feature is removed: every title stays in the source, and `facts sync` still records verdicts.

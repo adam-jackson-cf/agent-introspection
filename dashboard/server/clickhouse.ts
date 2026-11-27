@@ -35,10 +35,12 @@ export function credentialsFromEnv(
   return { user: user || "default", password: password ?? "" };
 }
 
-const defaultReadConfig = (path: string): string | undefined =>
+/** The agent-introspection config file's text, or undefined when it does not exist. */
+export const readConfigFile = (path: string): string | undefined =>
   existsSync(path) ? readFileSync(path, "utf8") : undefined;
 
-function configPath(env: Record<string, string | undefined>): string {
+/** The config path the CLI reads: `AGENT_INTROSPECTION_CONFIG`, else the default. */
+export function configPath(env: Record<string, string | undefined>): string {
   return (
     env.AGENT_INTROSPECTION_CONFIG ||
     join(env.HOME ?? homedir(), ".config/agent-introspection/config.toml")
@@ -88,7 +90,7 @@ export function assertLocalAddress(baseUrl: string): void {
  */
 export function clickhouseUrl(
   env: Record<string, string | undefined> = process.env,
-  readConfig: (path: string) => string | undefined = defaultReadConfig,
+  readConfig: (path: string) => string | undefined = readConfigFile,
 ): string {
   if (env.INTROSPECTION_CLICKHOUSE_URL) return env.INTROSPECTION_CLICKHOUSE_URL;
   const url = configuredUrl(readConfig(configPath(env)));

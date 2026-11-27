@@ -208,8 +208,10 @@ events from SigNoz with the same family filter.
 
 - `facts status` shows every loader fresh for every harness.
 - The dashboard Pipeline view shows loaders, freshness, parity, and the coverage grid;
-  the [`introspection-operations`](../../.agents/skills/introspection-operations/SKILL.md)
-  skill covers health checks and signal changes.
+  the [`introspection-health`](../../.agents/skills/introspection-health/SKILL.md)
+  skill covers health checks, and
+  [`introspection-signals`](../../.agents/skills/introspection-signals/SKILL.md) signal
+  changes.
 
 ## Related Docs
 

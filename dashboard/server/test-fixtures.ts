@@ -155,6 +155,7 @@ export const registry = (): Registry =>
       enabled: 1,
     })),
     hidden: [],
+    features: { intervention_outcomes: false },
   }) as Registry;
 
 /**

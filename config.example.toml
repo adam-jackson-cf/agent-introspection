@@ -49,3 +49,12 @@ busy_timeout_ms = 5000
 # [machine]
 # role = "additional"
 # export_endpoint = "http://signoz-host.local:4318"
+
+# Experimental dashboard features, each off unless set true. They are not yet proven in
+# use. intervention_outcomes shows, on the Findings and fixes view, whether an applied
+# intervention reduced what it targeted: the post-intervention recurrence and
+# recurrence baseline panels, the applied-interventions figure, and each proposal's
+# verdict. `facts sync` records verdicts either way. Restart the dashboard (`dashboard
+# install`) after a change.
+# [experimental]
+# intervention_outcomes = true

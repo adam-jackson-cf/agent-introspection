@@ -61,8 +61,8 @@ A known producer starts at **decide**: its profile is bundled and already checke
 Turning a candidate into a harness is a code change: a registry `[harnesses]` key, a
 route or a reason for every signal, the profile with
 status `registered`, and an activity-hook adapter where one is needed. The
-`introspection-operations` skill's
-[change workflow](../../.agents/skills/introspection-operations/references/change-workflow.md)
+`introspection-signals` skill's
+[change workflow](../../.agents/skills/introspection-signals/references/change-workflow.md)
 lists every place a harness is named.
 
 ## Capabilities and signals

@@ -4,6 +4,13 @@ const DAY = 86_400_000;
 const CORRECTION_DETECTOR = "facts.repeated_correction";
 /** The datasets the page never sees: inputs of the before/after windows. */
 const DAILY_INPUTS = ["cluster_daily", "task_daily"];
+/** A proposal's latest evaluation: shown only with intervention outcomes on. */
+const OUTCOME_FIELDS = [
+  "verdict",
+  "evaluated_ratio",
+  "baseline_rate",
+  "evaluation_rate",
+];
 
 export type InterventionScope = { harness: string; start: string; end: string };
 
@@ -196,11 +203,15 @@ function kpiRow(
  * datasets: harness-scoped findings, proposals and decision history, the KPI row,
  * proposals per tier, and the before/after
  * comparison of every proposal applied strictly inside the range.
+ * Without `outcomes` (the experimental `intervention_outcomes` feature), nothing
+ * says whether an applied intervention worked: no comparisons, no applied KPI
+ * parts, no proposal verdicts, and no `evaluated` decision events.
  */
 export function interventionsData(
   clickhouse: Record<string, Row[]>,
   workflow: Record<string, Row[]>,
   scope: InterventionScope,
+  outcomes: boolean,
 ): Record<string, Row[]> {
   const findings = (workflow.findings ?? [])
     .filter((row) => inScope(row, scope.harness))
@@ -209,6 +220,30 @@ export function interventionsData(
     .filter((row) => inScope(row, scope.harness))
     .map(withKind);
   const ids = new Set(proposals.map((row) => row.id));
+  const events = (workflow.proposal_events ?? []).filter((event) =>
+    ids.has(event.proposal_id),
+  );
+  if (!outcomes) {
+    const counts = kpiRow(findings, proposals, [], 0);
+    return {
+      kpis: [
+        {
+          findings: counts.findings,
+          actionable: counts.actionable,
+          proposals: counts.proposals,
+          pending: counts.pending,
+        },
+      ],
+      findings,
+      proposals: proposals.map((row) =>
+        Object.fromEntries(
+          Object.entries(row).filter(([key]) => !OUTCOME_FIELDS.includes(key)),
+        ),
+      ),
+      proposal_events: events.filter((event) => event.event !== "evaluated"),
+      tiers: tierCounts(proposals),
+    };
+  }
   const applied = proposals.filter((row) => row.applied_at);
   const start = Date.parse(scope.start);
   const end = Date.parse(scope.end);
@@ -230,9 +265,7 @@ export function interventionsData(
     kpis: [kpiRow(findings, proposals, applied, comparisons.length)],
     findings,
     proposals,
-    proposal_events: (workflow.proposal_events ?? []).filter((event) =>
-      ids.has(event.proposal_id),
-    ),
+    proposal_events: events,
     tiers: tierCounts(proposals),
     comparisons,
   };

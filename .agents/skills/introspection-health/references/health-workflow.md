@@ -53,7 +53,7 @@ without bypassing a failed check.
      lost after the collector acknowledged them).
 6. A boundary route going quiet while a similarly named attribute appears is a
    producer rename (omp moved `pi.gen_ai.*` to `omp.gen_ai.*` on 2026-09-29), not
-   idleness: fix it with the change workflow.
+   idleness: fix it with the `introspection-signals` change workflow.
 
 ## Done when
 

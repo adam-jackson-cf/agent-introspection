@@ -81,8 +81,12 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 - `.agents/skills/`: skills that let a coding agent run the system:
   - [`introspection-onboarding`](.agents/skills/introspection-onboarding/SKILL.md):
     install, connect harnesses, assess new producers, add machines.
-  - [`introspection-operations`](.agents/skills/introspection-operations/SKILL.md):
-    check health; change signals, projections, or harnesses.
+  - [`introspection-health`](.agents/skills/introspection-health/SKILL.md): check
+    health before changes and before trusting findings or figures.
+  - [`introspection-signals`](.agents/skills/introspection-signals/SKILL.md): change
+    signals, projections, or harnesses.
+  - [`introspection-analysis`](.agents/skills/introspection-analysis/SKILL.md):
+    read what the dashboard shows from the terminal and route its themes.
   - [`introspection-improvement`](.agents/skills/introspection-improvement/SKILL.md):
     findings → proposal → decision → evaluation.
   - [`python-conventions`](.agents/skills/python-conventions/SKILL.md): this

@@ -237,7 +237,7 @@ steers are verified; enabling then still needs the user to accept that cost.
    delivers from `hook_available` to `hook`.
 5. Decide with the user whether hiding Time to first token is acceptable.
 6. If the user accepts the remaining cost, register opencode through the
-   [change workflow](../../.agents/skills/introspection-operations/references/change-workflow.md),
+   [change workflow](../../.agents/skills/introspection-signals/references/change-workflow.md),
    then save a baseline with `agent-introspection producers fingerprint --save opencode`.
 7. Optional, and the user's decision: apply the collector filter, and decide whether to
    drop the path-bearing keys of the HTTP server spans as well.

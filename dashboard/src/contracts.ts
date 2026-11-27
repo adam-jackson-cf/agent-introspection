@@ -112,6 +112,12 @@ export type HiddenSignal = {
   missing: string;
   note: string;
 };
+/**
+ * Experimental features this machine turns on in its config (`[experimental]`); each
+ * is off unless set true. `intervention_outcomes`: whether applied interventions
+ * reduced what they targeted (Findings and fixes).
+ */
+export type Features = { intervention_outcomes: boolean };
 export type Registry = {
   signals: SignalDefinition[];
   support: SignalSupport[];
@@ -120,6 +126,7 @@ export type Registry = {
   exclusions: SignalExclusion[];
   harnesses: HarnessEntry[];
   hidden: HiddenSignal[];
+  features: Features;
 };
 
 /**
