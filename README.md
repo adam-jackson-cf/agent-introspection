@@ -125,3 +125,16 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 | Contribute code                        | [Development](docs/references/development.md)                                                                                                                 |
 
 [docs/README.md](docs/README.md) indexes every doc.
+
+## Contributing
+
+Install the commit hook once in each clone (every gate mode also runs these commands):
+
+```bash
+uv sync --locked --dev
+uv run pre-commit install
+```
+
+Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`, which only checks and
+never changes files. [Development](docs/references/development.md) lists the gate modes,
+the fix script `scripts/fix-quality-gates.sh`, the test tiers, and `proofs.toml`.

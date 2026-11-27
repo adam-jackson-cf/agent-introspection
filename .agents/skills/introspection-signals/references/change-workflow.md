@@ -49,8 +49,10 @@ The generated rule and matrix are in
 5. **Apply**:
    - `uv run python scripts/render-measures.py` (regenerates the signal catalog, the
      data-gaps doc, the producer-capabilities doc, and
-     `dashboard/src/harnesses.generated.ts`; a test fails when they drift);
-   - `bash scripts/run-ci-quality-gates.sh`;
+     `dashboard/src/harnesses.generated.ts`, which carries no header naming its origin;
+     `render-measures.py --check` and a test fail when they drift);
+   - `bash scripts/run-ci-quality-gates.sh hook` (the commit suite: static checks, T1
+     and T2);
    - `uv tool install --force --reinstall .` after any Python change;
    - `agent-introspection facts install`; `facts backfill --days 90` when a projection
      changed; `OPTIMIZE TABLE introspection.spans FINAL` (and `logs`) when a change
@@ -70,7 +72,8 @@ signal has a route or a recorded reason, or the user has decided which signals t
 exclude (exclusion removes a signal for every harness).
 
 The harness identity lists are generated from the registry's `[harnesses]` table;
-never edit them by hand. `uv run python scripts/render-measures.py` regenerates
+never edit them by hand: `scripts/render-measures.py` is their only source.
+`uv run python scripts/render-measures.py` regenerates
 `dashboard/src/harnesses.generated.ts` (`HARNESSES`, `HARNESS_LABEL`, and the services
 list that `contracts.ts`, `format.ts`, and `pipeline.ts` import) and the docs. The
 projections' service lists (`{services}` in `select_spans.sql` and `select_logs.sql`)

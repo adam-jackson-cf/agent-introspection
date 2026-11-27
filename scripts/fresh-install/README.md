@@ -30,8 +30,26 @@ removes the container and closes both forwards.
 
 Run `verify` and `agent` on separate sandboxes: each expects a machine where nothing
 has been installed yet. Commit first, because the sandbox clones `HEAD`. It runs on
-macOS and Linux; CI runs `verify` on Linux for every push and pull request (the
-`fresh-install` job), since GitHub's macOS runners have no Docker.
+macOS and Linux. CI runs it on Linux for every push and pull request, since GitHub's
+macOS runners have no Docker, through the gate entrypoint:
+
+```bash
+bash scripts/run-ci-quality-gates.sh install   # create, verify, destroy
+```
+
+The `install` mode prints the verify logs to stderr when `verify` fails, then destroys the
+sandbox; CI uploads no artifact.
+
+`lever` runs the same create, verify and destroy as one command and keeps the evidence:
+
+```bash
+bash scripts/fresh-install/sandbox.sh lever --data-dir DIR --evidence-dir DIR [--docker-ssh USER@HOST]
+```
+
+It first checks that `uv`, `bun`, `git`, `curl`, `python3` and Docker are present and that
+port 4173 is free. When one is not, it prints `LEVER DOCTOR FAILED: <reason>` and exits 3.
+Otherwise it writes `create.log`, `verify.log`, the sandbox `state/`, the ports it used
+and `destroy.log` into the evidence directory, and exits with `verify`'s status.
 
 ## What the sandbox is
 
