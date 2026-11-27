@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Validate Python structure, class shape, and seam boundary rules.
-
-Rule IDs: PYQ100-107 (structure), PYQ200-203 (class shape), PYQ210-211 (analyzer
-classes), PYQ220-221 (subprocess and dynamic-import seams), PYQ230-231 (contract
-dataclass fields), PYQ299 (undecodable or unparsable source fails closed).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -17,32 +10,24 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from lib.python_quality_scope import (
-    candidate_python_relpaths,
-    fixture_location,
+    SourceFile,
     is_excluded_python_path,
     is_maintained_python_path,
+    listed_relpaths,
+    path_matches_prefix,
+    report_settings_error,
+    select_sources,
+)
+from lib.python_quality_settings import (
+    PROOFS_FILE,
+    TABLE,
+    PythonQuality,
+    SettingsError,
+    python_quality,
 )
 
-CLASS_MAX_LINES = 700
-CLASS_MAX_INIT_ARGS = 8
-CLASS_MAX_INSTANCE_ATTRIBUTES = 12
-
-# --- Target-owned configuration (replaces the Enaible roots and allowlists) ---
-
-SKILLS_ROOT = ".agents/skills"
-# Approved generic-name directories (PYQ103) and modules (PYQ104), as repo-relative paths.
-GENERIC_NAME_ALLOWLIST: frozenset[str] = frozenset()
-GENERIC_NAME_PARTS = frozenset({"common", "helpers", "misc", "stuff", "temp"})
-# Files that may sit directly under tests/ (PYQ102).
-ALLOWED_ROOT_FILES = frozenset({"tests/__init__.py", "tests/conftest.py"})
-ALLOWED_TEST_GROUPS = frozenset({"fixtures", "integration", "seams", "support", "unit"})
-# Flat tests/<glob> layout approved for a canonical group (PYQ102): group -> filename glob.
-FLAT_TEST_GROUPS: dict[str, str] = {"unit": "test_*.py"}
-# Command scripts directly under scripts/ are kebab-case (PYQ101); importable helper
-# modules live in scripts/lib/ with snake_case names (PYQ107).
-SCRIPT_MODULE_DIRECTORY = "scripts/lib"
-# Directory names that are not Python package names (PYQ105).
-NON_PACKAGE_DIRECTORY_PARTS = frozenset({".github", "fixtures", "scripts", "src", "tests"})
+LABEL = "[python-quality]"
+ANALYZER_CLASS_SUFFIX = "Analyzer"
 SUBPROCESS_CALLS = frozenset({
     "run",
     "Popen",
@@ -52,58 +37,19 @@ SUBPROCESS_CALLS = frozenset({
     "getoutput",
     "getstatusoutput",
 })
-# Dedicated subprocess seam wrappers per file (PYQ220): each named function does nothing
-# but run the subprocess. Files absent from this map may not call subprocess at all.
-# Tests are out of scope for this rule.
-SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
-    "scripts/check-dependency-audit.py": frozenset({"_run"}),
-    "scripts/check-hook-installed.py": frozenset({"_git_path"}),
-    "scripts/check-lock-parity.py": frozenset({"_git_ls_files"}),
-    "scripts/check-python-mypy.py": frozenset({"_mypy"}),
-    "scripts/check-runner-failure-propagation.py": frozenset({"_run"}),
-    "scripts/check-skill-metadata.py": frozenset({"_git_ls_files"}),
-    "scripts/check-test-subprocess-timeouts.py": frozenset({"_git_ls_files"}),
-    "scripts/lib/python_quality_scope.py": frozenset({"_git_output"}),
-    "scripts/validate-rule-coverage.py": frozenset({"_spawn"}),
-    "src/agent_introspection/classify.py": frozenset({"_run_key_command"}),
-    "src/agent_introspection/doctor_harness.py": frozenset({"_run_version"}),
-    "src/agent_introspection/drafting.py": frozenset({"run_codex"}),
-    "src/agent_introspection/facts.py": frozenset({"run", "_run_local_command"}),
-    "src/agent_introspection/hook_install.py": frozenset({"_run_omp"}),
-    "src/agent_introspection/schedule.py": frozenset({"launchctl", "systemctl"}),
-    "src/agent_introspection/dashboard_service.py": frozenset({"_run_bun"}),
-    "src/agent_introspection/signoz_detect.py": frozenset({"_run_docker"}),
-}
-# Files allowed to call importlib.import_module (PYQ221).
-DYNAMIC_IMPORT_ADAPTER_ALLOWLIST: frozenset[str] = frozenset()
-# Analyzer-like classes (PYQ210, PYQ211): any class named ``*Analyzer``.
-ANALYZER_CLASS_SUFFIX = "Analyzer"
-APPROVED_ANALYZER_BASES = frozenset({"BaseAnalyzer", "ProjectAnalyzerMixin"})
-PROJECT_ANALYZER_MIXIN = "ProjectAnalyzerMixin"
-PROJECT_ENTRYPOINT = "run_project_analysis"
-# Dataclass collaborator contracts (PYQ230, PYQ231).
-CONTRACT_PATH_PREFIXES = ("src/agent_introspection/",)
+SETTINGS = f"{PROOFS_FILE} [{TABLE}]"
 
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """One quality-gate diagnostic."""
-
     code: str
     relpath: str
     line: int
     message: str
+    fix: str
 
     def render(self) -> str:
-        return f"{self.relpath}:{self.line}: {self.code} {self.message}"
-
-
-@dataclass(frozen=True)
-class SourceFile:
-    """A Python file to check and the repository-relative path it stands for."""
-
-    path: Path
-    relpath: str
+        return f"{self.relpath}:{self.line}: {self.code}: {self.message}; {self.fix}"
 
 
 def _is_snake_case_name(name: str) -> bool:
@@ -116,83 +62,105 @@ def _is_kebab_case_name(name: str) -> bool:
     return bool(name) and all(char == "-" or char.islower() or char.isdigit() for char in name)
 
 
-def _is_valid_skill_name(name: str) -> bool:
-    return bool(name) and all(char == "-" or char.islower() or char.isdigit() for char in name)
+def _snake_case(name: str) -> str:
+    characters: list[str] = []
+    for index, char in enumerate(name):
+        if char.isupper() and index and name[index - 1].islower():
+            characters.append("_")
+        characters.append("_" if char == "-" else char.lower())
+    return "".join(characters)
 
 
-def _is_test_relpath(relpath: str) -> bool:
-    return relpath.startswith("tests/")
+def _kebab_case(name: str) -> str:
+    return _snake_case(name).replace("_", "-")
 
 
-def _generic_name_diagnostics(relpath: str) -> list[Diagnostic]:
+def _matching_root(relpath: str, roots: Iterable[str]) -> str | None:
+    return next((root for root in roots if path_matches_prefix(relpath, root)), None)
+
+
+def _generic_name_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     parts = Path(relpath).parts[:-1]
     for index, part in enumerate(parts):
         prefix = "/".join(parts[: index + 1])
-        if part in GENERIC_NAME_PARTS and prefix not in GENERIC_NAME_ALLOWLIST:
+        if part in settings.generic_name_parts and prefix not in settings.generic_name_allowlist:
             diagnostics.append(
                 Diagnostic(
                     "PYQ103",
                     relpath,
                     1,
                     f"generic catch-all directory name '{part}' is not allowed",
+                    f"rename '{prefix}' after what it owns, or add '{prefix}' to "
+                    f"{SETTINGS} generic_name_allowlist after owner review",
                 )
             )
     stem = Path(relpath).stem
-    if stem in GENERIC_NAME_PARTS and relpath not in GENERIC_NAME_ALLOWLIST:
+    if stem in settings.generic_name_parts and relpath not in settings.generic_name_allowlist:
         diagnostics.append(
             Diagnostic(
                 "PYQ104",
                 relpath,
                 1,
                 f"generic catch-all module name '{stem}' is not allowed",
+                f"rename the module after what it owns, or add '{relpath}' to "
+                f"{SETTINGS} generic_name_allowlist after owner review",
             )
         )
     return diagnostics
 
 
-def _root_diagnostics(relpath: str) -> list[Diagnostic]:
+def _root_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
     if is_maintained_python_path(relpath):
         return []
+    roots = ", ".join(settings.maintained_roots)
     return [
         Diagnostic(
             "PYQ100",
             relpath,
             1,
             "Python file is outside canonical maintained roots",
+            f"move it under one of {roots}, or add its root to {SETTINGS} "
+            "maintained_roots or excluded_paths with a reason",
         )
     ]
 
 
-def _test_group_diagnostics(relpath: str) -> list[Diagnostic]:
-    if not _is_test_relpath(relpath) or relpath in ALLOWED_ROOT_FILES:
+def _test_group_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
+    if not path_matches_prefix(relpath, settings.test_root):
         return []
-    parts = Path(relpath).parts
-    if len(parts) <= 2:
-        if any(fnmatchcase(parts[-1], pattern) for pattern in FLAT_TEST_GROUPS.values()):
+    if relpath in settings.test_root_files:
+        return []
+    parts = Path(relpath).relative_to(settings.test_root).parts
+    groups = ", ".join(sorted(settings.test_groups))
+    if len(parts) <= 1:
+        if any(fnmatchcase(parts[-1], pattern) for pattern in settings.flat_test_groups.values()):
             return []
+        flat = ", ".join(sorted(settings.flat_test_groups.values()))
         return [
             Diagnostic(
                 "PYQ102",
                 relpath,
                 1,
                 "test file must live under a canonical test grouping",
+                f"name it to match {flat} or move it under one of {groups}",
             )
         ]
-    if parts[1] in ALLOWED_TEST_GROUPS:
+    if parts[0] in settings.test_groups:
         return []
     return [
         Diagnostic(
             "PYQ102",
             relpath,
             1,
-            f"test path group '{parts[1]}' is not a canonical test grouping",
+            f"test path group '{parts[0]}' is not a canonical test grouping",
+            f"move it under one of {groups}",
         )
     ]
 
 
-def _package_dir_diagnostics(relpath: str) -> list[Diagnostic]:
-    if relpath.startswith(f"{SKILLS_ROOT}/"):
+def _package_dir_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
+    if _matching_root(relpath, settings.skill_roots) is not None:
         return []
     return [
         Diagnostic(
@@ -200,107 +168,122 @@ def _package_dir_diagnostics(relpath: str) -> list[Diagnostic]:
             relpath,
             1,
             f"Python package directory '{part}' must use snake_case",
+            f"rename it to '{_snake_case(part)}'",
         )
         for part in Path(relpath).parts[:-1]
-        if part not in NON_PACKAGE_DIRECTORY_PARTS and not _is_snake_case_name(part)
+        if part not in settings.non_package_directories and not _is_snake_case_name(part)
     ]
 
 
 def _module_name_diagnostics(relpath: str) -> list[Diagnostic]:
     path = Path(relpath)
-    if path.stem.startswith("test-"):
-        return [
-            Diagnostic(
-                "PYQ107",
-                relpath,
-                1,
-                f"test module '{path.name}' must use test_snake_case",
-            )
-        ]
     if _is_snake_case_name(path.stem):
         return []
+    kind = "test module" if path.stem.startswith("test-") else "Python module"
     return [
         Diagnostic(
             "PYQ107",
             relpath,
             1,
-            f"Python module '{path.name}' must use snake_case",
+            f"{kind} '{path.name}' must use snake_case",
+            f"rename it to '{_snake_case(path.stem)}.py'",
         )
     ]
 
 
-def _script_name_diagnostics(relpath: str) -> list[Diagnostic]:
+def _script_name_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
     path = Path(relpath)
-    if path.parent.as_posix() != "scripts" or _is_kebab_case_name(path.stem):
+    if path.parent.as_posix() != settings.script_root:
+        return []
+    if not _is_kebab_case_name(path.stem):
+        return [
+            Diagnostic(
+                "PYQ101",
+                relpath,
+                1,
+                f"command script '{path.name}' must use kebab-case",
+                f"rename it to '{_kebab_case(path.stem)}.py', or move an importable module "
+                f"into {settings.script_module_directory}/",
+            )
+        ]
+    if path.name in settings.script_names:
         return []
     return [
         Diagnostic(
             "PYQ101",
             relpath,
             1,
-            f"command script '{path.name}' must use kebab-case; "
-            f"importable modules belong in {SCRIPT_MODULE_DIRECTORY}/",
+            f"command script '{path.name}' is not in the approved script names",
+            f"rename it to an approved script, or add '{path.name}' to {SETTINGS} "
+            "script_names after owner review",
         )
     ]
 
 
-def _skill_name_diagnostics(relpath: str) -> list[Diagnostic]:
-    if not relpath.startswith(f"{SKILLS_ROOT}/"):
-        return []
-    skill_name = Path(relpath).parts[2]
-    if _is_valid_skill_name(skill_name):
-        return []
-    return [
-        Diagnostic(
-            "PYQ106",
-            relpath,
-            1,
-            f"skill directory '{skill_name}' must use kebab-case",
-        )
-    ]
+def _skill_name(relpath: str, settings: PythonQuality) -> str | None:
+    root = _matching_root(relpath, settings.skill_roots)
+    if root is None:
+        return None
+    parts = Path(relpath).relative_to(root).parts
+    return parts[0] if len(parts) > 1 else None
 
 
-def structure_diagnostics_for_relpath(relpath: str) -> list[Diagnostic]:
-    """Return deterministic structure diagnostics for a Python relpath."""
+def _skill_name_diagnostic(location: str, skill_name: str) -> Diagnostic:
+    return Diagnostic(
+        "PYQ106",
+        location,
+        1,
+        f"skill directory '{skill_name}' must use kebab-case",
+        f"rename it to '{_kebab_case(skill_name)}'",
+    )
+
+
+def _skill_name_diagnostics(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
+    skill_name = _skill_name(relpath, settings)
+    if skill_name is None or _is_kebab_case_name(skill_name):
+        return []
+    return [_skill_name_diagnostic(relpath, skill_name)]
+
+
+def structure_diagnostics_for_relpath(relpath: str, settings: PythonQuality) -> list[Diagnostic]:
     normalized = relpath.removeprefix("./")
     if is_excluded_python_path(normalized):
         return []
 
-    diagnostics = _root_diagnostics(normalized)
+    diagnostics = _root_diagnostics(normalized, settings)
     if diagnostics:
         return diagnostics
 
-    if normalized.startswith("scripts/"):
-        diagnostics.extend(_script_name_diagnostics(normalized))
-        if Path(normalized).parent.as_posix() != "scripts":
+    if path_matches_prefix(normalized, settings.script_root):
+        diagnostics.extend(_script_name_diagnostics(normalized, settings))
+        if Path(normalized).parent.as_posix() != settings.script_root:
             diagnostics.extend(_module_name_diagnostics(normalized))
-        return diagnostics + _generic_name_diagnostics(normalized)
+        return diagnostics + _generic_name_diagnostics(normalized, settings)
 
-    diagnostics.extend(_test_group_diagnostics(normalized))
-    diagnostics.extend(_package_dir_diagnostics(normalized))
-    diagnostics.extend(_skill_name_diagnostics(normalized))
+    diagnostics.extend(_test_group_diagnostics(normalized, settings))
+    diagnostics.extend(_package_dir_diagnostics(normalized, settings))
+    diagnostics.extend(_skill_name_diagnostics(normalized, settings))
     diagnostics.extend(_module_name_diagnostics(normalized))
-    diagnostics.extend(_generic_name_diagnostics(normalized))
+    diagnostics.extend(_generic_name_diagnostics(normalized, settings))
     return diagnostics
 
 
-def skill_directory_diagnostics(repo_root: Path, already_flagged: set[str]) -> list[Diagnostic]:
-    """Return PYQ106 diagnostics for skill directories with no diagnosed Python file."""
-    skills = repo_root / SKILLS_ROOT
-    if not skills.is_dir():
-        return []
-    return [
-        Diagnostic(
-            "PYQ106",
-            f"{SKILLS_ROOT}/{child.name}",
-            1,
-            f"skill directory '{child.name}' must use kebab-case",
+def skill_directory_diagnostics(
+    repo_root: Path, settings: PythonQuality, already_flagged: set[str]
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for root in settings.skill_roots:
+        names = {
+            Path(relpath).relative_to(root).parts[0]
+            for relpath in listed_relpaths(repo_root, [root])
+            if len(Path(relpath).relative_to(root).parts) > 1
+        }
+        diagnostics.extend(
+            _skill_name_diagnostic(f"{root}/{name}", name)
+            for name in sorted(names)
+            if name not in already_flagged and not _is_kebab_case_name(name)
         )
-        for child in sorted(skills.iterdir())
-        if child.is_dir()
-        and child.name not in already_flagged
-        and not _is_valid_skill_name(child.name)
-    ]
+    return diagnostics
 
 
 def _base_names(class_node: ast.ClassDef) -> set[str]:
@@ -350,7 +333,6 @@ def _function_scope_for_line(tree: ast.AST, line: int) -> str | None:
 
 
 def _subprocess_import_names(tree: ast.AST) -> tuple[set[str], set[str]]:
-    """Return local names bound to the subprocess module and to its process-launching APIs."""
     module_names = {"subprocess"}
     function_names: set[str] = set()
     for node in ast.walk(tree):
@@ -432,34 +414,40 @@ def _annotation_names(annotation: ast.AST | None) -> set[str]:
     return names
 
 
-def _class_shape_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[Diagnostic]:
+def _class_shape_diagnostics(
+    class_node: ast.ClassDef, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     end_line = getattr(class_node, "end_lineno", class_node.lineno) or class_node.lineno
     line_count = end_line - class_node.lineno + 1
-    if line_count > CLASS_MAX_LINES:
+    if line_count > settings.class_max_lines:
         diagnostics.append(
             Diagnostic(
                 "PYQ200",
                 relpath,
                 class_node.lineno,
-                f"class '{class_node.name}' has {line_count} lines > {CLASS_MAX_LINES}",
+                f"class '{class_node.name}' has {line_count} lines > {settings.class_max_lines}",
+                "split the class into collaborators with one responsibility each",
             )
         )
     attributes = _self_attributes(class_node)
-    if len(attributes) > CLASS_MAX_INSTANCE_ATTRIBUTES:
+    if len(attributes) > settings.class_max_instance_attributes:
         diagnostics.append(
             Diagnostic(
                 "PYQ203",
                 relpath,
                 class_node.lineno,
                 f"class '{class_node.name}' assigns {len(attributes)} instance attributes "
-                f"> {CLASS_MAX_INSTANCE_ATTRIBUTES}",
+                f"> {settings.class_max_instance_attributes}",
+                "group related attributes into a value object or split the class",
             )
         )
     return diagnostics
 
 
-def _constructor_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[Diagnostic]:
+def _constructor_diagnostics(
+    class_node: ast.ClassDef, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for method in class_node.body:
         if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -467,54 +455,68 @@ def _constructor_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[Dia
         if method.name != "__init__":
             continue
         arg_count = _init_arg_count(method)
-        if arg_count > CLASS_MAX_INIT_ARGS:
+        if arg_count > settings.class_max_init_args:
             diagnostics.append(
                 Diagnostic(
                     "PYQ202",
                     relpath,
                     method.lineno,
                     f"constructor for '{class_node.name}' has {arg_count} parameters "
-                    f"> {CLASS_MAX_INIT_ARGS}",
+                    f"> {settings.class_max_init_args}",
+                    "pass a parameter object or split the class",
                 )
             )
     return diagnostics
 
 
-def _analyzer_boundary_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[Diagnostic]:
+def _analyzer_boundary_diagnostics(
+    class_node: ast.ClassDef, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     bases = _base_names(class_node)
-    if class_node.name.endswith(ANALYZER_CLASS_SUFFIX) and not (APPROVED_ANALYZER_BASES & bases):
+    if class_node.name.endswith(ANALYZER_CLASS_SUFFIX) and not (settings.analyzer_bases & bases):
+        approved = " or ".join(sorted(settings.analyzer_bases)) or "an approved base"
         diagnostics.append(
             Diagnostic(
                 "PYQ210",
                 relpath,
                 class_node.lineno,
-                f"analyzer class '{class_node.name}' must inherit "
-                f"{' or '.join(sorted(APPROVED_ANALYZER_BASES))}",
+                f"analyzer class '{class_node.name}' must inherit {approved}",
+                f"inherit {approved} listed in {SETTINGS} analyzer_bases, "
+                f"or rename the class without the '{ANALYZER_CLASS_SUFFIX}' suffix",
             )
         )
-    if PROJECT_ANALYZER_MIXIN in bases:
-        defines_project_analysis = any(
-            isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
-            and child.name == PROJECT_ENTRYPOINT
+    for base, entrypoint in sorted(settings.project_analyzer_entrypoints.items()):
+        if base not in bases:
+            continue
+        defines_entrypoint = any(
+            isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) and child.name == entrypoint
             for child in class_node.body
         )
-        if not defines_project_analysis:
+        if not defines_entrypoint:
             diagnostics.append(
                 Diagnostic(
                     "PYQ211",
                     relpath,
                     class_node.lineno,
-                    f"project analyzer class '{class_node.name}' must define {PROJECT_ENTRYPOINT}",
+                    f"project analyzer class '{class_node.name}' must define {entrypoint}",
+                    f"define {entrypoint} on '{class_node.name}'",
                 )
             )
     return diagnostics
 
 
-def _subprocess_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagnostic]:
-    if _is_test_relpath(relpath):
-        return []
-    allowed_wrappers = SEAM_SUBPROCESS_WRAPPERS.get(relpath, frozenset())
+def _call_attribute(node: ast.Call) -> str:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else ""
+
+
+def _subprocess_boundary_diagnostics(
+    tree: ast.AST, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
+    allowed_wrappers = settings.subprocess_wrappers.get(relpath, frozenset())
     diagnostics: list[Diagnostic] = []
     module_names, function_names = _subprocess_import_names(tree)
     for node in ast.walk(tree):
@@ -529,28 +531,28 @@ def _subprocess_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagno
                     "PYQ220",
                     relpath,
                     node.lineno,
-                    f"subprocess.{_call_attribute(node)} must be isolated in a seam wrapper",
+                    f"subprocess.{_call_attribute(node)} in {owner or '<module>'} is outside "
+                    "an approved seam wrapper",
+                    "call it from a function that only runs the subprocess and list that "
+                    f"function for this file in {SETTINGS} subprocess_wrappers",
                 )
             )
     return diagnostics
 
 
-def _call_attribute(node: ast.Call) -> str:
-    func = node.func
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return func.id if isinstance(func, ast.Name) else ""
-
-
-def _dynamic_import_boundary_diagnostics(tree: ast.AST, relpath: str) -> list[Diagnostic]:
-    if relpath in DYNAMIC_IMPORT_ADAPTER_ALLOWLIST:
+def _dynamic_import_boundary_diagnostics(
+    tree: ast.AST, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
+    if relpath in settings.dynamic_import_adapters:
         return []
     return [
         Diagnostic(
             "PYQ221",
             relpath,
             node.lineno,
-            "dynamic importlib.import_module calls must stay in adapter modules",
+            "dynamic importlib.import_module call is outside an adapter module",
+            "import the module statically, or move the call into an adapter module listed "
+            f"in {SETTINGS} dynamic_import_adapters",
         )
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and _is_importlib_import_module_call(node)
@@ -576,7 +578,8 @@ def _contract_field_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[
                     "PYQ230",
                     relpath,
                     node.lineno,
-                    "contract dataclass fields must use named Callable aliases",
+                    "contract dataclass field uses a bare Callable",
+                    "declare a named type alias for the callable and annotate the field with it",
                 )
             )
         if "Any" in annotation_names:
@@ -585,14 +588,16 @@ def _contract_field_diagnostics(class_node: ast.ClassDef, relpath: str) -> list[
                     "PYQ231",
                     relpath,
                     node.lineno,
-                    "contract dataclass fields must not use Any collaborator boundaries",
+                    "contract dataclass field uses Any as a collaborator boundary",
+                    "annotate the field with the collaborator's concrete type or a Protocol",
                 )
             )
     return diagnostics
 
 
-def class_interface_diagnostics_for_source(source: str, relpath: str) -> list[Diagnostic]:
-    """Return class/interface diagnostics for a source string."""
+def class_interface_diagnostics_for_source(
+    source: str, relpath: str, settings: PythonQuality
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     try:
         tree = ast.parse(source, filename=relpath)
@@ -603,25 +608,28 @@ def class_interface_diagnostics_for_source(source: str, relpath: str) -> list[Di
                 relpath,
                 exc.lineno or 1,
                 f"could not parse Python source: {exc.msg}",
+                "fix the syntax error",
             )
         ]
-    in_contract_scope = relpath.startswith(CONTRACT_PATH_PREFIXES)
+    in_contract_scope = _matching_root(relpath, settings.contract_roots) is not None
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        diagnostics.extend(_class_shape_diagnostics(node, relpath))
-        diagnostics.extend(_constructor_diagnostics(node, relpath))
-        diagnostics.extend(_analyzer_boundary_diagnostics(node, relpath))
+        diagnostics.extend(_class_shape_diagnostics(node, relpath, settings))
+        diagnostics.extend(_constructor_diagnostics(node, relpath, settings))
+        diagnostics.extend(_analyzer_boundary_diagnostics(node, relpath, settings))
         if in_contract_scope:
             diagnostics.extend(_contract_field_diagnostics(node, relpath))
 
-    diagnostics.extend(_subprocess_boundary_diagnostics(tree, relpath))
-    diagnostics.extend(_dynamic_import_boundary_diagnostics(tree, relpath))
+    diagnostics.extend(_subprocess_boundary_diagnostics(tree, relpath, settings))
+    diagnostics.extend(_dynamic_import_boundary_diagnostics(tree, relpath, settings))
     return diagnostics
 
 
-def class_interface_diagnostics(sources: Iterable[SourceFile]) -> list[Diagnostic]:
+def class_interface_diagnostics(
+    sources: Iterable[SourceFile], settings: PythonQuality
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for source_file in sources:
         try:
@@ -633,38 +641,14 @@ def class_interface_diagnostics(sources: Iterable[SourceFile]) -> list[Diagnosti
                     source_file.relpath,
                     1,
                     f"could not decode Python source: {exc}",
+                    "save the file as UTF-8",
                 )
             )
             continue
-        diagnostics.extend(class_interface_diagnostics_for_source(source, source_file.relpath))
+        diagnostics.extend(
+            class_interface_diagnostics_for_source(source, source_file.relpath, settings)
+        )
     return diagnostics
-
-
-def _fixture_source(raw_path: str) -> SourceFile:
-    """Map a canary fixture to the repo-relative path below its ``repo`` directory."""
-    return SourceFile(Path(raw_path).resolve(), fixture_location(raw_path)[1])
-
-
-def _selected_sources(repo_root: Path, raw_paths: Sequence[str]) -> list[SourceFile]:
-    selected = [(repo_root / raw_path).resolve() for raw_path in raw_paths]
-    sources: list[SourceFile] = []
-    for relpath in candidate_python_relpaths(repo_root):
-        path = (repo_root / relpath).resolve()
-        if not selected or any(path == root or path.is_relative_to(root) for root in selected):
-            sources.append(SourceFile(path, relpath))
-    return sources
-
-
-def _unmatched_paths(
-    repo_root: Path, raw_paths: Sequence[str], sources: Sequence[SourceFile]
-) -> list[str]:
-    resolved = [source.path for source in sources]
-    unmatched: list[str] = []
-    for raw_path in raw_paths:
-        root = (repo_root / raw_path).resolve()
-        if not any(path == root or path.is_relative_to(root) for path in resolved):
-            unmatched.append(raw_path)
-    return unmatched
 
 
 def _filter_checks(checks: Sequence[str]) -> set[str]:
@@ -686,58 +670,63 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
-        "--fixture",
-        action="append",
-        default=[],
+        "paths",
+        nargs="*",
         help=(
-            "Check one canary fixture instead of the repository. Its repo-relative path is "
-            "the part after the last 'repo' directory."
+            "Restrict checks to these paths. A path outside the repository or inside an "
+            "excluded tree is a canary fixture, judged from its last 'repo' directory."
         ),
     )
-    parser.add_argument("paths", nargs="*", help="Restrict checks to these repo-relative paths.")
     return parser
+
+
+def collect_diagnostics(
+    repo_root: Path, sources: Sequence[SourceFile], checks: set[str], *, whole_repo: bool
+) -> list[Diagnostic]:
+    settings = python_quality()
+    diagnostics: list[Diagnostic] = []
+    if "structure" in checks:
+        for source_file in sources:
+            diagnostics.extend(structure_diagnostics_for_relpath(source_file.relpath, settings))
+        if whole_repo:
+            flagged = {
+                name
+                for item in diagnostics
+                if item.code == "PYQ106"
+                and (name := _skill_name(item.relpath, settings)) is not None
+            }
+            diagnostics.extend(skill_directory_diagnostics(repo_root, settings, flagged))
+    if "class-interface" in checks:
+        diagnostics.extend(
+            class_interface_diagnostics(
+                (source for source in sources if is_maintained_python_path(source.relpath)),
+                settings,
+            )
+        )
+    return diagnostics
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo_root = args.repo_root.resolve()
-    fixture_mode = bool(args.fixture)
-    sources = (
-        [_fixture_source(raw_path) for raw_path in args.fixture]
-        if fixture_mode
-        else _selected_sources(repo_root, args.paths)
-    )
-    if not fixture_mode:
-        unmatched = _unmatched_paths(repo_root, args.paths, sources)
+    try:
+        sources, unmatched = select_sources(repo_root, args.paths)
         if unmatched:
-            print(
-                f"[python-quality] paths match no Python files: {', '.join(unmatched)}",
-                file=sys.stderr,
-            )
+            print(f"{LABEL} paths match no Python files: {', '.join(unmatched)}", file=sys.stderr)
             return 2
-    checks = _filter_checks(args.check or ["all"])
-    diagnostics: list[Diagnostic] = []
-    if "structure" in checks:
-        for source_file in sources:
-            diagnostics.extend(structure_diagnostics_for_relpath(source_file.relpath))
-        if not fixture_mode and not args.paths:
-            flagged = {Path(item.relpath).parts[2] for item in diagnostics if item.code == "PYQ106"}
-            diagnostics.extend(skill_directory_diagnostics(repo_root, flagged))
-    if "class-interface" in checks:
-        diagnostics.extend(
-            class_interface_diagnostics(
-                source_file
-                for source_file in sources
-                if is_maintained_python_path(source_file.relpath)
-            )
+        diagnostics = collect_diagnostics(
+            repo_root, sources, _filter_checks(args.check or ["all"]), whole_repo=not args.paths
         )
+    except SettingsError as error:
+        report_settings_error(error, LABEL)
+        return 2
 
     if diagnostics:
-        print("[python-quality] violations:", file=sys.stderr)
+        print(f"{LABEL} violations:", file=sys.stderr)
         for diagnostic in sorted(diagnostics, key=lambda item: item.render()):
             print(diagnostic.render(), file=sys.stderr)
         return 1
-    print(f"[python-quality] OK: {len(sources)} maintained Python files checked")
+    print(f"{LABEL} OK: {len(sources)} maintained Python files checked")
     return 0
 
 

@@ -234,6 +234,17 @@ def test_a_selected_config_is_pointed_at_and_the_default_removes_the_pointer(
     assert doctor_harness.pointer_check(tmp_path, "omp", None)["status"] == "pass"
 
 
+def _run_shim(shim: Path, environment: dict[str, str]) -> None:
+    subprocess.run(
+        ["/bin/sh", str(shim), "omp", "tool_call"],
+        input="{}",
+        env=environment,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+
+
 def test_the_shim_exports_the_pointed_config_unless_one_is_set(tmp_path: Path) -> None:
     hook_install.install_runtime(
         HookOptions(home=tmp_path, config_path=tmp_path / "c.toml"), "claude-code"
@@ -254,14 +265,7 @@ def test_the_shim_exports_the_pointed_config_unless_one_is_set(tmp_path: Path) -
         }
         if preset is not None:
             environment["AGENT_INTROSPECTION_CONFIG"] = preset
-        subprocess.run(
-            ["/bin/sh", str(shim), "omp", "tool_call"],
-            input="{}",
-            env=environment,
-            text=True,
-            timeout=10,
-            check=True,
-        )
+        _run_shim(shim, environment)
         for _ in range(100):
             if seen.exists():
                 break

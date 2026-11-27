@@ -1,3 +1,4 @@
+* @adam-jackson-cf
 /proofs.toml @adam-jackson-cf
 /scripts/validate-rule-coverage.py @adam-jackson-cf
 /scripts/check-quality-gate-parity.py @adam-jackson-cf

@@ -83,10 +83,11 @@ def _run_runner(runner: Path, repository: Path, state: Path, bin_dir: Path, fail
     state.mkdir(exist_ok=True)
     for leftover in state.iterdir():
         leftover.unlink()
+    scratch = _scratch_env()
     env = {
-        **_scratch_env(),
+        **scratch,
         "CI": "true",
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "PATH": f"{bin_dir}{os.pathsep}{scratch['PATH']}",
         "STUB_STATE": str(state),
         "STUB_FAIL_AT": str(fail_at),
     }

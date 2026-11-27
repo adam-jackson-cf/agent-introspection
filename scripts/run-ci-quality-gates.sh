@@ -96,13 +96,9 @@ check_ruff() {
 
 check_mypy() { uv run python -B scripts/check-python-mypy.py "$@"; }
 check_python_suppressions() { uv run python -B scripts/check-python-suppressions.py "$@"; }
-check_python_quality() { uv run python scripts/check-python-quality.py "$@"; }
-check_python_scalability() { uv run python scripts/check-python-scalability.py "$@"; }
-
-check_python_fanout() {
-  uv run python scripts/check-python-fanout.py --source-root src --source-root scripts \
-    --source-root tests --source-root .agents/skills --root-package agent_introspection "$@"
-}
+check_python_quality() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-quality.py "$@"; }
+check_python_scalability() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-scalability.py "$@"; }
+check_python_fanout() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-fanout.py "$@"; }
 
 check_oxlint() {
   local files=("$@")
