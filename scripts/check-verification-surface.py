@@ -114,7 +114,8 @@ def feature_map_problems(repo: Path, files: list[str], surface: Surface) -> list
 
 
 def _drives_lever(path: Path, surface: Surface) -> bool:
-    return surface.lever_parts[0] in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    return all(part in text for part in surface.lever_parts)
 
 
 def journey_problems(repo: Path, files: list[str], surface: Surface) -> list[str]:

@@ -3,11 +3,6 @@ schema = 1
 [scope]
 mode = "whole"
 
-[validator]
-status = "proofs"
-file = ".github/workflows/ci.yml"
-ref = "scripts/gate.sh proofs"
-
 [[claim]]
 id = "gate"
 rules = ["GATE.*"]
@@ -23,3 +18,9 @@ point = "ci"
 file = ".github/workflows/ci.yml"
 ref = "scripts/gate.sh static"
 status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = ".github/workflows/ci.yml"
+ref = "scripts/gate.sh proofs"
+status = "proofs"

@@ -123,16 +123,25 @@ def _doctor_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
     ]
 
 
+def _print_evidence(evidence: Path) -> None:
+    for log in sorted(evidence.glob("*.log")):
+        print(f"== {log}", file=sys.stderr)
+        print(log.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+
+
 def check(repo: Path) -> list[str]:
     lever = load_lever(repo)
     root = Path(tempfile.mkdtemp(prefix="lever-isolation-"))
     print(f"check-lever-isolation: evidence under {root}", file=sys.stderr)
     (root / "doctor").mkdir()
     (root / "run").mkdir()
-    return [
+    problems = [
         *_doctor_problems(repo, lever, root / "doctor"),
         *_run_problems(repo, lever, root / "run"),
     ]
+    if problems:
+        _print_evidence(root / "run" / "evidence")
+    return problems
 
 
 def main(argv: list[str]) -> int:

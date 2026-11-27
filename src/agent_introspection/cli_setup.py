@@ -62,6 +62,12 @@ def add_setup_parser(commands: Any) -> None:
         "--no-dashboard", action="store_true", help="do not install the dashboard service"
     )
     parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        metavar="PORT",
+        help="[dashboard] port the dashboard service listens on (default 4173)",
+    )
+    parser.add_argument(
         "--repo", default=".", help="the checkout the dashboard is built from (default: here)"
     )
 
@@ -78,6 +84,7 @@ def setup_command(args: argparse.Namespace) -> dict[str, Any]:
         openrouter_key_command=args.openrouter_key_command,
         backfill_days=args.backfill_days,
         dashboard=not args.no_dashboard,
+        dashboard_port=args.dashboard_port,
         repo=Path(args.repo),
         dry_run=args.dry_run,
     )

@@ -3,14 +3,9 @@ schema = 1
 [scope]
 mode = "whole"
 
-[validator]
-status = "proofs"
-file = "ci.yml"
-ref = "validate --root ."
-
 [[claim]]
 id = "check"
-rules = ["A.rule"]
+rules = ["GATE.self-check"]
 control = ["check.sh"]
 
 [[claim.enforced_by]]

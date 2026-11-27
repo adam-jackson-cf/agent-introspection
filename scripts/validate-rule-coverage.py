@@ -19,12 +19,14 @@ Usage:
 
 Reads proofs.toml (default <root>/proofs.toml) and the repo files it names. For every claim
 it checks that each enforcement point's file invokes the control and runs every canary through
-the enforcement entrypoint; it runs the hook installation check once. A [validator] CI job is
-required when any claim names a ci point. A later point names no status, so it never sets a
-required merge status. Command-evidence exclusions run every time, except host = true ones,
-which run with host claims only under --live-host-query. With --catalog it also proves that
-every catalogue rule is covered by exactly one claim or one approved exclusion of a conditional
-rule. --structure-only checks every field and path without running canaries or the hook check.
+the enforcement entrypoint; it runs the hook installation check once. When any claim names a ci
+point, a claim covering GATE.self-check must name one too. A later point names no status, so it
+never sets a required merge status. Command-evidence exclusions run every time, except
+host = true ones, which run with host claims only under --live-host-query. With --catalog it
+also proves that every catalogue rule is covered by exactly one claim, with the enforcement
+point its evidence kind needs and, for a bespoke rule, a canary naming it, or by one approved
+exclusion of a conditional rule. --structure-only checks every field and path without running
+canaries or the hook check.
 Writes nothing.
 Exit 0: prints proofs PASS, proofs PASS_WITH_APPROVED_EXCLUSIONS or proofs STRUCTURE_ONLY,
 preceded by proofs HOST_NOT_QUERIED: <claim ids> when host checks were not queried.
@@ -44,7 +46,6 @@ TOP_LEVEL = (
     frozenset({
         "schema",
         "scope",
-        "validator",
         "hooks",
         "claim",
         "not_applicable",
@@ -54,6 +55,7 @@ TOP_LEVEL = (
 )
 FIXTURE = "{fixture}"
 SCOPE_MODES = frozenset({"whole", "changed", "paths"})
+SELF_CHECK = "GATE.self-check"
 EVIDENCE_POINTS = {"local_ci": "ci", "git_hook": "hook", "later_job": "later"}
 GITHUB_REMOTE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
@@ -140,12 +142,6 @@ def _scope(proofs: dict[str, Any]) -> list[str]:
     ):
         return ["invalid scope: paths mode needs repo-relative paths without '..'"]
     return []
-
-
-def _validator(root: Path, proofs: dict[str, Any]) -> str:
-    table = _table(proofs.get("validator"), "validator", "validator", {"status", "file", "ref"})
-    _contains(root, table.get("file"), table.get("ref"), "validator", "ref")
-    return _text(table.get("status"), "validator", "status")
 
 
 def _points(root: Path, claim_id: str, value: object) -> list[dict[str, Any]]:
@@ -478,11 +474,13 @@ def validate(
     if any(point["point"] == "hook" for point in points):
         _guard(errors, _hooks, root, proofs, run=run)
     statuses = {point["status"] for point in points if point["point"] == "ci"}
-    if "validator" in proofs:
-        validator_status = _guard(errors, _validator, root, proofs)
-        statuses |= {validator_status} if validator_status else set()
-    elif statuses:
-        errors.append("validator: required when a claim names a ci point")
+    if statuses and not any(
+        point["point"] == "ci"
+        for claim in claims
+        if any(fnmatchcase(SELF_CHECK, rule) for rule in claim["rules"])
+        for point in claim.get("enforced_by", [])
+    ):
+        errors.append(f"validator: no claim with a ci point covers {SELF_CHECK}")
     for claim in hosts:
         _guard(errors, _host, root, claim, statuses, live=live_host_query)
     entries = proofs.get("not_applicable", [])

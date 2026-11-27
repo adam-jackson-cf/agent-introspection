@@ -15,6 +15,8 @@ OTLP_GRPC_PORT: Final = 4317
 DEFAULT_OTLP_ENDPOINT: Final = f"http://127.0.0.1:{OTLP_HTTP_PORT}"
 DEFAULT_CLICKHOUSE_URL: Final = "http://127.0.0.1:8123"
 DEFAULT_HARNESSES: Final = ("claude-code", "codex")
+DEFAULT_DASHBOARD_PORT: Final = 4173
+MAX_PORT: Final = 65_535
 
 
 class ConfigurationError(ValueError):
@@ -44,6 +46,11 @@ class SigNozConfig:
     otlp_endpoint: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DashboardConfig:
+    port: int = DEFAULT_DASHBOARD_PORT
+
+
 class MachineRole(StrEnum):
     HOST = "host"
     ADDITIONAL = "additional"
@@ -64,6 +71,7 @@ class AppConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     signoz: SigNozConfig = SigNozConfig()
     machine: MachineConfig = MachineConfig()
+    dashboard: DashboardConfig = DashboardConfig()
     harnesses_enabled: tuple[str, ...] = DEFAULT_HARNESSES
     hooks_otlp_logs_endpoint: str | None = None
     labels_openrouter_key_command: tuple[str, ...] | None = None
@@ -89,10 +97,12 @@ _ROOT_KEYS = frozenset({
     "hooks",
     "labels",
     "machine",
+    "dashboard",
     "experimental",
 })
 _EXPERIMENTAL_KEYS = frozenset({"intervention_outcomes"})
 _MACHINE_KEYS = frozenset({"role", "export_endpoint"})
+_DASHBOARD_KEYS = frozenset({"port"})
 _HOOKS_KEYS = frozenset({"otlp_logs_endpoint"})
 _LABELS_KEYS = frozenset({"openrouter_key_command"})
 _HARNESSES_KEYS = frozenset({"enabled"})
@@ -110,8 +120,8 @@ _RETIRED_KEYS = {
         "lifecycle",
         "legacy_project_attribution",
         "sessions",
-        "dashboard",
     }),
+    "dashboard": frozenset({"clickhouse_url"}),
     "signoz": frozenset({
         "health_url",
         "otlp_http_endpoint",
@@ -134,6 +144,12 @@ def _expand_path(value: object, *, field: str) -> Path:
 def _positive_int(value: object, *, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ConfigurationError(f"{field} must be a positive integer")
+    return value
+
+
+def _port(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_PORT:
+        raise ConfigurationError(f"{field} must be a TCP port from 1 to {MAX_PORT}")
     return value
 
 
@@ -305,9 +321,10 @@ def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
 
 def retired_paths(data: Mapping[str, Any]) -> list[tuple[str, ...]]:
     paths: list[tuple[str, ...]] = [(key,) for key in data if key in _RETIRED_KEYS["configuration"]]
-    signoz = data.get("signoz")
-    if isinstance(signoz, Mapping):
-        paths += [("signoz", key) for key in signoz if key in _RETIRED_KEYS["signoz"]]
+    for table in ("dashboard", "signoz"):
+        values = data.get(table)
+        if isinstance(values, Mapping):
+            paths += [(table, key) for key in values if key in _RETIRED_KEYS[table]]
     return paths
 
 
@@ -336,6 +353,8 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     _reject_unknown(set(labels), _LABELS_KEYS, location="labels")
     machine = _table(data, "machine")
     _reject_unknown(set(machine), _MACHINE_KEYS, location="machine")
+    dashboard = _table(data, "dashboard")
+    _reject_unknown(set(dashboard), _DASHBOARD_KEYS, location="dashboard")
     experimental = _table(data, "experimental")
     _reject_unknown(set(experimental), _EXPERIMENTAL_KEYS, location="experimental")
     defaults = AppConfig()
@@ -354,6 +373,13 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         ),
         signoz=_signoz(signoz),
         machine=_machine(machine),
+        dashboard=DashboardConfig(
+            port=(
+                _port(dashboard["port"], field="dashboard.port")
+                if "port" in dashboard
+                else defaults.dashboard.port
+            )
+        ),
         harnesses_enabled=_enabled_harnesses(harnesses),
         hooks_otlp_logs_endpoint=(
             _otlp_url(hooks["otlp_logs_endpoint"], field="hooks.otlp_logs_endpoint")

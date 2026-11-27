@@ -198,18 +198,42 @@ def _check_ci_points(gate: Gate, entrypoint: str) -> None:
             )
 
 
+def _covers_self_check(claim: dict[str, object]) -> bool:
+    rules = claim.get("rules")
+    return isinstance(rules, list) and any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in rules)
+
+
+def _self_check_points(gate: Gate) -> list[dict[str, str]]:
+    return [
+        point
+        for claim in _claims(gate)
+        if _covers_self_check(claim)
+        for point in _points(claim)
+        if point.get("point") == "ci"
+    ]
+
+
+def _own_job(gate: Gate, point: dict[str, str], entrypoint: str) -> bool:
+    jobs = _yaml(gate.root / point["file"]).get("jobs", {})
+    job = jobs.get(point["status"]) if isinstance(jobs, dict) else None
+    if not isinstance(job, dict) or job.get("needs"):
+        return False
+    runs = [str(step["run"]).strip() for step in _steps(job) if "run" in step]
+    return [_invocation(run, entrypoint) for run in runs] == [point["ref"].split()]
+
+
 def _check_validator(gate: Gate, entrypoint: str) -> None:
-    validator = gate.proofs.get("validator")
-    if not isinstance(validator, dict):
+    if not any(point.get("point") == "ci" for point in _all_points(gate)):
         return
-    commands = _status_commands(gate, str(validator["file"]), str(validator["status"]), entrypoint)
-    if str(validator["ref"]).split() not in commands:
-        gate.fail(
-            str(validator["file"]),
-            _SELF_CHECK,
-            f"job {validator['status']} does not run '{validator['ref']}'",
-            f"make it run 'bash {validator['ref']}' as its own job",
-        )
+    points = _self_check_points(gate)
+    if any(_own_job(gate, point, entrypoint) for point in points):
+        return
+    gate.fail(
+        points[0]["file"] if points else "proofs.toml",
+        _SELF_CHECK,
+        "no ci point of a GATE.self-check claim runs the validator as its own job",
+        f"add a ci point whose status job runs only 'bash {entrypoint} proofs'",
+    )
 
 
 def _check_hook_modes(gate: Gate, entrypoint: str) -> None:

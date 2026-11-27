@@ -184,3 +184,31 @@ export async function batch(
   if (failed !== undefined) throw new ClickHouseError(failed);
   return data;
 }
+
+export const DEFAULT_PORT = 4173;
+const MAX_PORT = 65_535;
+
+type PortDocument = { dashboard?: { port?: unknown } };
+
+export function dashboardPort(
+  env: Record<string, string | undefined> = process.env,
+  readConfig: (path: string) => string | undefined = readConfigFile,
+): number {
+  const path = configPath(env);
+  const text = readConfig(path);
+  const port =
+    text === undefined
+      ? undefined
+      : (Bun.TOML.parse(text) as PortDocument).dashboard?.["port"];
+  if (port === undefined) return DEFAULT_PORT;
+  if (
+    typeof port !== "number" ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > MAX_PORT
+  )
+    throw new Error(
+      `[dashboard] port in ${path} must be a TCP port from 1 to ${MAX_PORT}`,
+    );
+  return port;
+}

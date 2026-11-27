@@ -58,6 +58,7 @@ class SetupOptions:
     openrouter_key_command: tuple[str, ...] | None = None
     backfill_days: int = DEFAULT_BACKFILL_DAYS
     dashboard: bool = True
+    dashboard_port: int | None = None
     repo: Path = Path()
     dry_run: bool = False
 
@@ -87,6 +88,7 @@ def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
             if options.openrouter_key_command
             else {}
         ),
+        "dashboard": {"port": options.dashboard_port} if options.dashboard_port else {},
     }
     return {table: values for table, values in tables.items() if values}
 

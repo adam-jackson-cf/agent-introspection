@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from agent_introspection.cli import main
-from agent_introspection.dashboard_api import URL_VARIABLE
+from agent_introspection.cli_dashboard import URL_VARIABLE
 
 pytestmark = pytest.mark.boundary
 
@@ -171,6 +173,23 @@ def test_no_running_dashboard_names_the_command_that_starts_it(
 
     assert raised.value.code == 60
     assert "dashboard install" in capsys.readouterr().err
+
+
+def test_without_an_override_the_configured_port_is_read(
+    dashboard: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    port = urlsplit(os.environ[URL_VARIABLE]).port
+    monkeypatch.delenv(URL_VARIABLE)
+    config = tmp_path / "config.toml"
+    config.write_text(f"[dashboard]\nport = {port}\n", encoding="utf-8")
+
+    assert main(["--config", str(config), "dashboard", "views"]) == 0
+
+    assert json.loads(capsys.readouterr().out)["harnesses"] == ["claude-code"]
+    assert dashboard[-1]["host"] == f"127.0.0.1:{port}"
 
 
 def test_a_dashboard_address_off_this_machine_is_refused_before_any_request(

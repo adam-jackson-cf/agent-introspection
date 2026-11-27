@@ -61,6 +61,21 @@ def test_unowned_proofs_file_breaks_the_self_check(tmp_path: Path) -> None:
     assert "proofs.toml has no code owner" in problems[0]
 
 
+def test_validator_needs_a_ci_job_of_its_own(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(
+        root / "proofs.toml",
+        '\n[[claim.enforced_by]]\npoint = "ci"\nfile = ".github/workflows/ci.yml"\n'
+        'ref = "scripts/gate.sh proofs"\nstatus = "proofs"\n',
+        "",
+    )
+
+    problems = parity.check(root)
+
+    assert _rules(problems) == ["GATE.self-check"]
+    assert "runs the validator as its own job" in problems[0]
+
+
 @pytest.mark.parametrize("suffix", [" || true", " ; true", " && true", " | cat"])
 def test_masked_ci_invocation_breaks_parity(tmp_path: Path, suffix: str) -> None:
     root = _repo(tmp_path)

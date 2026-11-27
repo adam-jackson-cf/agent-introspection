@@ -346,21 +346,28 @@ clickhouse_count() {
   curl -fsS "$url/" --data-binary "SELECT count() FROM $1"
 }
 
+dashboard_port() {
+  cat "$ROOT/state/dashboard_port"
+}
+
 wait_for_dashboard() {
+  local port
+  port="$(dashboard_port)"
   for _ in $(seq 30); do
-    curl -fsS -m 2 http://127.0.0.1:4173/ >/dev/null 2>&1 && return 0
+    curl -fsS -m 2 "http://127.0.0.1:$port/" >/dev/null 2>&1 && return 0
     sleep 1
   done
   return 1
 }
 
 dashboard_views_clean() {
-  local view window since now
+  local view window since now port
+  port="$(dashboard_port)"
   since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   window="start=$since&end=$now"
   for view in pipeline cache effort tools friction guardrails provider recurrence intent interventions; do
-    curl -fsS -m 30 "http://127.0.0.1:4173/api/view?view=$view&$window" >"$ROOT/state/verify/view-$view.json" || return 1
+    curl -fsS -m 30 "http://127.0.0.1:$port/api/view?view=$view&$window" >"$ROOT/state/verify/view-$view.json" || return 1
     python3 -I -c 'import json, sys; sys.exit(1 if json.load(open(sys.argv[1])).get("errors") else 0)' \
       "$ROOT/state/verify/view-$view.json" || {
       echo "view $view has errors" >&2
@@ -376,9 +383,10 @@ cmd_verify() {
   ch=$(cat "$ROOT/state/clickhouse_url")
   otlp=$(cat "$ROOT/state/otlp_endpoint")
   rm -rf "$logs" && mkdir -p "$logs"
-  local dashboard_port_free=true
-  if curl -fsS -m 2 http://127.0.0.1:4173/ >/dev/null 2>&1; then dashboard_port_free=false; fi
-  local options="--clickhouse-url $ch --otlp-endpoint $otlp --backfill-days 1"
+  local port
+  port="$(free_port)"
+  echo "$port" >"$ROOT/state/dashboard_port"
+  local options="--clickhouse-url $ch --otlp-endpoint $otlp --backfill-days 1 --dashboard-port $port"
   echo "verify: $ROOT"
   step install-cli 0 'uv tool install --force --reinstall .'
   step cli-help 0 'agent-introspection --help'
@@ -405,12 +413,9 @@ cmd_verify() {
   fi
   check "dashboard built in the clone" test -f "$ROOT/repo/dashboard/dist/index.html"
   check "facts store created in ClickHouse" clickhouse_count introspection.hook_events
-  if $dashboard_port_free; then
-    check "dashboard service answers on 4173" wait_for_dashboard
-    check "every dashboard view queries cleanly" dashboard_views_clean
-  else
-    echo "  skip  dashboard checks: another dashboard already answers on 127.0.0.1:4173"
-  fi
+  check "dashboard config names port $port" grep -q "^port = $port$" "$home/.config/agent-introspection/config.toml"
+  check "dashboard service answers on $port" wait_for_dashboard
+  check "every dashboard view queries cleanly" dashboard_views_clean
   step hook-event 0 "printf '%s' '{\"session_id\":\"fresh-1\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"},\"tool_use_id\":\"fresh-tool-1\",\"cwd\":\"/srv/work\"}' | /bin/sh \"\$HOME/.local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh\" claude-code PreToolUse; sleep 3"
   step facts-sync 0 'agent-introspection facts sync'
   check "hook record reached the facts store" fresh_hook_recorded
@@ -549,7 +554,6 @@ cmd_destroy() {
 }
 
 LEVER_DOCTOR_MARKER="LEVER DOCTOR FAILED"
-DASHBOARD_PORT=4173
 DOCTOR_WAIT_SECONDS=20
 
 bounded() {
@@ -588,15 +592,11 @@ lever_doctor() {
       return 0
     fi
   fi
-  if curl -fsS -m 2 "http://127.0.0.1:$DASHBOARD_PORT/" >/dev/null 2>&1; then
-    echo "127.0.0.1:$DASHBOARD_PORT already answers; the sandbox dashboard needs it free"
-    return 0
-  fi
 }
 
 lever_ports() {
   local file
-  echo "$DASHBOARD_PORT"
+  [ -f "$1/state/dashboard_port" ] && cat "$1/state/dashboard_port"
   for file in "$1/state/clickhouse_url" "$1/state/otlp_endpoint"; do
     [ -f "$file" ] && sed 's|.*:||; s|/.*||' "$file"
   done

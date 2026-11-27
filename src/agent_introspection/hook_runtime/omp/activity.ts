@@ -10,10 +10,7 @@ const shimPath =
     ".local/lib/agent-introspection/activity-hooks-v1/activity-shim.sh",
   );
 
-const hooksLog = join(
-  homedir(),
-  ".local/share/agent-introspection/hooks.log",
-);
+const hooksLog = join(homedir(), ".local/share/agent-introspection/hooks.log");
 
 type ActivityEvent =
   | "tool_call"
@@ -103,16 +100,21 @@ function exitCodeOf(event: ToolResultEvent): number | undefined {
   return typeof code === "number" && Number.isFinite(code) ? code : undefined;
 }
 
-function logSpawnFailure(event: ActivityEvent, error: unknown): void {
+function failureCode(error: unknown): string {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code === "string") return code;
+  return error instanceof Error ? error.name : "error";
+}
+
+function logFailure(event: string, stage: string, error: unknown): void {
   try {
-    const code = (error as { code?: unknown })?.code;
     mkdirSync(dirname(hooksLog), { recursive: true });
     appendFileSync(
       hooksLog,
-      `${new Date().toISOString()} omp ${event} spawn ${typeof code === "string" ? code : "error"}\n`,
+      `${new Date().toISOString()} omp ${event} ${stage} ${failureCode(error)}\n`,
     );
-  } catch {
-  }
+    // oxlint-disable-next-line no-empty -- the hooks log is where failures go; when it cannot be written, the hook must still never throw into omp
+  } catch {}
 }
 
 function emit(
@@ -131,11 +133,12 @@ function emit(
       detached: true,
       stdio: ["pipe", "ignore", "ignore"],
     });
-    child.on("error", (error) => logSpawnFailure(event, error));
-    child.stdin?.on("error", () => undefined);
+    child.on("error", (error) => logFailure(event, "spawn", error));
+    child.stdin?.on("error", (error) => logFailure(event, "stdin", error));
     child.stdin?.end(envelope);
     child.unref();
-  } catch {
+  } catch (error) {
+    logFailure(event, "emit", error);
   }
 }
 
@@ -225,8 +228,9 @@ function exportPrompt(prompt: unknown, context: OmpContext): void {
       method: "POST",
       headers: otlpHeaders(),
       body: JSON.stringify(body),
-    }).catch(() => undefined);
-  } catch {
+    }).catch((error: unknown) => logFailure("user_prompt", "otlp", error));
+  } catch (error) {
+    logFailure("user_prompt", "otlp", error);
   }
 }
 

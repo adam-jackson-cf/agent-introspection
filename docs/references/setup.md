@@ -99,7 +99,8 @@ to stdout:
    plugin; Codex needs none), backing up each changed file.
 5. **schedule:** the job that syncs every minute.
 6. **dashboard:** builds the dashboard in this checkout and starts it as a service on
-   <http://127.0.0.1:4173> (`--repo` names another checkout; `--no-dashboard` skips it).
+   <http://127.0.0.1:4173> (`--repo` names another checkout; `--no-dashboard` skips it;
+   `--dashboard-port` picks another port).
 7. **doctor:** every check, as `agent-introspection doctor` reports them.
 
 Every step is idempotent, so a rerun is a reinstall. Its options:
@@ -112,6 +113,7 @@ Every step is idempotent, so a rerun is a reinstall. Its options:
 | `--clickhouse-url`, `--clickhouse-user` | `[signoz]`, when ClickHouse is not at `http://127.0.0.1:8123` as `default`.                                            |
 | `--clickhouse-password-command "CMD"`   | `[signoz] clickhouse_password_command` (setup then skips the dashboard service: run it by hand).                       |
 | `--otlp-endpoint`                       | `[signoz] otlp_endpoint`, when the collector is not at `http://127.0.0.1:4318`.                                        |
+| `--dashboard-port PORT`                 | `[dashboard] port`, the loopback port the dashboard service listens on; default 4173.                                  |
 
 On Linux, `loginctl enable-linger "$USER"` keeps the sync and the dashboard running
 after you log out.
@@ -125,7 +127,7 @@ them.
 
 - `setup` ends with `"passed": true`, and `agent-introspection doctor` shows the same;
   follow the `fix` on any `warn` or `fail`.
-- <http://127.0.0.1:4173> opens, and its Pipeline view shows each harness's freshness.
+- <http://127.0.0.1:4173> (or your `[dashboard] port`) opens, and its Pipeline view shows each harness's freshness.
 - After a few minutes of agent use, its sessions appear in the dashboard.
 
 ## Beyond one machine and the known harnesses

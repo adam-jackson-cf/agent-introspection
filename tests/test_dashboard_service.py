@@ -11,6 +11,7 @@ from agent_introspection import dashboard_service, schedule
 from agent_introspection.config import (
     AppConfig,
     ConfigurationError,
+    DashboardConfig,
     DatabaseConfig,
     MachineConfig,
     MachineRole,
@@ -82,6 +83,16 @@ def test_install_builds_in_the_checkout_then_starts_a_kept_alive_launchd_agent(
         "directory": str(directory),
         "url": "http://127.0.0.1:4173",
     }
+
+
+def test_install_reports_the_configured_port(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(schedule, "platform_name", lambda: "darwin")
+
+    result = dashboard_service.install(AppConfig(dashboard=DashboardConfig(port=5174)), REPO)
+
+    assert result["url"] == "http://127.0.0.1:5174"
 
 
 def test_install_restarts_a_systemd_user_service(

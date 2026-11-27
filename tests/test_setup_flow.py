@@ -119,6 +119,14 @@ def test_setup_writes_only_the_given_settings_and_runs_every_step_in_order(
     assert result["steps"]["config"]["action"] == "add"
 
 
+def test_a_dashboard_port_is_written_to_the_config_and_served(host: Host, tmp_path: Path) -> None:
+    result = setup_flow.run(options(tmp_path, dashboard_port=5174))
+
+    assert result["passed"] is True, result.get("doctor", result)
+    assert load_config(tmp_path / "config.toml").dashboard.port == 5174
+    assert result["steps"]["dashboard"]["url"] == "http://127.0.0.1:5174"
+
+
 def test_a_dry_run_changes_nothing_and_previews_each_harness(host: Host, tmp_path: Path) -> None:
     result = setup_flow.run(
         options(tmp_path, dry_run=True, clickhouse_url="http://localhost:18123")
@@ -211,7 +219,7 @@ def test_an_upgrade_removes_retired_settings_and_moves_the_dashboard_url(
     report = result["steps"]["config"]
     assert report["retired_removed"] == [
         "sessions",
-        "dashboard",
+        "dashboard.clickhouse_url",
         "signoz.docker_context",
         "signoz.clickhouse_container",
     ]

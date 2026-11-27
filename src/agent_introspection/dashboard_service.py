@@ -12,7 +12,6 @@ from agent_introspection.config import AppConfig, require_host
 
 LABEL: Final = "dev.agent-introspection.dashboard"
 UNIT: Final = "agent-introspection-dashboard"
-PORT: Final = 4173
 BUILD_TIMEOUT_SECONDS: Final = 600
 
 
@@ -168,7 +167,7 @@ def install(config: AppConfig, repo: Path, config_path: Path | None = None) -> d
         "installed": True,
         "scheduler": scheduler,
         "directory": str(directory),
-        "url": f"http://127.0.0.1:{PORT}",
+        "url": f"http://127.0.0.1:{config.dashboard.port}",
     }
 
 

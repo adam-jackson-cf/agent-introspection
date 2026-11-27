@@ -14,9 +14,11 @@ structure_event=--merge-base
 
 hook_modes=(static t1 t2)
 t1_tier='not boundary and not deferred'
-t2_tier='boundary or deferred'
+t2_tier='(boundary or deferred) and not (boundary and deferred)'
+journey_tier='boundary and deferred'
 t1_selection=(-m "$t1_tier")
 t2_selection=(-m "$t2_tier")
+journey_selection=(-m "$journey_tier")
 pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
 collect_timeout_seconds=300
 report_dir=""
@@ -54,6 +56,8 @@ static_checks=(
   test_growth
   coverage_ratchet
   identity_artefacts
+  golden_changes
+  verification_surface
   test_hooks
   test_evasion
 )
@@ -144,7 +148,10 @@ check_structure() {
 
 check_test_mocking() { uv run python -B scripts/check-test-mocking.py "$@"; }
 check_test_hooks() { uv run python -B scripts/check-test-hooks.py "$@"; }
-check_test_tiers() { uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" "$@"; }
+check_test_tiers() {
+  uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" \
+    --tier "journey=$journey_tier" "$@"
+}
 
 check_test_placement() {
   if (($#)); then
@@ -387,19 +394,13 @@ run_t2() {
 }
 
 run_install() {
-  local root log status=0
-  root="$(bash scripts/fresh-install/sandbox.sh create)"
-  bash scripts/fresh-install/sandbox.sh verify "$root" || status=$?
-  if ((status)); then
-    for log in "$root"/state/verify/*; do
-      if [[ -f "$log" ]]; then
-        printf '== %s\n' "$log" >&2
-        cat "$log" >&2
-      fi
-    done
-  fi
-  bash scripts/fresh-install/sandbox.sh destroy "$root"
-  return "$status"
+  make_report_dir
+  check_lever_isolation --repo .
+  collect_tier journey "${journey_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/journey-pytest.xml" "${journey_selection[@]}"
+  normalise_report pytest --tier journey "$report_dir/journey-pytest.xml" "$report_dir/journey-pytest.json"
+  check_test_run --listing "$report_dir/journey-listing.json" "$report_dir/journey-pytest.json"
+  check_test_evasion --report "$report_dir/journey-pytest.xml"
 }
 
 check_proofs() { uv run python scripts/validate-rule-coverage.py --root "${1:-.}"; }
@@ -428,6 +429,7 @@ case "$mode" in
       usage >&2
       exit 2
     }
+    prepare
     run_install
     ;;
   hook)
