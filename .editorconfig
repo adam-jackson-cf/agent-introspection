@@ -6,3 +6,10 @@ indent_size = 2
 binary_next_line = true
 switch_case_indent = true
 function_next_line = false
+
+[scripts/ci]
+indent_style = space
+indent_size = 2
+binary_next_line = true
+switch_case_indent = true
+function_next_line = false

@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+case "${1-}" in
+  static)
+    exec bash scripts/run-ci-quality-gates.sh static
+    ;;
+  t1)
+    exec bash scripts/run-ci-quality-gates.sh t1
+    ;;
+  t2)
+    exec bash scripts/run-ci-quality-gates.sh t2
+    ;;
+  install)
+    exec bash scripts/run-ci-quality-gates.sh install
+    ;;
+  t3)
+    exec bash scripts/run-ci-quality-gates.sh t3
+    ;;
+  proofs)
+    bash scripts/run-ci-quality-gates.sh prepare
+    exec uv run python -B scripts/validate-rule-coverage.py --root .
+    ;;
+  *)
+    printf 'Usage: %s static|t1|t2|install|t3|proofs\n' "$0" >&2
+    exit 2
+    ;;
+esac

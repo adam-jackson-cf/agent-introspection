@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s static|t1|t2|t3|install|proofs|hook\n       %s check <name> [path ...]\n' "$0" "$0"
+  printf 'Usage: %s static|t1|t2|t3|install|proofs|hook|prepare\n       %s check <name> [path ...]\n' "$0" "$0"
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +10,7 @@ cd "$repo_root"
 export PYTHONDONTWRITEBYTECODE=1
 
 fixtures_exclude=':(exclude)tests/fixtures/**'
-structure_event=--merge-base
+diff_event=--merge-base
 
 hook_modes=(static t1 t2)
 t1_tier='not boundary and not deferred and not live'
@@ -145,7 +145,7 @@ check_structure() {
   if (($#)); then
     uv run python -B scripts/check-structure.py "$@"
   else
-    uv run python -B scripts/check-structure.py "$structure_event"
+    uv run python -B scripts/check-structure.py "$diff_event"
   fi
 }
 
@@ -160,7 +160,7 @@ check_test_placement() {
   if (($#)); then
     uv run python -B scripts/check-test-placement.py "$@"
   else
-    uv run python -B scripts/check-test-placement.py "$structure_event"
+    uv run python -B scripts/check-test-placement.py "$diff_event"
   fi
 }
 
@@ -168,7 +168,7 @@ check_test_evasion() {
   if (($#)); then
     uv run python -B scripts/check-test-evasion.py "$@"
   else
-    uv run python -B scripts/check-test-evasion.py "$structure_event"
+    uv run python -B scripts/check-test-evasion.py "$diff_event"
   fi
 }
 
@@ -288,23 +288,13 @@ check_shfmt() {
   uv run shfmt --diff "${files[@]}"
 }
 
-diff_base() {
-  if [[ -n "${PROOFS_BASE_REF:-}" ]]; then
-    git merge-base HEAD "$PROOFS_BASE_REF"
-  else
-    git rev-parse HEAD
-  fi
-}
-
 diff_check() {
   local script=$1
   shift
   if (($#)); then
     uv run python "scripts/$script" "$@"
   else
-    local base
-    base="$(diff_base)"
-    uv run python "scripts/$script" --repo . --base "$base"
+    uv run python "scripts/$script" --repo . "$diff_event"
   fi
 }
 
@@ -448,12 +438,19 @@ case "$mode" in
     prepare
     run_install
     ;;
+  prepare)
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
+    prepare
+    ;;
   hook)
     (($# == 0)) || {
       usage >&2
       exit 2
     }
-    structure_event=--staged
+    diff_event=--staged
     prepare
     for mode in "${hook_modes[@]}"; do
       "run_$mode"

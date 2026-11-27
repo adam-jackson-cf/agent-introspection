@@ -6,7 +6,7 @@ mode = "whole"
 [[claim]]
 id = "gate"
 rules = ["GATE.*"]
-control = ["scripts/gate.sh"]
+control = ["scripts/gate.sh", "scripts/ci"]
 
 [[claim.enforced_by]]
 point = "hook"
@@ -15,12 +15,12 @@ ref = "scripts/gate.sh hook"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci.yml"
+file = "scripts/ci"
 ref = "scripts/gate.sh static"
 status = "gate"
 
 [[claim.enforced_by]]
 point = "ci"
-file = ".github/workflows/ci.yml"
-ref = "scripts/gate.sh proofs"
+file = "scripts/ci"
+ref = "uv run tool validate --root ."
 status = "proofs"

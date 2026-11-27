@@ -19,7 +19,21 @@ _PARITY = "GATE.parity"
 _SELF_CHECK = "GATE.self-check"
 _ARGUMENT = re.compile(r"^[A-Za-z0-9_./=-]+$")
 _HOOK_MODES = re.compile(r"^hook_modes=\((?P<modes>[^)]*)\)$", re.MULTILINE)
+_BRANCH = re.compile(r"^\s*(?P<labels>[A-Za-z0-9_-]+(?:\s*\|\s*[A-Za-z0-9_-]+)*)\)\s*$")
+_SHEBANGS = ("#!/bin/sh", "#!/usr/bin/env sh")
+_SHELLS = ("bash", "sh")
+_WORKFLOWS = ".github/workflows"
 _CODEOWNERS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
+
+
+@dataclass
+class EntryScript:
+    path: str
+    branches: dict[str, list[list[str]]]
+
+    def runs(self, branch: str) -> list[str] | None:
+        commands = self.branches.get(branch)
+        return commands[-1] if commands else None
 
 
 @dataclass
@@ -62,61 +76,98 @@ def _all_points(gate: Gate) -> list[dict[str, str]]:
     return [point for claim in _claims(gate) for point in _points(claim)]
 
 
-def _steps(job: dict[str, object]) -> list[dict[str, object]]:
-    steps = job.get("steps", [])
+def _covers_self_check(claim: dict[str, object]) -> bool:
+    rules = claim.get("rules")
+    return isinstance(rules, list) and any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in rules)
+
+
+def _steps(job: object) -> list[dict[str, object]]:
+    steps = job.get("steps", []) if isinstance(job, dict) else []
     return [step for step in steps if isinstance(step, dict)] if isinstance(steps, list) else []
 
 
-def _invocation(command: str, entrypoint: str) -> list[str] | None:
+def _tokens(command: str) -> list[str] | None:
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
-    if tokens[:1] == ["bash"]:
+    if len(tokens) > 1 and tokens[0] in _SHELLS:
         tokens = tokens[1:]
-    if not tokens or tokens[0].removeprefix("./") != entrypoint:
+    if not tokens or not all(_ARGUMENT.match(token) for token in tokens):
         return None
-    if not all(_ARGUMENT.match(token) for token in tokens[1:]):
-        return None
-    return [entrypoint, *tokens[1:]]
+    return [tokens[0].removeprefix("./"), *tokens[1:]]
 
 
-def _check_entrypoints(gate: Gate) -> str | None:
-    entrypoints: set[str] = set()
-    for claim in _claims(gate):
-        found = {
-            point["ref"].split()[0] for point in _points(claim) if point.get("ref", "").split()
-        }
-        if len(found) > 1:
+def _invocation(command: str, entrypoint: str) -> list[str] | None:
+    tokens = _tokens(command)
+    return tokens if tokens is not None and tokens[0] == entrypoint else None
+
+
+def _branch_commands(gate: Gate, path: str, lines: list[str]) -> list[list[str]] | None:
+    commands: list[list[str]] = []
+    for line in lines:
+        tokens = _tokens(line.removeprefix("exec ").strip())
+        if tokens is None:
             gate.fail(
-                "proofs.toml",
+                path,
                 _PARITY,
-                f"claim {claim.get('id')} points invoke {', '.join(sorted(found))}",
-                "make every point of the claim run the same entrypoint",
+                f"branch line '{line}' is masked or not a plain command",
+                "run one plain command per line with no shell operators",
             )
-        entrypoints |= found
-    if len(entrypoints) != 1:
+            return None
+        commands.append(tokens)
+    if not lines or not lines[-1].startswith("exec "):
         gate.fail(
-            "proofs.toml",
+            path,
             _PARITY,
-            f"claims name {len(entrypoints)} entrypoints",
-            "route every hook and CI point through one entrypoint script",
+            "a branch does not end by exec-ing its command",
+            "end every case branch with 'exec <command>'",
         )
         return None
-    return entrypoints.pop()
+    return commands
 
 
-def _check_hook_file(gate: Gate, path: str, entrypoint: str, refs: set[str]) -> None:
-    config = _yaml(gate.root / path)
+def _entry_script(gate: Gate, path: str) -> EntryScript | None:
+    text = filesystem.read_text(gate.root / path)
+    lines = [line.strip() for line in text.splitlines()]
+    if not lines or lines[0] not in _SHEBANGS or "set -eu" not in lines:
+        gate.fail(
+            path,
+            _PARITY,
+            "the CI entry script is not a POSIX sh script with set -eu",
+            "start it with #!/bin/sh and set -eu",
+        )
+        return None
+    branches: dict[str, list[list[str]]] = {}
+    labels: list[str] = []
+    body: list[str] = []
+    for line in lines:
+        match = _BRANCH.match(line)
+        if match is not None:
+            labels, body = [label.strip() for label in match["labels"].split("|")], []
+        elif line == ";;" and labels:
+            commands = _branch_commands(gate, path, body)
+            if commands is not None:
+                branches.update(dict.fromkeys(labels, commands))
+            labels = []
+        elif labels and line:
+            body.append(line)
+    return EntryScript(path, branches)
+
+
+def _hooks(config: dict[str, object]) -> list[dict[str, object]]:
     repos = config.get("repos", [])
-    hooks = [
+    return [
         hook
         for repo in (repos if isinstance(repos, list) else [])
         if isinstance(repo, dict)
         for hook in repo.get("hooks", [])
         if isinstance(hook, dict)
     ]
-    for hook in hooks:
+
+
+def _check_hook_file(gate: Gate, path: str, entrypoint: str, refs: set[str]) -> None:
+    for hook in _hooks(_yaml(gate.root / path)):
         command = _invocation(str(hook.get("entry", "")), entrypoint)
         hook_id = hook.get("id")
         if command is None or shlex.join(command) not in refs:
@@ -138,30 +189,40 @@ def _check_hook_file(gate: Gate, path: str, entrypoint: str, refs: set[str]) -> 
             gate.fail(path, _PARITY, f"hook {hook_id} filters files", "remove its file filters")
 
 
-def _job_invocation(gate: Gate, path: str, name: str, job: object, entrypoint: str) -> list[str]:
-    steps = job.get("steps", []) if isinstance(job, dict) else []
-    runs = [str(step["run"]) for step in steps if isinstance(step, dict) and "run" in step]
-    commands = [_invocation(run.strip(), entrypoint) for run in runs]
-    if len(runs) != 1 or commands[0] is None:
-        gate.fail(
-            path,
-            _PARITY,
-            f"job {name} does not run exactly one unmasked {entrypoint} step",
-            f"make its only run step 'bash {entrypoint} <mode>'",
-        )
-        return []
-    return commands[0]
+def _workflows(gate: Gate) -> dict[str, dict[str, object]]:
+    folder = gate.root / _WORKFLOWS
+    if not filesystem.is_dir(folder):
+        return {}
+    files = sorted(
+        path for pattern in ("*.yml", "*.yaml") for path in filesystem.glob(folder, pattern)
+    )
+    workflows: dict[str, dict[str, object]] = {}
+    for path in files:
+        jobs = _yaml(path).get("jobs", {})
+        if isinstance(jobs, dict):
+            workflows[path.relative_to(gate.root).as_posix()] = {str(k): v for k, v in jobs.items()}
+    return workflows
 
 
-def _aggregate_needs(gate: Gate, path: str, name: str, job: dict[str, object]) -> list[str]:
-    needs = job.get("needs")
+def _needs(job: object) -> list[str]:
+    needs = job.get("needs") if isinstance(job, dict) else None
     needs = [needs] if isinstance(needs, str) else needs
-    if not isinstance(needs, list) or not needs:
-        return []
+    return [str(need) for need in needs] if isinstance(needs, list) else []
+
+
+def _job_branch(job: object, entry: EntryScript) -> str | None:
+    runs = [str(step["run"]).strip() for step in _steps(job) if "run" in step]
+    tokens = _tokens(runs[0]) if len(runs) == 1 else None
+    if tokens is None or tokens[0] != entry.path or len(tokens) != 2:
+        return None
+    return tokens[1] if entry.runs(tokens[1]) is not None else None
+
+
+def _check_aggregate(gate: Gate, path: str, name: str, job: dict[str, object]) -> None:
     if "always()" not in str(job.get("if", "")):
         gate.fail(path, _PARITY, f"aggregate {name} skips after a failed tier", "add if: always()")
     script = "\n".join(str(step.get("run", "")) for step in _steps(job))
-    for need in needs:
+    for need in _needs(job):
         check = f'test "${{{{ needs.{need}.result }}}}" = success'
         if check not in script:
             gate.fail(
@@ -170,76 +231,202 @@ def _aggregate_needs(gate: Gate, path: str, name: str, job: dict[str, object]) -
                 f"aggregate {name} does not fail when {need} fails, is cancelled or skipped",
                 f"add the step line {check}",
             )
-    return [str(need) for need in needs]
 
 
-def _status_commands(gate: Gate, path: str, status: str, entrypoint: str) -> list[list[str]]:
-    jobs = _yaml(gate.root / path).get("jobs", {})
-    job = jobs.get(status) if isinstance(jobs, dict) else None
-    if not isinstance(job, dict) or not isinstance(jobs, dict):
-        gate.fail(path, _PARITY, f"no job posts status {status}", f"add a job named {status}")
-        return []
-    needs = _aggregate_needs(gate, path, status, job)
-    names = needs or [status]
-    commands = [_job_invocation(gate, path, name, jobs.get(name), entrypoint) for name in names]
-    return [command for command in commands if command]
+def _check_jobs(gate: Gate, workflows: dict[str, dict[str, object]], entry: EntryScript) -> None:
+    for path, jobs in workflows.items():
+        for name, job in jobs.items():
+            if _needs(job):
+                _check_aggregate(gate, path, name, job if isinstance(job, dict) else {})
+            elif _job_branch(job, entry) is None:
+                gate.fail(
+                    path,
+                    _PARITY,
+                    f"job {name} does not run exactly one unmasked {entry.path} step",
+                    f"make its only run step '{entry.path} <branch>' with a branch {entry.path} "
+                    "declares",
+                )
 
 
-def _check_ci_points(gate: Gate, entrypoint: str) -> None:
+def _status_job(
+    workflows: dict[str, dict[str, object]], status: str
+) -> tuple[dict[str, object], object] | None:
+    for jobs in workflows.values():
+        if status in jobs:
+            return jobs, jobs[status]
+    return None
+
+
+def _status_commands(
+    workflows: dict[str, dict[str, object]], status: str, entry: EntryScript
+) -> list[list[str]] | None:
+    found = _status_job(workflows, status)
+    if found is None:
+        return None
+    jobs, job = found
+    names = _needs(job) or [status]
+    branches = [_job_branch(jobs.get(name), entry) for name in names]
+    return [command for branch in branches if branch for command in [entry.runs(branch)] if command]
+
+
+def _entry_path(gate: Gate) -> str | None:
+    files = sorted({point["file"] for point in _all_points(gate) if point.get("point") == "ci"})
+    if len(files) > 1:
+        gate.fail(
+            "proofs.toml",
+            _PARITY,
+            f"ci points name {len(files)} files ({', '.join(files)})",
+            "name the one CI entry script as the file of every ci point",
+        )
+        return None
+    return files[0] if files else None
+
+
+def _validator_point(point: dict[str, str], claim: dict[str, object], entrypoint: str) -> bool:
+    ref = point.get("ref", "").split()
+    return (
+        point.get("point") == "ci"
+        and _covers_self_check(claim)
+        and "--root" in ref
+        and ref[0] != entrypoint
+    )
+
+
+def _later_command(point: dict[str, str], entry: EntryScript | None) -> list[str]:
+    tokens = _tokens(point.get("ref", ""))
+    if entry is None or tokens is None or tokens[0] != entry.path or len(tokens) != 2:
+        return point.get("ref", "").split()
+    return entry.runs(tokens[1]) or []
+
+
+def _effective(point: dict[str, str], entry: EntryScript | None) -> list[str]:
+    if point.get("point") == "later":
+        return _later_command(point, entry)
+    return point.get("ref", "").split()
+
+
+def _invoked(
+    claim: dict[str, object], entry: EntryScript | None, entrypoint: str | None
+) -> set[str]:
+    commands = [
+        _effective(point, entry)
+        for point in _points(claim)
+        if entrypoint is None or not _validator_point(point, claim, entrypoint)
+    ]
+    return {command[0] for command in commands if command}
+
+
+def _check_entrypoints(gate: Gate, entry: EntryScript | None) -> str | None:
+    hook_refs = {
+        point["ref"].split()[0]
+        for point in _all_points(gate)
+        if point.get("point") == "hook" and point.get("ref", "").split()
+    }
+    candidates = hook_refs or {
+        command
+        for claim in _claims(gate)
+        if not _covers_self_check(claim)
+        for command in _invoked(claim, entry, None)
+    }
+    if len(candidates) != 1:
+        gate.fail(
+            "proofs.toml",
+            _PARITY,
+            f"claims name {len(candidates)} entrypoints",
+            "route every hook and CI point through one entrypoint script",
+        )
+        return None
+    entrypoint = candidates.pop()
+    for claim in _claims(gate):
+        found = _invoked(claim, entry, entrypoint)
+        if found - {entrypoint}:
+            gate.fail(
+                "proofs.toml",
+                _PARITY,
+                f"claim {claim.get('id')} points invoke {', '.join(sorted(found | {entrypoint}))}",
+                "make every point of the claim run the same entrypoint",
+            )
+    return entrypoint
+
+
+def _check_ci_points(
+    gate: Gate, workflows: dict[str, dict[str, object]], entry: EntryScript, entrypoint: str
+) -> None:
     for point in _all_points(gate):
         if point.get("point") != "ci":
             continue
-        commands = _status_commands(gate, point["file"], point["status"], entrypoint)
-        gate.ci_modes |= {command[1] for command in commands if len(command) > 1}
+        commands = _status_commands(workflows, point["status"], entry)
+        if commands is None:
+            gate.fail(
+                _WORKFLOWS,
+                _PARITY,
+                f"no job posts status {point['status']}",
+                f"add a job named {point['status']}",
+            )
+            continue
+        gate.ci_modes |= {
+            command[1] for command in commands if len(command) > 1 and command[0] == entrypoint
+        }
         if point["ref"].split() not in commands:
             gate.fail(
-                point["file"],
+                entry.path,
                 _PARITY,
                 f"status {point['status']} does not run '{point['ref']}'",
-                f"run 'bash {point['ref']}' in a job under {point['status']}",
+                f"exec '{point['ref']}' in a {entry.path} branch a job under {point['status']} "
+                "calls",
             )
 
 
-def _covers_self_check(claim: dict[str, object]) -> bool:
-    rules = claim.get("rules")
-    return isinstance(rules, list) and any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in rules)
+def _check_later_points(gate: Gate, entry: EntryScript | None, entrypoint: str) -> None:
+    for point in _all_points(gate):
+        if point.get("point") != "later":
+            continue
+        command = _later_command(point, entry)
+        if not command or command[0] != entrypoint:
+            gate.fail(
+                point["file"],
+                _PARITY,
+                f"later point '{point['ref']}' does not run {entrypoint}",
+                f"call a CI entry script branch that execs {entrypoint}",
+            )
 
 
-def _self_check_points(gate: Gate) -> list[dict[str, str]]:
-    return [
+def _own_job(
+    workflows: dict[str, dict[str, object]], point: dict[str, str], entry: EntryScript
+) -> bool:
+    found = _status_job(workflows, point["status"])
+    if found is None or _needs(found[1]):
+        return False
+    branch = _job_branch(found[1], entry)
+    ref = point["ref"].split()
+    return branch is not None and entry.runs(branch) == ref and "--root" in ref
+
+
+def _check_validator(
+    gate: Gate, workflows: dict[str, dict[str, object]], entry: EntryScript | None
+) -> None:
+    if entry is None:
+        return
+    points = [
         point
         for claim in _claims(gate)
         if _covers_self_check(claim)
         for point in _points(claim)
         if point.get("point") == "ci"
     ]
-
-
-def _own_job(gate: Gate, point: dict[str, str], entrypoint: str) -> bool:
-    jobs = _yaml(gate.root / point["file"]).get("jobs", {})
-    job = jobs.get(point["status"]) if isinstance(jobs, dict) else None
-    if not isinstance(job, dict) or job.get("needs"):
-        return False
-    runs = [str(step["run"]).strip() for step in _steps(job) if "run" in step]
-    return [_invocation(run, entrypoint) for run in runs] == [point["ref"].split()]
-
-
-def _check_validator(gate: Gate, entrypoint: str) -> None:
-    if not any(point.get("point") == "ci" for point in _all_points(gate)):
-        return
-    points = _self_check_points(gate)
-    if any(_own_job(gate, point, entrypoint) for point in points):
+    if any(_own_job(workflows, point, entry) for point in points):
         return
     gate.fail(
-        points[0]["file"] if points else "proofs.toml",
+        entry.path,
         _SELF_CHECK,
         "no ci point of a GATE.self-check claim runs the validator as its own job",
-        f"add a ci point whose status job runs only 'bash {entrypoint} proofs'",
+        f"add a ci point whose status job runs only '{entry.path} proofs' and whose branch "
+        "execs the shipped validator with --root",
     )
 
 
 def _check_hook_modes(gate: Gate, entrypoint: str) -> None:
-    match = _HOOK_MODES.search((gate.root / entrypoint).read_text(encoding="utf-8"))
+    match = _HOOK_MODES.search(filesystem.read_text(gate.root / entrypoint))
     if match is None:
         gate.fail(entrypoint, _PARITY, "no hook_modes array", "declare hook_modes=(<mode> ...)")
         return
@@ -249,7 +436,8 @@ def _check_hook_modes(gate: Gate, entrypoint: str) -> None:
                 entrypoint,
                 _PARITY,
                 f"the hook runs {mode} but no CI job under a claimed status runs it",
-                f"add a job running 'bash {entrypoint} {mode}' under the gate status",
+                f"add a job whose CI entry script branch execs '{entrypoint} {mode}' under the "
+                "gate status",
             )
 
 
@@ -268,7 +456,7 @@ def _owned(patterns: list[tuple[str, list[str]]], path: str) -> bool:
     return bool(owners)
 
 
-def _check_owners(gate: Gate, entrypoint: str) -> None:
+def _check_owners(gate: Gate, entrypoint: str, protected: set[str]) -> None:
     location = next((name for name in _CODEOWNERS if (gate.root / name).is_file()), None)
     if location is None:
         gate.fail(".github/CODEOWNERS", _SELF_CHECK, "no CODEOWNERS file", "add .github/CODEOWNERS")
@@ -278,16 +466,35 @@ def _check_owners(gate: Gate, entrypoint: str) -> None:
         for line in (gate.root / location).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    protected = {"proofs.toml", entrypoint} | {point["file"] for point in _all_points(gate)}
+    protected = protected | {"proofs.toml", entrypoint}
+    protected |= {point["file"] for point in _all_points(gate)}
     for claim in _claims(gate):
-        rules, controls = claim.get("rules", []), claim.get("control", [])
-        if not isinstance(rules, list) or not isinstance(controls, list):
-            continue
-        if any(fnmatchcase(_SELF_CHECK, str(rule)) for rule in rules):
+        controls = claim.get("control", [])
+        if _covers_self_check(claim) and isinstance(controls, list):
             protected |= {str(item) for item in controls}
     for path in sorted(protected):
         if not _owned(patterns, path):
             gate.fail(location, _SELF_CHECK, f"{path} has no code owner", f"add '/{path} @<owner>'")
+
+
+def _check(gate: Gate) -> None:
+    path = _entry_path(gate)
+    entry = _entry_script(gate, path) if path is not None else None
+    entrypoint = _check_entrypoints(gate, entry)
+    if entrypoint is None:
+        return
+    points = _all_points(gate)
+    for hook_file in sorted({point["file"] for point in points if point["point"] == "hook"}):
+        refs = {point["ref"] for point in points if point["file"] == hook_file}
+        _check_hook_file(gate, hook_file, entrypoint, refs)
+    workflows = _workflows(gate)
+    if entry is not None:
+        _check_jobs(gate, workflows, entry)
+        _check_ci_points(gate, workflows, entry, entrypoint)
+    _check_later_points(gate, entry, entrypoint)
+    _check_validator(gate, workflows, entry)
+    _check_hook_modes(gate, entrypoint)
+    _check_owners(gate, entrypoint, set(workflows))
 
 
 def check(root: Path) -> list[str]:
@@ -296,18 +503,8 @@ def check(root: Path) -> list[str]:
     except (OSError, tomllib.TOMLDecodeError) as error:
         return [f"proofs.toml: {_PARITY}: cannot read: {error}; restore proofs.toml"]
     gate = Gate(root, proofs)
-    entrypoint = _check_entrypoints(gate)
-    if entrypoint is None:
-        return gate.problems
     try:
-        points = _all_points(gate)
-        for path in sorted({point["file"] for point in points if point["point"] == "hook"}):
-            refs = {point["ref"] for point in points if point["file"] == path}
-            _check_hook_file(gate, path, entrypoint, refs)
-        _check_ci_points(gate, entrypoint)
-        _check_validator(gate, entrypoint)
-        _check_hook_modes(gate, entrypoint)
-        _check_owners(gate, entrypoint)
+        _check(gate)
     except (OSError, ValueError, yaml.YAMLError) as error:
         gate.fail("proofs.toml", _PARITY, f"cannot read a point file: {error}", "fix the file")
     return gate.problems

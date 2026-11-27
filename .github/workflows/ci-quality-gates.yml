@@ -10,8 +10,6 @@ permissions:
 jobs:
   static:
     runs-on: ubuntu-latest
-    env:
-      PROOFS_BASE_REF: origin/${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh static
+      - run: scripts/ci static
   t1:
     runs-on: ubuntu-latest
     steps:
@@ -35,7 +33,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh t1
+      - run: scripts/ci t1
   t2:
     runs-on: ubuntu-latest
     steps:
@@ -48,7 +46,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh t2
+      - run: scripts/ci t2
   proofs:
     runs-on: ubuntu-latest
     steps:
@@ -61,7 +59,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh proofs
+      - run: scripts/ci proofs
   fresh-install:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -75,7 +73,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh install
+      - run: scripts/ci install
   gate:
     needs: [static, t1, t2, fresh-install]
     if: ${{ always() }}

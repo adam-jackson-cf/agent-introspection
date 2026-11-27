@@ -5,8 +5,9 @@ Use this guide to run the same checks as the commit hook and CI before calling a
 ## Purpose
 
 The Python package, the independent dashboard package, the scripts and the docs share one
-check-only entrypoint, `scripts/run-ci-quality-gates.sh`. The commit hook and every CI job
-run it, and it never changes a file. Fixing is a separate, explicit command:
+check-only entrypoint, `scripts/run-ci-quality-gates.sh`. The commit hook runs it, and every
+CI job calls the POSIX `sh` CI entry script `scripts/ci <job>`, which runs it with that job's
+mode. It never changes a file. Fixing is a separate, explicit command:
 `bash scripts/fix-quality-gates.sh`. [`proofs.toml`](../../proofs.toml) declares which
 control enforces each rule, where it runs, and the canaries that prove it.
 
@@ -38,7 +39,7 @@ control enforces each rule, where it runs, and the canaries that prove it.
    Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`. Never bypass it
    with `--no-verify`; fix the failure instead.
 
-2. Run the mode you need. Each mode except `check` and `install` first syncs the locked
+2. Run the mode you need. Each mode except `check` first syncs the locked
    Python and Bun dependencies and installs the hook:
 
    | Command                                                        | Runs                                                                    |
@@ -50,6 +51,7 @@ control enforces each rule, where it runs, and the canaries that prove it.
    | `bash scripts/run-ci-quality-gates.sh hook`                    | `static`, `t1` (then the T1 time budget) and `t2`, judging staged paths |
    | `bash scripts/run-ci-quality-gates.sh install`                 | The lever twice (`check lever_isolation`), then the journey tier        |
    | `bash scripts/run-ci-quality-gates.sh proofs`                  | The `proofs.toml` validator with every canary                           |
+   | `bash scripts/run-ci-quality-gates.sh prepare`                 | Only the setup step: sync the locked dependencies and install the hook  |
    | `bash scripts/run-ci-quality-gates.sh check <name> [path ...]` | One check, over the given paths or its whole-repository scope           |
 
    `check` names are the `check_<name>` functions in the entrypoint, for example
@@ -67,16 +69,13 @@ control enforces each rule, where it runs, and the canaries that prove it.
    `uv run shfmt -w <file>` and
    `bun dashboard/node_modules/.bin/oxlint --config oxlint.config.ts --fix <file>`.
 
-4. A local `static` run compares test growth, the coverage ratchet and identity artefacts
-   with `HEAD`. To check a branch as CI does, compare with the default branch:
-
-   ```sh
-   PROOFS_BASE_REF=origin/main bash scripts/run-ci-quality-gates.sh static
-   ```
-
-   `structure`, `test_placement` and `test_evasion` always judge the branch against
-   `origin/main` (the hook judges staged paths). A clone without `origin/main` fails
-   them with a `git merge-base` error rather than skipping them.
+4. Every check that compares with a base uses one diff base: `structure`,
+   `test_placement`, `test_evasion`, `test_growth`, `coverage_ratchet`,
+   `identity_artefacts` and `golden_changes` judge the branch against its merge base with
+   `proofs.toml` `[scope]` `base_ref` (`origin/main`) in `static` runs and CI, and the
+   staged changes in `hook` mode. A clone without `origin/main` fails them with a
+   `git merge-base` error rather than skipping them. Pass `--staged` or `--merge-base`
+   to run one by hand, for example `check test_growth --repo . --staged`.
 
 5. The dashboard companion is an independent Bun package in `dashboard/`. The gate covers
    every command below except `start`:
@@ -114,7 +113,7 @@ The tier selectors live once, in `scripts/run-ci-quality-gates.sh`.
 - T3 also holds the dashboard tests in files named `*.live.ts`, which `bun test` discovery
   skips. Neither the hook nor CI runs T3. Run it with
   `bash scripts/run-ci-quality-gates.sh t3` on a SigNoz host, or start the Live tests
-  workflow (`.github/workflows/live-tests.yml`), which runs that mode by hand on a
+  workflow (`.github/workflows/live-tests.yml`), which runs `scripts/ci t3` by hand on a
   self-hosted runner labelled `signoz`; its status is never a required merge status.
 - The dashboard's `bun test` is T1. `dashboard/bunfig.toml` preloads `t1-guard.ts`, so a
   test that calls `Bun.spawn`, `fetch`, `Bun.serve` or Node `child_process` or `net` fails.
@@ -144,7 +143,8 @@ The tier selectors live once, in `scripts/run-ci-quality-gates.sh`.
 dashboard format and build checks, plus the repository-owned checkers in `scripts/`:
 
 - Gate wiring: `check-quality-gate-parity.py` (every hook and CI point of a claim runs
-  the same entrypoint command), `check-hook-installed.py`,
+  the same entrypoint command, every workflow job calls one `scripts/ci` branch, and each
+  branch `exec`s its command), `check-hook-installed.py`,
   `check-runner-failure-propagation.py` (a failing step fails every mode) and
   `validate-rule-coverage.py` (the `proofs` mode).
 - Supply chain: `check-dependency-audit.py` audits every tracked `uv.lock` and `bun.lock`
@@ -168,7 +168,11 @@ dashboard format and build checks, plus the repository-owned checkers in `script
   and `RENAME.residue`. With no arguments it judges branch additions and renames against
   `origin/main`; `--staged` judges the commit, `--all` the whole repository, and paths
   judge those files. A new module under `src/agent_introspection` goes in one
-  `[structure].tier_modules` list (owner-reviewed). A new file whose name shares a first
+  `[structure].tier_modules` list (owner-reviewed). Tracked TypeScript outside tests is
+  judged the same way: `scripts/list-typescript-imports.ts` resolves its static imports
+  through `tsconfig.json`, and a new module goes in one
+  `[structure.typescript].tier_modules` list, named by its path without the extension.
+  `--all` reports the existing open work; only added and renamed paths block. A new file whose name shares a first
   token with a sibling blocks until the owner extracts the concept or records an
   exception. A rename updates every reference to the old name in the same change.
 - Tests: `check-test-placement.py`, `check-test-tiers.py`, `check-test-mocking.py`,
@@ -188,15 +192,17 @@ catalogue is not kept in the repository. Each `[[claim]]` names its rules, its c
 its enforcement points and its canaries:
 
 - the hook point: `.pre-commit-config.yaml`, ref `scripts/run-ci-quality-gates.sh hook`;
-- the CI points: `.github/workflows/ci-quality-gates.yml`, ref
-  `scripts/run-ci-quality-gates.sh static`, `t1` or `t2`, status `gate`;
+- the CI points: the CI entry script `scripts/ci`, ref
+  `scripts/run-ci-quality-gates.sh static`, `t1`, `t2` or `install`, status `gate`;
+  the validator's point names `uv run python -B scripts/validate-rule-coverage.py --root .`
+  with status `proofs`;
 - canaries: a passing and a violating fixture under `tests/fixtures/proofs/<claim-id>/`,
   each run through `bash scripts/run-ci-quality-gates.sh check <name> {fixture}`.
 
 Values with no native config home sit in its settings tables (`[python_quality]`,
 `[structure]`, `[layout]`, `[test_budget]`, `[surface]`, `[identity_artefacts]`, `[golden]`). Every `[[exception]]` and
 `[[not_applicable]]` entry carries the owner's `approved_by`. Run the validator, as the
-`proofs` mode and its CI job do:
+`proofs` mode and the `scripts/ci proofs` job do:
 
 ```sh
 uv run python scripts/validate-rule-coverage.py --root .
@@ -219,9 +225,11 @@ or edits a dependency-audit exception: it upgrades or replaces the dependency a
 
 ## CI
 
-`.github/workflows/ci-quality-gates.yml` runs on every push and pull request. Its jobs
-call the entrypoint with full history: `static` (with `PROOFS_BASE_REF`), `t1`, `t2`,
-`proofs` and `fresh-install` (the `install` mode, on Docker). The `install` mode's lever
+`.github/workflows/ci-quality-gates.yml` runs on every push and pull request. Each job
+checks out full history and runs one step, `scripts/ci <job>`: `static`, `t1`, `t2` and
+`install` (the `fresh-install` job, on Docker) `exec` the entrypoint with that mode, and
+`proofs` runs the entrypoint's `prepare` mode (which installs the hook), then `exec`s the
+validator with `--root .`. The `install` mode's lever
 runs `agent-introspection facts verify` against the sandbox ClickHouse, so every facts SQL
 statement builds there. The aggregate `gate` job passes only when `static`, `t1`, `t2`
 and `fresh-install` pass. Branch protection on `main` requires the `gate` and `proofs`

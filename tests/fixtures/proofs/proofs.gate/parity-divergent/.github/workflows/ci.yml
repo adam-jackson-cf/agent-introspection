@@ -5,12 +5,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/gate.sh static
+      - run: scripts/ci static
   proofs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/gate.sh proofs
+      - run: scripts/ci proofs
   gate:
     needs: [static]
     if: ${{ always() }}

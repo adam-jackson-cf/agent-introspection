@@ -4,6 +4,7 @@
 /scripts/check-quality-gate-parity.py @adam-jackson-cf
 /scripts/check-hook-installed.py @adam-jackson-cf
 /scripts/run-ci-quality-gates.sh @adam-jackson-cf
+/scripts/ci @adam-jackson-cf
 /scripts/check-dependency-audit.py @adam-jackson-cf
 /.pre-commit-config.yaml @adam-jackson-cf
 /.github/workflows/ @adam-jackson-cf

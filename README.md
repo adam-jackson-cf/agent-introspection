@@ -139,5 +139,6 @@ uv run pre-commit install
 ```
 
 Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`, which only checks and
-never changes files. [Development](docs/references/development.md) lists the gate modes,
+never changes files. Every CI job runs `scripts/ci <job>` (`static`, `t1`, `t2`,
+`install` or `proofs`), which runs the same entrypoint. [Development](docs/references/development.md) lists the gate modes,
 the fix script `scripts/fix-quality-gates.sh`, the test tiers, and `proofs.toml`.

@@ -18,4 +18,4 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: dashboard/package.json
-      - run: bash scripts/run-ci-quality-gates.sh t3
+      - run: scripts/ci t3

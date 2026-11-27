@@ -65,8 +65,8 @@ def test_validator_needs_a_ci_job_of_its_own(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     _edit(
         root / "proofs.toml",
-        '\n[[claim.enforced_by]]\npoint = "ci"\nfile = ".github/workflows/ci.yml"\n'
-        'ref = "scripts/gate.sh proofs"\nstatus = "proofs"\n',
+        '\n[[claim.enforced_by]]\npoint = "ci"\nfile = "scripts/ci"\n'
+        'ref = "uv run tool validate --root ."\nstatus = "proofs"\n',
         "",
     )
 
@@ -80,7 +80,7 @@ def test_validator_needs_a_ci_job_of_its_own(tmp_path: Path) -> None:
 def test_masked_ci_invocation_breaks_parity(tmp_path: Path, suffix: str) -> None:
     root = _repo(tmp_path)
     workflow = root / ".github/workflows/ci.yml"
-    _edit(workflow, "run: bash scripts/gate.sh static", f"run: bash scripts/gate.sh static{suffix}")
+    _edit(workflow, "run: scripts/ci static", f"run: scripts/ci static{suffix}")
 
     problems = parity.check(root)
 
@@ -128,3 +128,77 @@ def test_commented_hook_entry_does_not_count(tmp_path: Path) -> None:
     problems = parity.check(root)
 
     assert any("hook gate runs 'echo'" in item for item in problems)
+
+
+def test_a_ci_point_must_name_the_ci_entry_script(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(
+        root / "proofs.toml",
+        'file = "scripts/ci"\nref = "scripts/gate.sh static"',
+        'file = ".github/workflows/ci.yml"\nref = "scripts/gate.sh static"',
+    )
+
+    problems = parity.check(root)
+
+    assert any("ci points name 2 files" in item for item in problems)
+
+
+def test_a_branch_that_does_not_exec_its_command_breaks_parity(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(
+        root / "scripts/ci",
+        "    exec bash scripts/gate.sh static\n",
+        "    bash scripts/gate.sh static || true\n",
+    )
+
+    problems = parity.check(root)
+
+    assert any("is masked or not a plain command" in item for item in problems)
+
+
+def test_a_job_that_bypasses_the_ci_entry_script_breaks_parity(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(
+        root / ".github/workflows/ci.yml",
+        "run: scripts/ci static",
+        "run: bash scripts/gate.sh static",
+    )
+
+    problems = parity.check(root)
+
+    assert any(
+        "job static does not run exactly one unmasked scripts/ci step" in item for item in problems
+    )
+
+
+def test_a_ci_entry_script_without_posix_sh_breaks_parity(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(root / "scripts/ci", "#!/bin/sh\nset -eu\n", "#!/usr/bin/env bash\n")
+
+    problems = parity.check(root)
+
+    assert any("is not a POSIX sh script with set -eu" in item for item in problems)
+
+
+def test_a_later_point_runs_the_entrypoint_through_the_ci_entry_script(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _edit(root / "scripts/ci", "  *)\n", "  t3)\n    exec bash scripts/gate.sh t3\n    ;;\n  *)\n")
+    (root / ".github/workflows/live.yml").write_text(
+        "on:\n  workflow_dispatch:\njobs:\n  t3:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: scripts/ci t3\n",
+        encoding="utf-8",
+    )
+    with (root / "proofs.toml").open("a", encoding="utf-8") as handle:
+        handle.write(
+            '\n[[claim.enforced_by]]\npoint = "later"\nfile = ".github/workflows/live.yml"\n'
+            'ref = "scripts/ci t3"\n'
+        )
+
+    assert parity.check(root) == []
+    _edit(root / "scripts/ci", "exec bash scripts/gate.sh t3", "exec uv run other t3")
+
+    problems = parity.check(root)
+
+    assert any(
+        "later point 'scripts/ci t3' does not run scripts/gate.sh" in item for item in problems
+    )
