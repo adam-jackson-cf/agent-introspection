@@ -105,6 +105,39 @@ def test_omp_tool_result_spawns_the_shim_only_for_errors(tmp_path: Path) -> None
     assert envelope["exit_code"] == 2
 
 
+OMP_FAILURE_PROBE = """
+import register from "%s";
+globalThis.fetch = (() => Promise.reject(new TypeError("fetch failed"))) as any;
+const handlers: Record<string, any> = {};
+register({ on: (name: string, fn: any) => { handlers[name] = fn; } } as any);
+const broken = { sessionManager: { getSessionId: () => { throw new RangeError("no session"); } } };
+handlers.tool_call({ toolCallId: "c1", toolName: "bash", input: {} }, broken);
+handlers.before_agent_start(
+  { prompt: "secret prompt" },
+  { sessionManager: { getSessionId: () => "s1" } },
+);
+await new Promise((resolve) => setTimeout(resolve, 100));
+"""
+
+
+def test_omp_emit_and_prompt_export_failures_reach_the_hook_log(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.ts"
+    probe.write_text(OMP_FAILURE_PROBE % (RUNTIME / "omp/activity.ts"))
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
+        "AGENT_INTROSPECTION_OMP_PROMPT_EXPORT": "1",
+        "AGENT_INTROSPECTION_SHIM": str(probe),
+    }
+    _run_bun_probe(probe, env)
+
+    log = (tmp_path / ".local/share/agent-introspection/hooks.log").read_text()
+    events = [line.split(" ", 1)[1] for line in log.splitlines()]
+    assert events == ["omp tool_call emit RangeError", "omp before_agent_start otlp TypeError"]
+    assert "secret prompt" not in log
+
+
 @pytest.mark.parametrize(("opt_in", "expected"), [(None, "0"), ("1", "1")])
 def test_omp_prompt_is_exported_only_after_opt_in(
     tmp_path: Path, opt_in: str | None, expected: str

@@ -233,8 +233,11 @@ path) detached. Handlers never block, throw, or return a result.
 | `input` while `ctx.isIdle()` is false | `steer`                                               | text length only is kept                        |
 
 A `tool_result` that is an error hands its text to the shim in memory; `hooks.py` keeps
-only the normalized failure signature, its hash, and the exit code. A failed spawn
-appends `<time> omp <event> spawn <code>` to the hook log, with no payload.
+only the normalized failure signature, its hash, and the exit code. A failed spawn,
+a handler that throws while building or handing over an envelope, and a prompt export
+that fails append `<time> omp <event> <stage> <code>` to the hook log, with no payload:
+`<stage>` is `spawn`, `emit` or `otlp`, and `<code>` is the error's code, else its class
+name. A failure to write the hook log itself is dropped.
 
 ## Prompt export
 
