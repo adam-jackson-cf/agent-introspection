@@ -1,0 +1,30 @@
+schema = 1
+
+[layout]
+support_dir = "tests/support"
+fixtures_dir = "tests/fixtures"
+canary_fixtures_dir = "tests/fixtures/proofs"
+test_file_patterns = [
+  "tests/test_*.py",
+  "dashboard/*.test.ts",
+  "dashboard/**/*.test.ts",
+  "dashboard/**/*.test.tsx",
+]
+adapter_seams = [
+  "agent_introspection.classify:_run_key_command",
+  "agent_introspection.dashboard_service:_bun",
+  "agent_introspection.dashboard_service:_run_bun",
+  "agent_introspection.facts:_run_local_command",
+  "agent_introspection.facts:runner",
+  "agent_introspection.hook_install:_run_omp",
+  "agent_introspection.hook_install:_which",
+  "agent_introspection.schedule:launchctl",
+  "agent_introspection.schedule:launchd_domain",
+  "agent_introspection.schedule:systemctl",
+  "agent_introspection.signoz_detect:_docker_cli",
+  "agent_introspection.signoz_detect:_run_docker",
+  "agent_introspection.signoz_detect:clickhouse_answers",
+  "agent_introspection.signoz_detect:port_open",
+  "agent_introspection.spool:cli_version",
+  "agent_introspection.spool:host_name",
+]
