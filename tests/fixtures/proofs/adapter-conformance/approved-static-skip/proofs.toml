@@ -1,0 +1,7 @@
+schema = 1
+
+[[exception]]
+rule = "TEST.no-evasion"
+path = "tests/test_vendor_sync.py::test_vendor_sync_reads_the_feed"
+reason = "The vendor sandbox is offline until its fix ships."
+approved_by = "fixture owner, 2026-11-27"

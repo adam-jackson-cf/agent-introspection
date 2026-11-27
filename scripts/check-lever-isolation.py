@@ -34,7 +34,11 @@ def load_lever(repo: Path) -> Lever:
     failure = surface.get("doctor_failure_env")
     if isinstance(timeout, bool) or not isinstance(timeout, int | float) or timeout <= 0:
         raise SettingsError("[surface] lever_timeout_s must be a positive number")
-    if not isinstance(failure, dict) or not failure or not all(isinstance(v, str) for v in failure.values()):
+    if (
+        not isinstance(failure, dict)
+        or not failure
+        or not all(isinstance(v, str) for v in failure.values())
+    ):
         raise SettingsError("[surface] doctor_failure_env must be a nonempty table of strings")
     return Lever(
         strings(surface, "lever_command", "surface"),
@@ -48,7 +52,13 @@ def load_lever(repo: Path) -> Lever:
 
 
 def _launch(repo: Path, lever: Lever, work: Path, extra: dict[str, str]) -> tuple[int, str]:
-    argv = [*lever.command, lever.data_arg, str(work / "data"), lever.evidence_arg, str(work / "evidence")]
+    argv = [
+        *lever.command,
+        lever.data_arg,
+        str(work / "data"),
+        lever.evidence_arg,
+        str(work / "evidence"),
+    ]
     try:
         completed = run_command(argv, repo, lever.timeout_seconds, isolated_environment(extra))
     except subprocess.TimeoutExpired:
@@ -72,19 +82,28 @@ def _run_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
     evidence, data = work / "evidence", work / "data"
     problems: list[str] = []
     if code != 0:
-        kind = "doctor reported blocked infrastructure" if lever.marker in output else "lever failed"
+        kind = (
+            "doctor reported blocked infrastructure" if lever.marker in output else "lever failed"
+        )
         problems.append(f"{lever.command[1]}: {RULE}: {kind} (exit {code}); see {evidence}")
     if not evidence.is_dir() or not any(evidence.iterdir()):
-        problems.append(f"{lever.command[1]}: {RULE}: evidence directory is empty after cleanup; keep it")
+        problems.append(
+            f"{lever.command[1]}: {RULE}: evidence directory is empty after cleanup; keep it"
+        )
     if data.exists():
-        problems.append(f"{lever.command[1]}: {RULE}: data directory {data} survives cleanup; delete it")
+        problems.append(
+            f"{lever.command[1]}: {RULE}: data directory {data} survives cleanup; delete it"
+        )
     problems.extend(
-        f"{lever.command[1]}: {RULE}: process left running after cleanup: {line}; stop it in cleanup"
+        f"{lever.command[1]}: {RULE}: process left running after cleanup: {line}; "
+        "stop it in cleanup"
         for line in _leftover_processes(repo, data)
     )
     ports = evidence / lever.ports_file
     if code == 0 and not ports.is_file():
-        problems.append(f"{lever.command[1]}: {RULE}: evidence lacks {lever.ports_file}; record every port used")
+        problems.append(
+            f"{lever.command[1]}: {RULE}: evidence lacks {lever.ports_file}; record every port used"
+        )
     elif ports.is_file():
         problems.extend(
             f"{lever.command[1]}: {RULE}: port {port} still listens after cleanup; stop its process"
@@ -99,8 +118,8 @@ def _doctor_problems(repo: Path, lever: Lever, work: Path) -> list[str]:
     if code != 0 and lever.marker in output:
         return []
     return [
-        f"{lever.command[1]}: {RULE}: a failing doctor did not print {lever.marker!r} and exit nonzero "
-        f"(exit {code}); print the marker when the lever's infrastructure is not ready"
+        f"{lever.command[1]}: {RULE}: a failing doctor did not print {lever.marker!r} and exit "
+        f"nonzero (exit {code}); print the marker when the lever's infrastructure is not ready"
     ]
 
 
@@ -110,7 +129,10 @@ def check(repo: Path) -> list[str]:
     print(f"check-lever-isolation: evidence under {root}", file=sys.stderr)
     (root / "doctor").mkdir()
     (root / "run").mkdir()
-    return [*_doctor_problems(repo, lever, root / "doctor"), *_run_problems(repo, lever, root / "run")]
+    return [
+        *_doctor_problems(repo, lever, root / "doctor"),
+        *_run_problems(repo, lever, root / "run"),
+    ]
 
 
 def main(argv: list[str]) -> int:

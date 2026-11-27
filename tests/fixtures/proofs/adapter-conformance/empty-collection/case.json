@@ -1,0 +1,7 @@
+{
+ "id": "empty-collection",
+ "rule": "TEST.failure-propagation",
+ "evidence": "collection",
+ "situation": "a tier selector collects no tests",
+ "expect": "finding"
+}

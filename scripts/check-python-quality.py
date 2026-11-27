@@ -61,6 +61,7 @@ SEAM_SUBPROCESS_WRAPPERS: dict[str, frozenset[str]] = {
     "scripts/check-runner-failure-propagation.py": frozenset({"_run"}),
     "scripts/check-skill-metadata.py": frozenset({"_git_ls_files"}),
     "scripts/check-test-subprocess-timeouts.py": frozenset({"_git_ls_files"}),
+    "scripts/lib/command_runner.py": frozenset({"run_command"}),
     "scripts/guardrails-tool-canary.py": frozenset({"_run"}),
     "scripts/lib/python_quality_scope.py": frozenset({"_git_output"}),
     "scripts/validate-rule-coverage.py": frozenset({"_run"}),

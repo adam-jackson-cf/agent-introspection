@@ -57,7 +57,10 @@ def exceptions(document: dict[str, Any], rule: str) -> list[dict[str, Any]]:
 def approved_paths(document: dict[str, Any], rule: str) -> set[str]:
     approved: set[str] = set()
     for entry in exceptions(document, rule):
-        if all(isinstance(entry.get(key), str) and entry[key] for key in ("path", "reason", "approved_by")):
+        if all(
+            isinstance(entry.get(key), str) and entry[key]
+            for key in ("path", "reason", "approved_by")
+        ):
             approved.add(entry["path"])
     return approved
 

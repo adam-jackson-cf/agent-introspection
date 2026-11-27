@@ -9,15 +9,26 @@ from pathlib import Path
 from typing import Any
 
 from lib.git_changes import GitError, added_lines, changes_since, file_at, resolve
-from lib.proofs_settings import PROOFS_FILE, SettingsError, approved_paths, load_proofs, string
-from lib.proofs_settings import table
+from lib.proofs_settings import (
+    PROOFS_FILE,
+    SettingsError,
+    approved_paths,
+    load_proofs,
+    string,
+    table,
+)
 
 RULE = "TEST.coverage-ratchet"
 CONFIG = "pyproject.toml"
 OTHER_CONFIGS = (".coveragerc",)
 DEFAULT_PRAGMA = r"#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER|branch|BRANCH)"
 SCRIPT_PRAGMA = r"(istanbul|c8|v8|node:coverage)\s+ignore"
-GROWING_LISTS = (("run", "omit"), ("report", "omit"), ("report", "exclude_lines"), ("report", "exclude_also"))
+GROWING_LISTS = (
+    ("run", "omit"),
+    ("report", "omit"),
+    ("report", "exclude_lines"),
+    ("report", "exclude_also"),
+)
 FIXED_VALUES = (("run", "source"), ("run", "include"), ("report", "include"))
 
 
@@ -36,11 +47,18 @@ def _value(coverage: dict[str, Any], section: str, key: str) -> Any:
 
 def config_changes(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     changes: list[str] = []
-    floor_before, floor_after = _value(before, "report", "fail_under"), _value(after, "report", "fail_under")
+    floor_before, floor_after = (
+        _value(before, "report", "fail_under"),
+        _value(after, "report", "fail_under"),
+    )
     if floor_before is not None and (floor_after is None or floor_after < floor_before):
-        changes.append(f"[tool.coverage.report] fail_under lowered from {floor_before} to {floor_after}")
+        changes.append(
+            f"[tool.coverage.report] fail_under lowered from {floor_before} to {floor_after}"
+        )
     for section, key in GROWING_LISTS:
-        gained = sorted(set(_value(after, section, key) or []) - set(_value(before, section, key) or []))
+        gained = sorted(
+            set(_value(after, section, key) or []) - set(_value(before, section, key) or [])
+        )
         if gained:
             changes.append(f"[tool.coverage.{section}] {key} gained {', '.join(gained)}")
     changes.extend(
@@ -52,7 +70,10 @@ def config_changes(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
 
 
 def pragma_patterns(coverage: dict[str, Any]) -> list[re.Pattern[str]]:
-    configured = [*(_value(coverage, "report", "exclude_lines") or []), *(_value(coverage, "report", "exclude_also") or [])]
+    configured = [
+        *(_value(coverage, "report", "exclude_lines") or []),
+        *(_value(coverage, "report", "exclude_also") or []),
+    ]
     return [re.compile(pattern) for pattern in (DEFAULT_PRAGMA, SCRIPT_PRAGMA, *configured)]
 
 
@@ -65,7 +86,9 @@ def _new_approval(repo: Path, commit: str) -> bool:
 
 def check(repo: Path, base: str) -> list[str]:
     commit = resolve(repo, base)
-    fixtures = string(table(load_proofs(repo), "layout"), "fixtures_dir", "layout").rstrip("/") + "/"
+    fixtures = (
+        string(table(load_proofs(repo), "layout"), "fixtures_dir", "layout").rstrip("/") + "/"
+    )
     before = coverage_table(file_at(repo, commit, CONFIG))
     after = coverage_table((repo / CONFIG).read_text(encoding="utf-8"))
     changed = [change.path for change in changes_since(repo, commit) if change.status != "D"]
@@ -101,7 +124,9 @@ def main(argv: list[str]) -> int:
     try:
         problems = check(arguments.repo, arguments.base)
     except (SettingsError, GitError, tomllib.TOMLDecodeError) as error:
-        print(f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr)
+        print(
+            f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr
+        )
         return 1
     for problem in problems:
         print(problem, file=sys.stderr)

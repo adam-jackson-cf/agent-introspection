@@ -34,7 +34,9 @@ def _cases(suite: ElementTree.Element, prefix: str, groups: tuple[str, ...]) -> 
             outcome, reason = _outcome(child)
             name = " > ".join((*groups, child.get("name", "")))
             identifier = f"{prefix}{child.get('file', '')}::{name}"
-            records.append(CaseRecord(identifier, outcome, reason, float(child.get("time", "0")), 0))
+            records.append(
+                CaseRecord(identifier, outcome, reason, float(child.get("time", "0")), 0)
+            )
     return records
 
 

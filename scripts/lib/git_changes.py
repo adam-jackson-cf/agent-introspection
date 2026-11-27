@@ -23,7 +23,7 @@ def _git(repo: Path, *args: str) -> str:
     completed = run_command(["git", "-C", str(repo), *args], repo, GIT_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         raise GitError(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
-    return completed.stdout
+    return str(completed.stdout)
 
 
 def _split(output: str) -> list[str]:

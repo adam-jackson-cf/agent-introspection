@@ -10,8 +10,14 @@ from datetime import datetime
 from pathlib import Path
 
 from lib.command_runner import isolated_environment, run_command
-from lib.test_evidence import CaseRecord, EvidenceError, RunReport, StaticCase, TierListing
-from lib.test_evidence import listing_from_ids
+from lib.test_evidence import (
+    CaseRecord,
+    EvidenceError,
+    RunReport,
+    StaticCase,
+    TierListing,
+    listing_from_ids,
+)
 
 FRAMEWORK = "pytest"
 NO_TESTS_COLLECTED = 5
@@ -107,7 +113,9 @@ def _local_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
     names.update(
-        node.name for node in ast.walk(function) if isinstance(node, ast.ExceptHandler) and node.name
+        node.name
+        for node in ast.walk(function)
+        if isinstance(node, ast.ExceptHandler) and node.name
     )
     return names
 
@@ -137,7 +145,9 @@ def _test_functions(
 ) -> list[tuple[tuple[str, ...], ast.FunctionDef | ast.AsyncFunctionDef]]:
     found: list[tuple[tuple[str, ...], ast.FunctionDef | ast.AsyncFunctionDef]] = []
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test"):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith(
+            "test"
+        ):
             found.append(((node.name,), node))
         elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
             found.extend(
@@ -152,7 +162,9 @@ def _test_functions(
 def static_cases(path: str, source: str) -> list[StaticCase]:
     tree = ast.parse(source, filename=path)
     return [
-        StaticCase("::".join((path, *owner)), path, function.lineno, owner[-1], fingerprint(function))
+        StaticCase(
+            "::".join((path, *owner)), path, function.lineno, owner[-1], fingerprint(function)
+        )
         for owner, function in _test_functions(tree)
     ]
 

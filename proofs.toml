@@ -7,3 +7,17 @@ mode = "whole"
 support_dir = "tests/support"
 fixtures_dir = "tests/fixtures"
 test_file_patterns = ["tests/**/test_*.py", "dashboard/**/*.test.ts", "dashboard/**/*.test.tsx"]
+
+[surface]
+lever_command = ["bash", "scripts/fresh-install/sandbox.sh", "lever"]
+data_dir_arg = "--data-dir"
+evidence_dir_arg = "--evidence-dir"
+doctor_marker = "LEVER DOCTOR FAILED"
+evidence_ports_file = "ports"
+lever_timeout_s = 1500
+doctor_failure_env = { DOCKER_HOST = "unix:///nonexistent/docker.sock" }
+
+[identity_artefacts]
+"src/agent_introspection/facts_sql/00*_*.sql" = "facts store DDL: the tables and views every installed ClickHouse holds"
+"src/agent_introspection/workflow.sql" = "workflow store schema: every existing SQLite workflow store was created from it"
+"src/agent_introspection/facts_sql/signal_support.toml" = "signal registry: the signal IDs findings, proposals and the dashboard name"

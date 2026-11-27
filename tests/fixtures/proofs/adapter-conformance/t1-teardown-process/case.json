@@ -1,0 +1,7 @@
+{
+ "id": "t1-teardown-process",
+ "rule": "TEST.t1-isolation",
+ "evidence": "run-report",
+ "situation": "a T1 fixture starts a process during teardown",
+ "expect": "finding"
+}

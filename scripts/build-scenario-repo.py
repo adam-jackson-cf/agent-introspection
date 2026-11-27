@@ -17,7 +17,7 @@ def _git(repo: Path, *args: str) -> str:
     completed = run_command(["git", *IDENTITY, *args], repo, GIT_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
-    return completed.stdout.strip()
+    return str(completed.stdout).strip()
 
 
 def _place(tree: Path, repo: Path) -> None:

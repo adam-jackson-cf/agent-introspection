@@ -43,7 +43,8 @@ def machine_limits(document: dict[str, Any], machine: str) -> Limits | None:
             if not isinstance(approval, str) or not approval:
                 raise SettingsError(f"[[test_budget.machine]] {machine} has no approval")
             return Limits(
-                _positive(entry, "wall_limit_s", machine), _positive(entry, "per_test_limit_s", machine)
+                _positive(entry, "wall_limit_s", machine),
+                _positive(entry, "per_test_limit_s", machine),
             )
     return None
 
@@ -58,10 +59,14 @@ def _reports(paths: list[Path], since: float) -> tuple[list[RunReport], list[str
             problems.append(f"{path}: {WALL_RULE}: {error}; rerun T1 so it writes a fresh report")
             continue
         if report.tier != TIER:
-            problems.append(f"{path}: {WALL_RULE}: report is for tier {report.tier}, not {TIER}; "
-                            "pass only T1 run reports")
+            problems.append(
+                f"{path}: {WALL_RULE}: report is for tier {report.tier}, not {TIER}; "
+                "pass only T1 run reports"
+            )
         elif report.started_at < since:
-            problems.append(f"{path}: {WALL_RULE}: report predates this run; rerun T1 for a fresh report")
+            problems.append(
+                f"{path}: {WALL_RULE}: report predates this run; rerun T1 for a fresh report"
+            )
         else:
             reports.append(report)
     return reports, problems
@@ -73,7 +78,8 @@ def judge(reports: list[RunReport], limits: Limits, machine: str, deferred: set[
     if wall > limits.wall_seconds:
         problems.append(
             f"{PROOFS_FILE}: {WALL_RULE}: T1 took {wall:.2f}s on {machine}, over the approved "
-            f"{limits.wall_seconds:g}s; speed up the slowest T1 tests (a limit raise needs owner approval)"
+            f"{limits.wall_seconds:g}s; speed up the slowest T1 tests "
+            "(a limit raise needs owner approval)"
         )
     problems.extend(
         f"{case.id}: {PER_TEST_RULE}: took {case.seconds:.3f}s on {machine}, over the approved "
@@ -92,12 +98,17 @@ def check(repo: Path, paths: list[Path], since: float) -> tuple[list[str], str]:
         document = load_proofs(repo)
         limits = machine_limits(document, machine)
     except SettingsError as error:
-        return [*problems, f"{PROOFS_FILE}: {WALL_RULE}: {error}; fix [[test_budget.machine]]"], machine
+        return [
+            *problems,
+            f"{PROOFS_FILE}: {WALL_RULE}: {error}; fix [[test_budget.machine]]",
+        ], machine
     wall = sum(report.wall_seconds for report in reports)
     summary = f"T1 wall {wall:.2f}s across {sum(len(r.cases) for r in reports)} tests on {machine}"
     if limits is None:
-        prompt = (f"{summary}; no approved limits for this machine: record five baseline T1 runs "
-                  f"and add a [[test_budget.machine]] entry with id = \"{machine}\" for owner approval")
+        prompt = (
+            f"{summary}; no approved limits for this machine: record five baseline T1 runs "
+            f'and add a [[test_budget.machine]] entry with id = "{machine}" for owner approval'
+        )
         return problems, prompt
     deferred = approved_paths(document, PER_TEST_RULE)
     return [*problems, *judge(reports, limits, machine, deferred)], summary

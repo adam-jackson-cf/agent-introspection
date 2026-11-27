@@ -36,7 +36,9 @@ def _normalise(arguments: argparse.Namespace) -> None:
 
 def _collect(arguments: argparse.Namespace) -> None:
     selection = [item for item in arguments.selection if item != "--"]
-    listing = pytest_adapter.collect(Path.cwd(), arguments.tier, selection, arguments.timeout_seconds)
+    listing = pytest_adapter.collect(
+        Path.cwd(), arguments.tier, selection, arguments.timeout_seconds
+    )
     write_listing(listing, arguments.out)
     print(f"test-evidence: tier {listing.tier} collected {len(listing.ids)} tests", file=sys.stderr)
 

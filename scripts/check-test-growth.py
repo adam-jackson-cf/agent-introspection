@@ -9,8 +9,15 @@ from pathlib import Path
 
 from lib import bun_adapter, pytest_adapter
 from lib.git_changes import GitError, changes_since, file_at, files_at, resolve, tracked_files
-from lib.proofs_settings import PROOFS_FILE, SettingsError, load_proofs, matches, string, strings
-from lib.proofs_settings import table
+from lib.proofs_settings import (
+    PROOFS_FILE,
+    SettingsError,
+    load_proofs,
+    matches,
+    string,
+    strings,
+    table,
+)
 from lib.test_evidence import EvidenceError, StaticCase
 
 GROWTH_RULE = "TEST.growth.justified"
@@ -36,7 +43,9 @@ class Collection:
 
 def load_layout(repo: Path) -> Layout:
     layout = table(load_proofs(repo), "layout")
-    return Layout(strings(layout, "test_file_patterns", "layout"), string(layout, "fixtures_dir", "layout"))
+    return Layout(
+        strings(layout, "test_file_patterns", "layout"), string(layout, "fixtures_dir", "layout")
+    )
 
 
 def collect(root: Path, files: list[str]) -> Collection:
@@ -44,7 +53,9 @@ def collect(root: Path, files: list[str]) -> Collection:
     unparsable: dict[str, str] = {}
     for path in (item for item in files if item.endswith(".py")):
         try:
-            cases.extend(pytest_adapter.static_cases(path, (root / path).read_text(encoding="utf-8")))
+            cases.extend(
+                pytest_adapter.static_cases(path, (root / path).read_text(encoding="utf-8"))
+            )
         except (SyntaxError, UnicodeDecodeError) as error:
             unparsable[path] = str(error)
     bun_cases, bun_unparsable = bun_adapter.static_cases(
@@ -65,7 +76,9 @@ def _base_collection(repo: Path, base: str, layout: Layout) -> Collection:
 
 
 def _words(case: StaticCase) -> list[str]:
-    split = pytest_adapter.behaviour_words if case.file.endswith(".py") else bun_adapter.behaviour_words
+    split = (
+        pytest_adapter.behaviour_words if case.file.endswith(".py") else bun_adapter.behaviour_words
+    )
     return [word for word in split(case.name) if word.lower() not in STOP_WORDS]
 
 
@@ -97,7 +110,9 @@ def _duplicates(new: list[StaticCase], current: list[StaticCase]) -> list[str]:
 
 def check(repo: Path, base: str | None, paths: list[str]) -> list[str]:
     layout = load_layout(repo)
-    current_files = [path for path in tracked_files(repo) if layout.owns(path) and (repo / path).is_file()]
+    current_files = [
+        path for path in tracked_files(repo) if layout.owns(path) and (repo / path).is_file()
+    ]
     current = collect(repo, current_files)
     if base is None:
         known: set[str] = set()
@@ -108,7 +123,8 @@ def check(repo: Path, base: str | None, paths: list[str]) -> list[str]:
         changed = {change.path for change in changes_since(repo, commit)}
     scope = set(paths) if paths else None
     new = [
-        case for case in current.cases
+        case
+        for case in current.cases
         if case.id not in known and (scope is None or case.file in scope)
     ]
     problems = [
@@ -128,7 +144,10 @@ def main(argv: list[str]) -> int:
     try:
         problems = check(arguments.repo, arguments.base, arguments.paths)
     except (SettingsError, GitError, EvidenceError) as error:
-        print(f"{PROOFS_FILE}: {GROWTH_RULE}: {error}; fix the setting or repository state", file=sys.stderr)
+        print(
+            f"{PROOFS_FILE}: {GROWTH_RULE}: {error}; fix the setting or repository state",
+            file=sys.stderr,
+        )
         return 1
     for problem in problems:
         print(problem, file=sys.stderr)

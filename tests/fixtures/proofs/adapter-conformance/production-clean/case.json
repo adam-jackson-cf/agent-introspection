@@ -1,0 +1,7 @@
+{
+ "id": "production-clean",
+ "rule": "TEST.no-test-hooks",
+ "evidence": "source",
+ "situation": "owned production code reads only real configuration",
+ "expect": "clean"
+}

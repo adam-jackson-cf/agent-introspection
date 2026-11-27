@@ -6,8 +6,15 @@ import sys
 from pathlib import Path
 
 from lib.git_changes import GitError, changes_since, resolve
-from lib.proofs_settings import PROOFS_FILE, SettingsError, load_proofs, matches, string, strings
-from lib.proofs_settings import table
+from lib.proofs_settings import (
+    PROOFS_FILE,
+    SettingsError,
+    load_proofs,
+    matches,
+    string,
+    strings,
+    table,
+)
 
 RULE = "TEST.identity-artefacts"
 
@@ -26,7 +33,10 @@ def check(repo: Path, base: str) -> list[str]:
         raise SettingsError("[identity_artefacts] declares no artefacts")
     tests = _test_paths(table(document, "layout"))
     changed = {
-        path for change in changes_since(repo, resolve(repo, base)) for path in (change.path, change.old_path) if path
+        path
+        for change in changes_since(repo, resolve(repo, base))
+        for path in (change.path, change.old_path)
+        if path
     }
     touched = sorted(path for path in changed if matches(path, list(reasons)))
     others = changed.difference(touched)
@@ -48,7 +58,9 @@ def main(argv: list[str]) -> int:
     try:
         problems = check(arguments.repo, arguments.base)
     except (SettingsError, GitError) as error:
-        print(f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr)
+        print(
+            f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr
+        )
         return 1
     for problem in problems:
         print(problem, file=sys.stderr)

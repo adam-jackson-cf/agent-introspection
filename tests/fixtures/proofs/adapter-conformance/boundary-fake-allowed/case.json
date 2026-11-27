@@ -1,0 +1,7 @@
+{
+ "id": "boundary-fake-allowed",
+ "rule": "TEST.no-self-mocking",
+ "evidence": "source",
+ "situation": "a test fakes only an owned adapter interface that wraps a third party",
+ "expect": "clean"
+}

@@ -1,0 +1,7 @@
+{
+ "id": "unapproved-static-skip",
+ "rule": "TEST.no-evasion",
+ "evidence": "source",
+ "situation": "a test carries a static skip marker with no approved exception",
+ "expect": "finding"
+}

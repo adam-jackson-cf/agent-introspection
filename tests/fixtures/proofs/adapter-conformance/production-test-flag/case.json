@@ -1,0 +1,7 @@
+{
+ "id": "production-test-flag",
+ "rule": "TEST.no-test-hooks",
+ "evidence": "source",
+ "situation": "owned production code branches on a test-marker environment variable",
+ "expect": "finding"
+}

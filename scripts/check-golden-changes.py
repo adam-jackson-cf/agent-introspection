@@ -6,8 +6,15 @@ import sys
 from pathlib import Path
 
 from lib.git_changes import GitError, added_lines, changes_since, resolve
-from lib.proofs_settings import PROOFS_FILE, SettingsError, load_proofs, matches, string, strings
-from lib.proofs_settings import table
+from lib.proofs_settings import (
+    PROOFS_FILE,
+    SettingsError,
+    load_proofs,
+    matches,
+    string,
+    strings,
+    table,
+)
 
 RULE = "TEST.golden-change-record"
 
@@ -19,9 +26,12 @@ def check(repo: Path, base: str) -> list[str]:
     if not (repo / record).is_file():
         return [f"{PROOFS_FILE}: {RULE}: [golden] change_record {record} does not exist; create it"]
     commit = resolve(repo, base)
-    changed = sorted(
-        {path for change in changes_since(repo, commit) for path in (change.path, change.old_path) if path}
-    )
+    changed = sorted({
+        path
+        for change in changes_since(repo, commit)
+        for path in (change.path, change.old_path)
+        if path
+    })
     goldens = [path for path in changed if matches(path, globs)]
     entries = "\n".join(text for _, text in added_lines(repo, commit, [record]).get(record, []))
     return [
@@ -40,7 +50,9 @@ def main(argv: list[str]) -> int:
     try:
         problems = check(arguments.repo, arguments.base)
     except (SettingsError, GitError) as error:
-        print(f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr)
+        print(
+            f"{PROOFS_FILE}: {RULE}: {error}; fix the setting or repository state", file=sys.stderr
+        )
         return 1
     for problem in problems:
         print(problem, file=sys.stderr)

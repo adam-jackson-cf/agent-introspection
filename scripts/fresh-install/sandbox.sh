@@ -560,11 +560,13 @@ DOCTOR_WAIT_SECONDS=20
 bounded() {
   local seconds=$1 pid waited=0
   shift
+  set -m
   "$@" >/dev/null 2>&1 &
   pid=$!
+  set +m
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$waited" -ge "$seconds" ]; then
-      kill "$pid" 2>/dev/null || true
+      kill -KILL -- "-$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       return 1
     fi

@@ -14,7 +14,7 @@ def _output(argv: list[str]) -> str:
     completed = run_command(argv, Path.cwd(), PROBE_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         raise RuntimeError(f"{' '.join(argv)} failed: {completed.stderr.strip()}")
-    return completed.stdout.strip()
+    return str(completed.stdout).strip()
 
 
 def cpu_model() -> str:

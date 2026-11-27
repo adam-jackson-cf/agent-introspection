@@ -14,8 +14,10 @@ BROKEN = frozenset({"failed", "error", "timeout"})
 
 def _report_problems(path: Path, report: RunReport) -> list[str]:
     if not report.cases:
-        return [f"{path}: {RULE}: tier {report.tier} ({report.framework}) ran no tests; "
-                "fix the tier selector or the runner so the tier runs its tests"]
+        return [
+            f"{path}: {RULE}: tier {report.tier} ({report.framework}) ran no tests; "
+            "fix the tier selector or the runner so the tier runs its tests"
+        ]
     problems = [
         f"{case.id}: {RULE}: the run report records {case.outcome} but the runner passed; "
         "make the runner exit nonzero when a test fails, errors or times out"
@@ -36,7 +38,10 @@ def _listing_problems(listing_path: Path, reports: list[RunReport]) -> list[str]
     except EvidenceError as error:
         return [f"{listing_path}: {RULE}: {error}; collect the tier again with its selector"]
     reported = {
-        case.id for report in reports if report.framework == listing.framework for case in report.cases
+        case.id
+        for report in reports
+        if report.framework == listing.framework
+        for case in report.cases
     }
     return [
         f"{identifier}: {RULE}: collected for tier {listing.tier} but missing from the run report; "

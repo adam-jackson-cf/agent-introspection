@@ -56,7 +56,11 @@ def _scratch_repository(runner: Path, directory: Path) -> Path:
     (repository / "oxlint.config.ts").write_text("export default {};\n", encoding="utf-8")
     (repository / "README.md").write_text("# Scratch\n", encoding="utf-8")
     (repository / "scripts" / "stub.py").write_text("", encoding="utf-8")
-    for argv in (["git", "init", "-q"], ["git", "add", "-A"], ["git", *_IDENTITY, "commit", "-qm", "scratch"]):
+    for argv in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", *_IDENTITY, "commit", "-qm", "scratch"],
+    ):
         _run(argv, repository, None, check=True)
     bin_dir = directory / "bin"
     bin_dir.mkdir()
@@ -90,18 +94,27 @@ def _run_runner(runner: Path, repository: Path, directory: Path, mode: str, fail
 
 def _check_mode(runner: Path, repository: Path, directory: Path, mode: str) -> list[str]:
     if _run_runner(runner, repository, directory, mode, 0) != 0:
-        return [f"{runner}: TEST.failure-propagation: mode {mode} fails with passing tools; "
-                "make the control run pass"]
+        return [
+            f"{runner}: TEST.failure-propagation: mode {mode} fails with passing tools; "
+            "make the control run pass"
+        ]
     count = directory / "state" / "count"
     calls = int(count.read_text(encoding="utf-8")) if count.exists() else 0
     if calls == 0:
-        return [f"{runner}: TEST.failure-propagation: mode {mode} invoked no stubbed tools; "
-                "run the gate's tools through the runner"]
-    print(f"check-runner-failure-propagation: mode {mode}: {calls} tool calls exercised", file=sys.stderr)
+        return [
+            f"{runner}: TEST.failure-propagation: mode {mode} invoked no stubbed tools; "
+            "run the gate's tools through the runner"
+        ]
+    print(
+        f"check-runner-failure-propagation: mode {mode}: {calls} tool calls exercised",
+        file=sys.stderr,
+    )
     problems: list[str] = []
     for index in range(1, calls + 1):
         if _run_runner(runner, repository, directory, mode, index) == 0:
-            call = (directory / "state" / "calls").read_text(encoding="utf-8").splitlines()[index - 1]
+            call = (
+                (directory / "state" / "calls").read_text(encoding="utf-8").splitlines()[index - 1]
+            )
             problems.append(
                 f"{runner}: TEST.failure-propagation: mode {mode} passed although tool call "
                 f"#{index} failed ({call}); propagate that call's nonzero exit"
@@ -113,7 +126,11 @@ def check_runner(runner: Path, modes: list[str]) -> list[str]:
     with tempfile.TemporaryDirectory() as raw_directory:
         directory = Path(raw_directory)
         repository = _scratch_repository(runner, directory)
-        return [problem for mode in modes for problem in _check_mode(runner, repository, directory, mode)]
+        return [
+            problem
+            for mode in modes
+            for problem in _check_mode(runner, repository, directory, mode)
+        ]
 
 
 def main(argv: list[str]) -> int:

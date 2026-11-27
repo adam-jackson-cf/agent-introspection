@@ -121,7 +121,11 @@ def read_listing(path: Path) -> TierListing:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise EvidenceError(f"tier listing is missing or unreadable: {error}") from error
-    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA or not isinstance(raw.get("ids"), list):
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema") != SCHEMA
+        or not isinstance(raw.get("ids"), list)
+    ):
         raise EvidenceError("tier listing is not a schema 1 listing")
     return listing_from_ids(str(raw.get("tier", "")), str(raw.get("framework", "")), raw["ids"])
 

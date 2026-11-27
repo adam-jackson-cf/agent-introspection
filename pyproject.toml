@@ -34,6 +34,12 @@ pythonpath = ["src", "."]
 # A leaked SQLite connection surfaces as an unraisable ResourceWarning at GC time.
 filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
+[tool.coverage.run]
+omit = ["*/agent_introspection/cli.py", "*/agent_introspection/schedule.py"]
+
+[tool.coverage.report]
+fail_under = 85
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
