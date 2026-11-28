@@ -15,9 +15,9 @@ from urllib.request import ProxyHandler, build_opener
 
 from agent_introspection import dashboard_service
 from agent_introspection.cli_common import app_config
-from agent_introspection.config import is_local_host
 
 URL_VARIABLE: Final = "INTROSPECTION_DASHBOARD_URL"
+DASHBOARD_ADDRESS: Final = "127.0.0.1"
 TIMEOUT_SECONDS: Final = 120
 MAX_DAYS: Final = 92
 DEFAULT_DAYS: Final = 7
@@ -56,8 +56,11 @@ def window_for(days: int | None, start: str | None, end: str | None, harness: st
 def dashboard_url(port: int) -> str:
     url = os.environ.get(URL_VARIABLE, "").rstrip("/") or f"http://127.0.0.1:{port}"
     parts = urlsplit(url)
-    if parts.scheme != "http" or not parts.hostname or not is_local_host(parts.hostname):
-        raise ValueError(f"{URL_VARIABLE} must be an http URL on loopback, not {url}")
+    if parts.scheme != "http" or parts.hostname != DASHBOARD_ADDRESS:
+        raise ValueError(
+            f"{URL_VARIABLE} must be an http URL on {DASHBOARD_ADDRESS}, the only address "
+            f"the dashboard serves, not {url}"
+        )
     return url
 
 
@@ -92,7 +95,10 @@ def views(base: str) -> dict[str, Any]:
         view: {"view": view, "title": title, "signals": []}
         for view, title in _view_titles(registry).items()
     }
+    hidden = {entry["signal"] for entry in registry["hidden"]}
     for signal in registry["signals"]:
+        if signal["signal"] in hidden:
+            continue
         listed[signal["view"]]["signals"].append({
             key: signal[key] for key in ("signal", "title", "question", "unit")
         })
@@ -187,9 +193,16 @@ def _window_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--harness", default="", help="one enabled harness (default: All)")
 
 
+def _row_count(value: str) -> int:
+    rows = int(value)
+    if rows < 0:
+        raise argparse.ArgumentTypeError("--rows must be 0 or more")
+    return rows
+
+
 def _rows_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--rows", type=int, help="keep the first N rows of each dataset (default: all)"
+        "--rows", type=_row_count, help="keep the first N rows of each dataset (default: all)"
     )
 
 

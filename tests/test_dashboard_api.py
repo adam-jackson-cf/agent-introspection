@@ -201,4 +201,48 @@ def test_a_dashboard_address_off_this_machine_is_refused_before_any_request(
         main(["dashboard", "views"])
 
     assert raised.value.code == 50
-    assert "on loopback" in capsys.readouterr().err
+    assert "must be an http URL on 127.0.0.1" in capsys.readouterr().err
+
+
+def test_a_signal_an_enabled_harness_cannot_produce_is_listed_only_as_hidden(
+    dashboard: list[dict[str, Any]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hidden = {
+        "signal": "intervene.findings",
+        "view": "interventions",
+        "missing": ["codex"],
+        "note": "",
+    }
+    monkeypatch.setitem(REGISTRY, "hidden", [hidden])
+
+    result = _run(capsys, "views")
+
+    shown = {entry["view"]: [s["signal"] for s in entry["signals"]] for entry in result["views"]}
+    assert shown == {"friction": ["friction.interrupt"], "interventions": []}
+    assert result["hidden"] == [hidden]
+
+
+def test_a_negative_row_limit_is_refused_before_any_request(
+    dashboard: list[dict[str, Any]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["dashboard", "view", "friction", "--rows", "-1"])
+
+    assert raised.value.code == 2
+    assert "--rows must be 0 or more" in capsys.readouterr().err
+    assert dashboard == []
+
+
+@pytest.mark.parametrize("url", ["http://localhost:4173", "http://[::1]:4173"])
+def test_a_loopback_alias_the_dashboard_does_not_serve_is_refused(
+    url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(URL_VARIABLE, url)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["dashboard", "views"])
+
+    assert raised.value.code == 50
+    assert "the only address the dashboard serves" in capsys.readouterr().err

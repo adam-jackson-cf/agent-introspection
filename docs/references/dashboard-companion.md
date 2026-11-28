@@ -79,8 +79,11 @@ results at once.
 what the running service's `/api` routes return to the page, so an agent reads what a
 person sees without a browser (see the [CLI reference](cli-reference.md)). They need
 the service running on this machine and fail with exit code 60 when it is not.
-`INTROSPECTION_DASHBOARD_URL` points them at another loopback address (default
-`http://127.0.0.1:<port>`, the `[dashboard] port`); an address off this machine is refused.
+`INTROSPECTION_DASHBOARD_URL` points them at another port on `127.0.0.1` (default
+`http://127.0.0.1:<port>`, the `[dashboard] port`); any other host, `localhost` included,
+is refused, because the server answers only requests addressed to `127.0.0.1`. `--rows`
+must be 0 or more, and `views` lists a signal an enabled harness cannot produce only
+under `hidden`.
 
 ## Design notes
 
