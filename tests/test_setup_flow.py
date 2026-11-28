@@ -353,6 +353,16 @@ def test_an_unknown_harness_key_stops_both_runs_at_the_config(host: Host, tmp_pa
     assert (host.connected, host.statements) == ([], [])
 
 
+def test_a_zero_dashboard_port_stops_at_the_config_instead_of_using_the_default(
+    host: Host, tmp_path: Path
+) -> None:
+    result = setup_flow.run(options(tmp_path, dashboard_port=0))
+
+    assert (result["stopped_at"], result["passed"]) == ("config", False)
+    assert "TCP port" in result["error"]
+    assert not (tmp_path / "config.toml").exists()
+
+
 def test_a_symlinked_config_is_written_through(host: Host, tmp_path: Path) -> None:
     target = tmp_path / "dotfiles/config.toml"
     target.parent.mkdir()

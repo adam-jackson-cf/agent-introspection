@@ -88,7 +88,7 @@ def _settings(options: SetupOptions) -> dict[str, dict[str, object]]:
             if options.openrouter_key_command
             else {}
         ),
-        "dashboard": {"port": options.dashboard_port} if options.dashboard_port else {},
+        "dashboard": {"port": options.dashboard_port} if options.dashboard_port is not None else {},
     }
     return {table: values for table, values in tables.items() if values}
 
