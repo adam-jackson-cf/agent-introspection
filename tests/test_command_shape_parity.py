@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,18 +10,28 @@ import pytest
 from agent_introspection import facts
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "command_shape.json").read_text())
-CONTAINER = "signoz-clickhouse"
+CONTAINER_SETTING = "AGENT_INTROSPECTION_TEST_CLICKHOUSE"
 
-pytestmark = pytest.mark.live
+pytestmark = [pytest.mark.boundary, pytest.mark.deferred]
 
 
 def _literal(text: str) -> str:
     return "'" + text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
 
 
+def _container() -> str:
+    container = os.environ.get(CONTAINER_SETTING)
+    if not container:
+        pytest.fail(
+            f"{CONTAINER_SETTING} names no ClickHouse container; run "
+            "bash scripts/run-ci-quality-gates.sh install, which starts one"
+        )
+    return container
+
+
 def _clickhouse_query(query: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["docker", "exec", "-i", CONTAINER, "clickhouse-client", "--format", "JSONEachRow"],
+        ["docker", "exec", "-i", _container(), "clickhouse-client", "--format", "JSONEachRow"],
         input=query,
         capture_output=True,
         text=True,

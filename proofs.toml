@@ -19,7 +19,6 @@ control = [
   "scripts/ci",
   ".pre-commit-config.yaml",
   ".github/workflows/ci-quality-gates.yml",
-  ".github/workflows/live-tests.yml",
   ".github/CODEOWNERS",
 ]
 
@@ -899,11 +898,6 @@ file = "scripts/ci"
 ref = "scripts/run-ci-quality-gates.sh static"
 status = "gate"
 
-[[claim.enforced_by]]
-point = "later"
-file = ".github/workflows/live-tests.yml"
-ref = "scripts/ci t3"
-
 [[claim.canary]]
 command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_tiers", "{fixture}"]
 passing = "tests/fixtures/proofs/tests.tiers/passing"
@@ -1295,6 +1289,24 @@ rule = "PYQ211"
 reason = "No project analyzer exists: no *Analyzer class in src, scripts or .agents and [python_quality] analyzer_bases is empty, so no class has a project entrypoint to implement."
 approved_by = "adam-jackson-cf, 2026-11-27"
 evidence = { command = ["sh", "-c", "git grep -q -E 'class [A-Za-z]*Analyzer' -- src scripts .agents || echo no-project-analyzers"], expect = "no-project-analyzers" }
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "tests/journeys/test_install_journey.py::test_a_new_machine_installs_and_every_dashboard_view_answers"
+reason = "Deferred T2: drives a sandboxed fresh install through the lever in Docker, so only the install mode (CI fresh-install job) runs it."
+approved_by = "adam-jackson-cf, 2026-11-28"
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "tests/test_command_shape_parity.py::test_sql_fragment_matches_the_python_shape_for_every_fixture_case"
+reason = "Deferred T2: runs the command-shape SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
+approved_by = "adam-jackson-cf, 2026-11-28"
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "dashboard/server/pipeline.deferred.ts"
+reason = "Deferred T2: runs the spool-delivery SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
+approved_by = "adam-jackson-cf, 2026-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
@@ -1885,6 +1897,7 @@ files = ["SKILL.md", "README.md", "references/*.md", "assets/**", "scripts/**"]
 [layout]
 support_dir = "tests/support"
 support_files = ["dashboard/server/test-fixtures.ts"]
+instruction_files = ["tests/AGENTS.md", "tests/CLAUDE.md"]
 fixtures_dir = "tests/fixtures"
 canary_fixtures_dir = "tests/fixtures/proofs"
 test_file_patterns = [
@@ -1893,7 +1906,7 @@ test_file_patterns = [
   "dashboard/*.test.ts",
   "dashboard/**/*.test.ts",
   "dashboard/**/*.test.tsx",
-  "dashboard/**/*.live.ts",
+  "dashboard/**/*.deferred.ts",
 ]
 test_like_patterns = ["**/test*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
 test_marker_tokens = ["jest", "pytest", "test", "testing", "tests", "vitest"]

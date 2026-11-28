@@ -24,7 +24,7 @@ control enforces each rule, where it runs, and the canaries that prove it.
   and the only approved entry names `bun1.3.0`; another Bun gives an unknown machine,
   whose run reports timing but enforces no limit. Check the id with
   `uv run python scripts/check-test-budget.py --print-machine-id`.
-- Docker, only for the `install` mode, and a SigNoz host, only for the `t3` mode.
+- Docker, only for the `install` mode.
 - `origin/main` fetched, for the checks that compare the branch with its merge base.
 
 ## Steps
@@ -47,9 +47,8 @@ control enforces each rule, where it runs, and the canaries that prove it.
    | `bash scripts/run-ci-quality-gates.sh static`                  | Every static check in order; stops at the first failure                 |
    | `bash scripts/run-ci-quality-gates.sh t1`                      | T1 pytest with the coverage floor, then the dashboard `bun test`        |
    | `bash scripts/run-ci-quality-gates.sh t2`                      | T2 pytest                                                               |
-   | `bash scripts/run-ci-quality-gates.sh t3`                      | T3 pytest and `*.live.ts` against a local SigNoz ClickHouse             |
    | `bash scripts/run-ci-quality-gates.sh hook`                    | `static`, `t1` (then the T1 time budget) and `t2`, judging staged paths |
-   | `bash scripts/run-ci-quality-gates.sh install`                 | The lever twice (`check lever_isolation`), then the journey tier        |
+   | `bash scripts/run-ci-quality-gates.sh install`                 | The lever twice (`check lever_isolation`), then the deferred tier       |
    | `bash scripts/run-ci-quality-gates.sh proofs`                  | The `proofs.toml` validator with every canary                           |
    | `bash scripts/run-ci-quality-gates.sh prepare`                 | Only the setup step: sync the locked dependencies and install the hook  |
    | `bash scripts/run-ci-quality-gates.sh check <name> [path ...]` | One check, over the given paths or its whole-repository scope           |
@@ -101,20 +100,20 @@ control enforces each rule, where it runs, and the canaries that prove it.
 
 The tier selectors live once, in `scripts/run-ci-quality-gates.sh`.
 
-| Tier    | Selector                                                              | What belongs there                                                                                    |
-| ------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| T1      | `not boundary and not deferred and not live`                          | Untagged tests: no process, socket or loopback call; each test gets its own temporary `HOME`          |
-| T2      | `(boundary or deferred) and not (boundary and deferred) and not live` | Files with a module-level `pytestmark = pytest.mark.boundary`, which drive a process, build or socket |
-| journey | `boundary and deferred and not live`                                  | `tests/journeys/`: drive the product through the lever; only the `install` mode runs them             |
-| T3      | `live`                                                                | Tests against a local SigNoz ClickHouse; only the `t3` mode runs them                                 |
+| Tier        | Selector                                                 | What belongs there                                                                                    |
+| ----------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| T1          | `not boundary and not deferred`                          | Untagged tests: no process, socket or loopback call; each test gets its own temporary `HOME`          |
+| T2          | `(boundary or deferred) and not (boundary and deferred)` | Files with a module-level `pytestmark = pytest.mark.boundary`, which drive a process, build or socket |
+| deferred T2 | `boundary and deferred`                                  | T2 tests that need Docker; only the `install` mode (CI `fresh-install`) runs them                     |
 
-- One file holds one tier. `deferred` marks a test over its tier's time limit that runs
-  with T2 under an approved exception.
-- T3 also holds the dashboard tests in files named `*.live.ts`, which `bun test` discovery
-  skips. Neither the hook nor CI runs T3. Run it with
-  `bash scripts/run-ci-quality-gates.sh t3` on a SigNoz host, or start the Live tests
-  workflow (`.github/workflows/live-tests.yml`), which runs `scripts/ci t3` by hand on a
-  self-hosted runner labelled `signoz`; its status is never a required merge status.
+- One file holds one tier. Each deferred test has an approved `[[exception]]` for
+  `TEST.tier-selectors` in `proofs.toml` whose `path` is its test ID.
+- Deferred T2 holds the journeys under `tests/journeys/`, which drive the product through
+  the lever, and the ClickHouse SQL tests (`tests/test_command_shape_parity.py` and the
+  dashboard files named `*.deferred.ts`, which `bun test` discovery skips). The `install`
+  mode starts a throwaway ClickHouse container from the image `scripts/fresh-install/sandbox.sh`
+  names and passes its name in `AGENT_INTROSPECTION_TEST_CLICKHOUSE`.
+- The repository has no T3 tests and no T3 job.
 - The dashboard's `bun test` is T1. `dashboard/bunfig.toml` preloads `t1-guard.ts`, so a
   test that calls `Bun.spawn`, `fetch`, `Bun.serve` or Node `child_process` or `net` fails.
 - The T1 coverage floor is `fail_under` in `pyproject.toml` `[tool.coverage.report]`,

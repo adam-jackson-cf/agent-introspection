@@ -34,6 +34,7 @@ class Layout:
     test_like_patterns: list[str]
     support_dir: str
     support_files: list[str]
+    instruction_files: frozenset[str]
     fixtures_dir: str
     owners: dict[str, str]
     ignored: frozenset[str]
@@ -60,6 +61,11 @@ def load_layout(root: Path) -> Layout:
         test_like_patterns=strings(layout_table, "test_like_patterns", "layout"),
         support_dir=string(layout_table, "support_dir", "layout"),
         support_files=strings(layout_table, "support_files", "layout"),
+        instruction_files=frozenset(
+            strings(layout_table, "instruction_files", "layout")
+            if "instruction_files" in layout_table
+            else []
+        ),
         fixtures_dir=string(layout_table, "fixtures_dir", "layout"),
         owners=dict(owners),
         ignored=frozenset(strings(names, "ignored", "layout.test_names")),
@@ -130,7 +136,9 @@ def placement_problems(layout: Layout, path: str) -> list[str]:
             f"{path}: {PLACEMENT}: shared pytest fixtures live under {layout.test_root}/; "
             f"move it to {layout.test_root}/{CONFTEST}"
         )
-    elif in_root and not (is_test or support or name == CONFTEST):
+    elif in_root and not (
+        is_test or support or name == CONFTEST or path in layout.instruction_files
+    ):
         problems.append(
             f"{path}: {PLACEMENT}: only tests, {CONFTEST}, support code and fixtures live under "
             f"{layout.test_root}/; move shared code to {layout.support_dir}/ or data to "

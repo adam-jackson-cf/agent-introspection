@@ -55,9 +55,9 @@ Complements Ruff `pep8-naming`; does not replace deterministic lint checks.
   parameters or environment flags.
 - A test file holds one tier: T1 files are untagged and start no process or socket; T2
   files set a module-level `pytestmark = pytest.mark.boundary`; journeys under
-  `tests/journeys/` add `deferred` and run only in the `install` mode; tests that need a
-  local SigNoz ClickHouse are marked `live` (T3, dashboard files `*.live.ts`) and run
-  only through `bash scripts/run-ci-quality-gates.sh t3`.
+  `tests/journeys/` and tests that need a ClickHouse container add `deferred` (dashboard
+  files `*.deferred.ts`) and run only in the `install` mode, each under an approved
+  `proofs.toml` exception.
 - `bash scripts/run-ci-quality-gates.sh hook` is the commit suite (static checks, T1 and
   T2, including the dashboard); CI runs the `static`, `t1`, `t2`, `proofs` and
   `install` modes.

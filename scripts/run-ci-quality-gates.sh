@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s static|t1|t2|t3|install|proofs|hook|prepare\n       %s check <name> [path ...]\n' "$0" "$0"
+  printf 'Usage: %s static|t1|t2|install|proofs|hook|prepare\n       %s check <name> [path ...]\n' "$0" "$0"
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,15 +13,14 @@ fixtures_exclude=':(exclude)tests/fixtures/**'
 diff_event=--merge-base
 
 hook_modes=(static t1 t2)
-t1_tier='not boundary and not deferred and not live'
-t2_tier='(boundary or deferred) and not (boundary and deferred) and not live'
-journey_tier='boundary and deferred and not live'
-t3_tier='live'
+t1_tier='not boundary and not deferred'
+t2_tier='(boundary or deferred) and not (boundary and deferred)'
+deferred_tier='boundary and deferred'
 t1_selection=(-m "$t1_tier")
 t2_selection=(-m "$t2_tier")
-journey_selection=(-m "$journey_tier")
-t3_selection=(-m "$t3_tier")
-bun_t3_tests=('dashboard/*.live.ts' 'dashboard/**/*.live.ts')
+deferred_selection=(-m "$deferred_tier")
+bun_deferred_tests=('dashboard/*.deferred.ts' 'dashboard/**/*.deferred.ts')
+test_clickhouse=agent-introspection-test-clickhouse
 pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
 collect_timeout_seconds=300
 report_dir=""
@@ -153,7 +152,7 @@ check_test_mocking() { uv run python -B scripts/check-test-mocking.py "$@"; }
 check_test_hooks() { uv run python -B scripts/check-test-hooks.py "$@"; }
 check_test_tiers() {
   uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" \
-    --tier "journey=$journey_tier" --tier "t3=$t3_tier" "$@"
+    --tier "deferred=$deferred_tier" "$@"
 }
 
 check_test_placement() {
@@ -386,27 +385,42 @@ run_t2() {
   check_test_evasion --report "$report_dir/t2-pytest.xml"
 }
 
-run_t3() {
-  make_report_dir
-  collect_tier t3 "${t3_selection[@]}"
-  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/t3-pytest.xml" "${t3_selection[@]}"
-  normalise_report pytest --tier t3 "$report_dir/t3-pytest.xml" "$report_dir/t3-pytest.json"
-  scan tracked "${bun_t3_tests[@]}"
-  local files=("${scanned[@]/#/./}")
-  bun test --reporter=junit --reporter-outfile="$report_dir/t3-bun.xml" "${files[@]}"
-  normalise_report bun --tier t3 "$report_dir/t3-bun.xml" "$report_dir/t3-bun.json"
-  check_test_run --listing "$report_dir/t3-listing.json" "$report_dir/t3-pytest.json" "$report_dir/t3-bun.json"
-  check_test_evasion --report "$report_dir/t3-pytest.xml" --report "$report_dir/t3-bun.xml"
+start_test_clickhouse() {
+  local line image attempt
+  line="$(grep '^CLICKHOUSE_IMAGE=' scripts/fresh-install/sandbox.sh)"
+  image="${line#*:-}"
+  image="${image%\}}"
+  [[ -n "$image" && "$image" != "$line" ]] || {
+    echo "scripts/fresh-install/sandbox.sh names no CLICKHOUSE_IMAGE default" >&2
+    return 1
+  }
+  docker rm -f "$test_clickhouse" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$test_clickhouse" -e CLICKHOUSE_SKIP_USER_SETUP=1 "$image" >/dev/null
+  trap 'docker rm -f "$test_clickhouse" >/dev/null 2>&1; rm -rf "$report_dir"' EXIT
+  for attempt in $(seq 60); do
+    docker exec "$test_clickhouse" clickhouse-client --query 'SELECT 1' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec "$test_clickhouse" clickhouse-client --query 'SELECT 1' >/dev/null || {
+    echo "the test ClickHouse did not start after $attempt attempts; see: docker logs $test_clickhouse" >&2
+    return 1
+  }
+  export AGENT_INTROSPECTION_TEST_CLICKHOUSE="$test_clickhouse"
 }
 
 run_install() {
   make_report_dir
   check_lever_isolation --repo .
-  collect_tier journey "${journey_selection[@]}"
-  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/journey-pytest.xml" "${journey_selection[@]}"
-  normalise_report pytest --tier journey "$report_dir/journey-pytest.xml" "$report_dir/journey-pytest.json"
-  check_test_run --listing "$report_dir/journey-listing.json" "$report_dir/journey-pytest.json"
-  check_test_evasion --report "$report_dir/journey-pytest.xml"
+  start_test_clickhouse
+  collect_tier deferred "${deferred_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/deferred-pytest.xml" "${deferred_selection[@]}"
+  normalise_report pytest --tier deferred "$report_dir/deferred-pytest.xml" "$report_dir/deferred-pytest.json"
+  scan tracked "${bun_deferred_tests[@]}"
+  local files=("${scanned[@]/#/./}")
+  bun test --reporter=junit --reporter-outfile="$report_dir/deferred-bun.xml" "${files[@]}"
+  normalise_report bun --tier deferred "$report_dir/deferred-bun.xml" "$report_dir/deferred-bun.json"
+  check_test_run --listing "$report_dir/deferred-listing.json" "$report_dir/deferred-pytest.json" "$report_dir/deferred-bun.json"
+  check_test_evasion --report "$report_dir/deferred-pytest.xml" --report "$report_dir/deferred-bun.xml"
 }
 
 check_proofs() { uv run python scripts/validate-rule-coverage.py --root "${1:-.}"; }
@@ -422,7 +436,7 @@ run_proofs() {
 mode="$1"
 shift
 case "$mode" in
-  static | t1 | t2 | t3 | proofs)
+  static | t1 | t2 | proofs)
     (($# == 0)) || {
       usage >&2
       exit 2

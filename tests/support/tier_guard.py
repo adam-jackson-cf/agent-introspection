@@ -6,7 +6,7 @@ import pytest
 from pluggy import Result
 
 RULE = "TEST.t1-isolation"
-UNGUARDED_MARKERS = ("boundary", "live")
+UNGUARDED_MARKERS = ("boundary",)
 PROCESS_EVENTS = frozenset({
     "os.exec",
     "os.fork",

@@ -6,6 +6,18 @@ import {
   spoolDelivery,
 } from "./record-route";
 
+const CONTAINER_SETTING = "AGENT_INTROSPECTION_TEST_CLICKHOUSE";
+
+const container = (): string => {
+  const name = process.env[CONTAINER_SETTING];
+  if (!name) {
+    throw new Error(
+      `${CONTAINER_SETTING} names no ClickHouse container; run bash scripts/run-ci-quality-gates.sh install, which starts one`,
+    );
+  }
+  return name;
+};
+
 const sentFor = async (totals: number[]): Promise<number> => {
   const rows = totals
     .map((total, index) => `(${index + 1}, ${total})`)
@@ -13,7 +25,7 @@ const sentFor = async (totals: number[]): Promise<number> => {
     .join(", ");
   const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
   const proc = Bun.spawn(
-    ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
+    ["docker", "exec", "-i", container(), "clickhouse-client"],
     {
       stdin: new TextEncoder().encode(sql),
       stdout: "pipe",
@@ -53,7 +65,7 @@ const logRow = (
 const deliveryFor = async (rows: string[]): Promise<Row[]> => {
   const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
   const proc = Bun.spawn(
-    ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
+    ["docker", "exec", "-i", container(), "clickhouse-client"],
     {
       stdin: new TextEncoder().encode(sql),
       stdout: "pipe",
@@ -73,7 +85,7 @@ const deliveryFor = async (rows: string[]): Promise<Row[]> => {
     .map((line) => JSON.parse(line) as Row);
 };
 
-describe("spool delivery against the local SigNoz ClickHouse", () => {
+describe("spool delivery against a ClickHouse server", () => {
   test("sent sums positive counter increments and counts a post-reset value as its own increment", async () => {
     expect(await sentFor([100, 0, 150])).toBe(150);
     expect(await sentFor([100, 120, 0, 30])).toBe(50);

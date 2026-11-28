@@ -38,6 +38,7 @@ def test_a_test_like_file_outside_the_declared_patterns_is_reported() -> None:
     ("path", "destination"),
     [
         ("tests/spool_cases.py", "move shared code to tests/support/"),
+        ("tests/NOTES.md", "move shared code to tests/support/"),
         ("tests/support/test_spool_batches.py", "a test file sits in the support layout"),
         ("scripts/conftest.py", "move it to tests/conftest.py"),
         ("tests/test_unowned_behaviour.py", "no [structure.ownership_areas] entry"),
@@ -59,6 +60,7 @@ def test_a_misplaced_or_unmapped_file_is_reported_with_its_destination(
         "tests/fixtures/guardrails/anything.txt",
         "dashboard/src/charts.test.tsx",
         "dashboard/server/test-fixtures.ts",
+        "tests/AGENTS.md",
     ],
 )
 def test_a_placed_and_owned_path_is_clean(path: str) -> None:
