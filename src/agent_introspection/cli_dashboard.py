@@ -23,9 +23,16 @@ def _window_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--harness", default="", help="one enabled harness (default: All)")
 
 
+def _row_count(value: str) -> int:
+    rows = int(value)
+    if rows < 0:
+        raise argparse.ArgumentTypeError("--rows must be 0 or more")
+    return rows
+
+
 def _rows_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--rows", type=int, help="keep the first N rows of each dataset (default: all)"
+        "--rows", type=_row_count, help="keep the first N rows of each dataset (default: all)"
     )
 
 

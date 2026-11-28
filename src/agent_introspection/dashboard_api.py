@@ -21,10 +21,10 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 from agent_introspection import dashboard_service
-from agent_introspection.config import is_local_host
 
 DEFAULT_URL: Final = f"http://127.0.0.1:{dashboard_service.PORT}"
 URL_VARIABLE: Final = "INTROSPECTION_DASHBOARD_URL"
+DASHBOARD_ADDRESS: Final = "127.0.0.1"
 # A cold view (no cached route counts) can take tens of seconds on a large store.
 TIMEOUT_SECONDS: Final = 120
 # The server refuses a wider range.
@@ -71,8 +71,11 @@ def dashboard_url() -> str:
     """Return the dashboard's base URL: ``INTROSPECTION_DASHBOARD_URL``, else the service's."""
     url = os.environ.get(URL_VARIABLE, "").rstrip("/") or DEFAULT_URL
     parts = urlsplit(url)
-    if parts.scheme != "http" or not parts.hostname or not is_local_host(parts.hostname):
-        raise ValueError(f"{URL_VARIABLE} must be an http URL on loopback, not {url}")
+    if parts.scheme != "http" or parts.hostname != DASHBOARD_ADDRESS:
+        raise ValueError(
+            f"{URL_VARIABLE} must be an http URL on {DASHBOARD_ADDRESS}, the only address "
+            f"the dashboard serves, not {url}"
+        )
     return url
 
 
@@ -115,7 +118,10 @@ def views() -> dict[str, Any]:
         view: {"view": view, "title": title, "signals": []}
         for view, title in _view_titles(registry).items()
     }
+    hidden = {entry["signal"] for entry in registry["hidden"]}
     for signal in registry["signals"]:
+        if signal["signal"] in hidden:
+            continue
         listed[signal["view"]]["signals"].append({
             key: signal[key] for key in ("signal", "title", "question", "unit")
         })
