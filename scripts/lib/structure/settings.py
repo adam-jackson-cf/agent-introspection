@@ -38,7 +38,7 @@ _STRUCTURE_KEYS = frozenset({
 })
 _TYPESCRIPT_KEYS = frozenset({"tier_modules", "tiers", "tsconfig"})
 _SKILL_LAYOUT_KEYS = frozenset({"files", "marker", "root"})
-_EXCEPTION_KEYS = frozenset({"approved_by", "check", "path", "reason", "rule"})
+_EXCEPTION_KEYS = frozenset({"approved_by", "check", "expires", "path", "reason", "rule"})
 
 
 class SettingsError(Exception):

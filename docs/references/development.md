@@ -203,7 +203,9 @@ its enforcement points and its canaries:
 
 Values with no native config home sit in its settings tables (`[python_quality]`,
 `[structure]`, `[layout]`, `[test_budget]`, `[surface]`, `[identity_artefacts]`, `[golden]`). Every `[[exception]]` and
-`[[not_applicable]]` entry carries the owner's `approved_by`. Run the validator, as the
+`[[not_applicable]]` entry carries the owner's `approved_by`, and every `[[exception]]`
+has an `expires` date (`YYYY-MM-DD`); the validator fails once that UTC date passes, so
+the owner renews or removes the exception. Run the validator, as the
 `proofs` mode and the `scripts/ci proofs` job do:
 
 ```sh

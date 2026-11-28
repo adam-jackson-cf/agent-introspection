@@ -4,6 +4,7 @@ import importlib.util
 import shutil
 import sys
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -100,3 +101,42 @@ def test_main_prints_the_structure_only_result(
 def test_missing_root_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert validator.main(["--root", str(tmp_path / "absent")]) == 2
     assert capsys.readouterr().err == "proofs FAIL: target root is missing\n"
+
+
+def _with_exception(root: Path, expires: str) -> dict[str, object]:
+    exception = {
+        "rule": "A.rule",
+        "path": "scripts/*",
+        "reason": "a named convention",
+        "approved_by": "owner, 2026-11-28",
+        "expires": expires,
+    }
+    return {**_proofs(root), "exception": [exception]}
+
+
+def test_an_exception_expiring_today_or_later_is_accepted(tmp_path: Path) -> None:
+    root = _copy(tmp_path, "bound")
+    today = datetime.now(UTC).date().isoformat()
+
+    assert validator.validate(root, _with_exception(root, today), structure_only=True) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("expires", "error"),
+    [
+        (
+            "2020-01-31",
+            "exception[0]: expired on 2020-01-31; fix the finding or renew it with the owner",
+        ),
+        ("2027-02-30", "exception[0]: expires must be a YYYY-MM-DD date"),
+        ("next year", "exception[0]: expires must be a YYYY-MM-DD date"),
+    ],
+)
+def test_an_expired_or_malformed_exception_date_fails(
+    tmp_path: Path, expires: str, error: str
+) -> None:
+    root = _copy(tmp_path, "bound")
+
+    errors, _ = validator.validate(root, _with_exception(root, expires), structure_only=True)
+
+    assert errors == [error]

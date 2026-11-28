@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import UTC, date, datetime
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -366,12 +367,26 @@ def _exclusion(root: Path, value: object, index: int, *, live: bool) -> dict[str
 def _exceptions(value: object) -> None:
     for index, item in enumerate(value if isinstance(value, list) else [value]):
         owner = f"exception[{index}]"
-        allowed = {"rule", "path", "reason", "approved_by", "check"}
+        allowed = {"rule", "path", "reason", "approved_by", "expires", "check"}
         entry = _table(item, owner, "exception", allowed)
         for field in ("rule", "path", "reason", "approved_by"):
             _text(entry.get(field), owner, field)
         if "check" in entry:
             _text(entry["check"], owner, "check")
+        _expiry(_text(entry.get("expires"), owner, "expires"), owner)
+
+
+def _expiry(expires: str, owner: str) -> None:
+    try:
+        day = date.fromisoformat(expires) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", expires) else None
+    except ValueError:
+        day = None
+    if day is None:
+        raise CoverageError(f"{owner}: expires must be a YYYY-MM-DD date")
+    if day < datetime.now(UTC).date():
+        raise CoverageError(
+            f"{owner}: expired on {expires}; fix the finding or renew it with the owner"
+        )
 
 
 def _shape(proofs: dict[str, Any]) -> list[str]:

@@ -1295,144 +1295,168 @@ rule = "TEST.tier-selectors"
 path = "tests/journeys/test_install_journey.py::test_a_new_machine_installs_and_every_dashboard_view_answers"
 reason = "Deferred T2: drives a sandboxed fresh install through the lever in Docker, so only the install mode (CI fresh-install job) runs it."
 approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
 
 [[exception]]
 rule = "TEST.tier-selectors"
 path = "tests/test_command_shape_parity.py::test_sql_fragment_matches_the_python_shape_for_every_fixture_case"
 reason = "Deferred T2: runs the command-shape SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
 approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
 
 [[exception]]
 rule = "TEST.tier-selectors"
 path = "dashboard/server/pipeline.deferred.ts"
 reason = "Deferred T2: runs the spool-delivery SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
 approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "scripts/check-*"
 reason = "One command script per checker, named check-<check>; the gate entrypoint calls each as check_<name>, so the shared prefix is the naming convention, not a hidden concept."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "scripts/lib/bun_*"
 reason = "Library modules for the scripts, each named for the Bun artefact it reads (the bun test report adapter, bun.lock); a bun folder would hold two unrelated readers."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "scripts/lib/python_*"
 reason = "Library modules shared by the Python quality checkers, named for the checker family they serve; scripts/lib already is their folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "scripts/list-*"
 reason = "Two unrelated command scripts that each print a list (bun test cases, the Python scope); the verb names what they do."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "scripts/run-*"
 reason = "The gate entrypoint and the run-evidence collector are separate commands; the verb names what they do."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = ".agents/skills/introspection-*"
 reason = "User-facing skill names: the product prefix names the skill catalogue users invoke by name, and skill folders must match their names."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_cli_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_code_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_command_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_dashboard_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_doctor_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_facts_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_harness_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_hook_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_hooks_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_python_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_quality_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_signoz_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_structure_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_test_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "PREFIX.candidates"
 path = "tests/test_tier_*"
 reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [[exception]]
 rule = "NAME.conventions"
@@ -1440,6 +1464,7 @@ check = "child-repeats-parent"
 path = ".agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh"
 reason = "User-facing install command named in the onboarding skill and twelve documents; renaming it would break the commands users run."
 approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
 
 [python_quality]
 maintained_roots = ["scripts", "src", "tests"]
