@@ -57,7 +57,34 @@ otherwise active: a possible break), no activity (the harness is idle), no event
 rare-event route), or not applicable. The coverage grid shows harnesses this machine
 does not enable as not in use, flagged when their routes still have rows.
 
+## Experimental features
+
+`[experimental]` in the agent-introspection config turns on dashboard features that are
+not yet proven in use; each is off unless set to `true`. The server reads the table
+once at start, so restart the service (`dashboard install`) after a change.
+
+| Key                     | What it shows when on                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `intervention_outcomes` | Findings and fixes: whether an applied intervention reduced what it targeted (`intervene.post_recurrence`): the "Did an intervention reduce what it targeted?" section, the Applied interventions figure, each proposal's verdict, ratio and rates, and `evaluated` events in Approval history. Off, the signal leaves the registry, so the Glossary and `dashboard views` omit it, and the view's question drops its outcome half. |
+
+Off, the server leaves those datasets and fields out of `/api/view` and skips their
+queries, and `/api/registry` reports the state in `features`. `facts sync` and
+`proposal evaluate` record verdicts either way, so turning a feature on shows past
+results at once.
+
+## Reading the views from a terminal
+
+`agent-introspection dashboard views`, `view`, `overview` and `session` print, as JSON,
+what the running service's `/api` routes return to the page, so an agent reads what a
+person sees without a browser (see the [CLI reference](cli-reference.md)). They need
+the service running on this machine and fail with exit code 60 when it is not.
+`INTROSPECTION_DASHBOARD_URL` points them at another port on `127.0.0.1` (default
+`http://127.0.0.1:4173`); any other host, `localhost` included, is refused, because the
+server answers only requests addressed to `127.0.0.1`. `--rows` must be 0 or more, and
+`views` lists a signal an enabled harness cannot produce only under `hidden`.
+
 ## Related Docs
 
 - [Facts Store](facts-store.md): the facts and registry behind every panel.
 - [Development](development.md): the package's quality commands.
+- [CLI Reference](cli-reference.md): the `dashboard` read commands.

@@ -52,7 +52,7 @@ clickhouse_url`, default `http://127.0.0.1:8123`). When `signoz detect` finds it
   collector.
 
 Closing a signal gap with a new hook event, or adding a harness, is a code change: see
-the `introspection-operations` change workflow.
+the `introspection-signals` change workflow.
 
 ## Output
 

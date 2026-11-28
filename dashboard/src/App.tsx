@@ -119,6 +119,7 @@ export default function App() {
             failure={data.failure}
             viewResponse={viewResponse}
             sessionResponse={sessionResponse}
+            registry={data.registry}
           />
           {location.kind === "view" && (
             <FilterBar

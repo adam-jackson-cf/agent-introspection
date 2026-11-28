@@ -57,7 +57,7 @@ The generated rule and matrix are in
      removes stored text;
    - for a new hook event, reinstall the harness's hooks and run the onboarding
      validation workflow.
-6. **Verify** with the health workflow over 90 days, and record anomalies (finding, evidence, fix, validated result) in the commit or PR
+6. **Verify** with the `introspection-health` workflow over 90 days, and record anomalies (finding, evidence, fix, validated result) in the commit or PR
    message or the dated Gaps tables of
    [data-gaps.md](../../../../docs/references/data-gaps.md); never patch silently.
 

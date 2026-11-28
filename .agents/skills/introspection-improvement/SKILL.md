@@ -20,7 +20,7 @@ instructions.
 
 ## 1. Discover
 
-- **Entry:** the `introspection-operations` health workflow passes (stale facts give
+- **Entry:** the `introspection-health` workflow passes (stale facts give
   stale findings).
 - `agent-introspection facts findings` (the minute `facts sync` also runs it), then
   `agent-introspection proposal list` for findings that already have proposals.
@@ -30,7 +30,9 @@ instructions.
   evaluation workspaces (a working directory or failure path under a temporary
   directory) are not counted.
 - Cross-check in the dashboard (Recurrence, Intent and corrections, the session
-  drill-down of an example) for the same 7-day Europe/London window.
+  drill-down of an example) for the same 7-day Europe/London window; the
+  `introspection-analysis` skill reads them from the terminal
+  (`agent-introspection dashboard view recurrence`).
 
 ## 2. Draft
 

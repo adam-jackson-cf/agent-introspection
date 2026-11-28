@@ -135,7 +135,7 @@ all four on `127.0.0.1` only and needs Docker Compose 2.24.4 or later. For a
 10. **Doctor.** `agent-introspection doctor` exits 0 (no check fails), and each
     `warn`, `off`, or `info` has a reason the user accepts.
 11. **Validate.** The [validation workflow](validation-workflow.md), then the
-    `introspection-operations` health workflow over 90 days.
+    `introspection-health` workflow over 90 days.
 12. **Record** a reinstall in the commit or pull request message: date, commit, steps,
     row counts, parity results, and anything unresolved.
 

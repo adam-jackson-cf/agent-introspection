@@ -39,6 +39,11 @@ export const OUTCOME_VIEWS: ViewSpec[] = [
     title: "Findings and fixes",
     question:
       "Which findings became interventions, and did applied interventions reduce what they targeted?",
+    questionWithout: {
+      feature: "intervention_outcomes",
+      question:
+        "Which findings became interventions, and in what state are they?",
+    },
     component: Interventions,
   },
 ];

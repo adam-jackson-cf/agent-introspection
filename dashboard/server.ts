@@ -8,6 +8,7 @@ import {
   DETAIL_PATHS,
   PAGE_PATHS,
   VIEW_IDS,
+  type Features,
   type Filters,
   type Harness,
   type Registry,
@@ -28,6 +29,7 @@ import {
   type Query,
 } from "./server/clickhouse";
 import { asOfFor, REFRESHERS, refreshersFor } from "./server/refreshers";
+import { experimentalFeatures, gatedSignals } from "./server/features";
 import { enabledHarnesses, hiddenSignals } from "./src/harness-scope";
 import {
   contributions,
@@ -77,6 +79,7 @@ type Dependencies = {
   workflow: WorkflowReader;
   assets: Map<string, Response>;
   now: () => Date;
+  features: Features;
 };
 
 function json(body: unknown, status = 200): Response {
@@ -151,7 +154,10 @@ export function ttlCache<T>(
   };
 }
 
-async function loadRegistry(query: Query): Promise<Registry> {
+async function loadRegistry(
+  query: Query,
+  features: Features,
+): Promise<Registry> {
   const { signals, support, routes, strays, exclusions, harnesses } =
     await batch(query, {
       signals:
@@ -169,17 +175,19 @@ async function loadRegistry(query: Query): Promise<Registry> {
     });
   if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
+  // A signal of an experimental feature that is off is not defined on this machine.
+  const gated = gatedSignals(features);
   const registry = {
-    signals,
-    support,
+    signals: signals.filter((row) => !gated.has(String(row.signal))),
+    support: support?.filter((row) => !gated.has(String(row.signal))),
     routes,
     strays,
     exclusions,
     harnesses,
-  } as unknown as Omit<Registry, "hidden">;
+  } as unknown as Omit<Registry, "hidden" | "features">;
   if (enabledHarnesses(registry).length === 0)
     throw new Error("no harness is enabled; run facts install");
-  return { ...registry, hidden: hiddenSignals(registry) };
+  return { ...registry, hidden: hiddenSignals(registry), features };
 }
 
 /**
@@ -357,14 +365,16 @@ export function createApp(
     workflow: sqliteWorkflow(),
     assets: new Map(),
     now: () => new Date(),
+    // Read once at start; a config change takes effect when the service restarts.
+    features: overrides.features ?? experimentalFeatures(),
     ...overrides,
   };
-  const { query } = dependencies;
+  const { query, features } = dependencies;
   let cached: { at: number; registry: Promise<Registry> } | null = null;
   const registry = (): Promise<Registry> => {
     const now = dependencies.now().getTime();
     if (!cached || now - cached.at > REGISTRY_TTL_MS) {
-      const pending = loadRegistry(query);
+      const pending = loadRegistry(query, features);
       cached = { at: now, registry: pending };
       pending.catch(() => {
         if (cached?.registry === pending) cached = null;
@@ -437,7 +447,11 @@ export function createApp(
         },
       ));
     } else {
-      const queries = VIEW_QUERIES[id];
+      // Without intervention outcomes, the before/after inputs are never queried.
+      const queries =
+        id === "interventions" && !features.intervention_outcomes
+          ? {}
+          : VIEW_QUERIES[id];
       asOf = factsAsOf(refreshersFor(queries, withinSnapshots));
       ({ data, errors } = await batchSettled(
         query,
@@ -449,7 +463,12 @@ export function createApp(
       if (names.length > 0 && Object.keys(errors).length === names.length)
         throw new Error(Object.values(errors)[0]);
       if (id === "interventions")
-        data = interventionsData(data, dependencies.workflow(), filters);
+        data = interventionsData(
+          data,
+          dependencies.workflow(),
+          filters,
+          features.intervention_outcomes,
+        );
     }
     const sqlDone = performance.now();
     // Chips need the route counts; without them the view shows no chips.

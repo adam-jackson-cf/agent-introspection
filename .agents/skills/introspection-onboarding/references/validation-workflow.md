@@ -104,4 +104,4 @@ Beyond `doctor`, check by hand:
 ## Done when
 
 - `doctor` passes and each harness passes the live check, or each gap is explained (a
-  signal no route can reach goes to the `introspection-operations` change workflow).
+  signal no route can reach goes to the `introspection-signals` change workflow).

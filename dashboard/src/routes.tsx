@@ -1,5 +1,10 @@
 import { type ComponentType } from "react";
-import { type Row, type ViewId, type ViewPath } from "./contracts";
+import {
+  type Features,
+  type Row,
+  type ViewId,
+  type ViewPath,
+} from "./contracts";
 import { HEALTH_VIEWS } from "./routes-health";
 import { OUTCOME_VIEWS } from "./routes-outcomes";
 
@@ -15,6 +20,8 @@ export type ViewSpec = {
   id: ViewId;
   title: string;
   question: string;
+  /** The question while an experimental feature the view answers part of is off. */
+  questionWithout?: { feature: keyof Features; question: string };
   component: ComponentType<{ data: Record<string, Row[]> }>;
   /** L3 pages of this view: same nav item, filters and data. */
   details?: DetailSpec[];

@@ -134,6 +134,7 @@ test("a dormant repeated-correction finding keeps its kind for its subject label
       ],
     },
     { harness: "", start: RANGE[0], end: RANGE[1] },
+    true,
   );
   expect(data.findings![0]!.kind).toBe("correction");
   expect(data.corrections).toBeUndefined();
@@ -177,6 +178,7 @@ const workflow = {
   proposal_events: [
     { proposal_id: "p1", event: "applied" },
     { proposal_id: "p2", event: "applied" },
+    { proposal_id: "p1", event: "evaluated" },
   ],
 };
 const clickhouse = {
@@ -187,7 +189,7 @@ const clickhouse = {
 const all = { harness: "", start: RANGE[0], end: RANGE[1] };
 
 test("All scope computes KPI counts, verdict parts, tiers, history and comparisons", () => {
-  const data = interventionsData(clickhouse, workflow, all);
+  const data = interventionsData(clickhouse, workflow, all, true);
   expect(data.kpis).toEqual([
     {
       findings: 3,
@@ -206,23 +208,41 @@ test("All scope computes KPI counts, verdict parts, tiers, history and compariso
     { tier: "established_tool", proposals: 2 },
     { tier: "not recorded", proposals: 1 },
   ]);
-  expect(data.proposal_events).toHaveLength(2);
+  expect(data.proposal_events).toHaveLength(3);
   expect(data.comparisons).toHaveLength(1);
   expect(data.comparisons![0]!.pre_matched).toBe(2);
   expect(data.baseline_daily).toEqual(clickhouse.baseline_daily);
   expect(data.cluster_daily).toBeUndefined();
 });
 
+test("without intervention outcomes, nothing says whether an applied intervention worked", () => {
+  const data = interventionsData({}, workflow, all, false);
+  expect(data.kpis).toEqual([
+    { findings: 3, actionable: 1, proposals: 3, pending: 1 },
+  ]);
+  expect(data.proposals!.map((row) => row.id)).toEqual(["p1", "p2", "p3"]);
+  expect(data.proposals!.some((row) => "verdict" in row)).toBe(false);
+  expect(data.proposal_events!.map((event) => event.event)).toEqual([
+    "applied",
+    "applied",
+  ]);
+  expect(data.comparisons).toBeUndefined();
+  expect(data.baseline_daily).toBeUndefined();
+});
+
 test("a harness scope keeps rows seen in it by metric harnesses first; rows without a list drop out", () => {
-  const data = interventionsData(clickhouse, workflow, {
-    ...all,
-    harness: "codex_exec",
-  });
+  const data = interventionsData(
+    clickhouse,
+    workflow,
+    { ...all, harness: "codex_exec" },
+    true,
+  );
   expect(data.findings).toHaveLength(1);
   // p1 (harnesses) and p3 (metric_harnesses override harnesses) stay; p2 does not.
   expect(data.proposals!.map((row) => row.id)).toEqual(["p1", "p3"]);
   expect(data.proposal_events).toEqual([
     { proposal_id: "p1", event: "applied" },
+    { proposal_id: "p1", event: "evaluated" },
   ]);
   expect(data.kpis![0]).toMatchObject({
     findings: 1,

@@ -128,6 +128,7 @@ def test_every_setting_the_example_documents_is_accepted(tmp_path: Path) -> None
     assert config.harnesses_enabled is not None
     assert config.hooks_otlp_logs_endpoint is not None
     assert config.labels_openrouter_key_command is not None
+    assert config.experimental_intervention_outcomes is True
     assert config.machine.role is MachineRole.ADDITIONAL
     assert config.collector_endpoint == config.machine.export_endpoint
 
@@ -143,6 +144,16 @@ def test_the_openrouter_key_command_is_an_argv_list_and_never_the_key() -> None:
         parse_config({"labels": {"openrouter_api_key": "sk-or-v1-0000"}})
     with pytest.raises(ConfigurationError, match="labels must be a TOML table"):
         parse_config({"labels": "security"})
+
+
+def test_experimental_features_are_off_unless_set_true() -> None:
+    assert parse_config({}).experimental_intervention_outcomes is False
+    on = parse_config({"experimental": {"intervention_outcomes": True}})
+    assert on.experimental_intervention_outcomes is True
+    with pytest.raises(ConfigurationError, match="must be true or false"):
+        parse_config({"experimental": {"intervention_outcomes": "yes"}})
+    with pytest.raises(ConfigurationError, match="unsupported keys in experimental: outcomes"):
+        parse_config({"experimental": {"outcomes": True}})
 
 
 def test_signoz_reads_url_user_and_password_variable_name() -> None:

@@ -1,4 +1,5 @@
 import type {
+  Features,
   Filters,
   Harness,
   Registry,
@@ -142,9 +143,14 @@ export function Topbar(props: {
   );
 }
 
-const headingQuestion = (location: Location) => {
-  if (location.kind === "view")
-    return location.detail?.question ?? location.view.question;
+const headingQuestion = (location: Location, features?: Features) => {
+  if (location.kind === "view") {
+    if (location.detail) return location.detail.question;
+    const gated = location.view.questionWithout;
+    return gated && features && !features[gated.feature]
+      ? gated.question
+      : location.view.question;
+  }
   if (location.kind === "glossary")
     return "What each signal asks, how it is computed, and how each harness produces it.";
   if (location.kind === "session")
@@ -197,6 +203,8 @@ export function PageHead(props: {
   failure: string;
   viewResponse: ViewResponse | null;
   sessionResponse: SessionResponse | null;
+  /** Null until it loads; its experimental features shape the view's question. */
+  registry: Registry | null;
 }) {
   const { location, title, heading, loading, failure, viewResponse } = props;
   return (
@@ -212,7 +220,7 @@ export function PageHead(props: {
         <h1 ref={heading} tabIndex={-1}>
           {title}
         </h1>
-        <p>{headingQuestion(location)}</p>
+        <p>{headingQuestion(location, props.registry?.features)}</p>
       </div>
       <div className="live">
         <span aria-live="polite">

@@ -106,6 +106,10 @@ class AppConfig:
     # openrouter_key_command`), an argv list such as a Keychain lookup that the scheduled
     # sync can also run. The key itself is never stored here.
     labels_openrouter_key_command: tuple[str, ...] | None = None
+    # Experimental dashboard features (`[experimental]`), each off unless set true. The
+    # dashboard reads the same file; this parse only validates the keys.
+    # intervention_outcomes: the Findings and fixes view's post-intervention recurrence.
+    experimental_intervention_outcomes: bool = False
 
     @property
     def collector_endpoint(self) -> str | None:
@@ -137,7 +141,9 @@ _ROOT_KEYS = frozenset({
     "hooks",
     "labels",
     "machine",
+    "experimental",
 })
+_EXPERIMENTAL_KEYS = frozenset({"intervention_outcomes"})
 _MACHINE_KEYS = frozenset({"role", "export_endpoint"})
 _HOOKS_KEYS = frozenset({"otlp_logs_endpoint"})
 _LABELS_KEYS = frozenset({"openrouter_key_command"})
@@ -189,6 +195,12 @@ def _positive_int(value: object, *, field: str) -> int:
 def _non_empty_string(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{field} must be a non-empty string")
+    return value
+
+
+def _bool(value: object, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"{field} must be true or false")
     return value
 
 
@@ -402,6 +414,8 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     _reject_unknown(set(labels), _LABELS_KEYS, location="labels")
     machine = _table(data, "machine")
     _reject_unknown(set(machine), _MACHINE_KEYS, location="machine")
+    experimental = _table(data, "experimental")
+    _reject_unknown(set(experimental), _EXPERIMENTAL_KEYS, location="experimental")
     defaults = AppConfig()
     return AppConfig(
         database=DatabaseConfig(
@@ -428,6 +442,14 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             _argv(labels["openrouter_key_command"], field="labels.openrouter_key_command")
             if "openrouter_key_command" in labels
             else None
+        ),
+        experimental_intervention_outcomes=(
+            _bool(
+                experimental["intervention_outcomes"],
+                field="experimental.intervention_outcomes",
+            )
+            if "intervention_outcomes" in experimental
+            else False
         ),
     )
 
