@@ -36,8 +36,9 @@ Complements Ruff `pep8-naming`; does not replace deterministic lint checks.
   directives are allowed (`noqa`, `type: ignore`, `fmt`, `shellcheck`,
   `@ts-expect-error`, `oxlint`/`eslint`, `prettier-ignore`, `markdownlint`), and
   `scripts/check-python-suppressions.py` still rejects every `noqa` and `type: ignore`.
-  `scripts/check-code-integrity.py` owns the rule. Put a durable reason in
-  `docs/references/` instead of a comment.
+  `scripts/check-code-integrity.py` owns the rule. Make the code explain itself
+  through names, types, small functions and tests; no document records why it was
+  written that way.
 - Ruff (line length 100, `fix = false`): exceptions end in `Error`; no blind
   `except Exception` (BLE001); complexity limits C901, PLR0904 (at most 20 public
   methods), PLR0911 (at most 6 returns), PLR0912, PLR0913 (at most 5 arguments, keyword-only

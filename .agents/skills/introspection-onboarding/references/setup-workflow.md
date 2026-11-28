@@ -6,10 +6,6 @@ identities. This single-machine path is the default. To also send records from o
 machines, finish here first, then follow the
 [additional machines workflow](additional-machines-workflow.md).
 
-[`docs/references/setup.md`](../../../../docs/references/setup.md) is the human-facing
-version of this path. When a step here changes a command, an order, or a success
-signal, update that guide in the same change.
-
 Run every command from the repository root. Install the CLI first (step 1): the
 scheduled job, every hook, and `setup` itself run that copy. Before and after each
 step, `agent-introspection doctor` (read-only) shows what is

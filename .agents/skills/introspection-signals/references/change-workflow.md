@@ -12,8 +12,9 @@ as headless Codex exec having no user to steer), or `not emitted` (no route; the
 says why). Parity is judged over the harnesses a machine enables (config `[harnesses]
 enabled`): a signal is shown only when every enabled harness reaches it, and is hidden
 on a machine where an enabled harness does not emit it. Never rank or compare harnesses.
-The generated rule and matrix are in
-[data-gaps](../../../../docs/references/data-gaps.md#harness-support-matrix).
+The cells live in the registry,
+`src/agent_introspection/facts_sql/signal_support.toml`; the dashboard's Pipeline page
+shows them per harness for the machine.
 
 ## Steps
 
@@ -31,7 +32,7 @@ The generated rule and matrix are in
       counts in SigNoz read-only; never print prompt or command text);
    2. a native field the projection drops or does not derive yet (store only
       normalized forms, never raw text);
-   3. a new activity-hook event: add it to `docs/references/hook-events.md`, implement it in
+   3. a new activity-hook event: implement it in
       `hooks.py` with tests (normalize; never keep raw text), register it in the
       harness's installer or extension, and route it with `source = "hooks"`; mark the
       cell `differs` when inferred or when history starts at the hook's install;
@@ -47,10 +48,12 @@ The generated rule and matrix are in
    come only from the registry. Wrap a panel of a signal some harness does not emit in
    a visibility check, so it renders only where every enabled harness reaches it.
 5. **Apply**:
-   - `uv run python scripts/render-measures.py` (regenerates the signal catalog, the
-     data-gaps doc, the producer-capabilities doc, and
-     `dashboard/src/harnesses.generated.ts`, which carries no header naming its origin;
-     `render-measures.py --check` and a test fail when they drift);
+   - `uv run python scripts/render-measures.py` when the registry's `[harnesses]`
+     table changed (regenerates `dashboard/src/harnesses.generated.ts`, which carries no
+     header naming its origin; `render-measures.py --check` and a test fail when it
+     drifts);
+   - check that the dashboard's Glossary and Pipeline pages show the changed signal
+     with the registry's question, unit, formula, and per-harness cells;
    - `bash scripts/run-ci-quality-gates.sh hook` (the commit suite: static checks, T1
      and T2);
    - `uv tool install --force --reinstall .` after any Python change;
@@ -60,8 +63,7 @@ The generated rule and matrix are in
    - for a new hook event, reinstall the harness's hooks and run the onboarding
      validation workflow.
 6. **Verify** with the `introspection-health` workflow over 90 days, and record anomalies (finding, evidence, fix, validated result) in the commit or PR
-   message or the dated Gaps tables of
-   [data-gaps.md](../../../../docs/references/data-gaps.md); never patch silently.
+   message; never patch silently.
 
 ## Add a harness
 
@@ -75,7 +77,7 @@ The harness identity lists are generated from the registry's `[harnesses]` table
 never edit them by hand: `scripts/render-measures.py` is their only source.
 `uv run python scripts/render-measures.py` regenerates
 `dashboard/src/harnesses.generated.ts` (`HARNESSES`, `HARNESS_LABEL`, and the services
-list that `contracts.ts`, `format.ts`, and `pipeline.ts` import) and the docs. The
+list that `contracts.ts`, `format.ts`, and `pipeline.ts` import). The
 projections' service lists (`{services}` in `select_spans.sql` and `select_logs.sql`)
 and the services doctor's preflight checks read are filled from the same table when they
 run.
@@ -93,8 +95,7 @@ What still needs work per producer:
 - `dashboard/server/pipeline.ts` (parity recount) and `dashboard/server/views.ts`
   (per-harness branches);
 - activity hooks, when the profile needs them: an adapter in the CLI package's
-  `hook_runtime/`, its producer and events in `hooks.py` and
-  `docs/references/hook-events.md`, the profile's `hook_adapter`, its install step in
+  `hook_runtime/`, its producer and events in `hooks.py`, the profile's `hook_adapter`, its install step in
   `hook_install.py`, and its check in `doctor_harness.py`;
 - a colour: `HARNESS_TOKENS` in `dashboard/src/tokens.ts` has slots for three more
   harnesses; a harness beyond that needs a new slot (`dashboard/src/components.test.ts`
@@ -110,5 +111,6 @@ history exist only there.
 ## Done when
 
 - The registry validates, every harness cell is aligned, differs with a note, not
-  applicable, or not emitted with a note (or the signal is excluded), generated docs are
-  current, the gates pass, and the coverage grid is healthy.
+  applicable, or not emitted with a note (or the signal is excluded), the generated
+  harness module is current, the Glossary and Pipeline pages show the change, the gates
+  pass, and the coverage grid is healthy.

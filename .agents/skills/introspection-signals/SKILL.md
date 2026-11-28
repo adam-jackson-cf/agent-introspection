@@ -11,8 +11,8 @@ producer onboarding are `introspection-onboarding`.
 ## Workflow
 
 [Change](references/change-workflow.md): edit the projections, views, or registry
-under the harness parity rule, apply them (render docs, gates, reinstall, install,
-backfill), and verify. Adding a harness starts from the onboarding skill's producer
+under the harness parity rule, apply them (render the harness module, gates, reinstall,
+install, backfill), and verify. Adding a harness starts from the onboarding skill's producer
 onboarding workflow.
 
 ## Output

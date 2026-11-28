@@ -20,4 +20,6 @@ Outcome tests: [dashboard/server.test.ts](../../dashboard/server.test.ts).
 
 ## Gotchas
 
-- Prompt labels need `[labels] openrouter_key_command`; without it no task is labelled and the view stays empty.
+- Prompt labels need `[labels] openrouter_key_command` and prompt export turned on (`setup --prompt-export` or `harness configure --prompt-export`). Without both, no task is labelled and the view stays empty.
+- Prompts exported before 2026-09-30 were redacted, so their tasks have no label.
+- Prompt text was exported from 2026-09-30 15:20 UTC; a session that started earlier keeps sending the `REDACTED` placeholder until it restarts.

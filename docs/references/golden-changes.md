@@ -1,17 +1,5 @@
 # Golden changes
 
-A golden file is a stored file a test loads as its expected output. A change to one
-changes what the tests accept, so each change needs an entry here that names the file
-and says why it changed. `proofs.toml` `[golden]` lists the golden files, and
-`bash scripts/run-ci-quality-gates.sh check golden_changes` fails a change that
-edits one without adding an entry naming it.
+`scripts/check-golden-changes.py` fails any change to a file in `proofs.toml` `[golden] globs` unless it adds a line here: the date, the file's path, and why it changed. Newest first.
 
-| Golden file                         | What it holds                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------------- |
-| `tests/fixtures/command_shape.json` | The command-shape cases the Python and SQL command shapes must both produce. |
-| `docs/ux/feature-audit/titles.json` | The dashboard titles the feature-audit test compares the views with.         |
-
-## Entries
-
-Add one line per change, newest first: the date, the golden file's path, and why it
-changed.
+- 2026-11-28: `docs/ux/feature-audit/titles.json` moved to `dashboard/src/feature-audit.titles.json`: moved beside its test; decisions moved in from the deleted feature-audit README.

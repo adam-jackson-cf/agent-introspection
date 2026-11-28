@@ -253,7 +253,7 @@ components:
     textColor: "{colors.status-stray-unexplained}"
     rounded: "{rounded.md}"
     padding: 12px 16px
-  not-emitted-notice:
+  not-applicable-notice:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.muted}"
     rounded: "{rounded.md}"
@@ -343,14 +343,17 @@ thing the eye finds.
 
 Status colours always appear with their word and are never decorative. Each passes 4.5:1 on every background.
 
-- **Pipeline coverage** (`dashboard/src/views/Pipeline.tsx:14-22`, states assigned in
-  `dashboard/server/pipeline.ts`): healthy (routes produce the expected rows), no events and idle (nothing to
-  expect in the window), not emitted (the harness never produces this signal), stray (explained), possible
-  break (an active harness should have rows but the route has none), stray (unexplained). Each state keeps its
-  mark: ✓, ○, ○, ·, ≈, !, ✕. The parity and recombination checks (`Pipeline.tsx:315-347`) use healthy and
+- **Pipeline coverage** (`STATE_MARK` in `dashboard/src/views/PipelineCoverage.tsx`, states assigned by
+  `CoverageState` in `dashboard/server/pipeline.ts`): healthy (routes produce the expected rows), no events
+  and idle (nothing to expect in the window), not applicable (the harness never produces this signal), stray
+  (explained), possible break (an active harness should have rows but the route has none), stray
+  (unexplained), not in use (this machine does not enable the harness) and not in use, rows present (the
+  harness is not enabled but rows arrive). Each state keeps its mark: ✓, ○, ○, ·, ≈, !, ✕, – and !. Not
+  applicable and not in use use the `status-not-emitted` colour; not in use, rows present uses the warning
+  tone. The source parity and "All = Σ harnesses" checks in `dashboard/src/views/Pipeline.tsx` use healthy and
   possible break from this scale.
-- **Route alignment** (`dashboard/src/contracts.ts:45-53`): aligned, differs, not emitted, shown as pills in
-  the panel info note.
+- **Route alignment** (`Alignment` in `dashboard/src/contracts.ts`): aligned, differs, not applicable and not
+  emitted, shown as pills in the panel info note.
 
 ### Charts
 
@@ -361,18 +364,17 @@ Status colours always appear with their word and are never decorative. Each pass
   in normal vision and under protanopia and deuteranopia (worst neighbouring pair OKLab ΔE 19.3 and 8.4 on
   `surface`). Slots that are not neighbours can sit close, such as `cat-11` beside `cat-2` and the stray
   (unexplained) status, so a harness series always keeps its legend entry or chip label. `HARNESS_COLOR` in
-  `dashboard/src/format.ts:11-13` assigns the slots by index and is passed to charts as `Series.color`. Colour
+  `dashboard/src/format.ts` assigns the slots by index and is passed to charts as `Series.color`. Colour
   follows the harness, never its rank.
 - **Parts of a total, categorical `cat-6`…`cat-8`**: series that aren't harnesses, such as uncached, cached
-  and output tokens (`dashboard/src/views/Cache.tsx:57-61`), interrupt and steer
-  (`dashboard/src/views/Friction.tsx:129-132`), and single-line trends (`dashboard/src/views/Interventions.tsx:219-223`).
+  and output tokens (`dashboard/src/views/Cache.tsx`), interrupt and steer (`dashboard/src/views/Friction.tsx`),
+  and the baseline trends (`BASELINE_SERIES` in `dashboard/src/views/Interventions.tsx`).
   They are pale so they never read as a harness. These series take `cat-6`…`cat-8` through `SERIES`
-  (`dashboard/src/format.ts:18`, built from `PART_TOKENS`), and a test (`dashboard/src/components.test.ts`) keeps
+  (`dashboard/src/format.ts`, built from `PART_TOKENS`), and a test (`dashboard/src/components.test.ts`) keeps
   them off the harness slots.
 - **Reasoning effort, ordinal `seq-effort-1`…`seq-effort-4`**: low, medium, high, xhigh, a multi-hue ramp from
   violet through sky blue and aqua to pale lime, rising in lightness (`EFFORT_COLOR`, `dashboard/src/format.ts`).
-  Neighbouring steps differ in hue as well as lightness so they read apart in a stack (minimum OKLab ΔE 0.157,
-  up from 0.095 for the all-blue ramp), and every step passes 4:1 on `surface` and `raised`. **effort-mixed**
+  Neighbouring steps differ in hue as well as lightness so they read apart in a stack (minimum OKLab ΔE 0.157), and every step passes 4:1 on `surface` and `raised`. **effort-mixed**
   (salmon, a warm hue off the cool ramp) marks tasks with more than one effort level. Effort series still carry a legend
   entry, and bars are ordered low → xhigh.
 - **Legends and chip rows** keep `md` space below a chart legend and `sm` below a contributor chip row, so a
@@ -385,7 +387,7 @@ stay distinct from each other. Ordinal ramps keep their lightness order, and a s
 non-colour cue. The neutral `other` colour stays low in saturation and distinct from every categorical colour.
 
 Charts sit on `surface`. Gridlines are `rule`, tick labels are `caption` in `muted`, lines are 2px, and every
-mark has a hover and focus readout in a `popover`. Daily-trend charts are 280px high (up from 170px), so tick
+mark has a hover and focus readout in a `popover`. Daily-trend charts are 280px high, so tick
 labels and small differences stay readable.
 
 ## Typography
@@ -394,8 +396,7 @@ One family: **Inter**, kept from the existing app. It has true tabular lining fi
 holds at the dense sizes an expert dashboard needs, and needs no second face. Session IDs use the system
 monospace, because they are identifiers a reader compares character by character.
 
-The scale is one step larger than the old app: body text is 14px (`body-md`) at the root, and nothing is smaller
-than 12px (the old table headers were 9px and chart ticks, contributors and captions 10–11px). Labels and
+Body text is 14px (`body-md`) at the root, and nothing is smaller than 12px. Labels and
 table headers use sentence case, not tracked capitals.
 
 | Token         | Use                                                                      |
@@ -418,9 +419,8 @@ The reference window is **2560 × 1440** (a 1440p monitor, or half a 5120 × 144
 layout must also work on smaller monitors, down to 1024px wide, and on wider windows.
 
 - **Left-anchored content.** The content column starts immediately right of the 220px sidebar, with only
-  `page-x` padding between them. It is never centred: any width beyond `content-max` stays empty on the
-  right. (Today `.content` is centred with `margin: auto` at `max-width: 1540px`, which opens a gap between
-  the sidebar and the content on wide windows, `dashboard/src/styles.css:156-160`.)
+  the `.content` padding between them. It is never centred: any width beyond `content-max` stays empty on the
+  right.
 - **Width cap `content-max` (2560px).** Below the cap, content fills the space beside the sidebar. Content
   runs in **bands** separated by `band-gap` and a hairline `rule`.
 - **A 12-column grid** with a `gutter`. Typical spans: primary 8 + drivers 4, two comparisons at 6 each, or
@@ -429,7 +429,8 @@ layout must also work on smaller monitors, down to 1024px wide, and on wider win
 - **Prose is capped at `measure` (80ch)** inside whatever column it sits in, including the page question.
 - **Fold budget at 1330 px** (1440 minus menu bar and browser chrome): the header and L1 take ≤ 30% of it.
   Charts are 280–360px high and as wide as their span.
-- **Below 1024px** every span becomes 12, in source order: L1, then L2 bands.
+- **At 1050px and below** every span becomes 12, in source order: L1, then L2 bands. At 640px and below the
+  top bar padding narrows.
 
 Alignment: everything is left-aligned. Numbers are right-aligned in tables.
 
@@ -448,7 +449,8 @@ The radius follows the hierarchy: `sm` for inputs and bars, `md` for callouts, p
 
 ## Components
 
-- **Page.** `ink` background, `text` colour, `body-md` type and `page-x` side padding. The header holds the
+- **Page.** `ink` background, `text` colour and `body-md` type. The `.content` column in
+  `dashboard/src/styles.css` uses `padding: 22px 26px 52px`, not the `page-x` token. The header holds the
   view title in `page-title` and its question in `body-md` `text-2`.
 - **Bands.** Each band opens with its sub-question in `band-title`, over a 1px `rule`. When at least one panel
   in the band has the same contributing-harness chips as the band as a whole, the chip row sits once under the
@@ -486,7 +488,7 @@ The radius follows the hierarchy: `sm` for inputs and bars, `md` for callouts, p
   (`minRateN`, 20) the rate itself is `muted` too; it is never hidden.
 - **Status chip.** Pill, caption size, status-coloured mark and word. Alignment pills sit on `raised`.
 - **Callout.** Query errors only, on `raised` with a 3px `status-stray-unexplained` left edge.
-- **Not-emitted notice.** A dashed `axis` outline on `surface`, `muted` text.
+- **Not-applicable notice** (`NotApplicableNotice` in `dashboard/src/components.tsx`). A dashed `axis` outline on `surface`, `muted` text.
 - **Charts.** Transparent background, `rule` gridlines, `muted` ticks, `axis` reference lines, and hover on
   every mark. Daily charts are 280px high, fit the axis to the data, and are one tab stop: arrow keys move the
   day, Escape clears, and a live region reads the day aloud. A chart drops its own legend when the panel's

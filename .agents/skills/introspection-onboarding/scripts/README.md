@@ -16,8 +16,8 @@ The activity hooks are not here: they ship in the CLI package
 (`src/agent_introspection/hook_runtime/`), and `agent-introspection harness configure
 <harness>` installs them, copying the runtime to
 `~/.local/lib/agent-introspection/activity-hooks-v1/` so hooks never run a repository
-path. [`docs/references/hook-events.md`](../../../../docs/references/hook-events.md)
-holds the record contract, each harness's hooks, and how they are installed.
+path. `src/agent_introspection/hooks.py` defines the record contract, and
+`src/agent_introspection/hook_install.py` installs each harness's hooks.
 
 ```text
 harness hook ─> activity-shim.sh PRODUCER EVENT ─> agent-introspection hook PRODUCER EVENT (detached)

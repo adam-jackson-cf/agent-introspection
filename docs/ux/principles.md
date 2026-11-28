@@ -1,7 +1,6 @@
 # UX principles: Agent Introspection dashboard
 
-The rules for every page in `dashboard/src/views/`. They come from [`discovery.md`](discovery.md) and the app
-brief in [`app-brief.md`](app-brief.md) (2026-09-30). The visual system lives in [`DESIGN.md`](DESIGN.md).
+The rules for every page in `dashboard/src/views/`. The visual system lives in [`DESIGN.md`](DESIGN.md).
 Pages are graded with the `ux-page` rubric ([`rubrics/ux-page.yaml`](rubrics/ux-page.yaml)).
 
 The principles have three parts: a **core** that applies to every app (P0–P6), **pattern modules** this app
@@ -76,9 +75,9 @@ where_:
 - The same thing always looks, reads and behaves the same: figures, states, chips, series colours, number
   formats and vocabulary.
 - One status scale means one set of words and colours on every page. Pipeline coverage uses healthy, no
-  events, idle, not emitted, stray (explained), possible break and stray (unexplained), in that order. The
-  parity and recombination checks use healthy and possible break from the same scale. Route alignment uses
-  aligned, differs and not emitted, in that order.
+  events, idle, not applicable, stray (explained), possible break, stray (unexplained), not in use and not in
+  use, rows present, in that order. The parity and recombination checks use healthy and possible break from
+  the same scale. Route alignment uses aligned, differs, not applicable and not emitted, in that order.
 - Build pages from the shared components in `dashboard/src/components.tsx` and `dashboard/src/charts.tsx`, and
   the tokens in the mirror named in `docs/ux/AGENTS.md`.
 - Colour literals in pages and components are defects; colours come from the token mirror.
@@ -101,7 +100,7 @@ where_:
 ### P6. Built for a 2560 × 1440 window, on any monitor
 
 - **The content column starts at the navigation.** It sits directly right of the sidebar, separated only by
-  `page-x` padding, and never floats in the middle of the window. Spare width goes to the right of the
+  the `.content` padding, and never floats in the middle of the window. Spare width goes to the right of the
   content, never between the sidebar and the content.
 - **Adapt up to a cap.** Content fills the space beside the sidebar up to 2560px (half a 5120 × 1440
   ultrawide), in **bands** of one logical group each. Smaller monitors get the same layout, narrower; wider
@@ -111,7 +110,7 @@ where_:
 - **Prose keeps a readable measure.** Paragraphs, callouts and lists are capped at about 80 characters a line
   _within their column_. The layout gets wide, but text blocks don't.
 - **Side-by-side for two or three options; a table for more.**
-- Below 1024 px wide the layout stacks to one column, with L1 still first. Phones are out of scope.
+- At 1050 px wide and below the layout stacks to one column, with L1 still first. Phones are out of scope.
 
 ## Pattern modules
 
@@ -144,51 +143,37 @@ where_:
 
 ### A1. Absent is never zero
 
-- A missing value renders "—", and a signal a harness doesn't produce renders the not-emitted notice. Neither
+- A missing value renders "—", and a signal a harness doesn't produce renders the not-applicable notice. Neither
   is ever drawn as 0 in a figure, bar or line.
 - Charts show gaps where days have no data; they don't interpolate across them.
-
-**Evidence:** CO1, V1CP3, V1DF3, CO8.
 
 ### A2. A harness keeps one colour everywhere
 
 - Each harness has one categorical colour on every page, chart, legend and chip. Colour never encodes rank.
 - Series that aren't harnesses use their own palette, so a colour never means two things on one screen.
 
-**Evidence:** CP1, TK5, V1TK2 (the conflict this resolves).
-
 ### A3. Every page answers one stated question
 
 - The page header states the question; each band below it is a sub-question the band answers.
-
-**Evidence:** PG1–PG9, PG11, V1/V2 Notes.
 
 ### A4. Read-only
 
 - No page writes data or applies a proposal. Approval is recorded in the CLI workflow, never from the
   dashboard.
 
-**Evidence:** DF5, AC8, V2AC4.
-
 ### A5. Aggregates link to their sessions
 
 - Any row that names a session links to the Session view for it.
-
-**Evidence:** AC6, V1AC1, V2AC3.
 
 ### A6. Every panel states its provenance
 
 - Each panel's info note shows the registry definition, formula, and each harness's route and alignment, and
   the panel shows which harnesses contributed rows.
 
-**Evidence:** CO2, CO3, AC5, DF2.
-
 ### A7. Ratios aggregate before dividing
 
 - A rate sums its numerator and denominator across rows first, then divides. "All harnesses" is the union of
   the harnesses, never an average of their rates.
-
-**Evidence:** VO6, V1DF2, `dashboard/src/format.ts:85-97`.
 
 ### A8. Each page leads to its conclusion
 
@@ -200,15 +185,10 @@ where_:
 - A caveat (inferred, correlation not cause, partial observability) sits next to the figure it qualifies,
   not in a separate note.
 
-**Evidence:** PG1–PG9, PG11 (question per view), V1VO2 and Effort Notes (correlation caveat), V1VO6 (inferred
-recovery), V2VO3 (thresholds in subtitles).
-
 ### A9. Language stays as it is
 
 - Labels, state words and terms on the site are settled. Standards work changes layout, styling, type and data
   viz, not wording. New text uses the words already in use for the same thing.
-
-**Evidence:** brief answers to Q10–Q15.
 
 ## Not adopted
 

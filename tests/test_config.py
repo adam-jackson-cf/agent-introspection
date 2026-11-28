@@ -98,14 +98,6 @@ def test_retired_keys_are_named_as_safe_to_delete(
 
 REPOSITORY = Path(__file__).parents[1]
 EXAMPLE = REPOSITORY / "config.example.toml"
-SETUP_GUIDE = REPOSITORY / "docs/references/setup.md"
-DOCUMENTED_SETTINGS = re.compile(r"^## Configuration file\n.*?^```toml\n(.*?)^```$", re.M | re.S)
-
-
-def _documented_settings() -> str:
-    found = DOCUMENTED_SETTINGS.search(SETUP_GUIDE.read_text())
-    assert found is not None, f"{SETUP_GUIDE} has no toml block under ## Configuration file"
-    return found.group(1)
 
 
 def test_example_configuration_is_valid_and_the_defaults() -> None:
@@ -114,22 +106,6 @@ def test_example_configuration_is_valid_and_the_defaults() -> None:
         default_database_path().parents[3]
     )
     assert replace(example, database=DatabaseConfig()) == parse_config({})
-
-
-def test_every_setting_the_setup_guide_documents_is_accepted(tmp_path: Path) -> None:
-    path = tmp_path / "config.toml"
-    path.write_text(_documented_settings())
-
-    config = load_config(path)
-
-    assert config.signoz.clickhouse_url == "http://127.0.0.1:8123"
-    assert config.signoz.clickhouse_password_command is not None
-    assert config.harnesses_enabled is not None
-    assert config.hooks_otlp_logs_endpoint is not None
-    assert config.labels_openrouter_key_command is not None
-    assert config.experimental_intervention_outcomes is True
-    assert config.machine.role is MachineRole.ADDITIONAL
-    assert config.collector_endpoint == config.machine.export_endpoint
 
 
 def test_the_openrouter_key_command_is_an_argv_list_and_never_the_key() -> None:

@@ -20,4 +20,5 @@ Outcome tests: [dashboard/server.test.ts](../../dashboard/server.test.ts).
 
 ## Gotchas
 
-- Claude Code reasoning comes from tasks, so a harness that reports no reasoning shows the registry's reason, never zero.
+- Claude Code reasoning is summed per turn by the `Stop` hook. Tasks from before the activity hooks were installed show no value, not zero.
+- Codex CLI TUI turns often omit `codex.turn.token_usage.*`, so per-task reasoning and output run about 55% below the usage totals (measured over 30 days to 2026-10-01).
