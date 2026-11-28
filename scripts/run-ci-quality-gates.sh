@@ -1,174 +1,496 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fix=false
-stage=false
-
 usage() {
-  printf 'Usage: %s [--fix] [--stage]\n' "$0"
+  printf 'Usage: %s static|t1|t2|install|proofs|hook|prepare\n       %s check <name> [path ...]\n' "$0" "$0"
 }
-
-while (($#)); do
-  case "$1" in
-    --fix)
-      fix=true
-      ;;
-    --stage)
-      stage=true
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      printf 'Unknown argument: %s\n' "$1" >&2
-      usage >&2
-      exit 2
-      ;;
-  esac
-  shift
-done
-
-if "$stage" && ! "$fix"; then
-  printf '%s\n' '--stage requires --fix.' >&2
-  exit 2
-fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+export PYTHONDONTWRITEBYTECODE=1
 
-# Canary fixtures deliberately violate rules; git pathspec keeps them out of every linter.
 fixtures_exclude=':(exclude)tests/fixtures/**'
+diff_event=--merge-base
 
-lint_pathspecs=('*.py' '*.ts' '*.tsx' '*.mts' '*.cts' '*.md' '*.markdown' '*.yml' '*.yaml')
-if "$stage"; then
-  # --stage re-adds whole files the fixers touched, so it is only exact when
-  # the working tree already matches the index for every lintable file.
-  unstaged="$(git diff --name-only -- "${lint_pathspecs[@]}")"
-  if [[ -n "$unstaged" ]]; then
-    printf '%s\n' '--stage refuses to run: these files have unstaged changes that it would stage:' >&2
-    printf '%s\n' "$unstaged" | sed 's/^/  /' >&2
-    printf '%s\n' 'Stage or discard them first, or run without --stage.' >&2
-    exit 2
-  fi
-fi
+hook_modes=(static t1 t2)
+t1_tier='not boundary and not deferred'
+t2_tier='(boundary or deferred) and not (boundary and deferred)'
+deferred_tier='boundary and deferred'
+t1_selection=(-m "$t1_tier")
+t2_selection=(-m "$t2_tier")
+deferred_selection=(-m "$deferred_tier")
+bun_deferred_tests=('dashboard/*.deferred.ts' 'dashboard/**/*.deferred.ts')
+test_clickhouse=agent-introspection-test-clickhouse
+pytest_report=(-p no:cacheprovider -o junit_family=xunit1)
+collect_timeout_seconds=300
+report_dir=""
+t1_started=""
 
-bash scripts/check-quality-gate-parity.sh
-uv sync --locked --dev
-uv lock --check
-uv run python scripts/check-lock-parity.py
-uv run python scripts/check-skill-metadata.py
-uv run python scripts/check-test-subprocess-timeouts.py
-# Slow or networked steps run in CI only (GitHub Actions sets CI=true).
-rule_coverage_args=(--root . --catalog docs/guardrails/enaible-rules.json
-  --ledger docs/guardrails/coverage-ledger.json)
-if [[ "${CI:-}" == "true" ]]; then
-  uv run python scripts/check-runner-failure-propagation.py scripts/run-ci-quality-gates.sh
-  uv run python scripts/check-dependency-audit.py
-  uv run python scripts/validate-rule-coverage.py "${rule_coverage_args[@]}"
-else
-  uv run python scripts/validate-rule-coverage.py "${rule_coverage_args[@]}" --structure-only
-fi
+static_checks=(
+  gate_parity
+  install_guidance
+  lock_parity
+  skill_metadata
+  subprocess_timeouts
+  test_placement
+  test_mocking
+  test_tiers
+  dependency_audit
+  ruff_format
+  ruff
+  mypy
+  python_suppressions
+  python_quality
+  python_scalability
+  python_fanout
+  code_integrity
+  oxlint
+  markdownlint
+  prettier
+  typescript_limits
+  tsc
+  shellcheck
+  shfmt
+  dashboard_format
+  dashboard_build
+  structure
+  failure_propagation
+  test_growth
+  coverage_ratchet
+  identity_artefacts
+  golden_changes
+  verification_surface
+  test_hooks
+  test_evasion
+)
 
-scope_file="$(mktemp)"
-coverage_dir="$(mktemp -d)"
-trap 'rm -rf "$scope_file" "$coverage_dir"' EXIT
-uv run python scripts/list-python-scope.py > "$scope_file"
-
-python_files=()
-while IFS= read -r -d '' file; do
-  python_files+=("$file")
-done < "$scope_file"
-
-typescript_files=("oxlint.config.ts")
-while IFS= read -r -d '' file; do
-  [[ -f "$file" ]] || continue
-  if [[ "$file" != "oxlint.config.ts" ]]; then
-    typescript_files+=("$file")
-  fi
-done < <(git ls-files -z -- '*.ts' '*.tsx' '*.mts' '*.cts' "$fixtures_exclude")
-
-markdown_files=()
-while IFS= read -r -d '' file; do
-  [[ -f "$file" ]] || continue
-  markdown_files+=("$file")
-done < <(git ls-files -z -- '*.md' '*.markdown' "$fixtures_exclude")
-
-yaml_files=()
-while IFS= read -r -d '' file; do
-  [[ -f "$file" ]] || continue
-  yaml_files+=("$file")
-done < <(git ls-files -z -- '*.yml' '*.yaml' "$fixtures_exclude")
-
-# Prettier refuses symlinks given explicitly; the linked target is checked on its own.
-prettier_files=()
-for file in "${markdown_files[@]}" "${yaml_files[@]}"; do
-  [[ -L "$file" ]] || prettier_files+=("$file")
-done
-lint_files=("${python_files[@]}" "${typescript_files[@]}" "${markdown_files[@]}" "${yaml_files[@]}")
-lint_hashes=()
-if "$fix" && "$stage"; then
-  for file in "${lint_files[@]}"; do
-    lint_hashes+=("$(git hash-object "$file")")
-  done
-fi
-
-if "$fix"; then
-  uv run ruff format --force-exclude "${python_files[@]}"
-  uv run ruff check --fix --force-exclude "${python_files[@]}"
-else
-  uv run ruff format --check --force-exclude "${python_files[@]}"
-  uv run ruff check --no-fix --force-exclude "${python_files[@]}"
-fi
-
-uv run python scripts/check-python-mypy.py
-uv run python scripts/check-python-suppressions.py
-uv run python scripts/check-python-quality.py
-uv run python scripts/check-python-scalability.py
-uv run python scripts/check-python-fanout.py --source-root src --source-root scripts \
-  --source-root tests --source-root .agents/skills --root-package agent_introspection
-# COVERAGE_FILE keeps the tracked .coverage artifact untouched.
-COVERAGE_FILE="$coverage_dir/.coverage" uv run pytest --cov=agent_introspection \
-  --cov-report="json:$coverage_dir/coverage.json"
-uv run python scripts/check-coverage-slice.py "$coverage_dir/coverage.json"
-
-if ((${#typescript_files[@]})); then
-  if "$fix"; then
-    bunx --bun oxlint@1.80.0 --config oxlint.config.ts --fix "${typescript_files[@]}"
-  else
-    bunx --bun oxlint@1.80.0 --config oxlint.config.ts "${typescript_files[@]}"
-  fi
-fi
-
-if ((${#markdown_files[@]})); then
-  if "$fix"; then
-    bunx --bun markdownlint-cli2@0.23.2 --fix "${markdown_files[@]}"
-  else
-    bunx --bun markdownlint-cli2@0.23.2 "${markdown_files[@]}"
-  fi
-fi
-
-if ((${#prettier_files[@]})); then
-  if "$fix"; then
-    bunx --bun prettier@3.6.2 --write "${prettier_files[@]}"
-  else
-    bunx --bun prettier@3.6.2 --check "${prettier_files[@]}"
-  fi
-fi
-
-bun install --cwd dashboard --frozen-lockfile
-bun scripts/check-typescript-limits.ts
-bun run --cwd dashboard check
-bun run --cwd dashboard test
-bun run --cwd dashboard lint
-bun run --cwd dashboard format:check
-bun run --cwd dashboard build
-
-if "$stage"; then
-  for index in "${!lint_files[@]}"; do
-    file="${lint_files[$index]}"
-    if [[ "$(git hash-object "$file")" != "${lint_hashes[$index]}" ]]; then
-      git add -- "$file"
+tracked() {
+  local file
+  git ls-files -z -- "$@" "$fixtures_exclude" | while IFS= read -r -d '' file; do
+    if [[ -f "$file" && ! -L "$file" ]]; then
+      printf '%s\0' "$file"
     fi
   done
-fi
+}
+
+python_scope() {
+  uv run python -B scripts/list-python-scope.py
+}
+
+shell_scope() {
+  local file first
+  tracked '*' | while IFS= read -r -d '' file; do
+    case "${file##*/}" in
+      *.sh | *.bash) printf '%s\0' "$file" ;;
+      *.*) ;;
+      *)
+        first=""
+        IFS= read -r first <"$file" || true
+        if [[ "$first" =~ ^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$) ]]; then
+          printf '%s\0' "$file"
+        fi
+        ;;
+    esac
+  done
+}
+
+dashboard_tool() {
+  local tool="$1"
+  shift
+  bun "dashboard/node_modules/.bin/$tool" "$@"
+}
+
+scanned=()
+scan() {
+  scanned=()
+  local list file status=0
+  list="$(mktemp)"
+  "$@" >"$list" || status=$?
+  while IFS= read -r -d '' file; do
+    scanned+=("$file")
+  done <"$list"
+  rm -f "$list"
+  return "$status"
+}
+
+check_gate_parity() { uv run python scripts/check-quality-gate-parity.py "${1:-.}"; }
+check_install_guidance() {
+  local guide=README.md installer=scripts/fresh-install/sandbox.sh
+  if (($#)); then
+    guide="$1/README.md"
+    installer="$1/sandbox.sh"
+  fi
+  uv run python scripts/check-install-guidance.py --guide "$guide" --installer "$installer" \
+    --section "Quick Install"
+}
+
+check_hook_installed() { uv run python scripts/check-hook-installed.py .pre-commit-config.yaml; }
+check_lock_parity() {
+  if (($#)); then
+    uv run python scripts/check-lock-parity.py "$@"
+  else
+    uv run python scripts/check-lock-parity.py --exclude "$fixtures_exclude" .
+  fi
+}
+check_skill_metadata() {
+  uv run python scripts/check-skill-metadata.py --schema .agents/skill-metadata.schema.json "$@"
+}
+check_subprocess_timeouts() { uv run python scripts/check-test-subprocess-timeouts.py "$@"; }
+check_dependency_audit() {
+  uv run python scripts/check-dependency-audit.py --policy .github/dependency-audit.json "$@"
+}
+
+check_structure() {
+  if (($#)); then
+    uv run python -B scripts/check-structure.py "$@"
+  else
+    uv run python -B scripts/check-structure.py "$diff_event"
+  fi
+}
+
+check_test_mocking() { uv run python -B scripts/check-test-mocking.py "$@"; }
+check_test_hooks() { uv run python -B scripts/check-test-hooks.py "$@"; }
+check_test_tiers() {
+  uv run python -B scripts/check-test-tiers.py --tier "t1=$t1_tier" --tier "t2=$t2_tier" \
+    --tier "deferred=$deferred_tier" "$@"
+}
+
+check_test_placement() {
+  if (($#)); then
+    uv run python -B scripts/check-test-placement.py "$@"
+  else
+    uv run python -B scripts/check-test-placement.py "$diff_event"
+  fi
+}
+
+check_test_evasion() {
+  if (($#)); then
+    uv run python -B scripts/check-test-evasion.py "$@"
+  else
+    uv run python -B scripts/check-test-evasion.py "$diff_event"
+  fi
+}
+
+pytest_tier() {
+  local selector="$1"
+  shift
+  uv run pytest -p no:cacheprovider -m "$selector" "$@"
+}
+
+check_t1_isolation() { pytest_tier "$t1_tier" "$@"; }
+check_user_data_guard() { uv run pytest -p no:cacheprovider "$@"; }
+
+check_bun_t1_isolation() {
+  (($#)) || {
+    bun run --cwd dashboard test
+    return
+  }
+  local files=()
+  local file
+  for file in "$@"; do
+    [[ "$file" == /* ]] || file="$repo_root/$file"
+    files+=("$file")
+  done
+  (cd dashboard && bun test "${files[@]}")
+}
+
+check_ruff_format() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan python_scope
+    files=("${scanned[@]}")
+  }
+  uv run ruff format --check --no-cache "${files[@]}"
+}
+
+check_ruff() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan python_scope
+    files=("${scanned[@]}")
+  }
+  uv run ruff check --no-fix --no-cache "${files[@]}"
+}
+
+check_mypy() { uv run python -B scripts/check-python-mypy.py "$@"; }
+check_python_suppressions() { uv run python -B scripts/check-python-suppressions.py "$@"; }
+check_python_quality() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-quality.py "$@"; }
+check_python_scalability() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-scalability.py "$@"; }
+check_python_fanout() { PYTHONDONTWRITEBYTECODE=1 uv run python -B scripts/check-python-fanout.py "$@"; }
+
+check_code_integrity() {
+  if (($#)); then
+    uv run python scripts/check-code-integrity.py "$@"
+  else
+    uv run python scripts/check-code-integrity.py --all -- "$fixtures_exclude"
+  fi
+}
+
+check_oxlint() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan tracked '*.ts' '*.tsx' '*.mts' '*.cts'
+    files=("${scanned[@]}")
+  }
+  dashboard_tool oxlint --config oxlint.config.ts --deny-warnings "${files[@]}"
+}
+
+check_markdownlint() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan tracked '*.md' '*.markdown'
+    files=("${scanned[@]}")
+  }
+  bunx --bun markdownlint-cli2@0.23.2 "${files[@]}"
+}
+
+check_prettier() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan tracked '*.md' '*.markdown' '*.yml' '*.yaml'
+    files=("${scanned[@]}")
+  }
+  dashboard_tool prettier --check "${files[@]}"
+}
+
+check_typescript_limits() { bun scripts/check-typescript-limits.ts "$@"; }
+check_tsc() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan tracked '*.ts' '*.tsx' '*.mts' '*.cts'
+    files=("${scanned[@]}")
+  }
+  local project status=0
+  project="$(mktemp -d)"
+  bun -e 'const { resolve } = require("node:path"); console.log(JSON.stringify({ extends: resolve(process.argv[1]), files: process.argv.slice(2).map((path) => resolve(path)), include: [] }))' \
+    tsconfig.json "${files[@]}" >"$project/tsconfig.json"
+  bun dashboard/node_modules/.bin/tsc --project "$project/tsconfig.json" || status=$?
+  rm -rf "$project"
+  return "$status"
+}
+
+check_shellcheck() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan shell_scope
+    files=("${scanned[@]}")
+  }
+  uv run shellcheck --format=gcc "${files[@]}"
+}
+
+check_shfmt() {
+  local files=("$@")
+  ((${#files[@]})) || {
+    scan shell_scope
+    files=("${scanned[@]}")
+  }
+  uv run shfmt --diff "${files[@]}"
+}
+
+diff_check() {
+  local script=$1
+  shift
+  if (($#)); then
+    uv run python "scripts/$script" "$@"
+  else
+    uv run python "scripts/$script" --repo . "$diff_event"
+  fi
+}
+
+check_failure_propagation() {
+  uv run python scripts/check-runner-failure-propagation.py "${1:-scripts/run-ci-quality-gates.sh}" \
+    static t1 t2 hook
+}
+
+check_test_run() { uv run python scripts/check-test-run.py "$@"; }
+check_test_budget() { uv run python scripts/check-test-budget.py "$@"; }
+check_test_growth() { diff_check check-test-growth.py "$@"; }
+check_coverage_ratchet() { diff_check check-coverage-ratchet.py "$@"; }
+check_identity_artefacts() { diff_check check-identity-artefacts.py "$@"; }
+check_golden_changes() { diff_check check-golden-changes.py "$@"; }
+check_verification_surface() { uv run python scripts/check-verification-surface.py "$@"; }
+check_lever_isolation() { uv run python scripts/check-lever-isolation.py "$@"; }
+
+check_scenario() {
+  (($# == 2)) || {
+    usage >&2
+    return 2
+  }
+  local name=$1 fixture=$2 work base line code=0 args=()
+  work="$(mktemp -d)"
+  base="$(uv run python scripts/build-scenario-repo.py "$fixture" "$work/repo")"
+  while IFS= read -r line; do
+    line=${line//\{repo\}/$work/repo}
+    args+=("${line//\{base\}/$base}")
+  done <"$fixture/argv"
+  "check_$name" "${args[@]}" || code=$?
+  rm -rf "$work"
+  return "$code"
+}
+check_dashboard_format() { bun run --cwd dashboard format:check; }
+check_dashboard_build() { bun run --cwd dashboard build; }
+
+prepare() {
+  uv sync --locked --dev
+  uv lock --check
+  uv run pre-commit install
+  bun install --cwd dashboard --frozen-lockfile
+  bun install --cwd scripts/ux-probe --frozen-lockfile
+}
+
+run_static() {
+  local name
+  for name in "${static_checks[@]}"; do
+    "check_$name"
+  done
+}
+
+make_report_dir() {
+  if [[ -z "$report_dir" ]]; then
+    report_dir="$(mktemp -d)"
+    trap 'rm -rf "$report_dir"' EXIT
+  fi
+}
+
+collect_tier() {
+  local tier=$1
+  shift
+  uv run python scripts/run-evidence.py collect --tier "$tier" --out "$report_dir/$tier-listing.json" \
+    --timeout-seconds "$collect_timeout_seconds" -- "$@"
+}
+
+normalise_report() {
+  uv run python scripts/run-evidence.py normalise "$@"
+}
+
+run_t1() {
+  make_report_dir
+  t1_started="$(date +%s)"
+  collect_tier t1 "${t1_selection[@]}"
+  COVERAGE_FILE="$report_dir/.coverage" uv run pytest "${pytest_report[@]}" \
+    --junitxml="$report_dir/t1-pytest.xml" --cov=agent_introspection --cov-report= "${t1_selection[@]}"
+  normalise_report pytest --tier t1 "$report_dir/t1-pytest.xml" "$report_dir/t1-pytest.json"
+  bun run --cwd dashboard test --reporter=junit --reporter-outfile="$report_dir/t1-bun.xml"
+  normalise_report bun --tier t1 --prefix dashboard/ "$report_dir/t1-bun.xml" "$report_dir/t1-bun.json"
+  check_test_run --listing "$report_dir/t1-listing.json" "$report_dir/t1-pytest.json" "$report_dir/t1-bun.json"
+  check_test_evasion --report "$report_dir/t1-pytest.xml" --report "$report_dir/t1-bun.xml"
+}
+
+run_t2() {
+  make_report_dir
+  collect_tier t2 "${t2_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/t2-pytest.xml" "${t2_selection[@]}"
+  normalise_report pytest --tier t2 "$report_dir/t2-pytest.xml" "$report_dir/t2-pytest.json"
+  check_test_run --listing "$report_dir/t2-listing.json" "$report_dir/t2-pytest.json"
+  check_test_evasion --report "$report_dir/t2-pytest.xml"
+}
+
+start_test_clickhouse() {
+  local line image attempt
+  line="$(grep '^CLICKHOUSE_IMAGE=' scripts/fresh-install/sandbox.sh)"
+  image="${line#*:-}"
+  image="${image%\}}"
+  [[ -n "$image" && "$image" != "$line" ]] || {
+    echo "scripts/fresh-install/sandbox.sh names no CLICKHOUSE_IMAGE default" >&2
+    return 1
+  }
+  docker rm -f "$test_clickhouse" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$test_clickhouse" -e CLICKHOUSE_SKIP_USER_SETUP=1 "$image" >/dev/null
+  trap 'docker rm -f "$test_clickhouse" >/dev/null 2>&1; rm -rf "$report_dir"' EXIT
+  for attempt in $(seq 60); do
+    docker exec "$test_clickhouse" clickhouse-client --query 'SELECT 1' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec "$test_clickhouse" clickhouse-client --query 'SELECT 1' >/dev/null || {
+    echo "the test ClickHouse did not start after $attempt attempts; see: docker logs $test_clickhouse" >&2
+    return 1
+  }
+  export AGENT_INTROSPECTION_TEST_CLICKHOUSE="$test_clickhouse"
+}
+
+run_install() {
+  make_report_dir
+  check_lever_isolation --repo .
+  start_test_clickhouse
+  collect_tier deferred "${deferred_selection[@]}"
+  uv run pytest "${pytest_report[@]}" --junitxml="$report_dir/deferred-pytest.xml" "${deferred_selection[@]}"
+  normalise_report pytest --tier deferred "$report_dir/deferred-pytest.xml" "$report_dir/deferred-pytest.json"
+  scan tracked "${bun_deferred_tests[@]}"
+  local files=("${scanned[@]/#/./}")
+  bun test --reporter=junit --reporter-outfile="$report_dir/deferred-bun.xml" "${files[@]}"
+  normalise_report bun --tier deferred "$report_dir/deferred-bun.xml" "$report_dir/deferred-bun.json"
+  check_test_run --listing "$report_dir/deferred-listing.json" "$report_dir/deferred-pytest.json" "$report_dir/deferred-bun.json"
+  check_test_evasion --report "$report_dir/deferred-pytest.xml" --report "$report_dir/deferred-bun.xml"
+}
+
+check_proofs() { uv run python scripts/validate-rule-coverage.py --root "${1:-.}"; }
+
+run_proofs() {
+  check_proofs
+}
+
+(($#)) || {
+  usage >&2
+  exit 2
+}
+mode="$1"
+shift
+case "$mode" in
+  static | t1 | t2 | proofs)
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
+    prepare
+    "run_$mode"
+    ;;
+  install)
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
+    prepare
+    run_install
+    ;;
+  prepare)
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
+    prepare
+    ;;
+  hook)
+    (($# == 0)) || {
+      usage >&2
+      exit 2
+    }
+    diff_event=--staged
+    prepare
+    for mode in "${hook_modes[@]}"; do
+      "run_$mode"
+      if [[ "$mode" == t1 ]]; then
+        check_test_budget --since "$t1_started" "$report_dir/t1-pytest.json" "$report_dir/t1-bun.json"
+      fi
+    done
+    ;;
+  check)
+    (($#)) || {
+      usage >&2
+      exit 2
+    }
+    name="$1"
+    shift
+    if ! declare -F "check_$name" >/dev/null; then
+      printf 'Unknown check: %s\n' "$name" >&2
+      exit 2
+    fi
+    "check_$name" "$@"
+    ;;
+  -h | --help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

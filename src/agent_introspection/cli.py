@@ -1,11 +1,11 @@
-"""Structured command-line interface for Agent Introspection."""
-
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -59,8 +59,6 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
-    # Each command group's handler, looked up when called; the proposal subcommands
-    # dispatch on their own name.
     commands: dict[str, Handler] = {
         "facts": facts_command,
         "spool": spool_command,
@@ -85,7 +83,6 @@ def _fail(code: int, exc: BaseException, log: bool = False) -> NoReturn:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "hook":
-        # Hooks never fail the harness: failures go to the hook log, never stdout.
         return hooks.main(
             args.producer, args.event, Path(args.config) if args.config is not None else None
         )
@@ -102,11 +99,9 @@ def main(argv: list[str] | None = None) -> int:
         _fail(EXIT_VALIDATION, exc, log)
     except RuntimeError as exc:
         _fail(EXIT_CONFLICT, exc, log)
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError, http.client.HTTPException) as exc:
         _fail(EXIT_INTERNAL, exc, log)
     _emit(result, log)
-    # A failed snapshot comparison, doctor check, or setup step still prints every result,
-    # then exits non-zero.
     checked = args.command in ("doctor", "setup") or (
         getattr(args, "facts_command", None) == "verify"
     )

@@ -1,25 +1,3 @@
-"""Activity hooks: normalize one harness hook envelope into hook-event records.
-
-The activity shim hands each hook envelope (JSON on stdin) to
-``agent-introspection hook <producer> <event>``, which runs ``main`` detached from
-the harness. ``normalize`` reduces the envelope to the fields in
-``docs/references/hook-events.md`` and ``write`` stores each record atomically in the spool
-(``spool.py``), which ships records to the OTLP route ``facts sync`` loads from.
-
-Raw prompt, argument, and output text is read only in memory. The derivations
-mirror the Codex projection in ``facts_sql/select_logs.sql`` so a field means the
-same thing for every harness. Prompts are only measured here (ID, length, whether a
-turn was running); their text reaches the Jev classifier through the producers' own
-OTLP prompt events, which ``facts sync`` labels (``classify.py``).
-
-Turn state: Claude Code and omp have no native "a turn is running" flag on the
-prompt hook, so a small per-session marker file under ``STATE_DIR`` is created
-when a prompt is submitted and removed when the turn stops (Claude ``Stop`` /
-``StopFailure``). A marker older than
-``TURN_STALE_SECONDS`` counts as closed (the harness may have exited mid-turn).
-The marker holds only the prompt ID and a timestamp.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -38,10 +16,6 @@ from typing import Any
 from agent_introspection.command_shape import command_shape, command_tokens
 
 SCHEMA = "agent-introspection.hook-event/1"
-DATA_DIR = Path.home() / ".local/share/agent-introspection"
-INBOX = DATA_DIR / "hook-inbox"
-STATE_DIR = DATA_DIR / "hook-state"
-LOG = DATA_DIR / "hooks.log"
 TURN_STALE_SECONDS = 6 * 3600
 MAX_TARGETS = 20
 TARGET_CHARS = 300
@@ -52,7 +26,26 @@ type Record = dict[str, Any]
 type Attrs = dict[str, Any]
 type Envelope = dict[str, Any]
 
-# --- Derivations mirrored from facts_sql/select_logs.sql -------------------------
+
+def data_dir() -> Path:
+    return Path.home() / ".local/share/agent-introspection"
+
+
+def inbox_dir() -> Path:
+    return data_dir() / "hook-inbox"
+
+
+def state_dir() -> Path:
+    return data_dir() / "hook-state"
+
+
+def log_file() -> Path:
+    return data_dir() / "hooks.log"
+
+
+def read_stdin() -> str:
+    return sys.stdin.read()
+
 
 _PATH_TOKEN = re.compile(r"^[~.]{0,2}/?[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*/?$")
 _FILE_EXTENSION = re.compile(
@@ -85,9 +78,6 @@ _GENERIC_LINE = re.compile(
     r"|error: script \"[^\"]*\" exited|={3,}|- Status: failed)"
 )
 _DIGITS = re.compile(r"[0-9a-f]{8,}|\d+")
-# Ordered credential redactions, applied before home/digit normalisation. The same
-# list, in the same order, is mirrored in facts_sql/select_logs.sql and select_spans.sql
-# (RE2 syntax only: no lookahead, so the long-token rule marks, unmarks, then redacts).
 REDACTIONS: tuple[tuple[str, str], ...] = (
     (
         r"""(?i)((?:token|password|passwd|secret|credential|auth|private[_-]?key|api[_-]?key|authorization)\w*["']?\s*[=:]\s*)"""
@@ -115,20 +105,14 @@ _HOME_PATHS = re.compile(r"/(?:Users|home)/[^/\s;:,'\"]+|/root(?=[/\s;:,'\"]|$)"
 
 
 def redact_home(path: str) -> str:
-    """Replace every ``/Users/<name>``, ``/home/<name>`` and ``/root`` with ``~``.
-
-    One argument can hold several paths.
-    """
     return _HOME_PATHS.sub("~", path)
 
 
 def canonical_arguments(arguments: object) -> str:
-    """Return the canonical JSON text of tool arguments (sorted keys, compact)."""
     return json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def command_text(arguments: object) -> str:
-    """Return the shell command a tool call runs (``command`` or ``cmd``), else ``''``."""
     if not isinstance(arguments, dict):
         return ""
     for key in ("command", "cmd"):
@@ -156,12 +140,10 @@ def _is_path_token(token: str) -> bool:
 
 
 def command_paths(tokens: list[str]) -> list[str]:
-    """Return path-like command arguments (a slash or a known file extension)."""
     return [token for token in map(_strip_token, tokens[1:]) if _is_path_token(token)]
 
 
 def targets(arguments: object, canonical: str, tokens: list[str]) -> list[str]:
-    """Return distinct home-redacted target paths, at most ``MAX_TARGETS``."""
     found = _PATCH_FILE.findall(canonical)
     if isinstance(arguments, dict):
         found += [
@@ -173,12 +155,10 @@ def targets(arguments: object, canonical: str, tokens: list[str]) -> list[str]:
 
 
 def gate_bypass(canonical: str) -> int:
-    """Return 1 when the arguments skip a commit gate (``--no-verify``, ``HUSKY=0``, ...)."""
     return int(_GATE_BYPASS.search(canonical) is not None)
 
 
 def arguments_hash(canonical: str) -> str:
-    """Return the first 16 hex digits of SHA-256 over the canonical arguments."""
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
@@ -195,7 +175,6 @@ def _error_line(output: str) -> str:
 
 
 def normalized_failure_line(output: str) -> str:
-    """Return the most specific diagnostic line, redacted, home as ``~``, digits ``N``, uncapped."""
     line = _error_line(output)
     if not _DIAGNOSTIC.search(line[:SIGNATURE_CHARS]):
         tail = _DIAGNOSTIC_TAIL.search(line)
@@ -206,16 +185,11 @@ def normalized_failure_line(output: str) -> str:
 
 
 def failure_signature(output: str) -> str:
-    """Return the normalized diagnostic line capped at ``SIGNATURE_CHARS`` characters."""
     return normalized_failure_line(output)[:SIGNATURE_CHARS]
 
 
 def signature_hash(line: str) -> str:
-    """Return 16 hex digits of SHA-256 over a full normalized line; empty for an empty line."""
     return hashlib.sha256(line.encode()).hexdigest()[:16] if line else ""
-
-
-# --- Records ----------------------------------------------------------------------
 
 
 type Clock = Callable[[], datetime]
@@ -223,19 +197,15 @@ type Clock = Callable[[], datetime]
 
 @dataclass
 class Context:
-    """Where turn state lives, and the clock records are stamped with."""
-
-    state_dir: Path = field(default_factory=lambda: STATE_DIR)
+    state_dir: Path = field(default_factory=state_dir)
     now: Clock = field(default=lambda: datetime.now(UTC))
 
 
 def timestamp(moment: datetime) -> str:
-    """Return an RFC 3339 UTC timestamp with microseconds."""
     return moment.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def record(head: tuple[str, str, str], occurred_at: str, key: str, attrs: Attrs) -> Record:
-    """Build one record; ``head`` is (producer, session_id, event_type)."""
     producer, session_id, event_type = head
     digest = hashlib.sha256(
         "\0".join((producer, session_id, event_type, occurred_at, key)).encode()
@@ -264,7 +234,6 @@ def _session(envelope: Envelope) -> str:
 
 
 def tool_call_attrs(envelope: Envelope) -> Attrs:
-    """Derive ``tool_call`` attributes from a tool name, input, and working directory."""
     arguments = envelope.get("tool_input", {})
     canonical = canonical_arguments(arguments)
     command = command_text(arguments)
@@ -291,7 +260,6 @@ def tool_call_attrs(envelope: Envelope) -> Attrs:
 
 
 def tool_failure_attrs(envelope: Envelope) -> Attrs:
-    """Derive ``tool_failure`` attributes; the error text becomes a signature only."""
     line = normalized_failure_line(_text(envelope, "error"))
     attrs: Attrs = {
         "tool_use_id": _text(envelope, "tool_use_id"),
@@ -306,16 +274,12 @@ def tool_failure_attrs(envelope: Envelope) -> Attrs:
     return attrs
 
 
-# --- Turn state -------------------------------------------------------------------
-
-
 def _state_path(context: Context, producer: str, session_id: str) -> Path:
     digest = hashlib.sha256(f"{producer}\0{session_id}".encode()).hexdigest()[:32]
     return context.state_dir / f"{digest}.turn"
 
 
 def turn_open(context: Context, producer: str, session_id: str) -> int:
-    """Return 1 when this session's turn marker exists and is not stale."""
     path = _state_path(context, producer, session_id)
     try:
         age = time.time() - path.stat().st_mtime
@@ -325,18 +289,13 @@ def turn_open(context: Context, producer: str, session_id: str) -> int:
 
 
 def open_turn(context: Context, producer: str, session_id: str, prompt_id: str) -> None:
-    """Mark this session's turn as running."""
     context.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     marker = {"prompt_id": prompt_id, "opened_at": timestamp(context.now())}
     atomic_write(_state_path(context, producer, session_id), json.dumps(marker) + "\n")
 
 
 def close_turn(context: Context, producer: str, session_id: str) -> None:
-    """Clear this session's running-turn marker."""
     _state_path(context, producer, session_id).unlink(missing_ok=True)
-
-
-# --- Prompts ----------------------------------------------------------------------
 
 
 def _prompt_records(
@@ -354,9 +313,6 @@ def _prompt_records(
     }
     open_turn(context, producer, session_id, prompt_id)
     yield record((producer, session_id, "prompt_submitted"), occurred_at, prompt_id, attrs)
-
-
-# --- Claude transcript ------------------------------------------------------------
 
 
 def _is_prompt_entry(entry: dict[str, Any], prompt_id: str) -> bool:
@@ -408,12 +364,6 @@ def _summarize(turn: dict[str, tuple[str, float]]) -> tuple[float, str]:
 
 
 def transcript_usage(transcript: Path, prompt_id: str) -> tuple[float, str]:
-    """Sum ``thinking_tokens`` and take the last model over the turn's assistant messages.
-
-    The turn starts at the first user entry carrying ``prompt_id``; when no entry
-    carries it, the turn starts after the last typed user prompt. Only numeric usage
-    and the model name are read; streamed entries sharing a message ID count once.
-    """
     by_prompt: dict[str, tuple[str, float]] | None = None
     closed = False
     since_last: dict[str, tuple[str, float]] = {}
@@ -451,9 +401,6 @@ def _error_class(envelope: Envelope) -> str:
     if isinstance(error, dict):
         error = error.get("type")
     return error if isinstance(error, str) and _ERROR_CLASS.match(error) else "unknown"
-
-
-# --- Dispatch ---------------------------------------------------------------------
 
 
 def _claude(event: str, envelope: Envelope, context: Context, occurred_at: str) -> Iterator[Record]:
@@ -534,7 +481,6 @@ _PRODUCERS = {"claude-code": _claude, "omp": _omp}
 def iter_records(
     producer: str, hook_event: str, envelope: Envelope, context: Context | None = None
 ) -> Iterator[Record]:
-    """Yield records as they are ready (a prompt's label follows its submission)."""
     if producer not in _PRODUCERS:
         raise ValueError(f"producer must be one of {', '.join(PRODUCERS)}")
     context = context or Context()
@@ -544,11 +490,7 @@ def iter_records(
 def normalize(
     producer: str, hook_event: str, envelope: Envelope, context: Context | None = None
 ) -> list[Record]:
-    """Return every record one hook envelope produces."""
     return list(iter_records(producer, hook_event, envelope, context))
-
-
-# --- Output -----------------------------------------------------------------------
 
 
 def atomic_write(destination: Path, content: str) -> None:
@@ -564,8 +506,7 @@ def atomic_write(destination: Path, content: str) -> None:
 
 
 def write(item: Record, inbox: Path | None = None) -> Path:
-    """Write one record to the inbox atomically (temporary file, then rename)."""
-    inbox = inbox or INBOX
+    inbox = inbox or inbox_dir()
     inbox.mkdir(parents=True, exist_ok=True)
     destination = inbox / f"{item['event_id']}.json"
     atomic_write(destination, json.dumps(item, separators=(",", ":")) + "\n")
@@ -573,17 +514,16 @@ def write(item: Record, inbox: Path | None = None) -> Path:
 
 
 def log(producer: str, hook_event: str, problem: str) -> None:
-    """Append ``<UTC> <producer> <hook_event> <problem>`` to the hook log; never raises."""
     try:
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as handle:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{timestamp(datetime.now(UTC))} {producer} {hook_event} {problem}\n")
     except OSError:
         pass
 
 
 def _drain_one_batch(config: Path | None) -> None:
-    """Send at most one spooled batch when an endpoint resolves; failures are logged by class."""
     from agent_introspection import spool
 
     endpoint = spool.hook_endpoint(config)
@@ -592,22 +532,16 @@ def _drain_one_batch(config: Path | None) -> None:
 
 
 def main(producer: str, hook_event: str, config: Path | None = None) -> int:
-    """Read one envelope from stdin, spool its records, drain one batch, and return 0.
-
-    A failure is logged by exception type only, never with envelope text; neither the
-    spool write nor the network send can fail the harness or block it past the send
-    timeout.
-    """
     try:
-        envelope = json.loads(sys.stdin.read())
+        envelope = json.loads(read_stdin())
         if not isinstance(envelope, dict):
             raise ValueError("envelope must be a JSON object")
         for item in iter_records(producer, hook_event, envelope):
             write(item)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         log(producer[:32], hook_event[:64], type(exc).__name__)
     try:
         _drain_one_batch(config)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         log("spool", type(exc).__name__, "0")
     return 0

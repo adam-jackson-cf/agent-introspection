@@ -1,0 +1,2006 @@
+schema = 1
+
+[scope]
+mode = "whole"
+base_ref = "origin/main"
+
+[hooks]
+check = ["bash", "scripts/run-ci-quality-gates.sh", "check", "hook_installed"]
+expect = "pre-commit hook installed"
+
+[[claim]]
+id = "proofs.gate"
+rules = ["GATE.*"]
+control = [
+  "scripts/validate-rule-coverage.py",
+  "scripts/check-quality-gate-parity.py",
+  "scripts/check-hook-installed.py",
+  "scripts/run-ci-quality-gates.sh",
+  "scripts/ci",
+  ".pre-commit-config.yaml",
+  ".github/workflows/ci-quality-gates.yml",
+  ".github/CODEOWNERS",
+]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "uv run python -B scripts/validate-rule-coverage.py --root ."
+status = "proofs"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "proofs", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/bound"
+violating = "tests/fixtures/proofs/proofs.gate/unbound"
+expect = "lacks ref"
+rule = "GATE.enforced"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "gate_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/parity-matched"
+violating = "tests/fixtures/proofs/proofs.gate/parity-divergent"
+expect = "GATE.parity"
+rule = "GATE.parity"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "gate_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/proofs.gate/parity-matched"
+violating = "tests/fixtures/proofs/proofs.gate/unowned"
+expect = "GATE.self-check"
+rule = "GATE.self-check"
+
+[[claim]]
+id = "host.required-checks"
+rules = ["GIT.required-checks"]
+
+[claim.host]
+command = ["gh", "api", "repos/adam-jackson-cf/agent-introspection/branches/main/protection"]
+expect = ["\"gate\"", "\"proofs\"", "\"require_code_owner_reviews\":true"]
+
+[[claim]]
+id = "security.dependency-audit"
+rules = ["SECURITY.dependency-audit"]
+control = ["scripts/check-dependency-audit.py", ".github/dependency-audit.json"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "dependency_audit", "{fixture}"]
+passing = "tests/fixtures/proofs/security.dependency-audit/passing"
+violating = "tests/fixtures/proofs/security.dependency-audit/advisory"
+expect = "SECURITY.dependency-audit lock="
+rule = "SECURITY.dependency-audit"
+timeout_seconds = 120
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "dependency_audit", "{fixture}"]
+passing = "tests/fixtures/proofs/security.dependency-audit/passing"
+violating = "tests/fixtures/proofs/security.dependency-audit/manifest-without-lock"
+expect = "SECURITY.dependency-audit failure=manifest-without-lock"
+rule = "SECURITY.dependency-audit"
+timeout_seconds = 120
+
+[[claim]]
+id = "parity.locks"
+rules = ["PARITY.lock-version", "PARITY.package-manager"]
+control = ["scripts/check-lock-parity.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "lock_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.locks/passing"
+violating = "tests/fixtures/proofs/parity.locks/lock-version"
+expect = "PARITY.lock-version"
+rule = "PARITY.lock-version"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "lock_parity", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.locks/passing"
+violating = "tests/fixtures/proofs/parity.locks/package-manager"
+expect = "PARITY.package-manager"
+rule = "PARITY.package-manager"
+
+[[claim]]
+id = "parity.install-guidance"
+rules = ["PARITY.install-guidance"]
+control = ["scripts/check-install-guidance.py", "scripts/fresh-install/sandbox.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh install"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "install_guidance", "{fixture}"]
+passing = "tests/fixtures/proofs/parity.install-guidance/passing"
+violating = "tests/fixtures/proofs/parity.install-guidance/violating"
+expect = "PARITY.install-guidance"
+rule = "PARITY.install-guidance"
+
+[[claim]]
+id = "skill.metadata"
+rules = ["SKILL.metadata"]
+control = ["scripts/check-skill-metadata.py", ".agents/skill-metadata.schema.json"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "skill_metadata", "{fixture}"]
+passing = "tests/fixtures/proofs/skill.metadata/passing/introspection-good/SKILL.md"
+violating = "tests/fixtures/proofs/skill.metadata/violating/wrong-directory/SKILL.md"
+expect = "SKILL.metadata"
+rule = "SKILL.metadata"
+
+[[claim]]
+id = "ruff"
+rules = ["RUFF.*"]
+control = ["pyproject.toml", "scripts/check-python-suppressions.py", "scripts/list-python-scope.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "ruff", "{fixture}"]
+passing = "tests/fixtures/proofs/ruff/passing/canary_module.py"
+violating = "tests/fixtures/proofs/ruff/violating/blind_except.py"
+expect = "blind-except"
+timeout_seconds = 60
+rule = "RUFF.SELECT.BLE001"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "ruff", "{fixture}"]
+passing = "tests/fixtures/proofs/ruff/passing/canary_module.py"
+violating = "tests/fixtures/proofs/ruff/violating/try_except_pass.py"
+expect = "try-except-pass"
+timeout_seconds = 60
+rule = "RUFF.SELECT.S110"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "ruff", "{fixture}"]
+passing = "tests/fixtures/proofs/ruff/passing/canary_module.py"
+violating = "tests/fixtures/proofs/ruff/violating/suppressible_exception.py"
+expect = "suppressible-exception"
+timeout_seconds = 60
+rule = "RUFF.SELECT.SIM105"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "ruff_format", "{fixture}"]
+passing = "tests/fixtures/proofs/ruff/passing/canary_module.py"
+violating = "tests/fixtures/proofs/ruff/violating/unformatted.py"
+expect = "would be reformatted"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_suppressions", "{fixture}"]
+passing = "tests/fixtures/proofs/ruff/passing/canary_module.py"
+violating = "tests/fixtures/proofs/ruff/violating/suppression_comment.py"
+expect = "RUFF.IGNORES"
+timeout_seconds = 60
+rule = "RUFF.IGNORES"
+
+[[claim]]
+id = "mypy"
+rules = ["MYPY.*"]
+control = ["pyproject.toml", "scripts/check-python-mypy.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "mypy", "{fixture}"]
+passing = "tests/fixtures/proofs/mypy/passing/canary_module.py"
+violating = "tests/fixtures/proofs/mypy/violating/untyped.py"
+expect = "[no-untyped-def]"
+timeout_seconds = 60
+rule = "MYPY.strict"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "mypy", "{fixture}"]
+passing = "tests/fixtures/proofs/mypy/passing/canary_module.py"
+violating = "tests/fixtures/proofs/mypy/violating/importer.py"
+expect = "broken.py:1: error"
+timeout_seconds = 60
+rule = "MYPY.follow_imports"
+
+[[claim]]
+id = "python.quality"
+rules = ["PYQ100", "PYQ101", "PYQ102", "PYQ103", "PYQ104", "PYQ105", "PYQ106", "PYQ107", "PYQ200", "PYQ202", "PYQ203", "PYQ210", "PYQ220", "PYQ221", "PYQ230", "PYQ231", "PYQ299"]
+control = ["scripts/check-python-quality.py", "scripts/lib/python_quality_scope.py", "scripts/lib/python_quality_settings.py", "proofs.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ100/passing/repo/src/pkg/mod.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ100/violating/repo/tools/loose.py"
+expect = ": PYQ100: "
+rule = "PYQ100"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ101/passing/repo/scripts/render-measures.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ101/violating/repo/scripts/unapproved-tool.py"
+expect = ": PYQ101: "
+rule = "PYQ101"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ102/passing/repo/tests/unit/case_ok.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ102/violating/repo/tests/flat_case.py"
+expect = ": PYQ102: "
+rule = "PYQ102"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ103/passing/repo/src/pkg/services/mod.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ103/violating/repo/src/pkg/helpers/mod.py"
+expect = ": PYQ103: "
+rule = "PYQ103"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ104/passing/repo/src/pkg/domain.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ104/violating/repo/src/pkg/misc.py"
+expect = ": PYQ104: "
+rule = "PYQ104"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ105/passing/repo/src/good_pkg/mod.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ105/violating/repo/src/BadPkg/mod.py"
+expect = ": PYQ105: "
+rule = "PYQ105"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ106/passing/repo/.agents/skills/good-skill/scripts/tool.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ106/violating/repo/.agents/skills/Bad_Skill/scripts/tool.py"
+expect = ": PYQ106: "
+rule = "PYQ106"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ107/passing/repo/src/pkg/good_module.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ107/violating/repo/src/pkg/BadModule.py"
+expect = ": PYQ107: "
+rule = "PYQ107"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ200/passing/repo/src/pkg/big.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ200/violating/repo/src/pkg/big.py"
+expect = ": PYQ200: "
+rule = "PYQ200"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ202/passing/repo/src/pkg/widget.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ202/violating/repo/src/pkg/widget.py"
+expect = ": PYQ202: "
+rule = "PYQ202"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ203/passing/repo/src/pkg/holder.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ203/violating/repo/src/pkg/holder.py"
+expect = ": PYQ203: "
+rule = "PYQ203"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ210/passing/repo/src/pkg/scan.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ210/violating/repo/src/pkg/scan.py"
+expect = ": PYQ210: "
+rule = "PYQ210"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ220/passing/repo/src/agent_introspection/drafting.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ220/violating/repo/src/pkg/runner.py"
+expect = ": PYQ220: "
+rule = "PYQ220"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ221/passing/repo/src/pkg/loader.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ221/violating/repo/src/pkg/loader.py"
+expect = ": PYQ221: "
+rule = "PYQ221"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ230/passing/repo/src/agent_introspection/contracts.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ230/violating/repo/src/agent_introspection/contracts.py"
+expect = ": PYQ230: "
+rule = "PYQ230"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ231/passing/repo/src/agent_introspection/contracts.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ231/violating/repo/src/agent_introspection/contracts.py"
+expect = ": PYQ231: "
+rule = "PYQ231"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_quality", "{fixture}"]
+passing = "tests/fixtures/proofs/python.quality/PYQ299/passing/repo/src/pkg/decodable.py"
+violating = "tests/fixtures/proofs/python.quality/PYQ299/violating/repo/src/pkg/undecodable.py"
+expect = ": PYQ299: "
+rule = "PYQ299"
+timeout_seconds = 60
+
+[[claim]]
+id = "python.scalability"
+rules = ["PYS000", "PYS250", "PYS251", "PYS252", "PYS253"]
+control = ["scripts/check-python-scalability.py", "scripts/lib/python_quality_scope.py", "scripts/lib/python_quality_settings.py", "proofs.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_scalability", "{fixture}"]
+passing = "tests/fixtures/proofs/python.scalability/PYS000/passing/repo/src/pkg/parsed.py"
+violating = "tests/fixtures/proofs/python.scalability/PYS000/violating/repo/src/pkg/broken.py"
+expect = ": PYS000: "
+rule = "PYS000"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_scalability", "{fixture}"]
+passing = "tests/fixtures/proofs/python.scalability/PYS250/passing/repo/src/pkg/loops.py"
+violating = "tests/fixtures/proofs/python.scalability/PYS250/violating/repo/src/pkg/loops.py"
+expect = ": PYS250: "
+rule = "PYS250"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_scalability", "{fixture}"]
+passing = "tests/fixtures/proofs/python.scalability/PYS251/passing/repo/src/pkg/scan.py"
+violating = "tests/fixtures/proofs/python.scalability/PYS251/violating/repo/src/pkg/scan.py"
+expect = ": PYS251: "
+rule = "PYS251"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_scalability", "{fixture}"]
+passing = "tests/fixtures/proofs/python.scalability/PYS252/passing/repo/src/pkg/scan.py"
+violating = "tests/fixtures/proofs/python.scalability/PYS252/violating/repo/src/pkg/scan.py"
+expect = ": PYS252: "
+rule = "PYS252"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_scalability", "{fixture}"]
+passing = "tests/fixtures/proofs/python.scalability/PYS253/passing/repo/src/pkg/scan.py"
+violating = "tests/fixtures/proofs/python.scalability/PYS253/violating/repo/src/pkg/scan.py"
+expect = ": PYS253: "
+rule = "PYS253"
+timeout_seconds = 60
+
+[[claim]]
+id = "python.fanout"
+rules = ["FANOUT.general", "FANOUT.large-module"]
+control = ["scripts/check-python-fanout.py", "scripts/lib/python_quality_scope.py", "scripts/lib/python_quality_settings.py", "proofs.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_fanout", "{fixture}"]
+passing = "tests/fixtures/proofs/python.fanout/FANOUT.general/passing/repo/src/pkg/wide.py"
+violating = "tests/fixtures/proofs/python.fanout/FANOUT.general/violating/repo/src/pkg/wide.py"
+expect = ": FANOUT.general: "
+rule = "FANOUT.general"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "python_fanout", "{fixture}"]
+passing = "tests/fixtures/proofs/python.fanout/FANOUT.large-module/passing/repo/src/pkg/large.py"
+violating = "tests/fixtures/proofs/python.fanout/FANOUT.large-module/violating/repo/src/pkg/large.py"
+expect = ": FANOUT.large-module: "
+rule = "FANOUT.large-module"
+timeout_seconds = 60
+
+[[claim]]
+id = "typescript.tsc"
+rules = ["TSC.*"]
+control = ["tsconfig.json", "dashboard/tsconfig.json", "dashboard/package.json", "dashboard/bun.lock", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "tsc", "{fixture}"]
+passing = "tests/fixtures/proofs/typescript.tsc/passing.ts"
+violating = "tests/fixtures/proofs/typescript.tsc/violating.ts"
+expect = "TS4111"
+timeout_seconds = 120
+
+[[claim.canary]]
+command = ["bash", "-c", "set -eu; repo=$PWD; t=$(mktemp -d); trap 'rm -rf \"$t\"' EXIT; mkdir -p \"$t/scripts\" \"$t/dashboard\" \"$t/lib\"; cp scripts/run-ci-quality-gates.sh \"$t/scripts/\"; cp tsconfig.json \"$t/\"; ln -s \"$repo/dashboard/node_modules\" \"$t/dashboard/node_modules\"; cp \"$1\" \"$t/lib/module.ts\"; git -C \"$t\" init -q; git -C \"$t\" add -A; bash \"$t/scripts/run-ci-quality-gates.sh\" check tsc", "_", "{fixture}"]
+passing = "tests/fixtures/proofs/typescript.tsc/passing.ts"
+violating = "tests/fixtures/proofs/typescript.tsc/violating.ts"
+expect = "lib/module.ts(3,37): error TS4111"
+rule = "TSC.project-coverage"
+timeout_seconds = 120
+
+[[claim]]
+id = "typescript.oxlint"
+rules = ["OXLINT.*"]
+control = ["oxlint.config.ts", "dashboard/package.json", "dashboard/bun.lock", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "oxlint", "{fixture}"]
+passing = "tests/fixtures/proofs/typescript.oxlint/passing.ts"
+violating = "tests/fixtures/proofs/typescript.oxlint/violating.ts"
+expect = "eslint(complexity)"
+
+[[claim]]
+id = "docs.prettier"
+rules = ["PRETTIER.version"]
+control = ["dashboard/package.json", "dashboard/bun.lock", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "prettier", "{fixture}"]
+passing = "tests/fixtures/proofs/docs.prettier/passing.md"
+violating = "tests/fixtures/proofs/docs.prettier/violating.md"
+expect = "Code style issues"
+
+[[claim]]
+id = "shell.shellcheck"
+rules = ["SHELLCHECK.*"]
+control = [".shellcheckrc", "pyproject.toml", "uv.lock", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "shellcheck", "{fixture}"]
+passing = "tests/fixtures/proofs/shell.shellcheck/passing.sh"
+violating = "tests/fixtures/proofs/shell.shellcheck/violating.sh"
+expect = "SC2312"
+
+[[claim.canary]]
+command = ["bash", "-c", "set -eu; repo=$PWD; t=$(mktemp -d); trap 'rm -rf \"$t\"' EXIT; mkdir -p \"$t/scripts\" \"$t/bin\"; cp scripts/run-ci-quality-gates.sh \"$t/scripts/\"; cp .shellcheckrc \"$t/\"; cp \"$1\" \"$t/bin/tool\"; git -C \"$t\" init -q; git -C \"$t\" add -A; UV_PROJECT=\"$repo\" bash \"$t/scripts/run-ci-quality-gates.sh\" check shellcheck", "_", "{fixture}"]
+passing = "tests/fixtures/proofs/shell.shellcheck/passing-extensionless"
+violating = "tests/fixtures/proofs/shell.shellcheck/violating-extensionless"
+expect = "bin/tool:4:24: note: Consider invoking this command separately"
+rule = "SHELLCHECK.coverage"
+timeout_seconds = 120
+
+[[claim]]
+id = "shell.shfmt"
+rules = ["SHFMT.*"]
+control = [".editorconfig", "pyproject.toml", "uv.lock", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "shfmt", "{fixture}"]
+passing = "tests/fixtures/proofs/shell.shfmt/passing.sh"
+violating = "tests/fixtures/proofs/shell.shfmt/violating.sh"
+expect = "+    -h | --help)"
+
+[[claim]]
+id = "structure"
+rules = ["STRUCT.*", "NAME.conventions", "RENAME.residue", "PREFIX.candidates"]
+control = ["scripts/check-structure.py", "scripts/lib/structure", "scripts/list-typescript-imports.ts", "tsconfig.json", "proofs.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/reversed-import"
+expect = "STRUCT.dependency-direction: rates (core) imports cli (interface)"
+rule = "STRUCT.dependency-direction"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/unmapped-module"
+expect = "STRUCT.dependency-direction: module part 'orders' has no tier"
+rule = "STRUCT.dependency-direction"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/ts-compliant"
+violating = "tests/fixtures/proofs/structure/ts-reversed-import"
+expect = "web/rates.ts:1: STRUCT.dependency-direction: web/rates (contract) imports web/main (entry)"
+rule = "STRUCT.dependency-direction"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/ts-compliant"
+violating = "tests/fixtures/proofs/structure/ts-sibling-import"
+expect = "web/invoice.ts:1: STRUCT.sibling-isolation: web/invoice imports its 'view' sibling web/view"
+rule = "STRUCT.sibling-isolation"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/sibling-import"
+expect = "STRUCT.sibling-isolation: invoice imports its 'service' sibling billing"
+rule = "STRUCT.sibling-isolation"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/lone-tier"
+expect = "STRUCT.tier-readership: tier 'store' is read by 1 part(s)"
+rule = "STRUCT.tier-readership"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/one-reader"
+expect = "STRUCT.single-owner-placement: 'rounding' sits in shared tier 'core'"
+rule = "STRUCT.single-owner-placement"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/misplaced-file"
+expect = "deploy/run.sh: STRUCT.folder-placement: no [structure].owners entry owns this path"
+rule = "STRUCT.folder-placement"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/grab-bag-folder"
+expect = "src/shop/misc: STRUCT.folder-placement: directory 'misc' is a grab-bag folder"
+rule = "STRUCT.folder-placement"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/banned-word"
+expect = "docs/utils.md: NAME.conventions: 'utils' is a banned word"
+rule = "NAME.conventions"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/child-repeats-parent"
+expect = "NAME.conventions: 'billing-notes' repeats its parent 'billing'"
+rule = "NAME.conventions"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/version-suffix"
+expect = "NAME.conventions: 'publish-v2' carries a version token"
+rule = "NAME.conventions"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/rename-residue"
+expect = "docs/guide.md:3: RENAME.residue: retired name 'export-report'"
+rule = "RENAME.residue"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "structure", "--scenario", "{fixture}"]
+passing = "tests/fixtures/proofs/structure/compliant"
+violating = "tests/fixtures/proofs/structure/prefix-cluster-member"
+expect = "scripts/check-gamma.sh: PREFIX.candidates: 'check-gamma.sh' joins the sibling prefix cluster 'scripts/check-*'"
+rule = "PREFIX.candidates"
+
+[[claim]]
+id = "tests.failure-propagation"
+rules = ["TEST.failure-propagation"]
+control = ["scripts/check-runner-failure-propagation.py", "scripts/check-test-run.py", "scripts/run-evidence.py", "scripts/lib/run_evidence.py", "scripts/lib/pytest_adapter.py", "scripts/lib/bun_adapter.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t1"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t2"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","failure_propagation","{fixture}"]
+passing = "tests/fixtures/proofs/tests.failure-propagation/passing/scripts/run-ci-quality-gates.sh"
+violating = "tests/fixtures/proofs/tests.failure-propagation/violating/scripts/run-ci-quality-gates.sh"
+expect = "TEST.failure-propagation"
+rule = "TEST.failure-propagation"
+timeout_seconds = 90
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","test_run","{fixture}"]
+passing = "tests/fixtures/proofs/tests.failure-propagation/passing/t1-pytest.json"
+violating = "tests/fixtures/proofs/tests.failure-propagation/violating/t1-pytest.json"
+expect = "TEST.failure-propagation"
+rule = "TEST.failure-propagation"
+timeout_seconds = 30
+
+[[claim]]
+id = "tests.growth"
+rules = ["TEST.growth.justified", "TEST.duplicate-path"]
+control = ["scripts/check-test-growth.py", "scripts/list-bun-test-cases.ts", "scripts/lib/git_changes.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_growth","{fixture}"]
+passing = "tests/fixtures/proofs/tests.growth/passing"
+violating = "tests/fixtures/proofs/tests.growth/violating-name"
+expect = "TEST.growth.justified"
+rule = "TEST.growth.justified"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_growth","{fixture}"]
+passing = "tests/fixtures/proofs/tests.growth/passing"
+violating = "tests/fixtures/proofs/tests.growth/violating-duplicate"
+expect = "TEST.duplicate-path"
+rule = "TEST.duplicate-path"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.coverage-ratchet"
+rules = ["TEST.coverage-ratchet"]
+control = ["scripts/check-coverage-ratchet.py", "pyproject.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","coverage_ratchet","{fixture}"]
+passing = "tests/fixtures/proofs/tests.coverage-ratchet/passing"
+violating = "tests/fixtures/proofs/tests.coverage-ratchet/violating-pragma"
+expect = "TEST.coverage-ratchet"
+rule = "TEST.coverage-ratchet"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","coverage_ratchet","{fixture}"]
+passing = "tests/fixtures/proofs/tests.coverage-ratchet/passing"
+violating = "tests/fixtures/proofs/tests.coverage-ratchet/violating-floor"
+expect = "fail_under lowered"
+rule = "TEST.coverage-ratchet"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.identity-artefacts"
+rules = ["TEST.identity-artefacts"]
+control = ["scripts/check-identity-artefacts.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","identity_artefacts","{fixture}"]
+passing = "tests/fixtures/proofs/tests.identity-artefacts/passing"
+violating = "tests/fixtures/proofs/tests.identity-artefacts/violating"
+expect = "TEST.identity-artefacts"
+rule = "TEST.identity-artefacts"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.tiers"
+rules = ["TEST.tier-selectors"]
+control = ["scripts/check-test-tiers.py", "pyproject.toml", "scripts/run-ci-quality-gates.sh"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_tiers", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.tiers/passing"
+violating = "tests/fixtures/proofs/tests.tiers/violating"
+expect = "TEST.tier-selectors"
+rule = "TEST.tier-selectors"
+timeout_seconds = 120
+
+[[claim]]
+id = "tests.t1-guard"
+rules = ["TEST.t1-isolation"]
+control = ["tests/support/tier_guard.py", "tests/conftest.py", "dashboard/t1-guard.ts", "dashboard/bunfig.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t1"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "t1_isolation", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.t1-guard/passing/test_in_memory_total.py"
+violating = "tests/fixtures/proofs/tests.t1-guard/violating/test_starts_process.py"
+expect = "TEST.t1-isolation"
+rule = "TEST.t1-isolation"
+timeout_seconds = 120
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "bun_t1_isolation", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.t1-guard/passing/in-memory.test.ts"
+violating = "tests/fixtures/proofs/tests.t1-guard/violating/spawns.test.ts"
+expect = "TEST.t1-isolation"
+rule = "TEST.t1-isolation"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.user-data"
+rules = ["TEST.user-data-guard"]
+control = ["tests/support/home_guard.py", "tests/conftest.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t1"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t2"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "user_data_guard", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.user-data/passing/test_writes_redirected_home.py"
+violating = "tests/fixtures/proofs/tests.user-data/violating/test_writes_real_home.py"
+expect = "TEST.user-data-guard"
+rule = "TEST.user-data-guard"
+timeout_seconds = 120
+
+[[claim]]
+id = "tests.mocking"
+rules = ["TEST.no-self-mocking"]
+control = ["scripts/check-test-mocking.py", "scripts/lib/proofs_settings.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_mocking", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.mocking/passing/test_fakes_a_seam.py"
+violating = "tests/fixtures/proofs/tests.mocking/violating/test_patches_owned_code.py"
+expect = "TEST.no-self-mocking"
+rule = "TEST.no-self-mocking"
+
+[[claim]]
+id = "tests.hooks"
+rules = ["TEST.no-test-hooks"]
+control = ["scripts/check-test-hooks.py", "scripts/lib/proofs_settings.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_hooks", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.hooks/passing/real_configuration.py"
+violating = "tests/fixtures/proofs/tests.hooks/violating/test_marker_branch.py"
+expect = "TEST.no-test-hooks"
+rule = "TEST.no-test-hooks"
+
+[[claim]]
+id = "tests.evasion"
+rules = ["TEST.no-evasion"]
+control = ["scripts/check-test-evasion.py", "scripts/lib/proofs_settings.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t1"
+status = "gate"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh t2"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_evasion", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.evasion/passing/test_runs_every_case.py"
+violating = "tests/fixtures/proofs/tests.evasion/violating/test_skips_a_case.py"
+expect = "TEST.no-evasion"
+rule = "TEST.no-evasion"
+
+[[claim]]
+id = "tests.subprocess-timeouts"
+rules = ["TEST.subprocess-timeouts"]
+control = ["scripts/check-test-subprocess-timeouts.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "subprocess_timeouts", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.subprocess-timeouts/passing/test_bounded_process.py"
+violating = "tests/fixtures/proofs/tests.subprocess-timeouts/violating/test_unbounded_process.py"
+expect = "TEST.subprocess-timeouts"
+rule = "TEST.subprocess-timeouts"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "subprocess_timeouts", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.subprocess-timeouts/passing/bounded.test.ts"
+violating = "tests/fixtures/proofs/tests.subprocess-timeouts/violating/unbounded.test.ts"
+expect = "TEST.subprocess-timeouts"
+rule = "TEST.subprocess-timeouts"
+
+[[claim]]
+id = "tests.placement"
+rules = ["TEST.placement", "NAME.test-files"]
+control = ["scripts/check-test-placement.py", "scripts/lib/proofs_settings.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_placement", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.placement/passing/repo/tests/test_spool_batches.py"
+violating = "tests/fixtures/proofs/tests.placement/violating-placement/repo/tests/spool_cases.py"
+expect = "TEST.placement"
+rule = "TEST.placement"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "test_placement", "{fixture}"]
+passing = "tests/fixtures/proofs/tests.placement/passing/repo/tests/test_spool_batches.py"
+violating = "tests/fixtures/proofs/tests.placement/violating-name/repo/tests/test_spool_batches_v2.py"
+expect = "NAME.test-files"
+rule = "NAME.test-files"
+
+[[claim]]
+id = "code-integrity"
+rules = ["CODE.no-comments", "CODE.no-placeholder-bodies", "CODE.no-product-mocks"]
+control = ["scripts/check-code-integrity.py", "scripts/check-typescript-limits.ts", "scripts/run-ci-quality-gates.sh", "proofs.toml"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "code_integrity", "{fixture}"]
+passing = "tests/fixtures/proofs/code-integrity/no-comments/passing"
+violating = "tests/fixtures/proofs/code-integrity/no-comments/violating"
+expect = "CODE.no-comments"
+rule = "CODE.no-comments"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "code_integrity", "{fixture}"]
+passing = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/passing.py"
+violating = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/violating.py"
+expect = "CODE.no-placeholder-bodies"
+rule = "CODE.no-placeholder-bodies"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "typescript_limits", "{fixture}"]
+passing = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/passing.ts"
+violating = "tests/fixtures/proofs/code-integrity/no-placeholder-bodies/violating.ts"
+expect = "CODE.no-placeholder-bodies"
+rule = "CODE.no-placeholder-bodies"
+
+[[claim.canary]]
+command = ["bash", "scripts/run-ci-quality-gates.sh", "check", "code_integrity", "{fixture}"]
+passing = "tests/fixtures/proofs/code-integrity/no-product-mocks/passing"
+violating = "tests/fixtures/proofs/code-integrity/no-product-mocks/violating"
+expect = "CODE.no-product-mocks"
+rule = "CODE.no-product-mocks"
+
+[[claim]]
+id = "tests.budget"
+rules = ["TEST.budget.t1-time", "TEST.budget.per-test-time"]
+control = ["scripts/check-test-budget.py", "scripts/lib/machine_probe.py", "scripts/build-scenario-repo.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_budget","{fixture}"]
+passing = "tests/fixtures/proofs/tests.budget/passing"
+violating = "tests/fixtures/proofs/tests.budget/violating-wall"
+expect = "TEST.budget.t1-time"
+rule = "TEST.budget.t1-time"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","test_budget","{fixture}"]
+passing = "tests/fixtures/proofs/tests.budget/passing"
+violating = "tests/fixtures/proofs/tests.budget/violating-per-test"
+expect = "TEST.budget.per-test-time"
+rule = "TEST.budget.per-test-time"
+timeout_seconds = 60
+
+[[claim]]
+id = "tests.golden-change-record"
+rules = ["TEST.golden-change-record"]
+control = ["scripts/check-golden-changes.py", "docs/references/golden-changes.md"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","golden_changes","{fixture}"]
+passing = "tests/fixtures/proofs/tests.golden-change-record/passing"
+violating = "tests/fixtures/proofs/tests.golden-change-record/violating"
+expect = "TEST.golden-change-record"
+rule = "TEST.golden-change-record"
+timeout_seconds = 60
+
+[[claim]]
+id = "surface.feature-map"
+rules = ["SURFACE.feature-map", "SURFACE.journeys"]
+control = ["scripts/check-verification-surface.py", "docs/features", "tests/journeys/test_install_journey.py"]
+
+[[claim.enforced_by]]
+point = "hook"
+file = ".pre-commit-config.yaml"
+ref = "scripts/run-ci-quality-gates.sh hook"
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh static"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","verification_surface","{fixture}"]
+passing = "tests/fixtures/proofs/surface.feature-map/passing"
+violating = "tests/fixtures/proofs/surface.feature-map/violating-map"
+expect = "SURFACE.feature-map"
+rule = "SURFACE.feature-map"
+timeout_seconds = 60
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","verification_surface","{fixture}"]
+passing = "tests/fixtures/proofs/surface.feature-map/passing"
+violating = "tests/fixtures/proofs/surface.feature-map/violating-journey"
+expect = "SURFACE.journeys"
+rule = "SURFACE.journeys"
+timeout_seconds = 60
+
+[[claim]]
+id = "surface.lever"
+rules = ["SURFACE.lever-isolation"]
+control = ["scripts/check-lever-isolation.py", "scripts/fresh-install/sandbox.sh"]
+
+[[claim.enforced_by]]
+point = "ci"
+file = "scripts/ci"
+ref = "scripts/run-ci-quality-gates.sh install"
+status = "gate"
+
+[[claim.canary]]
+command = ["bash","scripts/run-ci-quality-gates.sh","check","scenario","lever_isolation","{fixture}"]
+passing = "tests/fixtures/proofs/surface.lever/passing"
+violating = "tests/fixtures/proofs/surface.lever/violating"
+expect = "SURFACE.lever-isolation"
+rule = "SURFACE.lever-isolation"
+timeout_seconds = 90
+
+[[not_applicable]]
+rule = "GOLANGCI.*"
+reason = "The repository maintains no Go code: git ls-files lists no .go file, no go.mod and no golangci-lint config."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { absent = ["*.go", "**/*.go", "go.mod", "**/go.mod", "go.sum", ".golangci*"] }
+
+[[not_applicable]]
+rule = "PARITY.dependency-inventory"
+reason = "No optional analyzer dependencies: pyproject.toml declares dependencies = [] and no optional-dependencies; the only group is dev, installed by uv sync --locked --dev in the entrypoint."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { path = "pyproject.toml", contains = "dependencies = []" }
+
+[[not_applicable]]
+rule = "TEST.property-seed"
+reason = "No property-based tests: no hypothesis or fast-check import or dependency in owned code."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E '^(from|import) hypothesis|fast-check' -- . ':!tests/fixtures' ':!proofs.toml' || echo no-property-tests"], expect = "no-property-tests" }
+
+[[not_applicable]]
+rule = "TEST.mutation-sensitivity"
+reason = "No mutation tool or mutation later job: no mutmut, cosmic-ray or stryker in any manifest or lock."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E 'mutmut|cosmic-ray|stryker' -- pyproject.toml uv.lock dashboard/package.json scripts/ux-probe/package.json || echo no-mutation-tool"], expect = "no-mutation-tool" }
+
+[[not_applicable]]
+rule = "PYQ201"
+reason = "Ruff PLR0904 enforces the public-method limit (max-public-methods = 20 in pyproject.toml) under the ruff claim, so the bespoke copy would duplicate it."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { path = "pyproject.toml", contains = "max-public-methods = 20" }
+
+[[not_applicable]]
+rule = "PYQ211"
+reason = "No project analyzer exists: no *Analyzer class in src, scripts or .agents and [python_quality] analyzer_bases is empty, so no class has a project entrypoint to implement."
+approved_by = "adam-jackson-cf, 2026-11-27"
+evidence = { command = ["sh", "-c", "git grep -q -E 'class [A-Za-z]*Analyzer' -- src scripts .agents || echo no-project-analyzers"], expect = "no-project-analyzers" }
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "tests/journeys/test_install_journey.py::test_a_new_machine_installs_and_every_dashboard_view_answers"
+reason = "Deferred T2: drives a sandboxed fresh install through the lever in Docker, so only the install mode (CI fresh-install job) runs it."
+approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "tests/test_command_shape_parity.py::test_sql_fragment_matches_the_python_shape_for_every_fixture_case"
+reason = "Deferred T2: runs the command-shape SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
+approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
+
+[[exception]]
+rule = "TEST.tier-selectors"
+path = "dashboard/server/pipeline.deferred.ts"
+reason = "Deferred T2: runs the spool-delivery SQL in a ClickHouse container, which only the install mode starts, so commits never need Docker."
+approved_by = "adam-jackson-cf, 2026-11-28"
+expires = "2027-05-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/check-*"
+reason = "One command script per checker, named check-<check>; the gate entrypoint calls each as check_<name>, so the shared prefix is the naming convention, not a hidden concept."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/lib/bun_*"
+reason = "Library modules for the scripts, each named for the Bun artefact it reads (the bun test report adapter, bun.lock); a bun folder would hold two unrelated readers."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/lib/python_*"
+reason = "Library modules shared by the Python quality checkers, named for the checker family they serve; scripts/lib already is their folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/list-*"
+reason = "Two unrelated command scripts that each print a list (bun test cases, the Python scope); the verb names what they do."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "scripts/run-*"
+reason = "The gate entrypoint and the run-evidence collector are separate commands; the verb names what they do."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = ".agents/skills/introspection-*"
+reason = "User-facing skill names: the product prefix names the skill catalogue users invoke by name, and skill folders must match their names."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_cli_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_code_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_command_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_dashboard_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_doctor_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_facts_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_harness_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_hook_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_hooks_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_python_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_quality_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_signoz_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_structure_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_test_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "PREFIX.candidates"
+path = "tests/test_tier_*"
+reason = "Flat tests/test_<area>_*.py layout required by [layout] test_file_patterns: test files sharing an area prefix are the layout, not a missing folder."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[[exception]]
+rule = "NAME.conventions"
+check = "child-repeats-parent"
+path = ".agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh"
+reason = "User-facing install command named in the onboarding skill and twelve documents; renaming it would break the commands users run."
+approved_by = "adam-jackson-cf, 2026-11-27"
+expires = "2027-11-28"
+
+[python_quality]
+maintained_roots = ["scripts", "src", "tests"]
+skill_roots = [".agents/skills"]
+script_root = "scripts"
+script_module_directory = "scripts/lib"
+script_names = [
+    "build-scenario-repo.py",
+    "check-code-integrity.py",
+    "check-coverage-ratchet.py",
+    "check-dependency-audit.py",
+    "check-golden-changes.py",
+    "check-hook-installed.py",
+    "check-identity-artefacts.py",
+    "check-install-guidance.py",
+    "check-lever-isolation.py",
+    "check-lock-parity.py",
+    "check-python-fanout.py",
+    "check-python-mypy.py",
+    "check-python-quality.py",
+    "check-python-scalability.py",
+    "check-python-suppressions.py",
+    "check-quality-gate-parity.py",
+    "check-runner-failure-propagation.py",
+    "check-skill-metadata.py",
+    "check-structure.py",
+    "check-test-budget.py",
+    "check-test-evasion.py",
+    "check-test-growth.py",
+    "check-test-hooks.py",
+    "check-test-mocking.py",
+    "check-test-placement.py",
+    "check-test-run.py",
+    "check-test-subprocess-timeouts.py",
+    "check-test-tiers.py",
+    "check-verification-surface.py",
+    "list-python-scope.py",
+    "render-measures.py",
+    "run-evidence.py",
+    "validate-rule-coverage.py",
+]
+test_root_files = ["tests/__init__.py", "tests/conftest.py"]
+test_groups = ["integration", "journeys", "seams", "unit"]
+non_package_directories = [".github", "fixtures", "scripts", "src", "tests"]
+generic_name_allowlist = []
+class_max_lines = 700
+class_max_init_args = 8
+class_max_instance_attributes = 12
+analyzer_bases = []
+dynamic_import_adapters = []
+contract_roots = ["src/agent_introspection"]
+max_loop_depth = 2
+analyzer_prefixes = ["scripts"]
+ownership_markers = ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]
+fanout_root_packages = ["agent_introspection"]
+fanout_max = 10
+large_module_nloc = 800
+large_module_fanout_max = 3
+
+[python_quality.excluded_paths]
+
+[python_quality.project_analyzer_entrypoints]
+
+[python_quality.subprocess_wrappers]
+"scripts/build-scenario-repo.py" = ["_git"]
+"scripts/check-code-integrity.py" = ["_git"]
+"scripts/check-dependency-audit.py" = ["_run"]
+"scripts/check-hook-installed.py" = ["_git_path"]
+"scripts/check-lock-parity.py" = ["_git_ls_files"]
+"scripts/check-python-mypy.py" = ["_mypy"]
+"scripts/check-runner-failure-propagation.py" = ["_run"]
+"scripts/check-skill-metadata.py" = ["_git_ls_files"]
+"scripts/check-test-subprocess-timeouts.py" = ["_git_ls_files"]
+"scripts/check-test-tiers.py" = ["_pytest"]
+"scripts/lib/command_runner.py" = ["run_command"]
+"scripts/lib/proofs_settings.py" = ["_git_ls_files", "_git_lines"]
+"scripts/lib/python_quality_scope.py" = ["_git_output"]
+"scripts/lib/structure/repo_git.py" = ["_git"]
+"scripts/validate-rule-coverage.py" = ["_spawn"]
+"src/agent_introspection/classify.py" = ["_run_key_command"]
+"src/agent_introspection/dashboard_service.py" = ["_run_bun"]
+"src/agent_introspection/doctor_harness.py" = ["_run_version"]
+"src/agent_introspection/drafting.py" = ["run_codex"]
+"src/agent_introspection/facts.py" = ["run", "_run_local_command"]
+"src/agent_introspection/hook_install.py" = ["_run_omp"]
+"src/agent_introspection/schedule.py" = ["launchctl", "systemctl"]
+"src/agent_introspection/signoz_detect.py" = ["_run_docker"]
+"tests/test_command_shape_parity.py" = ["_clickhouse_query"]
+"tests/test_code_integrity_git_modes.py" = ["_git"]
+"tests/test_diff_base_checks.py" = ["_run"]
+"tests/test_facts_registry_package.py" = ["_run_registry_probe"]
+"tests/test_hook_install_shim_process.py" = ["_run_shim"]
+"tests/test_hook_worktree_isolation.py" = ["_run"]
+"tests/test_hooks_runtime_scripts.py" = ["_pause", "_run_activity_shim", "_run_bun_probe"]
+"tests/test_preflight_cli_startup.py" = ["_run_python"]
+"tests/test_python_checker_scripts.py" = ["_run"]
+"tests/test_quality_scripts.py" = ["_git", "_run"]
+"tests/test_render_measures_script.py" = ["_render"]
+"tests/test_signoz_install_script.py" = ["_run_install"]
+"tests/test_structure_rules_scenarios.py" = ["_git"]
+"tests/test_test_evidence_canaries.py" = ["_gate", "_run_fixture"]
+"tests/test_tier_guards.py" = ["_run"]
+"tests/journeys/test_install_journey.py" = ["_lever"]
+
+[python_quality.filesystem_seams]
+"scripts/fresh-install/otlp_stub.py" = ["_write_text"]
+"scripts/lib/filesystem.py" = [
+    "copy_file",
+    "copy_tree",
+    "exists",
+    "glob",
+    "is_dir",
+    "is_executable",
+    "is_file",
+    "is_symlink",
+    "iterdir",
+    "make_executable",
+    "mkdir",
+    "modified_time",
+    "read_bytes",
+    "read_text",
+    "read_toml",
+    "remove_tree",
+    "rglob",
+    "unlink",
+    "write_text",
+]
+"scripts/validate-rule-coverage.py" = ["_is_dir", "_is_file", "_read_text", "_read_toml"]
+
+[python_quality.environment_seams]
+
+[structure]
+source_root = "src"
+import_package = "agent_introspection"
+tiers = ["contract", "store", "domain", "service", "interface"]
+banned_words = [
+  "common",
+  "compat",
+  "fallback",
+  "helpers",
+  "legacy",
+  "manager",
+  "misc",
+  "new",
+  "old",
+  "stuff",
+  "temp",
+  "utils",
+]
+catalogue_plurals = [
+  "agents",
+  "assets",
+  "commands",
+  "docs",
+  "experiments",
+  "extensions",
+  "features",
+  "fixtures",
+  "journeys",
+  "problems",
+  "profiles",
+  "references",
+  "rules",
+  "scripts",
+  "signals",
+  "skills",
+  "stages",
+  "templates",
+  "tests",
+  "tools",
+  "workflows",
+]
+fixed_files = [
+  "__init__.py",
+  "__main__.py",
+  "conftest.py",
+  "index.ts",
+  "index.tsx",
+  "index.js",
+  "index.jsx",
+  "index.mts",
+  "index.cts",
+  "index.mjs",
+  "index.cjs",
+  "*.d.ts",
+  "*.d.mts",
+  "*.d.cts",
+  "Dockerfile",
+  "Dockerfile.*",
+  "Containerfile",
+  "Makefile",
+  "GNUmakefile",
+  "makefile",
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "tsconfig.json",
+  "tsconfig.*.json",
+  "jsconfig.json",
+  "pyproject.toml",
+  "go.mod",
+  "go.sum",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "README",
+  "README.md",
+  "LICENSE",
+  "LICENSE.*",
+  "COPYING",
+  "devcontainer.json",
+  ".devcontainer.json",
+  ".gitignore",
+  ".gitattributes",
+  ".editorconfig",
+  ".npmrc",
+  ".nvmrc",
+  ".python-version",
+  ".tool-versions",
+  "uv.lock",
+  "bun.lock",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "go.work",
+  "go.work.sum",
+  "requirements.txt",
+  "ruff.toml",
+  ".ruff.toml",
+  "mypy.ini",
+  ".mypy.ini",
+  ".importlinter",
+  ".golangci.yml",
+  ".golangci.yaml",
+  ".golangci.toml",
+  ".golangci.json",
+  ".shellcheckrc",
+  "shellcheckrc",
+  "biome.json",
+  "biome.jsonc",
+  "eslint.config.*",
+  ".oxlintrc.json",
+  "oxlint.config.ts",
+  "vitest.config.*",
+  ".node-version",
+]
+repeat_exempt_files = ["__init__.py", "__main__.py"]
+pyq_owned_extensions = [".py"]
+test_name_patterns = ["test_*.py", "*_test.py"]
+
+[structure.tier_modules]
+contract = [
+  "__init__",
+  "command_shape",
+  "config",
+  "config_writers",
+  "interventions",
+  "json_types",
+  "report_summary",
+  "workflow",
+]
+store = [
+  "capabilities",
+  "facts",
+  "facts_sql",
+  "harness_profiles",
+  "hooks",
+  "spool",
+]
+domain = [
+  "candidates",
+  "evaluation",
+  "evidence",
+  "findings",
+  "inbox",
+  "preflight",
+  "profiles",
+  "proposals",
+  "review",
+  "schedule",
+]
+service = [
+  "classify",
+  "cli_common",
+  "dashboard_service",
+  "doctor",
+  "doctor_harness",
+  "drafting",
+  "harness_config",
+  "hook_install",
+  "producers",
+  "setup_flow",
+  "signoz_detect",
+]
+interface = [
+  "cli",
+  "cli_dashboard",
+  "cli_doctor",
+  "cli_facts",
+  "cli_harness",
+  "cli_onboarding",
+  "cli_producers",
+  "cli_proposals",
+  "cli_setup",
+  "cli_signoz",
+]
+
+[structure.typescript]
+tsconfig = "tsconfig.json"
+tiers = ["primitive", "contract", "model", "component", "view", "route", "app", "entry"]
+
+[structure.typescript.tier_modules]
+primitive = [
+  "dashboard/server/assets",
+  "dashboard/src/harnesses.generated",
+  "dashboard/src/tokens",
+  "dashboard/src/type-guards",
+  "dashboard/swap-dist",
+]
+contract = ["dashboard/src/contracts", "dashboard/src/format"]
+model = [
+  "dashboard/server/clickhouse",
+  "dashboard/server/interventions",
+  "dashboard/server/record-route",
+  "dashboard/server/refreshers",
+  "dashboard/server/views",
+  "dashboard/server/workflow",
+  "dashboard/src/app-state",
+  "dashboard/src/charts",
+  "dashboard/src/harness-scope",
+]
+component = [
+  "dashboard/server/features",
+  "dashboard/server/pipeline",
+  "dashboard/src/charts-interval",
+  "dashboard/src/components",
+]
+view = [
+  "dashboard/src/views/Cache",
+  "dashboard/src/views/Effort",
+  "dashboard/src/views/Friction",
+  "dashboard/src/views/Guardrails",
+  "dashboard/src/views/Intent",
+  "dashboard/src/views/Interventions",
+  "dashboard/src/views/Pipeline",
+  "dashboard/src/views/PipelineCoverage",
+  "dashboard/src/views/Provider",
+  "dashboard/src/views/Recurrence",
+  "dashboard/src/views/Session",
+  "dashboard/src/views/Tools",
+]
+route = ["dashboard/src/routes", "dashboard/src/routes-health", "dashboard/src/routes-outcomes"]
+app = [
+  "dashboard/src/App",
+  "dashboard/src/app-data",
+  "dashboard/src/app-parts",
+  "dashboard/src/views/Glossary",
+]
+entry = [
+  "dashboard/build",
+  "dashboard/server",
+  "dashboard/src/main",
+  "dashboard/t1-guard",
+  "oxlint.config",
+  "scripts/check-typescript-limits",
+  "scripts/list-bun-test-cases",
+  "scripts/list-typescript-imports",
+  "scripts/ux-probe/probe",
+  "scripts/ux-probe/score",
+  "src/agent_introspection/hook_runtime/omp/activity",
+]
+
+[structure.owners]
+".agents/skill-metadata.schema.json" = "skills"
+".agents/skills/" = "skills"
+".claude/" = "skills"
+".codegraph/" = "tooling"
+".github/" = "ci"
+".markdownlint-cli2.jsonc" = "tooling"
+".pre-commit-config.yaml" = "ci"
+"HANDOFF.md" = "docs"
+"config.example.toml" = "package"
+"dashboard/" = "dashboard"
+"docs/" = "docs"
+"mise.toml" = "tooling"
+"proofs.toml" = "ci"
+"scripts/" = "tooling"
+"src/agent_introspection/" = "package"
+"tests/" = "tests"
+
+[structure.casing]
+"scripts/*" = "kebab-case"
+".github/workflows/*" = "kebab-case"
+
+[structure.casing_patterns]
+"kebab-case" = "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+
+[structure.skill_layout]
+root = ".agents/skills"
+marker = "SKILL.md"
+files = ["SKILL.md", "README.md", "references/*.md", "assets/**", "scripts/**"]
+
+[structure.ownership_areas]
+"dashboard/**" = "dashboard"
+"tests/test_candidates.py" = "findings"
+"tests/test_capabilities.py" = "producers"
+"tests/test_classify.py" = "labels"
+"tests/test_cli.py" = "cli"
+"tests/test_cli_producers.py" = "producers"
+"tests/test_cli_spool*.py" = "spool"
+"tests/test_cli_sync.py" = "cli"
+"tests/test_command_shape*.py" = "facts"
+"tests/test_config*.py" = "config"
+"tests/test_dashboard_*.py" = "dashboard"
+"tests/test_doctor*.py" = "doctor"
+"tests/test_drafting.py" = "proposals"
+"tests/test_evaluation.py" = "interventions"
+"tests/test_facts*.py" = "facts"
+"tests/test_findings.py" = "findings"
+"tests/test_harness_*.py" = "harnesses"
+"tests/test_hook*.py" = "hooks"
+"tests/test_inbox.py" = "spool"
+"tests/test_measures_doc.py" = "facts"
+"tests/test_preflight*.py" = "doctor"
+"tests/test_producers.py" = "producers"
+"tests/test_profiles.py" = "harnesses"
+"tests/test_proposals.py" = "proposals"
+"tests/test_review.py" = "proposals"
+"tests/test_report_summary.py" = "interventions"
+"tests/test_schedule.py" = "schedule"
+"tests/test_setup_flow.py" = "setup"
+"tests/test_signoz_*.py" = "signoz"
+"tests/test_spool*.py" = "spool"
+"tests/test_python_*.py" = "quality-gates"
+"tests/test_quality_scripts.py" = "quality-gates"
+"tests/test_render_measures_script.py" = "quality-gates"
+"tests/test_small_checkers.py" = "quality-gates"
+"tests/test_*_check.py" = "quality-gates"
+"tests/test_*_checks.py" = "quality-gates"
+"tests/test_tier_guards.py" = "quality-gates"
+"tests/test_hook_worktree_isolation.py" = "quality-gates"
+"tests/test_code_integrity*.py" = "quality-gates"
+"tests/test_structure_rules*.py" = "quality-gates"
+"tests/test_dependency_audit.py" = "quality-gates"
+"tests/test_gate_checkers.py" = "quality-gates"
+"tests/test_quality_gate_parity.py" = "quality-gates"
+"tests/test_rule_coverage_validator.py" = "quality-gates"
+"tests/test_coverage_ratchet_rules.py" = "quality-gates"
+"tests/test_failure_propagation_reports.py" = "quality-gates"
+"tests/test_run_report_normalisation.py" = "quality-gates"
+"tests/test_static_test_cases.py" = "quality-gates"
+"tests/test_test_budget_limits.py" = "quality-gates"
+"tests/test_test_evidence_canaries.py" = "quality-gates"
+"tests/test_verification_surface_rules.py" = "quality-gates"
+"tests/journeys/test_*.py" = "setup"
+
+[layout]
+support_dir = "tests/support"
+support_files = ["dashboard/server/test-fixtures.ts"]
+instruction_files = ["tests/AGENTS.md", "tests/CLAUDE.md"]
+fixtures_dir = "tests/fixtures"
+canary_fixtures_dir = "tests/fixtures/proofs"
+test_file_patterns = [
+  "tests/test_*.py",
+  "tests/journeys/test_*.py",
+  "dashboard/*.test.ts",
+  "dashboard/**/*.test.ts",
+  "dashboard/**/*.test.tsx",
+  "dashboard/**/*.deferred.ts",
+]
+test_like_patterns = ["**/test*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
+test_marker_tokens = ["jest", "pytest", "test", "testing", "tests", "vitest"]
+adapter_seams = [
+  "agent_introspection.classify:_run_key_command",
+  "agent_introspection.classify:_urlopen",
+  "agent_introspection.dashboard_service:_bun",
+  "agent_introspection.dashboard_service:_run_bun",
+  "agent_introspection.doctor:_connect",
+  "agent_introspection.doctor:_open_local",
+  "agent_introspection.doctor:_urlopen",
+  "agent_introspection.doctor_harness:_run_version",
+  "agent_introspection.facts:_run_local_command",
+  "agent_introspection.facts:_urlopen",
+  "agent_introspection.facts:runner",
+  "agent_introspection.hook_install:_run_omp",
+  "agent_introspection.hook_install:_which",
+  "agent_introspection.hooks:read_stdin",
+  "agent_introspection.schedule:_linger_file_exists",
+  "agent_introspection.schedule:_python_executable",
+  "agent_introspection.schedule:_which",
+  "agent_introspection.schedule:launchctl",
+  "agent_introspection.schedule:launchd_domain",
+  "agent_introspection.schedule:platform_name",
+  "agent_introspection.schedule:systemctl",
+  "agent_introspection.signoz_detect:_docker_cli",
+  "agent_introspection.signoz_detect:_run_docker",
+  "agent_introspection.signoz_detect:clickhouse_answers",
+  "agent_introspection.signoz_detect:port_open",
+  "agent_introspection.spool:_urlopen",
+  "agent_introspection.spool:cli_version",
+  "agent_introspection.spool:host_name",
+]
+
+[layout.test_names]
+ignored = ["test", "tests", "spec"]
+ticket = '^(?:\d+|(?:issue|bug|ticket|pr|gh|jira)\d+)$'
+version = '^(?:v\d+|[a-z]+v\d+)$'
+date = '^(?:(?:19|20)\d{2}(?:\d{4})?)$'
+trailing_number = '^[a-z]+\d+$'
+numbered_allowlist = [
+  "base32", "base64", "float32", "float64", "http2", "http3", "int16", "int32", "int64", "int8",
+  "ipv4", "ipv6", "md5", "oauth2", "s3", "sha1", "sha256", "sha512", "uint8", "utf16", "utf8",
+  "x509",
+]
+
+[[test_budget.machine]]
+id = "darwin-arm64-apple-m5-pro-python3.14-bun1.3.0"
+wall_limit_s = 19
+per_test_limit_s = 1
+approval = "adam-jackson-cf, 2026-11-27"
+
+[surface]
+lever_name = "sandbox.sh lever"
+feature_map_path = "docs/features"
+journey_file_pattern = "tests/journeys/test_*.py"
+lever_command = ["bash", "scripts/fresh-install/sandbox.sh", "lever"]
+data_dir_arg = "--data-dir"
+evidence_dir_arg = "--evidence-dir"
+doctor_marker = "LEVER DOCTOR FAILED"
+evidence_ports_file = "ports"
+lever_timeout_s = 1500
+doctor_failure_env = { DOCKER_HOST = "unix:///nonexistent/docker.sock" }
+
+[golden]
+globs = ["tests/fixtures/command_shape.json", "docs/ux/feature-audit/titles.json"]
+change_record = "docs/references/golden-changes.md"
+
+[identity_artefacts]
+"src/agent_introspection/facts_sql/00*_*.sql" = "facts store DDL: the tables and views every installed ClickHouse holds"
+"src/agent_introspection/workflow.sql" = "workflow store schema: every existing SQLite workflow store was created from it"
+"src/agent_introspection/facts_sql/signal_support.toml" = "signal registry: the signal IDs findings, proposals and the dashboard name"

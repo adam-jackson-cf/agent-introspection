@@ -21,11 +21,9 @@ export const lastDays = (days: number): Pick<Filters, "start" | "end"> => {
     end: iso(end),
   };
 };
-/** The selector label for the filters: a live preset, or a fixed custom range. */
 export const presetFor = (filters: Filters) =>
   Object.entries(PRESETS).find(([, days]) => days === filters.range)?.[0] ??
   "Custom range";
-/** Reads the URL: `range` is a live preset; `start`/`end` a fixed range; neither the default preset. */
 export const readFilters = (): Filters => {
   const query = new URLSearchParams(window.location.search);
   const harness = query.get("harness") ?? "";
@@ -42,7 +40,6 @@ export const readFilters = (): Filters => {
   if (start && end) return { start, end, ...scope };
   return { ...lastDays(DEFAULT_DAYS), ...scope, range: DEFAULT_DAYS };
 };
-/** Filters as URL parameters: a live preset keeps only its length; All has no `harness`. */
 export const filterQuery = (filters: Filters) => {
   const query = new URLSearchParams(
     filters.range === undefined
@@ -52,7 +49,6 @@ export const filterQuery = (filters: Filters) => {
   if (filters.harness !== "") query.set("harness", filters.harness);
   return query;
 };
-/** Filters as API parameters: always the resolved window. */
 export const apiQuery = (filters: Filters) =>
   new URLSearchParams({
     start: filters.start,
@@ -62,20 +58,20 @@ export const apiQuery = (filters: Filters) =>
 
 export const isViewResponse = (value: unknown): value is ViewResponse =>
   isRecord(value) &&
-  typeof value.view === "string" &&
-  isRecord(value.data) &&
-  isRecord(value.errors) &&
-  isRecord(value.contributions) &&
-  isRecord(value.filters);
+  typeof value["view"] === "string" &&
+  isRecord(value["data"]) &&
+  isRecord(value["errors"]) &&
+  isRecord(value["contributions"]) &&
+  isRecord(value["filters"]);
 export const isRegistry = (value: unknown): value is Registry =>
   isRecord(value) &&
-  Array.isArray(value.signals) &&
-  Array.isArray(value.support) &&
-  Array.isArray(value.routes) &&
-  Array.isArray(value.strays) &&
-  Array.isArray(value.exclusions) &&
-  Array.isArray(value.harnesses) &&
-  Array.isArray(value.hidden);
+  Array.isArray(value["signals"]) &&
+  Array.isArray(value["support"]) &&
+  Array.isArray(value["routes"]) &&
+  Array.isArray(value["strays"]) &&
+  Array.isArray(value["exclusions"]) &&
+  Array.isArray(value["harnesses"]) &&
+  Array.isArray(value["hidden"]);
 
 export async function getJson(
   url: string,
@@ -85,8 +81,8 @@ export async function getJson(
   const body: unknown = await response.json();
   if (!response.ok)
     throw new Error(
-      isRecord(body) && typeof body.error === "string"
-        ? body.error
+      isRecord(body) && typeof body["error"] === "string"
+        ? body["error"]
         : "Request failed",
     );
   return body;

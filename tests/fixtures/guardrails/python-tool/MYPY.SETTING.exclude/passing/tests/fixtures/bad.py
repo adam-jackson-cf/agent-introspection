@@ -1,1 +1,0 @@
-VALUE: int = "a"

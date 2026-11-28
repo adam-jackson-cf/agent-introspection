@@ -30,8 +30,25 @@ removes the container and closes both forwards.
 
 Run `verify` and `agent` on separate sandboxes: each expects a machine where nothing
 has been installed yet. Commit first, because the sandbox clones `HEAD`. It runs on
-macOS and Linux; CI runs `verify` on Linux for every push and pull request (the
-`fresh-install` job), since GitHub's macOS runners have no Docker.
+macOS and Linux; CI runs it on Linux for every push and pull request, since GitHub's
+macOS runners have no Docker: the `fresh-install` job runs
+`bash scripts/run-ci-quality-gates.sh install`, which drives the lever below twice
+(`check lever_isolation`) and then the journeys under `tests/journeys/`.
+
+## The lever
+
+`bash scripts/fresh-install/sandbox.sh lever --data-dir DIR --evidence-dir DIR [--docker-ssh USER@HOST]`
+runs `create`, `verify` and `destroy` as one command. Before it starts, its doctor
+checks the tools and Docker; when they are not ready it prints
+`LEVER DOCTOR FAILED: <reason>` and exits 3, which counts as blocked infrastructure,
+never as a test result. It keeps `DIR` evidence after cleanup: the `create`, `verify`
+and `destroy` logs, a copy of the sandbox `state/` (with each view's response under
+`state/verify/`), and `ports`, every port it used.
+
+`verify` includes a `facts-verify` step: the installed `agent-introspection facts verify`
+runs against the sandbox ClickHouse, so every facts SQL statement in the checkout builds
+in a scratch database there. When any step fails, `check lever_isolation` prints the
+evidence logs.
 
 ## What the sandbox is
 
@@ -52,8 +69,8 @@ while a SigNoz answers on `127.0.0.1:8123` or `:4318` (`--allow-local-signoz` ov
 it). Two more exceptions:
 
 - Caches are shared to save time: `uv` and `bun` read and write their usual caches.
-- The sandbox dashboard listens on the fixed port 4173. `verify` skips its dashboard
-  checks when another dashboard already answers there.
+- The sandbox dashboard listens on a free loopback port. `verify` picks it and passes
+  it to `setup --dashboard-port`, so a dashboard already running here never clashes.
 
 The agent session:
 

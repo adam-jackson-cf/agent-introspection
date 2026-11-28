@@ -9,7 +9,6 @@ import { HEALTH_VIEWS } from "./routes-health";
 import { OUTCOME_VIEWS } from "./routes-outcomes";
 
 export type DetailSpec = {
-  /** The path segment under the parent view, as in `/pipeline/coverage`. */
   id: string;
   title: string;
   question: string;
@@ -20,14 +19,11 @@ export type ViewSpec = {
   id: ViewId;
   title: string;
   question: string;
-  /** The question while an experimental feature the view answers part of is off. */
   questionWithout?: { feature: keyof Features; question: string };
   component: ComponentType<{ data: Record<string, Row[]> }>;
-  /** L3 pages of this view: same nav item, filters and data. */
   details?: DetailSpec[];
 };
 
-/** The sidebar groups and the order of their views: reading order. */
 export const NAV_GROUPS: { title: string; views: ViewId[] }[] = [
   {
     title: "Health",
@@ -43,11 +39,9 @@ export const NAV_GROUPS: { title: string; views: ViewId[] }[] = [
 const BY_ID = new Map(
   [...HEALTH_VIEWS, ...OUTCOME_VIEWS].map((view) => [view.id, view]),
 );
-/** Question-led views, in reading order. */
 export const VIEWS: ViewSpec[] = NAV_GROUPS.flatMap((group) =>
   group.views.map((id) => BY_ID.get(id)!),
 );
-/** The sidebar group a view belongs to. */
 export const groupOf = (id: ViewId): string =>
   NAV_GROUPS.find((group) => group.views.includes(id))!.title;
 
@@ -76,7 +70,6 @@ export const readLocation = (): Location => {
   return detail ? { kind: "view", view, detail } : { kind: "unknown" };
 };
 
-/** The URL path of a view location: `pipeline`, or `pipeline/coverage` for its detail. */
 export const locationPath = (location: {
   view: ViewSpec;
   detail?: DetailSpec;

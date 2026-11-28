@@ -1,14 +1,3 @@
-"""A stand-in SigNoz collector for the fresh-install sandbox.
-
-It answers OTLP/HTTP JSON on loopback the way the SigNoz collector does, and writes
-each log record into the sandbox ClickHouse's ``signoz_logs.distributed_logs_v2`` (the
-stub table ``signoz-stub.sql`` creates), so hook records travel the whole path: hook,
-spool, collector, ClickHouse, ``facts sync``. Traces and metrics are accepted and
-counted, not stored. Every request is counted by path in ``<state>/collector.json``.
-
-Usage: ``python3 -I otlp_stub.py PORT CLICKHOUSE_URL STATE_DIR``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 INSERT = "INSERT INTO signoz_logs.distributed_logs_v2 FORMAT JSONEachRow"
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
 
 
 def _value(item: dict[str, Any]) -> object:
@@ -48,7 +41,6 @@ def _attributes(items: list[dict[str, Any]]) -> dict[str, dict[str, object]]:
 
 
 def _scopes(body: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """Return each scope's logs with its resource."""
     return [
         (resource_logs.get("resource", {}), scope)
         for resource_logs in body.get("resourceLogs", [])
@@ -57,7 +49,6 @@ def _scopes(body: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]
 
 
 def _records(body: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """Return each log record with its resource."""
     return [
         (resource, record)
         for resource, scope in _scopes(body)
@@ -66,7 +57,6 @@ def _records(body: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]
 
 
 def rows(body: dict[str, Any]) -> list[dict[str, object]]:
-    """Return the SigNoz log rows an OTLP/HTTP JSON logs request carries."""
     found: list[dict[str, object]] = []
     for resource_part, record in _records(body):
         resource = _attributes(resource_part.get("attributes", []))
@@ -90,7 +80,6 @@ def rows(body: dict[str, Any]) -> list[dict[str, object]]:
 
 
 def main(port: int, clickhouse: str, state: Path) -> None:
-    """Serve until interrupted."""
     counts: dict[str, int] = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -114,7 +103,7 @@ def main(port: int, clickhouse: str, state: Path) -> None:
                             pass
                     except OSError:
                         status = 503
-            (state / "collector.json").write_text(json.dumps(counts, sort_keys=True))
+            _write_text(state / "collector.json", json.dumps(counts, sort_keys=True))
             answer = b"{}"
             self.send_response(status)
             self.send_header("Content-Type", "application/json")

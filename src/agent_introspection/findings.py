@@ -1,24 +1,3 @@
-"""Workflow findings promoted from recurring problems in the facts.
-
-Each run reads the last seven Europe/London calendar days and upserts one finding
-per recurring problem from the ``facts.failure_cluster`` detector: a (tool family,
-failure class) pair of tool failures, which groups the same behaviour across
-harnesses, tool names, and the files it happened on. Impact is the affected tasks,
-with tasks that did not end cleanly counted twice.
-
-Calls in evaluation workspaces (a tool call's working directory or failure path under
-a temporary directory, or any call of a session that has one) are excluded, because
-they are test workloads rather than work to improve.
-
-- ``actionable``: at least 3 occurrences in 2 tasks on 2 days, or 5 occurrences
-  in 3 tasks (the V8 actionable-repeat rule);
-- ``emerging``: recurring across at least 2 tasks but below that threshold;
-- ``dormant``: an active finding from a detector with no occurrence in the window.
-
-Candidates are exported in impact order. Counts describe the seven-day window;
-``first_seen_ns`` keeps the earliest ever seen.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -37,9 +16,6 @@ from agent_introspection.json_types import JsonObject
 DETECTOR_ID = "facts.failure_cluster"
 DETECTOR_VERSION = 1
 CATEGORY = "tool_failure_cluster"
-# Detectors that no longer run: their still-active findings go dormant on the next
-# refresh and stay as history. The first five are the retired scan pipeline's; the
-# last read the removed project attribution.
 RETIRED_DETECTORS = (
     "tool_failure",
     "transport_instability",
@@ -49,19 +25,10 @@ RETIRED_DETECTORS = (
     "facts.repeated_correction",
 )
 
-# A tool call's working directory or failure path under a temporary directory marks an
-# evaluation workspace (for example `/private/tmp/luna-eval-ws/N`).
 EVALUATION_PATH = r"(^|\\W)(/private)?/(tmp|var/folders)/"
 
 
 def outside_evaluation(alias: str = "c.") -> str:
-    """Return the condition that keeps a tool call out of evaluation workspaces.
-
-    A whole session is excluded when every call that recorded a working directory ran
-    in one, because a Codex call records a working directory only when its arguments
-    name one; one call in a temporary directory never hides a session that works
-    elsewhere.
-    """
     return (
         f"NOT match({alias}workdir, '{EVALUATION_PATH}')"
         f" AND NOT match({alias}failure_signature, '{EVALUATION_PATH}')"
@@ -73,9 +40,6 @@ def outside_evaluation(alias: str = "c.") -> str:
 
 
 _LONDON_WEEK = "toDate({ts}, 'Europe/London') > toDate(now(), 'Europe/London') - 7"
-# A failure class that names only an error type or a header (`ShellError`,
-# `Traceback (most recent call last):`) cannot be root-caused; it stays emerging so
-# no proposal is drafted from it until sharper signatures replace it.
 GENERIC_CLASS = re.compile(
     r"^(\w+(Error|Exception)|Traceback \(most recent call last\):|Script (failed|error:?))$"
 )
@@ -106,8 +70,6 @@ type SubjectBuilder = Callable[[JsonObject], JsonObject]
 
 @dataclass(frozen=True)
 class Detector:
-    """One recurring-problem query and how its rows become findings."""
-
     detector_id: str
     category: str
     query: str
@@ -116,7 +78,6 @@ class Detector:
 
 
 def impact(tasks: int, unclean_tasks: int) -> int:
-    """Affected tasks, with tasks that did not end cleanly counted twice."""
     return tasks + unclean_tasks
 
 
@@ -140,12 +101,10 @@ DETECTORS = (
 
 
 def fingerprint(first: str, second: str, detector_id: str = DETECTOR_ID) -> str:
-    """Stable identity of one recurring problem for a detector."""
     return hashlib.sha256(f"{detector_id}\0{first}\0{second}".encode()).hexdigest()
 
 
 def trend_state(occurrences: int, tasks: int, days: int, *, generic: bool = False) -> str:
-    """Classify a problem that recurs across tasks in the window."""
     if generic:
         return "emerging"
     actionable = (occurrences >= 3 and tasks >= 2 and days >= 2) or (
@@ -247,11 +206,6 @@ def _stale(connection: sqlite3.Connection, seen: set[str]) -> list[str]:
 
 
 def refresh(run: SqlRunner, connection: sqlite3.Connection) -> dict[str, int]:
-    """Upsert findings from the current seven-day window and mark absent ones dormant.
-
-    Findings from retired detectors are marked dormant too, so only the current
-    detectors' problems stay active.
-    """
     now = datetime.now(UTC).isoformat()
     outcomes = {"created": 0, "updated": 0, "unchanged": 0, "dormant": 0}
     windows = [

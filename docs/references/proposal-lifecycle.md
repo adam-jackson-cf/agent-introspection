@@ -109,6 +109,22 @@ it.
 - `proposal list` shows the proposal's state; `proposal show` prints its full event history (decisions, actors, times, evidence).
 - The Interventions dashboard view shows findings, proposals, and an approval history table of each decision event (time, target, event, actor, and a short recorded reason; never raw prompt text).
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- Evaluation workspaces are excluded because they hold test workloads, not work to improve. A finding's `impact` is its affected tasks, with each task that did not end cleanly counted twice. Counts cover the seven-day window, while `first_seen_ns` keeps the earliest occurrence ever seen.
+- `facts findings` excludes a whole session as an evaluation workspace only when every call that recorded a working directory ran under a temporary directory. A Codex call records a working directory only when its arguments name one. One call in a temporary directory therefore never hides a session that works elsewhere.
+- A failure class that names only an error type or a header, such as `ShellError` or `Traceback (most recent call last):`, cannot be root-caused. Such a finding stays `emerging` whatever its counts, so no proposal is drafted from it until sharper signatures replace it.
+- Each refresh marks the still-active findings of retired detectors `dormant`, so only the current detector's problems stay active. Retired findings stay in the workflow store as history. The retired detectors are the five of the old scan pipeline and the one that read the removed project attribution.
+- `facts install` adds the `subject` column in place to a workflow store created before findings carried one.
+- An evidence pack holds no raw prompt, command, or output text. It carries only the normalized forms the facts already hold: signatures, classes, labels, and home-redacted working directories.
+- Codex counts reasoning tokens inside `output_tokens` and cached input inside `input_tokens`. The review therefore records only those two components, with availability `partial`, and `token_count` is their sum.
+- `proposal draft` commits the review import and its proposals in one transaction. A failed proposal insert therefore never leaves the review session consumed without a proposal.
+- The budget charge is the larger of the reported `token_count` and the sum of every reported token component. A low `token_count` therefore cannot hide components that already exceed it, even when usage is partial.
+- New proposals reject a free-text metric. Older proposals may still hold a free-text or retired metric that nothing measures; these read as having no metric.
+- A proposal's established-tool audit lists the three deterministic tiers in canonical order (`CANONICAL_TIER_LABELS` in `interventions.py`) and selects at most one. The other intervention types are allowed only when no tier can enforce the behaviour.
+
 ## Related Docs
 
 - [CLI Reference](cli-reference.md): every proposal command and its flags.

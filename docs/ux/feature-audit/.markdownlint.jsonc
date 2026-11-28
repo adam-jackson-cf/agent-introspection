@@ -1,4 +1,3 @@
 {
-  // Audit rows hold a full formation chain each; line length carries no meaning here.
   "MD013": false
 }

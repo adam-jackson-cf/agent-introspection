@@ -1,17 +1,3 @@
-# Codex (app-server, CLI, and exec): the settings that switch on its telemetry, and
-# the producer capabilities it offers (docs/references/producer-capabilities.md).
-# Routes are registry [[route]] ids; a capability's status is its weakest part.
-#
-# Codex reads `[otel]` from each Codex home (`$CODEX_HOME` when set, else `~/.codex`),
-# so `$CODEX_HOME` (even before Codex creates it) and an existing `~/.codex` are both
-# configured. Each exporter is an inline table keyed by its
-# kind; an `otlp-http` exporter posts to its endpoint as given, so the endpoint names
-# the signal path, and protocol `binary` is protobuf. Codex also accepts
-# `otlp-grpc = { endpoint = ... }`. A local gRPC exporter already reaches the
-# collector, so `doctor` passes it and `harness configure` leaves it unless `--force`;
-# a missing or other exporter is written as OTLP/HTTP so every harness uses the same
-# `{otlp_endpoint}`. Codex ignores `[otel]` in a project's `.codex/config.toml`. Each
-# surface reports its own `service.name`.
 schema = "agent-introspection.harness-profile/1"
 key = "codex"
 title = "Codex"
@@ -30,7 +16,6 @@ paths = ["$CODEX_HOME/config.toml", "~/.codex/config.toml"]
 format = "toml"
 table = "otel"
 roots = "each"
-# Orca keeps one Codex home per account.
 home_globs = ["~/Library/Application Support/orca/codex-accounts/*/home"]
 
 [[setting]]

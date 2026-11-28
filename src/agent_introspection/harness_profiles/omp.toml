@@ -1,8 +1,3 @@
-# omp (oh-my-pi): the settings that switch on its telemetry, and the producer
-# capabilities it offers (docs/references/producer-capabilities.md). Routes are
-# registry [[route]] ids; a capability's status is its weakest part. omp reads its
-# environment from `~/.omp/.env`; it exports spans only, and the activity extension
-# (hook adapter `omp`) sends the prompt event and the hook records.
 schema = "agent-introspection.harness-profile/1"
 key = "omp"
 title = "omp"

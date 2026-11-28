@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import subprocess
 from collections.abc import Callable, Iterator, Sequence
@@ -6,37 +7,39 @@ from pathlib import Path
 
 import pytest
 
-from agent_introspection import doctor_harness, hook_install, hooks
-from agent_introspection.workflow import connect_workflow
+from tests.support import home_guard, tier_guard
 from tests.support.otlp_collector import Collector
 
 type OpenWorkflow = Callable[..., sqlite3.Connection]
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(home_guard.GUARD, "user-data-guard")
+    config.pluginmanager.register(tier_guard.GUARD, "t1-guard")
 
 
 @pytest.fixture(autouse=True)
 def isolated_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point HOME at an empty directory, so no test reads or writes the real home.
-
-    `harness configure` installs hooks under the home; a test that needs a populated
-    home sets HOME again itself.
-    """
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
-    # Config directories that win over HOME when set.
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    monkeypatch.delenv("CODEX_HOME", raising=False)
+    for name in home_guard.REDIRECTED:
+        monkeypatch.setenv(name, str(home / name.lower()))
+    for name in home_guard.HOME_OVERRIDES:
+        monkeypatch.delenv(name, raising=False)
+    for name in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(name)
     return home
 
 
 class FakeOmp:
-    """Stands in for the `omp` binary: `plugin link` and `plugin uninstall` act on HOME."""
-
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
     def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        from agent_introspection import doctor_harness
+
         self.calls.append(list(command[1:]))
         link = Path.home() / doctor_harness.OMP_PLUGIN_LINK
         if list(command[1:3]) == ["plugin", "link"]:
@@ -49,7 +52,8 @@ class FakeOmp:
 
 @pytest.fixture(autouse=True)
 def fake_omp(monkeypatch: pytest.MonkeyPatch) -> FakeOmp:
-    """No test runs the real omp: hook installs find and run this stand-in."""
+    from agent_introspection import hook_install
+
     omp = FakeOmp()
     monkeypatch.setattr(hook_install, "_which", lambda name: f"/fake/bin/{name}")
     monkeypatch.setattr(hook_install, "_run_omp", omp)
@@ -58,7 +62,8 @@ def fake_omp(monkeypatch: pytest.MonkeyPatch) -> FakeOmp:
 
 @pytest.fixture
 def open_workflow() -> Iterator[OpenWorkflow]:
-    """Open workflow stores that the test closes when it ends."""
+    from agent_introspection.workflow import connect_workflow
+
     with ExitStack() as stack:
 
         def open_store(path: Path | str = ":memory:", **options: int) -> sqlite3.Connection:
@@ -69,18 +74,15 @@ def open_workflow() -> Iterator[OpenWorkflow]:
 
 @pytest.fixture
 def collector() -> Iterator[Collector]:
-    """A local OTLP/HTTP logs collector, shut down when the test ends."""
     server = Collector()
     yield server
     server.close()
 
 
 @pytest.fixture
-def inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """An isolated record spool and hook log, with no OTEL endpoint in the environment."""
-    directory = tmp_path / "data" / "hook-inbox"
-    monkeypatch.setattr(hooks, "INBOX", directory)
-    monkeypatch.setattr(hooks, "LOG", tmp_path / "data" / "hooks.log")
+def inbox(monkeypatch: pytest.MonkeyPatch) -> Path:
+    from agent_introspection import hooks
+
     for name in (
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
@@ -88,4 +90,4 @@ def inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
     ):
         monkeypatch.delenv(name, raising=False)
-    return directory
+    return hooks.inbox_dir()

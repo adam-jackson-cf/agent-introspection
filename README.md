@@ -40,7 +40,7 @@ next steps.
 `setup` writes the config, builds the facts store, configures Claude Code and Codex
 (export settings and activity hooks; for omp too, pass
 `--harness claude-code --harness codex --harness oh-my-pi`), schedules the
-minute sync, starts the dashboard at <http://127.0.0.1:4173>, and ends with
+minute sync, starts the dashboard at <http://127.0.0.1:4173> (`--dashboard-port` picks another), and ends with
 `agent-introspection doctor`. It stops at the first failing step and names it; every
 step is idempotent, so rerun it to reinstall. Restart running agent sessions so they
 pick up their settings.
@@ -125,3 +125,20 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 | Contribute code                        | [Development](docs/references/development.md)                                                                                                                 |
 
 [docs/README.md](docs/README.md) indexes every doc.
+
+## Contributing
+
+Install the pinned Bun and the commit hook once in each clone (every gate mode also runs
+the last two commands). With mise activated in your shell, `bun` in the checkout is the
+pinned 1.3.0, which the commit hook's time budget expects:
+
+```bash
+mise trust && mise install
+uv sync --locked --dev
+uv run pre-commit install
+```
+
+Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`, which only checks and
+never changes files. Every CI job runs `scripts/ci <job>` (`static`, `t1`, `t2`,
+`install` or `proofs`), which runs the same entrypoint. [Development](docs/references/development.md) lists the gate modes,
+the fix script `scripts/fix-quality-gates.sh`, the test tiers, and `proofs.toml`.

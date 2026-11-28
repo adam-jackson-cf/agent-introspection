@@ -1,0 +1,7 @@
+{
+ "id": "approved-static-skip",
+ "rule": "TEST.no-evasion",
+ "evidence": "source",
+ "situation": "the same static skip is covered by a reason-backed guardrail exception for its path",
+ "expect": "clean"
+}

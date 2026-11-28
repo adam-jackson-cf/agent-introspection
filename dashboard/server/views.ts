@@ -1,12 +1,6 @@
 import { HARNESSES, type ViewId } from "../src/contracts";
 import { EFFORT_ORDER, VERIFICATION_KINDS } from "../src/format";
 
-/**
- * Aggregate queries per question-led view. Every query reads the snapshot
- * tables that `facts install` refreshes after each minute load, binds the
- * window and harness as ClickHouse parameters, and returns per-harness rows so
- * the companion can recombine All from numerators and denominators.
- */
 export type ViewQueries = Record<string, string>;
 
 const U = "introspection.usage_events_snapshot";
@@ -14,60 +8,36 @@ const T = "introspection.task_outcomes_snapshot";
 const C = "introspection.tool_calls_snapshot";
 const S = "introspection.user_signals_snapshot";
 const M = "introspection.model_calls_snapshot";
-/** Codex sampling steps and attempts and Claude Code API errors, beside the terminal calls. */
 const A = "introspection.model_call_attempts_snapshot";
 const L = "introspection.task_labels_snapshot";
-/** Activity-hook events with the harness resolved (a view: never FINAL). */
 const H = "introspection.hook_rows";
 
-/** Rates over fewer samples than this are shown dimmed beside their n. */
 export const MIN_RATE_N = 20;
 
 const START = "{start:DateTime64(3, 'UTC')}";
 const END = "{end:DateTime64(3, 'UTC')}";
-/** The harnesses this machine uses (`facts install` loads them from the config). */
 export const ENABLED_HARNESSES =
   "(SELECT harness FROM introspection.harnesses WHERE enabled = 1)";
-/** The selected harness, or All: the union of the enabled harnesses. */
 const harnessFilter = (column: string): string =>
   `${column} IN ${ENABLED_HARNESSES} AND ({harness:String} = '' OR ${column} = {harness:String})`;
 export const HARNESS_FILTER = harnessFilter("harness");
 
-/** Selected window and harness over one timestamp column. */
 export const inWindow = (ts: string): string =>
   `${ts} >= ${START} AND ${ts} < ${END} AND ${HARNESS_FILTER}`;
-/** The same window for a joined table's alias. */
 const inWindowOf = (alias: string, ts: string): string =>
   `${alias}.${ts} >= ${START} AND ${alias}.${ts} < ${END} AND ${harnessFilter(`${alias}.harness`)}`;
 
 const EXPLICIT = "outcome IN ('succeeded', 'failed', 'aborted')";
-/** Waiting and status-polling tools repeat identical calls by design (registry: tools.repeats). */
 const NOT_POLLING =
   "tool NOT IN ('wait', 'write_stdin', 'wait_agent', 'wait_threads', 'collaborationwait_agent', 'sleep', 'get_goal', 'get_usage_limits')";
-/** Shell calls whose command shape was stored, so pre-change rows never read as "no verification". */
 const VERIFIABLE = "shape_v2 = 1 AND tool_family = 'shell'";
 const VERIFIED = `${VERIFIABLE} AND notEmpty(verification_kinds)`;
 const APPROVALS = "('approved', 'approved_with_amendment', 'accept')";
-/** Tool + command head + subcommand; omp and Claude Code take the command shape from the activity hooks. */
 const OPERATION = "trimBoth(concat(tool, ' ', command_head, ' ', command_sub))";
-/**
- * A failure class naming only an error type or a header cannot be root-caused, so it is
- * never actionable; mirrors findings.GENERIC_CLASS (a ClickHouse string literal).
- */
 export const GENERIC_CLASS = String.raw`^(\\w+(Error|Exception)|Traceback \\(most recent call last\\):|Script (failed|error:?))$`;
 const ACTIONABLE = `((occurrences >= 3 AND tasks >= 2 AND days >= 2) OR (occurrences >= 5 AND tasks >= 3))
     AND NOT match(failure_class, '${GENERIC_CLASS}')`;
-/**
- * A tool call's working directory or failure path under a temporary directory marks an
- * evaluation workspace; mirrors findings.EVALUATION_PATH (a ClickHouse string literal).
- */
 export const EVALUATION_PATH = String.raw`(^|\\W)(/private)?/(tmp|var/folders)/`;
-/**
- * Keeps a tool call out of evaluation workspaces, as findings.outside_evaluation does:
- * a whole session is excluded when every call that recorded a working directory ran
- * in one, because a Codex call records a working directory only when its arguments
- * name one.
- */
 export const outsideEvaluation = (
   alias: string,
 ) => `NOT match(${alias}.workdir, '${EVALUATION_PATH}')
@@ -76,16 +46,8 @@ export const outsideEvaluation = (
             FROM ${C} WHERE session_id != '' AND workdir != ''
             GROUP BY harness, session_id
             HAVING min(match(workdir, '${EVALUATION_PATH}')) = 1)`;
-/**
- * Headless Codex exec has no next prompt (registry: not applicable), so it stays
- * out of next-prompt denominators instead of counting as never corrected.
- */
 const NEXT_PROMPT = "harness != 'codex_exec'";
 
-/**
- * Tool failures with a failure class, outside evaluation workspaces, as findings.py
- * reads them. `where` bounds the window over `c.ts`.
- */
 const failures = (
   where: string,
 ) => `SELECT c.harness AS harness, c.tool_family AS tool_family,
@@ -94,13 +56,6 @@ const failures = (
     WHERE ${where} AND c.outcome = 'failed' AND c.failure_class != '' AND c.task_id != ''
         AND ${outsideEvaluation("c")}`;
 
-/**
- * Failure clusters (tool family × failure class), one finished row per cluster
- * across the selected harnesses: occurrences, tasks (harness-scoped, so distinct
- * (harness, task) pairs), the cluster's own distinct days, the sorted union of
- * tools, the latest occurrence, and `breakdown`, one "harness:occurrences" entry
- * per harness. The thresholds in `having` apply to the same cluster totals.
- */
 const clusters = (where: string, having: string) => `WITH
     f AS (${failures(where)}),
     h AS (
@@ -125,7 +80,6 @@ const TASK_OUTCOME_COLUMNS = `
     sum(errored) AS errored_n, count(errored) AS errored_den,
     sum(quick_follow_up) AS follow_up_n, count(quick_follow_up) AS follow_up_den`;
 
-/** Phase 2: `<component>_rate` = 100·n/den (NULL when no task observes it), from the aggregated n and den. */
 export const FRICTION_RATES = [
   "clean",
   "interrupted",
@@ -139,15 +93,8 @@ export const FRICTION_RATES = [
   )
   .join(",\n    ");
 
-/** Effort ordinal as format.ts `EFFORT_ORDER` (low … unset); any other value sorts last. */
 const EFFORT_RANK = `if(indexOf(['low', 'medium', 'high', 'xhigh', 'mixed', 'unset'], effort) = 0, 7, indexOf(['low', 'medium', 'high', 'xhigh', 'mixed', 'unset'], effort))`;
 
-/**
- * Reasoning spend rows grouped by `by` (from `harness`, `effort`, `day`): usage
- * records for producers that report reasoning per call, and Claude Code tasks,
- * whose reasoning the activity hooks report per turn (registry route
- * hook.turn_stop), each task counting as one call.
- */
 const REASONING_USAGE = `SELECT harness, effort, toString(toDate(ts)) AS day, count() AS calls,
         sum(coalesce(reasoning_tokens, 0)) AS reasoning, sum(output_tokens) AS output
     FROM ${U} WHERE ${inWindow("ts")} AND reasoning_tokens IS NOT NULL AND harness != 'claude-code'
@@ -158,15 +105,12 @@ const REASONING_USAGE = `SELECT harness, effort, toString(toDate(ts)) AS day, co
     FROM ${T} WHERE ${inWindow("start_ts")} AND harness = 'claude-code' AND reasoning_tokens IS NOT NULL
     GROUP BY harness, effort, day`;
 
-/** Corrected-by-next-prompt numerator and denominator over task_labels rows. */
 const CORRECTED_N = `countIf(${NEXT_PROMPT} AND corrected_next = 1)`;
 const CORRECTED_DEN = `countIf(${NEXT_PROMPT} AND corrected_next IS NOT NULL)`;
 
-/** A percentage as SQL: 100 × num ÷ den, NULL when there is no denominator (A7). */
 const rateOf = (numerator: string, denominator: string): string =>
   `if(${denominator} > 0, 100 * ${numerator} / ${denominator}, NULL)`;
 
-/** Jev's task types in classifier order; unknown types follow. */
 const TASK_TYPE_ORDER = [
   "bugfix",
   "feature",
@@ -180,17 +124,11 @@ const TASK_TYPE_ORDER = [
 
 const sqlArray = (items: readonly string[]): string =>
   `[${items.map((item) => `'${item}'`).join(", ")}]`;
-/** 1-based position in a fixed order, unknown values after the known ones. */
 const orderRank = (order: readonly string[], column: string): string =>
   `if(indexOf(${sqlArray(order)}, ${column}) = 0, ${order.length + 1}, indexOf(${sqlArray(order)}, ${column}))`;
 
-/** Harness position in registry order, for stable (never value-ranked) row order. */
 const harnessRank = (column: string): string => orderRank(HARNESSES, column);
 
-/**
- * Wilson 95% bounds (z = 1.96) in percent for `successes` of `n`; NULL when n is 0.
- * Aliases `lo` / `hi` over the columns it is given.
- */
 const wilson = (successes: string, n: string): string => {
   const p = `(${successes} / ${n})`;
   const centre = `(${p} + 1.96 * 1.96 / (2 * ${n})) / (1 + 1.96 * 1.96 / ${n})`;
@@ -199,11 +137,9 @@ const wilson = (successes: string, n: string): string => {
     if(${n} > 0, 100 * least(1, ${centre} + ${margin}), NULL) AS clean_hi`;
 };
 
-/** A verification kind failed in the task and a later run of the same kind succeeded. */
 const caught = (prefix = ""): string =>
   `${prefix}failed > 0 AND arrayExists(t -> t > ${prefix}first_failure, ${prefix}successes)`;
 
-/** Seven Europe/London calendar days ending on the window end, over an alias's `ts`. */
 const LONDON_WEEK_OF = (alias: string) =>
   `toDate(${alias}.ts, 'Europe/London') > toDate(${END}, 'Europe/London') - 7 AND ${alias}.ts < ${END} AND ${harnessFilter(`${alias}.harness`)}`;
 
@@ -259,7 +195,6 @@ FROM (
     if(reasoning_den > 0, reasoning / reasoning_den, NULL) AS reasoning_per_task,
     if(reasoning_den > 0 AND reasoning_output > 0, 100 * reasoning / reasoning_output, NULL) AS reasoning_share_rate
 FROM ${T} AS t WHERE ${inWindow("start_ts")} GROUP BY harness, effort ORDER BY harness, ${EFFORT_RANK}, effort`,
-    /** Whole-window clean rate (Wilson 95%) and duration quartiles per harness and effort. */
     intervals: `SELECT harness, effort, count() AS tasks,
     sum(clean_completion) AS clean_n, count(clean_completion) AS clean_den,
     if(clean_den > 0, 100 * clean_n / clean_den, NULL) AS clean_rate,
@@ -329,7 +264,6 @@ FROM (
     FROM ${C} WHERE ${inWindow("ts")} AND task_id != '' AND arguments_hash != '' AND ${NOT_POLLING}
     GROUP BY harness, task_id, tool, arguments_hash
 ) GROUP BY ROLLUP(harness) ORDER BY harness`,
-    /** Grouped as repeat_summary is, so the rows and the KPI count the same repeats. */
     repeated_calls: `WITH
     ordered AS (
         SELECT harness, session_id, task_id, ts, tool, command_head, command_sub, arguments_hash, outcome,
@@ -488,10 +422,6 @@ ORDER BY commands DESC, calls DESC LIMIT 25`,
     uniqExactIf(task_id, notEmpty(verification_kinds) AND task_id != '') AS tasks,
     countIf(gate_run = 1) AS gate_runs
 FROM ${C} WHERE ${inWindow("ts")} AND ${VERIFIABLE} GROUP BY ROLLUP(harness) ORDER BY harness`,
-    /**
-     * Runs per verification kind and harness; `caught` counts the tasks where the kind
-     * failed and a later run of it passed (as `verification_caught`, per kind).
-     */
     verification_kinds: `WITH ops AS (
     SELECT harness, task_id, kind, countIf(outcome = 'failed') AS failed,
         minIf(ts, outcome = 'failed') AS first_failure,
@@ -644,11 +574,6 @@ FROM (${failures(inWindowOf("c", "ts"))})
 GROUP BY day, harness ORDER BY day`,
   },
   intent: {
-    /**
-     * `tasks` counts the task_labels rows: tasks in sessions with at least one exported
-     * prompt, the only tasks a label can exist for. `all_tasks` is every task, so
-     * `before_export` is the tasks from sessions that never exported a prompt.
-     */
     kpi: `SELECT harness, tasks, all_tasks, greatest(all_tasks, tasks) - tasks AS before_export,
     labelled, corrected_n, corrected_den, frustrated_n, frustrated_den,
     ${rateOf("labelled", "tasks")} AS labelled_rate,
@@ -707,12 +632,6 @@ FROM (${failures(inWindowOf("c", "ts"))})
 GROUP BY day, harness, tool_family, failure_class ORDER BY day`,
     task_daily: `SELECT toString(toDate(start_ts, 'Europe/London')) AS day, harness, count() AS tasks
 FROM ${T} WHERE ${inWindow("start_ts")} GROUP BY day, harness ORDER BY day`,
-    /**
-     * One row per London day with the recurrence baseline: failure-cluster failures per
-     * 100 tasks and corrected tasks per 100 tasks with a next-prompt label (Intent's
-     * corrected rate; rates over that day's sums, NULL without a denominator). Days are
-     * those with tasks or labelled tasks.
-     */
     baseline_daily: `SELECT day, sum(f_n) AS failures, sum(t_n) AS tasks, sum(c_n) AS corrected, sum(l_n) AS labelled,
     if(sum(t_n) > 0, 100 * sum(f_n) / sum(t_n), NULL) AS failures_rate,
     if(sum(l_n) > 0, 100 * sum(c_n) / sum(l_n), NULL) AS corrected_rate
@@ -733,7 +652,6 @@ GROUP BY day HAVING tasks > 0 OR labelled > 0 ORDER BY day`,
   },
 };
 
-/** Queries for one session's drill-down: tasks, usage, tool calls, and signals. */
 export const SESSION_QUERIES: ViewQueries = {
   tasks: `SELECT t.task_id AS task_id, toString(t.start_ts) AS started, t.duration_seconds AS duration_seconds,
     t.model AS model, t.effort AS effort, t.model_steps AS model_steps, t.output_tokens AS output_tokens,

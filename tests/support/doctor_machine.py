@@ -1,12 +1,3 @@
-"""A fake machine for the doctor tests: a home with every harness set up, and probes.
-
-``build_machine`` writes Claude Code, Codex (plus an Orca account home), and omp
-config files, the managed activity shim and omp plugin link, and one session per
-store, under a temporary home. Its probes never leave the test: ClickHouse answers
-from ``fake_clickhouse``, every port is open, and each binary reports its verified
-version. ``make_additional`` turns it into an additional machine that sends to a host.
-"""
-
 from __future__ import annotations
 
 import json
@@ -18,8 +9,14 @@ from typing import Any
 
 import pytest
 
-from agent_introspection import doctor, doctor_harness, facts, hook_install, profiles
-from tests.test_preflight import fake_clickhouse
+from agent_introspection import doctor, doctor_harness, facts, hook_install, hooks, schedule
+from tests.support.host_probes import (
+    fake_network,
+    fake_systemd,
+    fake_version_probe,
+    verified_versions,
+)
+from tests.support.preflight_clickhouse import fake_clickhouse
 
 SECRET = "sk-sentinel-SECRET-7f3a"
 
@@ -36,7 +33,6 @@ CLAUDE_ENV = {
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_TRACES_EXPORTER": "otlp",
-    # gRPC on 4317: satisfies the profile's OTLP/HTTP endpoint and protocol.
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
     "OTEL_SERVICE_NAME": "claude-code",
@@ -44,8 +40,6 @@ CLAUDE_ENV = {
 }
 
 
-# Both Codex homes export prompts, as `harness configure codex --prompt-export` leaves
-# them: a healthy machine has no home that exports while another does not.
 CODEX_GRPC = """[otel]
 log_user_prompt = true
 exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }
@@ -80,10 +74,6 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def verified_versions() -> dict[str, str]:
-    return {profile.binary: profile.verified_versions[0] for profile in profiles.load_profiles()}
-
-
 def telemetry_rows(counts: Mapping[str, tuple[int, int]], last_seen: int) -> str:
     rows = [
         {"source": source, "service": service, "rows_24h": str(rows), "last_seen": str(last_seen)}
@@ -95,8 +85,6 @@ def telemetry_rows(counts: Mapping[str, tuple[int, int]], last_seen: int) -> str
 
 @dataclass
 class Machine:
-    """A fake home with every harness set up, and probes that never leave the test."""
-
     home: Path
     config: Path
     inbox: Path
@@ -109,8 +97,6 @@ class Machine:
     probes: doctor.Probes = field(init=False)
 
     def run_sql(self, grants: Mapping[str, str] | None = None) -> facts.SqlRunner:
-        """Answer preflight from ``fake_clickhouse`` (every grant held unless ``grants``
-        says ``0``) and the telemetry query from ``telemetry``."""
         executed, answer = fake_clickhouse(grants=dict(grants or {}))
         self.executed = executed
 
@@ -167,7 +153,6 @@ def fake_probes(machine: Machine) -> doctor.Probes:
 
 
 def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
-    """Build a healthy fake home under ``tmp_path``, every enabled harness set up."""
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     for name in (
@@ -191,8 +176,6 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
     write(home / ".claude/settings.json", json.dumps(settings, indent=2))
     write(home / ".omp/.env", OMP_ENV)
     write(home / ".codex/config.toml", CODEX_GRPC)
-    # Orca keeps per-account Codex homes under a path with a space, as on macOS; the
-    # codex profile's home_globs finds them.
     orca = home / "Library/Application Support/orca/codex-accounts/account-1/home"
     write(orca / "config.toml", CODEX_HTTP)
     config_path = write(
@@ -202,9 +185,8 @@ def build_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Machine:
         '[hooks]\notlp_logs_endpoint = "http://127.0.0.1:4318/v1/logs"\n'
         '[labels]\nopenrouter_key_command = ["security", "find-generic-password", "-w"]\n',
     )
-    # The hooks read this config, as `harness configure --config` points them.
     write(runtime / doctor_harness.CONFIG_POINTER, f"{config_path.resolve()}\n")
-    built = Machine(home=home, config=config_path, inbox=tmp_path / "data/hook-inbox", orca=orca)
+    built = Machine(home=home, config=config_path, inbox=hooks.inbox_dir(), orca=orca)
     built.probes = fake_probes(built)
     return built
 
@@ -238,7 +220,6 @@ def replace_settings(machine: Machine, env: Mapping[str, str]) -> None:
     path.write_text(json.dumps(settings))
 
 
-# The SigNoz host an additional machine sends to, and its healthy spool-sync timer.
 HOST = "signoz-host.example"
 SPOOL_SYNC = {
     "scheduler": "systemd",
@@ -251,11 +232,6 @@ SPOOL_SYNC = {
 
 
 def make_additional(machine: Machine) -> None:
-    """Turn ``machine`` into an additional machine whose harnesses and hooks send to ``HOST``.
-
-    Its probes refuse ClickHouse, the host's scheduler, and the dashboard's ping, which an
-    additional machine never touches.
-    """
     hooks = "http://127.0.0.1:4318/v1/logs"
     machine.config.write_text(
         machine.config.read_text().replace(hooks, f"http://{HOST}:4318/v1/logs")
@@ -281,3 +257,12 @@ def make_additional(machine: Machine) -> None:
         spool_sync_status=lambda: dict(SPOOL_SYNC),
         dashboard_status=host_only,
     )
+
+
+def through_seams(machine: Machine, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(facts, "runner", lambda _config: machine.run_sql())
+    machine.posted = fake_network(monkeypatch)
+    fake_systemd(monkeypatch)
+    fake_version_probe(monkeypatch)
+    for unit in (schedule.service_file(), schedule.timer_file()):
+        write(unit, "[Unit]\n")

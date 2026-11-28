@@ -6,7 +6,8 @@ its views correctly.
 ## Server
 
 The companion is an independent Bun package in `dashboard/`. The server binds only to
-`127.0.0.1:4173`. `agent-introspection dashboard install --repo <checkout>` runs it as
+`127.0.0.1`, at `[dashboard] port` in the agent-introspection config (default 4173);
+`dashboard install`, `dashboard view` and `doctor` read the same setting. `agent-introspection dashboard install --repo <checkout>` runs it as
 a user service: it builds the checkout's dashboard (`bun install --frozen-lockfile`,
 then `bun run build`) and starts `bun server.ts` there as a launchd agent kept alive
 (macOS) or a systemd user service restarted on failure (Linux), logging to
@@ -79,9 +80,30 @@ what the running service's `/api` routes return to the page, so an agent reads w
 person sees without a browser (see the [CLI reference](cli-reference.md)). They need
 the service running on this machine and fail with exit code 60 when it is not.
 `INTROSPECTION_DASHBOARD_URL` points them at another port on `127.0.0.1` (default
-`http://127.0.0.1:4173`); any other host, `localhost` included, is refused, because the
-server answers only requests addressed to `127.0.0.1`. `--rows` must be 0 or more, and
-`views` lists a signal an enabled harness cannot produce only under `hidden`.
+`http://127.0.0.1:<port>`, the `[dashboard] port`); any other host, `localhost` included,
+is refused, because the server answers only requests addressed to `127.0.0.1`. `--rows`
+must be 0 or more, and `views` lists a signal an enabled harness cannot produce only
+under `hidden`.
+
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- The installed service never sees your shell's environment. Only a server run by hand reads `INTROSPECTION_CLICKHOUSE_URL`; the service reads `[signoz] clickhouse_url`, and `doctor` reports which one applies.
+- The commands read the server's routes instead of querying ClickHouse, because the server owns every view's queries and their post-processing. Repeat reads hit the server's 10-minute caches, but a cold view can take tens of seconds on a large store. Requests never go through a proxy from the environment.
+- The workflow store uses a rollback journal, not WAL. A read-only opener such as the dashboard cannot create a WAL shared-memory file, so WAL would make the store unreadable to it.
+- The server shares the route counts behind coverage and chips, and the Pipeline sanitization and unrouted scans, for 10 minutes. That matches the 10-minute snapshot rebuild, so a shared result is never older than the facts it reads. Concurrent loads of one key run its query once. A failed result is dropped at once, so the next load retries it.
+- The server runs each named query of a view as its own request, at most three at a time (`BRANCH_CONCURRENCY` in `dashboard/server/clickhouse.ts`). One `UNION ALL` would peak at the sum of its branches' memory, and ClickHouse here runs near its memory cap. The small pool also reuses keep-alive connections. Bun's HTTP client stalls about one second on some new connections to OrbStack.
+- A failed query empties only its own dataset, and `/api/view` names it in `errors`. A panel over that dataset shows the failure instead of an empty body, because an empty body would read as zero. When every query of a view fails, the server reports one error: ClickHouse is down. The registry, the route counts, and a session drill-down fail whole, because a part of them is unusable. After a failed refresh, the page keeps the last good response, dimmed so it does not read as current.
+- The "Data as of" time covers only the refreshers a view reads: the span and log loaders, the hook-table loaders its SQL names, their hourly sweeps, and its snapshots' refreshers. Windows older than the snapshots read live views, which only the loaders feed. The time is the oldest last success among loaders and recent refreshes. Hourly sweeps and daily history refreshes are left out, because counting them would understate freshness. A failing sweep still marks the view stale; a failing history refresh sets `historyStale`, because it only ages older days.
+- Route counts are the dashboard's one scan of raw rows, because route predicates read raw attributes that no snapshot keeps. The scan reaches back 90 days before the window (`ROUTE_LOOKBACK_DAYS`, the snapshot horizon) to find whether a route has an earlier row. That lookback keeps the scan off all history and gives the `from <date>` on chips.
+- Some dashboard SQL copies definitions owned elsewhere, so change both together. The Codex span filter in `dashboard/server/pipeline.ts` mirrors `select_spans.sql`, including its usage predicate. `GENERIC_CLASS`, `EVALUATION_PATH`, and the evaluation-workspace exclusion in `dashboard/server/views.ts` mirror `findings.py`, so the Recurrence view counts what `facts sync` promotes.
+- On Findings and fixes, a harness filter keeps the findings and proposals seen in that harness: the success metric's harnesses, else the finding's. Rows from older workflow stores have no harness list, so they appear under All only.
+- The before/after comparison uses equal runs of whole Europe/London days on each side of the application day, clipped to the selected range. The shorter side sets both windows. Neither window counts the application day, because it mixes events before and after the change. Proposals of the retired repeated-correction detector have no failure cluster to match, so their rates show NULL rather than a measured 0.
+- The page abandons a view request after 120 seconds (`REQUEST_TIMEOUT_MS` in `dashboard/src/app-data.ts`) and says the query timed out. The user set this limit on 2026-10-02.
+- ClickHouse's JSON output sends 64-bit integers as strings. The page converts such cells to numbers before it sorts or charts them.
+- When the config still holds the retired `[dashboard] clickhouse_url` key, the server refuses it as the CLI does. It never falls back past that key to the default address, so the dashboard cannot read a different ClickHouse from the CLI.
+- The Linux dashboard unit writes `WorkingDirectory=` as a bare path. systemd fails to load a unit whose `WorkingDirectory=` is quoted.
 
 ## Related Docs
 

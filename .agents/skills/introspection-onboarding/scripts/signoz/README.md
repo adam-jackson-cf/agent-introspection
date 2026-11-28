@@ -31,9 +31,39 @@ its own and never reconfigures an existing SigNoz: connect to the one you have i
 
 ## The override and the filter
 
-Both change a SigNoz, so applying either is the user's decision. Each file's header
-says how to apply and revert it, including for a SigNoz installed from the deprecated
+Both change a SigNoz, so applying either is the user's decision. The steps below apply
+and revert each one, including for a SigNoz installed from the deprecated
 `deploy/docker` files.
+
+### Applying the override
+
+`install-signoz.sh` starts a new SigNoz with it. For a SigNoz you already run, decide
+first, then recreate the stack with the file added after its own:
+`docker compose -f compose.yaml -f docker-compose.clickhouse-http.yaml up -d`. Revert by
+running the same command without the file; data stays in its volumes. The service
+names are Foundry's (`pours/deployment/compose.yaml`). A SigNoz installed from the
+deprecated `deploy/docker` files (`docker-compose.yaml`) names them `clickhouse`,
+`otel-collector` and `signoz`: rename the three keys to match, or Compose rejects a
+service with no image. Keep it on loopback: in a Foundry install, ClickHouse's default
+user has no password.
+
+### Applying the filter
+
+1. Add its two processors to the collector config's `processors:`. For a Foundry
+   install, put them in `casting.yaml` under
+   `spec.ingester.spec.config.data."ingester.yaml"` (Foundry merges that fragment onto
+   the generated `pours/deployment/ingester/ingester.yaml`, which `forge` rewrites). For
+   a `deploy/docker` install, edit `otel-collector-config.yaml`.
+2. Put them first in `service.pipelines.traces.processors`, so dropped spans make no
+   span metrics. A list is replaced whole, so restate the existing processors: Foundry
+   v0.3.0 `[transform/opencode-db-text, filter/opencode-plumbing, signozspanmetrics/delta, signozspanmapper, signozllmpricing, batch]`;
+   `deploy/docker` `[transform/opencode-db-text, filter/opencode-plumbing, signozspanmetrics/delta, batch]`.
+3. Recreate the collector: for Foundry, `foundryctl forge -f casting.yaml`, then
+   `docker compose -f pours/deployment/compose.yaml up -d --force-recreate`; for
+   `deploy/docker`, `docker compose up -d --force-recreate otel-collector`.
+
+To revert, remove both processors from the traces pipeline and from `processors:`,
+then recreate the collector the same way. Spans already dropped are not recovered.
 
 The override serves a single machine, the default: SigNoz publishes its OTLP and UI
 ports on every interface, and the override replaces those port lists with `127.0.0.1`

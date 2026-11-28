@@ -1,8 +1,3 @@
--- Normalized fact views over the curated tables. Producer boundaries follow the
--- validated contracts in agent-observability's model-usage and reasoning-effort
--- signal references. NULL means the producer has no signal, never zero.
-
--- One row per accepted producer-native model usage record.
 CREATE OR REPLACE VIEW introspection.usage_events AS
 SELECT
     ts,
@@ -71,15 +66,6 @@ WHERE harness = 'oh-my-pi'
     AND mapContains(attrs_number, 'gen_ai.usage.input_tokens')
     AND (attrs_number['gen_ai.usage.input_tokens'] > 0 OR attrs_number['gen_ai.usage.output_tokens'] > 0);
 
--- One row per user-initiated task: a Codex turn, an OMP root agent run, or a
--- Claude Code interaction. Outcome flags are friction proxies, not quality scores.
--- `friction_observed` lists the clean-completion components the producer could
--- observe for the row; a NULL component is one the producer does not emit.
--- Activity-hook events (introspection.hook_events) close what native telemetry
--- lacks: Claude Code interrupts, steers, reasoning tokens, subagents, and turn
--- failures, and omp steers. Rows from before a session had hooks keep NULL there.
--- Codex delegations are subagent spawns (`codex.agent_communication`) sent from the
--- turn's thread, and a Codex turn errored when its last response stream failed.
 CREATE OR REPLACE VIEW introspection.task_outcomes AS
 WITH
     codex_turn_windows AS (
@@ -151,7 +137,6 @@ WITH
             if(mapContains(t.attrs_number, 'codex.turn.token_usage.reasoning_output_tokens'), toNullable(t.attrs_number['codex.turn.token_usage.reasoning_output_tokens']), NULL) AS reasoning_tokens,
             toUInt64(s.model_steps) AS model_steps,
             toUInt64(sp.delegations) AS delegations,
-            -- Headless Codex exec has no user to interrupt or steer: not applicable, so NULL.
             if(t.harness = 'codex_exec', NULL, toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_interrupts)))) AS interrupted,
             toNullable(toUInt8(lr.errored)) AS errored,
             if(t.harness = 'codex_exec', NULL, toNullable(toUInt8(t.attrs_string['turn.id'] IN (SELECT task_id FROM codex_steers)))) AS steered
@@ -299,7 +284,6 @@ WITH
             if(h.stops > 0, toNullable(h.reasoning_tokens), NULL) AS reasoning_tokens,
             toUInt64(c.model_steps) AS model_steps,
             toUInt64(h.subagents) AS delegations,
-            -- Claude Code runs no Stop hook when the user interrupts a turn.
             if(h.submitted = 1, toNullable(toUInt8(h.stopped = 0)), NULL) AS interrupted,
             toNullable(toUInt8(c.errored = 1 OR h.failed = 1)) AS errored,
             if(h.submitted = 1, toNullable(toUInt8(cs.steers > 0)), NULL) AS steered
@@ -347,11 +331,6 @@ FROM (
     FROM tasks
 );
 
--- One row per terminal model call. Boundaries differ by producer: a Codex response
--- stream (`codex.sse_event` `response.completed`, which carries `error.message` when
--- the stream fails), an OMP chat span, and a Claude Code LLM request span. NULL
--- means the producer has no such field. Outcome is `unknown` without explicit evidence,
--- and `cancelled` when the user aborted the call (OMP `error.type = 'aborted'`).
 CREATE OR REPLACE VIEW introspection.model_calls AS
 SELECT
     ts,
@@ -430,12 +409,6 @@ SELECT
 FROM introspection.spans FINAL
 WHERE harness = 'claude-code' AND name = 'claude_code.llm_request';
 
--- One row per retry-relevant event beside the terminal model calls: a Codex sampling
--- step (`run_sampling_request` span), each request attempt inside a step
--- (`try_run_sampling_request`), and a Claude Code `api_error` or
--- `api_retries_exhausted` log. `kind` is the span or event name. The Provider view reads
--- Codex latency and retry counts, and Claude Code API errors, from here rather than from
--- the raw tables; a step's duration is the Codex call duration the response log lacks.
 CREATE OR REPLACE VIEW introspection.model_call_attempts AS
 SELECT
     ts,
@@ -457,7 +430,6 @@ SELECT
 FROM introspection.logs FINAL
 WHERE harness = 'claude-code' AND event_name IN ('api_error', 'api_retries_exhausted');
 
--- One row per activity-hook `tool_call` (omp and Claude Code), keyed by tool call ID.
 CREATE OR REPLACE VIEW introspection.hook_tool_calls AS
 SELECT
     attrs_string['tool_use_id'] AS hc_tool_use_id,
@@ -474,32 +446,7 @@ FROM introspection.hook_events FINAL
 WHERE producer IN ('omp', 'claude-code') AND event_type = 'tool_call' AND attrs_string['tool_use_id'] != ''
 GROUP BY hc_tool_use_id;
 
--- One row per tool invocation with an explicit outcome where the producer has one.
--- Codex reports success=true for commands that exit non-zero; the exit code wins.
--- `task_id` joins task_outcomes: a Codex call belongs to the user turn of its
--- session whose span contains the call time; an OMP call to the root run of its
--- trace; a Claude Code call to the interaction of its trace. '' when unattributed.
--- omp and Claude Code tool spans carry no arguments, so their command shape, targets,
--- gate-bypass flag, and argument hash come from the activity hooks' `tool_call`
--- events (joined by tool call ID), and a Claude Code failure's signature from its
--- `tool_failure` event (omp: its `tool_result` error, which also gives the exit code; the
--- span status message is the fallback before the hook); calls from before hooks were installed keep the native fields.
--- `verification_kinds`, `gate_run` and `shape_v2` come from the command shape (Codex
--- `x.*` fields, hook `tool_call` attributes); `shape_v2` is 1 only for rows that carry
--- the shape, so a row from before it was stored never reads as "no verification".
--- `policy_blocked` is an omp call the jev-guard policy refused: enforcement, not a
--- tool failure, so it is neither succeeded nor failed.
--- Stored signatures were capped at 160 bytes before 2026-10-01; since then at 80
--- characters, taken from the diagnostic keyword when it lies past character 80, with
--- a hash of the full line beside them. The view applies that same window and cap to
--- every row, so old and new rows of one failure share text and `failure_class`. A row
--- without a stored hash whose text is under 160 bytes held the whole line, so hashing
--- its windowed text gives the `failure_signature_hash` a new row of that failure has.
 CREATE OR REPLACE VIEW introspection.tool_calls AS
--- `tool_family` groups each harness's tool names by what the tool does, so one
--- behaviour is one finding whatever harness produced it. `failure_class` is the
--- failure signature with quoted values and paths generalized, so the same failure on
--- different files is one class.
 SELECT
     * EXCEPT (stored_signature, stored_hash, windowed_signature),
     multiIf(
@@ -519,10 +466,6 @@ SELECT
         stored_signature != '' AND length(stored_signature) < 160, lower(substring(hex(SHA256(windowed_signature)), 1, 16)),
         ''
     ) AS failure_signature_hash,
-    -- zsh prefixes errors of `eval`ed commands with `(eval):N:`, which hides that two
-    -- failures are one; the prefix is dropped. A line that is only shell punctuation
-    -- before "not found" (`=== not found`, a markdown rule typed as a command) names
-    -- no failure and gets no class.
     if(
         windowed_signature = '',
         '',
@@ -534,8 +477,6 @@ SELECT
 FROM (
 SELECT
     *,
-    -- The projections' keyword window: when the first 80 characters hold no
-    -- diagnostic keyword but the line does, keep the line from the keyword on.
     if(
         match(substringUTF8(stored_signature, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)')
             OR NOT match(stored_signature, '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
@@ -701,9 +642,6 @@ FROM (
 )
 );
 
--- Explicit user and policy friction signals. Codex interrupt/steer RPC spans
--- carry only the turn ID; the session comes from the matching turn span. omp tool
--- approvals come from the activity hooks' `approval` events.
 CREATE OR REPLACE VIEW introspection.user_signals AS
 WITH codex_turn_sessions AS (
     SELECT attrs_string['turn.id'] AS turn_id, any(attrs_string['thread.id']) AS session_id
@@ -771,9 +709,6 @@ SELECT
 FROM introspection.hook_events FINAL
 WHERE producer = 'omp' AND event_type = 'approval';
 
--- Activity-hook events with the harness resolved, for registry route predicates and
--- the Pipeline coverage grid. Codex hooks are shared by app-server, CLI, and exec, so
--- a Codex event takes the harness of the session's Codex logs ('' until they arrive).
 CREATE OR REPLACE VIEW introspection.hook_rows AS
 SELECT
     multiIf(

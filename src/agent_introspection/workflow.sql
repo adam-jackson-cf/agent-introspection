@@ -1,6 +1,3 @@
--- Local workflow store: findings, intervention proposals, and the model review
--- sessions that draft them. History is immutable; state changes are guarded.
-
 CREATE TABLE IF NOT EXISTS findings (
     id TEXT PRIMARY KEY,
     fingerprint TEXT NOT NULL UNIQUE CHECK (length(fingerprint) = 64),

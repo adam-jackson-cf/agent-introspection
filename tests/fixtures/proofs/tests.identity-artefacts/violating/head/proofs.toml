@@ -1,0 +1,12 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[layout]
+support_dir = "tests/support"
+fixtures_dir = "tests/fixtures"
+test_file_patterns = ["tests/**/test_*.py"]
+
+[identity_artefacts]
+"schema/*.sql" = "the facts store DDL names every stored column"

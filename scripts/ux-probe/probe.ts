@@ -1,12 +1,6 @@
-// Answers every `auto` check in docs/ux/rubrics/ux-page.yaml for each page and writes <outDir>/<page>.checks.json
-// plus <page>-first.png and <page>-full.png. The dashboard must be running on 127.0.0.1:4173.
-//
-// Usage: bun scripts/ux-probe/probe.ts <outDir> <page...>
-//   page: pipeline, pipeline/coverage, cache, effort, tools, friction, guardrails, provider, recurrence,
-//         intent, interventions, session (the first loop session from Tools; its ID is never printed).
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import puppeteer from "puppeteer-core";
+import { launch } from "puppeteer-core";
 
 const ROOT = new URL("../../", import.meta.url);
 const BASE = "http://127.0.0.1:4173";
@@ -24,7 +18,6 @@ const rubric = Bun.YAML.parse(
 ) as Rubric;
 const pattern = (key: string) => new RegExp(rubric.definitions[key]!.trim(), "g");
 
-/** View files whose source the S and C checks read, per page. */
 const SOURCES: Record<string, string[]> = {
   pipeline: ["Pipeline.tsx"],
   "pipeline/coverage": ["PipelineCoverage.tsx"],
@@ -59,10 +52,7 @@ function sourceChecks(page: string): Record<string, Check> {
   };
 }
 
-/**
- * Runs in the page: every DOM-measured auto check. Self-contained (serialised into the browser), so the
- * check groups are nested functions sharing the measurements taken here.
- */
+/* oxlint-disable unicorn/consistent-function-scoping -- tab.evaluate serialises domChecks into the page, so its helpers must stay nested */
 function domChecks(args: { period: string; states: string[]; session: boolean; fold: number }) {
   const period = new RegExp(args.period, "i");
   const root = document.querySelector<HTMLElement>(".content")!;
@@ -74,7 +64,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   const articles = [...root.querySelectorAll<HTMLElement>("article.panel")];
   const kpis = articles.filter((a) => a.querySelector(".kpi"));
   const panels = articles.filter((a) => !a.querySelector(".kpi"));
-  const headed = panels; // a panel built without the shared header fails the header checks, never skips them
+  const headed = panels;
   const height = document.documentElement.scrollHeight;
   const views = !args.session;
   const result: Record<string, { pass: boolean; evidence: string }> = {};
@@ -114,8 +104,6 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
       return new Set(rows).size < rows.length;
     });
     set("L2", twinChips.length === 0, `sections repeating a chip row: ${twinChips.map((s) => text(s.querySelector("h2"))).join("; ") || "none"}`);
-    // Navigation links only: per-row links inside tables (sessions, view names in a list) are row identifiers,
-    // and their text is never printed, so no session ID reaches the evidence.
     const links = [...root.querySelectorAll("a.view-link")].filter((a) => !a.closest("td")).map((a) => `${text(a)} → ${a.getAttribute("href")}`);
     const lines = [...root.querySelectorAll(".panel-head > div > p, .kpi > span")].map(text).filter(Boolean);
     const dupes = (list: string[]) => [...new Set(list.filter((v, i) => list.indexOf(v) !== i))];
@@ -137,7 +125,6 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
     set("C3", odd.length === 0, `${words.length} state chips; other words: ${odd.join("; ") || "none"}`);
   }
 
-  /** Rows of panels that sit side by side in one grid, keyed by their top edge. */
   function gridRows(grid: HTMLElement) {
     const rows = new Map<number, HTMLElement[]>();
     for (const panel of grid.querySelectorAll<HTMLElement>(":scope > article.panel")) {
@@ -147,10 +134,9 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
     return [...rows.values()];
   }
 
-  /** A row is filled when its spans add up to the grid's columns and its panels share a height. */
   function rowFilled(row: HTMLElement[], columns: number) {
     const heights = row.map((p) => Math.round(p.getBoundingClientRect().height));
-    const spans = row.reduce((sum, p) => sum + Number(p.dataset.span ?? 6), 0);
+    const spans = row.reduce((sum, p) => sum + Number(p.dataset["span"] ?? 6), 0);
     return Math.max(...heights) - Math.min(...heights) <= 2 && spans === columns;
   }
 
@@ -167,7 +153,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
     const overflow = document.documentElement.scrollWidth > window.innerWidth;
     set("F1", !overflow && gap <= 40, `horizontal overflow: ${overflow}; gap from sidebar ${gap} px`);
     const badRows = [...root.querySelectorAll<HTMLElement>(".grid")].flatMap((grid) =>
-      gridRows(grid).filter((row) => !rowFilled(row, Number(grid.dataset.columns ?? 12))),
+      gridRows(grid).filter((row) => !rowFilled(row, Number(grid.dataset["columns"] ?? 12))),
     );
     set("F2", badRows.length === 0, `rows not filled or unequal: ${badRows.map((row) => row.map(titleOf).join(" + ")).join("; ") || "none"}`);
     const slack = articles.map((a) => ({ a, empty: emptyBelow(a) })).filter((s) => s.empty > 160);
@@ -223,13 +209,12 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   function readability() {
     const small = [...document.querySelectorAll("body *")].filter(smallText).length;
     set("R1", small <= 10, `${small} visible text elements below 12 px`);
-    result.R2 = { pass: small === 0, evidence: `${small} below 12 px` }; // contrast added by the caller from axe
+    result["R2"] = { pass: small === 0, evidence: `${small} below 12 px` };
     const tracked = [...root.querySelectorAll("*")].filter(trackedCaps).length;
     const proportional = [...root.querySelectorAll("td.num")].filter((td) => !getComputedStyle(td).fontVariantNumeric.includes("tabular-nums")).length;
     set("R3", tracked === 0 && proportional === 0, `${tracked} tracked-capital elements; ${proportional} numeric cells without tabular figures`);
   }
 
-  /** A chart is sized and keyed when its plot is 280–360 px high and a legend or chip row names its series. */
   function chartOk(c: Element) {
     const svg = c.querySelector("svg");
     const h = svg ? Math.round(svg.getBoundingClientRect().height) : 0;
@@ -263,6 +248,7 @@ function domChecks(args: { period: string; states: string[]; session: boolean; f
   const failed = !!root.querySelector(".state-notice[role='alert']");
   return { checks: result, pageHeight: height, title: text(root.querySelector("h1")), path: location.pathname, failed };
 }
+/* oxlint-enable unicorn/consistent-function-scoping */
 
 async function sessionTarget(): Promise<string> {
   const end = new Date();
@@ -283,7 +269,7 @@ if (!outDir || pages.length === 0) {
 }
 await mkdir(outDir, { recursive: true });
 const axeSource = readFileSync(new URL("node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 180_000, defaultViewport: VIEWPORT });
+const browser = await launch({ executablePath: CHROME, headless: true, protocolTimeout: 180_000, defaultViewport: VIEWPORT });
 const tab = await browser.newPage();
 await tab.setBypassCSP(true);
 const autoIds = rubric.criteria.flatMap((c) => c.checks.filter((k) => k.method === "auto").map((k) => k.id));
@@ -293,13 +279,12 @@ for (const page of pages) {
   const path = session ? await sessionTarget() : `${page}?range=7`;
   const name = page.replaceAll("/", "-");
   await tab.goto(`${BASE}/${path}`, { waitUntil: "networkidle0", timeout: 180_000 });
-  // "Query failed" ends the wait too, so the dom.failed check below reports it instead of a 180 s timeout.
   await tab.waitForFunction(() => /Queried|Query failed/.test(document.body.innerText) && !document.querySelector(".skeleton"), { timeout: 180_000 });
   await Bun.sleep(500);
   await tab.screenshot({ path: `${outDir}/${name}-first.png` });
   await tab.screenshot({ path: `${outDir}/${name}-full.png`, fullPage: true });
   const dom = await tab.evaluate(domChecks, {
-    period: rubric.definitions.period_phrase!.trim(),
+    period: rubric.definitions["period_phrase"]!.trim(),
     states: rubric.definitions.state_words,
     session,
     fold: VIEWPORT.height,
@@ -311,7 +296,7 @@ for (const page of pages) {
     return (run.violations as { nodes: unknown[] }[]).reduce((n, v) => n + v.nodes.length, 0);
   });
   const checks: Record<string, Check> = { ...dom.checks, ...sourceChecks(page) };
-  checks.R2 = { pass: checks.R2!.pass && contrast === 0, evidence: `${checks.R2!.evidence}; ${contrast} contrast failures` };
+  checks["R2"] = { pass: checks["R2"]!.pass && contrast === 0, evidence: `${checks["R2"]!.evidence}; ${contrast} contrast failures` };
   const missing = autoIds.filter((id) => !checks[id]);
   if (missing.length) throw new Error(`probe answered no result for ${missing.join(", ")}`);
   const inspect = Object.fromEntries(inspectIds.map((id) => [id, null]));

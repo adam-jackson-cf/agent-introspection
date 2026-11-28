@@ -104,8 +104,7 @@ export function Sidebar({ nav }: { nav: React.ReactNode }) {
 
 export function Topbar(props: {
   title: string;
-  /** The parent view of a detail page, shown as a link in the breadcrumb. */
-  parent?: { title: string; href: string; onOpen: () => void };
+  parent?: { title: string; href: string; onOpen: () => void } | undefined;
   nav: React.ReactNode;
   onRefresh: () => void;
 }) {
@@ -173,7 +172,6 @@ const liveText = (
   return "";
 };
 
-/** Where the query time went, and how fresh the facts are; both come from the server. */
 function ViewDetail({ response }: { response: ViewResponse }) {
   const { timings, asOf } = response;
   return (
@@ -203,7 +201,6 @@ export function PageHead(props: {
   failure: string;
   viewResponse: ViewResponse | null;
   sessionResponse: SessionResponse | null;
-  /** Null until it loads; its experimental features shape the view's question. */
   registry: Registry | null;
 }) {
   const { location, title, heading, loading, failure, viewResponse } = props;
@@ -350,7 +347,6 @@ export function Notices(props: {
   );
 }
 
-/** Said once above the bands when every dataset of the view is empty for the range. */
 export function RangeNotice({ response }: { response: ViewResponse | null }) {
   if (
     !response ||
@@ -364,7 +360,6 @@ export function RangeNotice({ response }: { response: ViewResponse | null }) {
   );
 }
 
-/** Said once when some datasets failed: panels not tied to one (`source`) may be incomplete. */
 export function PartialNotice({ response }: { response: ViewResponse | null }) {
   const failed = Object.keys(response?.errors ?? {});
   if (failed.length === 0) return null;
@@ -377,7 +372,6 @@ export function PartialNotice({ response }: { response: ViewResponse | null }) {
   );
 }
 
-/** Page-shaped placeholder: the header stays, then a KPI strip, a chart band and a table band. */
 export function LoadingSkeleton() {
   return (
     <div className="skeleton" role="status">

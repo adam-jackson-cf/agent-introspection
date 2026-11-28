@@ -1,9 +1,3 @@
-"""Render the generated sections of the measure and data-gap docs from the signal registry.
-
-Used by ``scripts/render-measures.py [--check]``, the command that writes or checks the
-generated documents.
-"""
-
 from __future__ import annotations
 
 import re
@@ -42,7 +36,6 @@ def _aligned_table(block: list[str]) -> list[str]:
 
 
 def _prettier_tables(text: str) -> str:
-    """Pad table columns the way Prettier formats Markdown, so regenerated docs stay clean."""
     out: list[str] = []
     block: list[str] = []
     for line in [*text.split("\n"), ""]:
@@ -107,7 +100,6 @@ def _signals(registry: facts.Registry) -> list[str]:
 
 
 def render() -> str:
-    """Return the Markdown catalog: routes, strays, then signals by view."""
     registry = facts.load_registry()
     labels = {str(row["harness"]): str(row["harness_label"]) for row in registry.routes}
     lines = [
@@ -139,7 +131,6 @@ def render() -> str:
 
 
 def render_gaps() -> str:
-    """Return the support matrix and the not-emitted, not-applicable, differs, excluded lists."""
     registry = facts.load_registry()
     harnesses = list(dict.fromkeys(str(row["harness_label"]) for row in registry.support))
     cells = {(str(row["signal"]), str(row["harness_label"])): row for row in registry.support}
@@ -231,14 +222,12 @@ def render_gaps() -> str:
 
 
 def updated(text: str, content: str | None = None) -> str:
-    """Replace the generated block in ``text`` with a fresh render."""
     head, rest = text.split(BEGIN, 1)
     _, tail = rest.split(END, 1)
     return f"{head}{BEGIN}\n\n{render() if content is None else content}\n{END}{tail}"
 
 
 def rendered() -> dict[Path, str]:
-    """Return each generated document with its block refreshed."""
     return {
         DOC: updated(DOC.read_text()),
         GAPS: updated(GAPS.read_text(), render_gaps()),

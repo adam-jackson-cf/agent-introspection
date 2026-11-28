@@ -1,11 +1,3 @@
-"""The scheduled job that runs ``facts sync`` every minute on the SigNoz host.
-
-macOS runs it as a launchd agent and Linux as a systemd user timer; other platforms
-are refused, and so is an additional machine (``[machine] role = "additional"``).
-Machines without SigNoz run ``spool sync`` from the onboarding skill's own systemd
-units instead, whose names differ from these; ``spool_sync_status`` reports them.
-"""
-
 from __future__ import annotations
 
 import getpass
@@ -24,48 +16,87 @@ from agent_introspection import spool
 from agent_introspection.config import AppConfig, load_config, require_host
 
 LABEL = "dev.agent-introspection.sync"
-# The label earlier releases installed; install and remove retire it.
 LEGACY_LABEL = "com.adamjackson.agent-introspection.sync"
-LAUNCH_AGENTS = Path.home() / "Library/LaunchAgents"
-PLIST = LAUNCH_AGENTS / f"{LABEL}.plist"
-LEGACY_PLIST = LAUNCH_AGENTS / f"{LEGACY_LABEL}.plist"
-# Distinct from the `agent-introspection-spool-sync` units of machines without SigNoz.
 UNIT = "agent-introspection-sync"
-SYSTEMD_UNITS = Path.home() / ".config/systemd/user"
-SERVICE = SYSTEMD_UNITS / f"{UNIT}.service"
-TIMER = SYSTEMD_UNITS / f"{UNIT}.timer"
-# The onboarding skill's units that run `spool sync` on an additional machine (Linux).
+SERVICE_NAME = f"{UNIT}.service"
+TIMER_NAME = f"{UNIT}.timer"
 SPOOL_SYNC_UNIT = "agent-introspection-spool-sync"
-SPOOL_SYNC_SERVICE = SYSTEMD_UNITS / f"{SPOOL_SYNC_UNIT}.service"
-SPOOL_SYNC_TIMER = SYSTEMD_UNITS / f"{SPOOL_SYNC_UNIT}.timer"
-# The `systemctl --user` commands that load the unit files and start the timer.
-_START = (("daemon-reload",), ("enable", "--now", TIMER.name))
-# A user's timers run without a login session only when lingering is enabled.
+_START = (("daemon-reload",), ("enable", "--now", TIMER_NAME))
 LINGER = Path("/var/lib/systemd/linger")
-LOG = Path.home() / ".local/share/agent-introspection/sync.log"
-# What launchd itself captures (a crash before the sync can log): not rotated, rarely written.
-LAUNCHD_LOG = LOG.with_name("sync-launchd.log")
-# Job files that install or remove replaced, kept outside LaunchAgents so launchd
-# never loads a backup as a second job.
-BACKUPS = LOG.with_name("schedule-backups")
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_FILES = 3
 INTERVAL_SECONDS = 60
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 SCHEDULERS = {"darwin": "launchd", "linux": "systemd"}
-# A launchctl or systemctl call that hangs fails instead of stalling the command.
 SCHEDULER_TIMEOUT_SECONDS = 30
+
+
+def launch_agents_dir() -> Path:
+    return Path.home() / "Library/LaunchAgents"
+
+
+def plist_file() -> Path:
+    return launch_agents_dir() / f"{LABEL}.plist"
+
+
+def legacy_plist_file() -> Path:
+    return launch_agents_dir() / f"{LEGACY_LABEL}.plist"
+
+
+def systemd_units_dir() -> Path:
+    return Path.home() / ".config/systemd/user"
+
+
+def service_file() -> Path:
+    return systemd_units_dir() / SERVICE_NAME
+
+
+def timer_file() -> Path:
+    return systemd_units_dir() / TIMER_NAME
+
+
+def spool_sync_service_file() -> Path:
+    return systemd_units_dir() / f"{SPOOL_SYNC_UNIT}.service"
+
+
+def spool_sync_timer_file() -> Path:
+    return systemd_units_dir() / f"{SPOOL_SYNC_UNIT}.timer"
+
+
+def log_file() -> Path:
+    return Path.home() / ".local/share/agent-introspection/sync.log"
+
+
+def launchd_log_file() -> Path:
+    return log_file().with_name("sync-launchd.log")
+
+
+def backups_dir() -> Path:
+    return log_file().with_name("schedule-backups")
+
+
+def platform_name() -> str:
+    return sys.platform
+
+
+def _python_executable() -> str:
+    return sys.executable
+
+
+def _which(name: str) -> str | None:
+    return shutil.which(name)
+
+
+def _linger_file_exists(user: str) -> bool:
+    return (LINGER / user).exists()
 
 
 @dataclass(frozen=True, slots=True)
 class RetiredJob:
-    """A launchd job under ``LEGACY_LABEL`` that was stopped and whose plist was moved."""
-
     unloaded: bool
     backup: Path | None
 
     def report(self) -> dict[str, Any]:
-        """Return the JSON-ready description of what was retired."""
         return {
             "label": LEGACY_LABEL,
             "unloaded": self.unloaded,
@@ -75,25 +106,20 @@ class RetiredJob:
 
 @dataclass(frozen=True, slots=True)
 class ReplacedJob:
-    """The job under ``LABEL`` an install replaced: its plist, and whether it was loaded."""
-
     plist: bytes
     loaded: bool
 
 
 @dataclass(frozen=True, slots=True)
 class TimerState:
-    """Whether a systemd user timer is enabled (starts at login) and active (running)."""
-
     enabled: bool
     active: bool
 
     def restore(self) -> tuple[tuple[str, ...], ...]:
-        """Return the ``systemctl --user`` commands that load the timer in this state."""
         return (
             ("daemon-reload",),
-            ("enable" if self.enabled else "disable", TIMER.name),
-            ("start" if self.active else "stop", TIMER.name),
+            ("enable" if self.enabled else "disable", TIMER_NAME),
+            ("start" if self.active else "stop", TIMER_NAME),
         )
 
 
@@ -103,36 +129,23 @@ def _program_arguments(executable: Path, config: Path | None) -> list[str]:
 
 
 def plist(executable: Path, path_dirs: Iterable[str], config: Path | None = None) -> bytes:
-    """Return the launchd job that runs ``facts sync`` every minute.
-
-    A selected ``config`` is passed through, so the job syncs the same deployment.
-    ``--log`` makes the sync write its summary and errors to the rotated ``LOG`` with
-    a UTC timestamp, which launchd's own file redirection cannot do.
-    """
     return plistlib.dumps({
         "Label": LABEL,
         "ProgramArguments": _program_arguments(executable, config),
         "StartInterval": INTERVAL_SECONDS,
         "RunAtLoad": True,
         "EnvironmentVariables": {"PATH": ":".join(dict.fromkeys(path_dirs))},
-        "StandardOutPath": str(LAUNCHD_LOG),
-        "StandardErrorPath": str(LAUNCHD_LOG),
+        "StandardOutPath": str(launchd_log_file()),
+        "StandardErrorPath": str(launchd_log_file()),
     })
 
 
 def unit_quote(value: str) -> str:
-    """Quote one unit-file value, escaping backslashes, quotes, and ``%`` specifiers."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     return f'"{escaped}"'
 
 
 def service_unit(executable: Path, path_dirs: Iterable[str], config: Path | None = None) -> str:
-    """Return the systemd user service that runs ``facts sync`` once; its timer repeats it.
-
-    It passes ``config`` and sets ``PATH`` as the launchd job does. ``--log`` writes
-    to the rotated ``LOG``; anything else the job prints goes to the user journal.
-    """
-    # `$` would expand an environment variable in ExecStart; `$$` is a literal one.
     command = " ".join(
         unit_quote(argument).replace("$", "$$")
         for argument in _program_arguments(executable, config)
@@ -150,10 +163,6 @@ def service_unit(executable: Path, path_dirs: Iterable[str], config: Path | None
 
 
 def timer_unit() -> str:
-    """Return the systemd user timer that starts the service every minute.
-
-    ``Persistent=true`` runs a start missed while the machine was off or asleep.
-    """
     return (
         "[Unit]\n"
         "Description=Run Agent Introspection facts sync every minute\n"
@@ -162,7 +171,7 @@ def timer_unit() -> str:
         "OnCalendar=minutely\n"
         "AccuracySec=1s\n"
         "Persistent=true\n"
-        f"Unit={SERVICE.name}\n"
+        f"Unit={SERVICE_NAME}\n"
         "\n"
         "[Install]\n"
         "WantedBy=timers.target\n"
@@ -170,7 +179,6 @@ def timer_unit() -> str:
 
 
 def _rotate(path: Path) -> None:
-    """Shift ``sync.log`` to ``sync.log.1`` and so on once it reaches ``LOG_MAX_BYTES``."""
     if not path.exists() or path.stat().st_size < LOG_MAX_BYTES:
         return
     for index in range(LOG_FILES - 1, 0, -1):
@@ -180,12 +188,7 @@ def _rotate(path: Path) -> None:
 
 
 def log_line(message: str, path: Path | None = None, now: datetime | None = None) -> None:
-    """Append ``message`` to the sync log, each line stamped with its UTC time.
-
-    The log keeps ``LOG_FILES`` files of about ``LOG_MAX_BYTES``. A log that cannot be
-    written falls back to stderr, so the line still reaches the scheduler's capture.
-    """
-    path = path or LOG
+    path = path or log_file()
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     text = "".join(f"{stamp} {line}\n" for line in message.splitlines() or [""])
     try:
@@ -218,30 +221,24 @@ def systemctl(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def platform_scheduler() -> str:
-    """Return the scheduler this platform uses: launchd on macOS, systemd on Linux."""
-    scheduler = SCHEDULERS.get(sys.platform)
+    platform = platform_name()
+    scheduler = SCHEDULERS.get(platform)
     if scheduler is None:
         raise RuntimeError(
             "facts schedule supports macOS (launchd) and Linux (systemd user units), "
-            f"not {sys.platform}"
+            f"not {platform}"
         )
     return scheduler
 
 
 def _tool_directory(name: str) -> str:
-    found = shutil.which(name)
+    found = _which(name)
     if found is None:
         raise RuntimeError(f"{name} not found on PATH")
     return str(Path(found).parent)
 
 
 def job_path(config: AppConfig) -> list[str]:
-    """Return the tool directories the scheduled job needs on PATH.
-
-    A ClickHouse password needs its command's executable, because the scheduler cannot
-    pass the password variable to the job.
-    Prompt labels need ``[labels] openrouter_key_command``'s executable.
-    """
     signoz = config.signoz
     required: list[str] = []
     if signoz.clickhouse_password_env is not None:
@@ -257,30 +254,21 @@ def job_path(config: AppConfig) -> list[str]:
 
 
 def _backup_path(path: Path) -> Path:
-    """Return where ``path`` is backed up: ``BACKUPS/<name>.bak-<UTC time>``."""
-    BACKUPS.mkdir(parents=True, exist_ok=True)
-    return BACKUPS / f"{path.name}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    backups = backups_dir()
+    backups.mkdir(parents=True, exist_ok=True)
+    return backups / f"{path.name}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
 
 def check(loaded: AppConfig) -> tuple[str, Path, tuple[str, ...]]:
-    """Refuse what ``schedule_install`` would refuse; return what it would install.
-
-    The scheduler, the ``agent-introspection`` executable, and the job's PATH.
-    """
     scheduler = platform_scheduler()
     require_host(loaded, "the scheduled `facts sync` needs SigNoz's ClickHouse")
-    executable = Path(sys.executable).with_name("agent-introspection")
+    executable = Path(_python_executable()).with_name("agent-introspection")
     if not executable.exists():
         raise RuntimeError(f"{executable} not found; cannot schedule a missing executable")
     return scheduler, executable, (*job_path(loaded), *SYSTEM_PATH)
 
 
 def schedule_install(config: Path | None = None) -> dict[str, Any]:
-    """Write and start the job that runs `facts sync` every minute.
-
-    A job that fails to start restores and restarts the job it replaced. An additional
-    machine is refused: it has no ClickHouse for ``facts sync``.
-    """
     scheduler, executable, path_dirs = check(load_config(config))
     if scheduler == "launchd":
         return _install_launchd(executable, path_dirs, config)
@@ -288,17 +276,12 @@ def schedule_install(config: Path | None = None) -> dict[str, Any]:
 
 
 def schedule_remove() -> dict[str, Any]:
-    """Stop the job and delete its files; on macOS also retire the legacy job."""
     if platform_scheduler() == "launchd":
         return _remove_launchd()
     return _remove_systemd()
 
 
 def schedule_status() -> dict[str, Any]:
-    """Report whether the job is installed and loaded, and the spool's backlog.
-
-    ``loaded`` means launchd has the job, or the systemd timer is active.
-    """
     status = _launchd_status() if platform_scheduler() == "launchd" else _systemd_status()
     return status | {
         "inbox_backlog": spool.backlog(),
@@ -315,12 +298,6 @@ def launchd_loaded(label: str) -> bool:
 
 
 def _bootout(domain: str, label: str, *, loaded: bool) -> str | None:
-    """Stop the job under ``label``; return why a loaded one could not be, else None.
-
-    Stopping a job that is not loaded fails harmlessly, so only a loaded job's failure
-    is returned: that job is still running, and the caller must not go on as if it
-    were stopped.
-    """
     stopped = launchctl("bootout", f"{domain}/{label}")
     if loaded and stopped.returncode != 0:
         return stopped.stderr.strip() or "launchctl bootout failed"
@@ -328,42 +305,36 @@ def _bootout(domain: str, label: str, *, loaded: bool) -> str | None:
 
 
 def _retire_legacy_job(domain: str) -> RetiredJob | None:
-    """Stop the job under ``LEGACY_LABEL`` and move its plist to ``BACKUPS``.
-
-    Returns None when no legacy job is installed or loaded. A loaded job that cannot
-    be stopped is an error, so two jobs never sync at once.
-    """
+    legacy = legacy_plist_file()
     loaded = launchd_loaded(LEGACY_LABEL)
-    if not (loaded or LEGACY_PLIST.exists()):
+    if not (loaded or legacy.exists()):
         return None
     if (detail := _bootout(domain, LEGACY_LABEL, loaded=loaded)) is not None:
         raise RuntimeError(f"could not stop the legacy job {LEGACY_LABEL}: {detail}")
     backup = None
-    if LEGACY_PLIST.exists():
-        backup = _backup_path(LEGACY_PLIST)
-        shutil.move(LEGACY_PLIST, backup)
+    if legacy.exists():
+        backup = _backup_path(legacy)
+        shutil.move(legacy, backup)
     return RetiredJob(unloaded=loaded, backup=backup)
 
 
 def _install_launchd(
     executable: Path, path_dirs: Iterable[str], config: Path | None
 ) -> dict[str, Any]:
-    PLIST.parent.mkdir(parents=True, exist_ok=True)
-    previous = PLIST.read_bytes() if PLIST.exists() else None
+    job = plist_file()
+    job.parent.mkdir(parents=True, exist_ok=True)
+    previous = job.read_bytes() if job.exists() else None
     domain = launchd_domain()
     retired = _retire_legacy_job(domain)
-    PLIST.write_bytes(plist(executable, path_dirs, config))
-    # Whether the job being replaced runs: a job the user stopped stays stopped if
-    # the new one fails to load and the old one is put back.
+    job.write_bytes(plist(executable, path_dirs, config))
     was_loaded = launchd_loaded(LABEL)
     if (detail := _bootout(domain, LABEL, loaded=was_loaded)) is not None:
-        # The job still runs as it was loaded: put its plist back as it was too.
         if previous is None:
-            PLIST.unlink()
+            job.unlink()
         else:
-            PLIST.write_bytes(previous)
+            job.write_bytes(previous)
         raise RuntimeError(_still_running(detail, retired))
-    loaded = launchctl("bootstrap", domain, str(PLIST))
+    loaded = launchctl("bootstrap", domain, str(job))
     if loaded.returncode != 0:
         message = loaded.stderr.strip() or "launchctl bootstrap failed"
         replaced = ReplacedJob(previous, was_loaded) if previous is not None else None
@@ -378,11 +349,6 @@ def _install_launchd(
 
 
 def _still_running(detail: str, retired: RetiredJob | None) -> str:
-    """Return the error for a loaded job under ``LABEL`` that could not be stopped.
-
-    It names what already changed: the legacy job install retires first stays retired,
-    since putting it back would leave two jobs syncing at once.
-    """
     message = f"could not stop the job {LABEL}: {detail}; it is still loaded, its plist unchanged"
     if retired is None:
         return message
@@ -393,23 +359,19 @@ def _still_running(detail: str, retired: RetiredJob | None) -> str:
 def _restore_launchd_job(
     domain: str, previous: ReplacedJob | None, retired: RetiredJob | None, message: str
 ) -> NoReturn:
-    """Put back the job a failed install replaced, then raise ``message``.
-
-    That is the previous job under ``LABEL``, else the legacy job install retired.
-    Either is reloaded only when it was loaded before install: a job the user had
-    stopped stays stopped. ``message`` then names what was put back.
-    """
+    job = plist_file()
     restored: Path | None = None
     reload = True
     if previous is not None:
-        PLIST.write_bytes(previous.plist)
-        restored = PLIST
+        job.write_bytes(previous.plist)
+        restored = job
         reload = previous.loaded
     else:
-        PLIST.unlink(missing_ok=True)
+        job.unlink(missing_ok=True)
         if retired is not None and retired.backup is not None:
-            shutil.move(retired.backup, LEGACY_PLIST)
-            restored = LEGACY_PLIST
+            legacy = legacy_plist_file()
+            shutil.move(retired.backup, legacy)
+            restored = legacy
             reload = retired.unloaded
     if restored is None:
         raise RuntimeError(message)
@@ -429,8 +391,9 @@ def _remove_launchd() -> dict[str, Any]:
     domain = launchd_domain()
     if (detail := _bootout(domain, LABEL, loaded=launchd_loaded(LABEL))) is not None:
         raise RuntimeError(_still_running(detail, None))
-    existed = PLIST.exists()
-    PLIST.unlink(missing_ok=True)
+    job = plist_file()
+    existed = job.exists()
+    job.unlink(missing_ok=True)
     retired = _retire_legacy_job(domain)
     return {
         "removed": existed,
@@ -442,13 +405,12 @@ def _remove_launchd() -> dict[str, Any]:
 
 def _launchd_status() -> dict[str, Any]:
     legacy_loaded = launchd_loaded(LEGACY_LABEL)
-    legacy_installed = LEGACY_PLIST.exists()
+    legacy_installed = legacy_plist_file().exists()
     return {
         "scheduler": "launchd",
         "label": LABEL,
-        "installed": PLIST.exists(),
+        "installed": plist_file().exists(),
         "loaded": launchd_loaded(LABEL),
-        # A job left by an earlier release; `facts schedule install` retires it.
         "legacy": (
             {"label": LEGACY_LABEL, "installed": legacy_installed, "loaded": legacy_loaded}
             if legacy_installed or legacy_loaded
@@ -458,7 +420,6 @@ def _launchd_status() -> dict[str, Any]:
 
 
 def _systemctl_failure(*commands: tuple[str, ...]) -> str | None:
-    """Run each ``systemctl --user`` command in turn; return the first failure's message."""
     for command in commands:
         result = systemctl(*command)
         if result.returncode != 0:
@@ -469,12 +430,11 @@ def _systemctl_failure(*commands: tuple[str, ...]) -> str | None:
 def _install_systemd(
     executable: Path, path_dirs: Iterable[str], config: Path | None
 ) -> dict[str, Any]:
-    SYSTEMD_UNITS.mkdir(parents=True, exist_ok=True)
-    units = {SERVICE: service_unit(executable, path_dirs, config), TIMER: timer_unit()}
+    service, timer = service_file(), timer_file()
+    service.parent.mkdir(parents=True, exist_ok=True)
+    units = {service: service_unit(executable, path_dirs, config), timer: timer_unit()}
     previous = {path: path.read_bytes() for path in units if path.exists()}
-    # The replaced timer's state: one the user stopped or disabled stays so if the new
-    # one fails to start and the old units are put back.
-    state = _timer_state(TIMER) if TIMER in previous else None
+    state = _timer_state(timer) if timer in previous else None
     backups: list[str] = []
     for path in previous:
         backup = _backup_path(path)
@@ -488,7 +448,7 @@ def _install_systemd(
     return {
         "installed": True,
         "scheduler": "systemd",
-        "unit": TIMER.name,
+        "unit": TIMER_NAME,
         "interval_seconds": INTERVAL_SECONDS,
         "backups": backups,
         "linger": _lingering(),
@@ -498,16 +458,9 @@ def _install_systemd(
 def _restore_systemd_units(
     previous: Mapping[Path, bytes], state: TimerState | None, message: str
 ) -> NoReturn:
-    """Put back the units a failed install replaced, then raise ``message``.
-
-    ``state`` is the replaced timer's, or None when there was no timer, in which case
-    the new timer is disabled. A replaced timer is enabled and started again only if
-    it was before: one the user stopped or disabled stays so. ``message`` then names
-    the state the timer is back in.
-    """
     if state is None:
-        systemctl("disable", "--now", TIMER.name)
-    for path in (SERVICE, TIMER):
+        systemctl("disable", "--now", TIMER_NAME)
+    for path in (service_file(), timer_file()):
         if path in previous:
             path.write_bytes(previous[path])
         else:
@@ -522,39 +475,33 @@ def _restore_systemd_units(
             f"restarted ({detail}); the schedule is stopped"
         )
     if not state.active:
-        raise RuntimeError(f"{message}; {TIMER.name} is back in place, not active, as it was")
-    raise RuntimeError(f"{message}; {TIMER.name} is back in place and active")
+        raise RuntimeError(f"{message}; {TIMER_NAME} is back in place, not active, as it was")
+    raise RuntimeError(f"{message}; {TIMER_NAME} is back in place and active")
 
 
 def _remove_systemd() -> dict[str, Any]:
-    """Stop and delete the units; a timer that could not be stopped keeps its units.
-
-    Stopping a timer that is neither enabled nor active fails harmlessly. An enabled or
-    active one that cannot be stopped (for example, an unreachable user bus) is still
-    scheduled, so its units stay and the removal is refused, as for launchd.
-    """
-    before = _timer_state(TIMER)
-    stopped = systemctl("disable", "--now", TIMER.name)
+    service, timer = service_file(), timer_file()
+    before = _timer_state(timer)
+    stopped = systemctl("disable", "--now", TIMER_NAME)
     if stopped.returncode != 0 and (before.enabled or before.active):
         detail = stopped.stderr.strip() or "systemctl disable failed"
         raise RuntimeError(
-            f"could not stop the timer {TIMER.name}: {detail}; it is still scheduled, "
+            f"could not stop the timer {TIMER_NAME}: {detail}; it is still scheduled, "
             "its units unchanged"
         )
-    existed = SERVICE.exists() or TIMER.exists()
-    SERVICE.unlink(missing_ok=True)
-    TIMER.unlink(missing_ok=True)
+    existed = service.exists() or timer.exists()
+    service.unlink(missing_ok=True)
+    timer.unlink(missing_ok=True)
     systemctl("daemon-reload")
-    return {"removed": existed, "scheduler": "systemd", "unit": TIMER.name}
+    return {"removed": existed, "scheduler": "systemd", "unit": TIMER_NAME}
 
 
 def _lingering() -> bool:
-    """Return whether systemd keeps this user's timers running with no login session."""
     try:
         user = getpass.getuser()
     except (OSError, KeyError):
         return False
-    return (LINGER / user).exists()
+    return _linger_file_exists(user)
 
 
 def _timer_state(timer: Path) -> TimerState:
@@ -577,16 +524,11 @@ def _timer_status(service: Path, timer: Path) -> dict[str, Any]:
 
 
 def _systemd_status() -> dict[str, Any]:
-    return _timer_status(SERVICE, TIMER)
+    return _timer_status(service_file(), timer_file())
 
 
 def spool_sync_status() -> dict[str, Any]:
-    """Report the timer that runs ``spool sync`` on an additional machine (read-only).
-
-    Only Linux has bundled units (the onboarding skill's systemd user units), reported
-    as ``schedule_status`` reports the host's job. On any other platform ``scheduler``
-    is None: no spool-sync job is bundled there.
-    """
-    if SCHEDULERS.get(sys.platform) != "systemd":
-        return {"scheduler": None, "platform": sys.platform}
-    return _timer_status(SPOOL_SYNC_SERVICE, SPOOL_SYNC_TIMER)
+    platform = platform_name()
+    if SCHEDULERS.get(platform) != "systemd":
+        return {"scheduler": None, "platform": platform}
+    return _timer_status(spool_sync_service_file(), spool_sync_timer_file())

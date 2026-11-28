@@ -1,0 +1,6 @@
+name: "a # b"
+other: 'c # d'
+url: http://example.com/#x
+run: |
+  # block scalar text is data
+  echo hi

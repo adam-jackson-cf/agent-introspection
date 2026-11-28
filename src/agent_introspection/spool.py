@@ -1,20 +1,3 @@
-"""The record spool and its one route to the facts store: OTLP/HTTP logs.
-
-Every machine writes its records (activity-hook events and spool status) as one JSON
-file each into the spool, ``hooks.INBOX``. ``drain`` ships them in batches of at most
-``BATCH_SIZE`` to the logs endpoint (``AppConfig.otlp_logs_endpoint``: ``[hooks]
-otlp_logs_endpoint``, else the collector's ``/v1/logs``), where SigNoz keeps them and the
-``facts`` loaders read them back into ClickHouse. ``sync`` is the whole periodic step:
-record a status heartbeat and drain.
-
-A file leaves the spool only once the collector accepted it. A batch the collector
-reports as rejected (a partial success, or a 400 carrying an OTLP status) moves to
-``rejected/``: it may already be partly stored, and resending is safe because the loaders
-deduplicate on ``event_id``. A response that says the endpoint is wrong (404, 415, other
-4xx) or a transient failure (429, 5xx, timeout, refused) keeps the files and records
-its class. Only exception and class names are logged, never URLs or record text.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -35,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent_introspection import hooks
-from agent_introspection.config import AppConfig, load_config
+from agent_introspection.config import AppConfig, ConfigurationError, load_config
 
 STATUS_SCHEMA = "agent-introspection.spool-status/1"
 SERVICE_NAME = "agent-introspection"
@@ -51,8 +34,6 @@ type Record = dict[str, Any]
 
 @dataclass(frozen=True)
 class Family:
-    """One record family: its OTLP ``event.name``, short name, and record-time field."""
-
     name: str
     event_name: str
     time_field: str
@@ -63,25 +44,26 @@ FAMILIES: dict[str, Family] = {
     STATUS_SCHEMA: Family("spool-status", "agent_introspection.spool_status", "reported_at"),
 }
 _COUNTED = ("hook-event",)
-# Families this release no longer sends; a leftover file is deleted, not quarantined.
 RETIRED_SCHEMAS = frozenset({"agent-introspection.session-project/1"})
 
 
 def host_name() -> str:
-    """Return this machine's short host name."""
     return socket.gethostname().split(".")[0]
 
 
 def cli_version() -> str:
-    """Return the installed package version, or ``unknown`` when run from a bare checkout."""
     try:
         return metadata.version("agent-introspection")
     except metadata.PackageNotFoundError:
         return "unknown"
 
 
+def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def _directory(inbox: Path | None) -> Path:
-    return inbox if inbox is not None else hooks.INBOX
+    return inbox if inbox is not None else hooks.inbox_dir()
 
 
 def _state_path(inbox: Path) -> Path:
@@ -89,27 +71,20 @@ def _state_path(inbox: Path) -> Path:
 
 
 def pending_paths(inbox: Path | None = None, limit: int | None = None) -> list[Path]:
-    """Return the spooled record files (at most ``limit``, in directory order)."""
     directory = _directory(inbox)
     return list(islice(directory.glob("*.json"), limit)) if directory.is_dir() else []
 
 
 def backlog(inbox: Path | None = None) -> int:
-    """Return how many record files wait in the spool."""
     return len(pending_paths(inbox))
 
 
 def rejected_count(inbox: Path | None = None) -> int:
-    """Return how many record files were quarantined in ``rejected/``."""
     quarantine = _directory(inbox) / "rejected"
     return len(list(quarantine.glob("*.json"))) if quarantine.is_dir() else 0
 
 
-# --- State ------------------------------------------------------------------------
-
-
 def read_state(inbox: Path | None = None) -> dict[str, Any]:
-    """Return the persisted send counters: ``sent_total`` per family and ``last_error_class``."""
     state: dict[str, Any] = {"sent_total": {}, "last_error_class": ""}
     try:
         document = json.loads(_state_path(_directory(inbox)).read_text())
@@ -128,9 +103,6 @@ def _save_state(inbox: Path, state: Mapping[str, Any]) -> None:
     hooks.atomic_write(_state_path(inbox), json.dumps(state, separators=(",", ":")) + "\n")
 
 
-# --- OTLP batches -----------------------------------------------------------------
-
-
 def _time_ns(value: str) -> int:
     moment = datetime.fromisoformat(value)
     if moment.tzinfo is None:
@@ -143,12 +115,6 @@ def _attribute(key: str, value: str) -> dict[str, Any]:
 
 
 def build_body(records: list[Record]) -> bytes:
-    """Return the OTLP/JSON logs request for ``records``.
-
-    Each record is one log record: ``timeUnixNano`` is its own time (the collector
-    stamps the observed time, which the loaders window on), the body is the record's
-    compact JSON, and ``event.name`` plus the schema select its family downstream.
-    """
     entries = []
     for item in records:
         family = FAMILIES[item["schema"]]
@@ -179,13 +145,8 @@ def build_body(records: list[Record]) -> bytes:
     return json.dumps(document, separators=(",", ":")).encode()
 
 
-# --- Responses --------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class Outcome:
-    """What to do with a sent batch's files, and the error class to record."""
-
     action: Literal["delete", "reject", "keep"]
     error_class: str = ""
 
@@ -227,7 +188,6 @@ def _classify_success(text: bytes) -> Outcome:
 
 
 def classify_response(status: int, body: bytes) -> Outcome:
-    """Classify one collector response (see the module docstring for the classes)."""
     text = body.strip()
     if 200 <= status < 300:
         return _classify_success(text)
@@ -239,12 +199,11 @@ def classify_response(status: int, body: bytes) -> Outcome:
 
 
 def send(endpoint: str, body: bytes, timeout: float = CONNECT_TIMEOUT_SECONDS) -> Outcome:
-    """POST one OTLP/JSON request and classify the answer; never raises."""
     request = urllib.request.Request(
         endpoint, data=body, method="POST", headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _urlopen(request, timeout) as response:
             return classify_response(response.status, response.read(_MAX_RESPONSE_BYTES))
     except urllib.error.HTTPError as exc:
         with exc:
@@ -262,13 +221,8 @@ def send(endpoint: str, body: bytes, timeout: float = CONNECT_TIMEOUT_SECONDS) -
         return Outcome("keep", type(exc).__name__)
 
 
-# --- Draining ---------------------------------------------------------------------
-
-
 @dataclass
 class DrainResult:
-    """What one drain did."""
-
     sent: int = 0
     rejected: int = 0
     batches: int = 0
@@ -287,7 +241,6 @@ class DrainResult:
 
 @contextlib.contextmanager
 def _lock(directory: Path) -> Generator[bool]:
-    """Hold the non-blocking drain lock; yield whether this process got it."""
     with (directory / ".drain.lock").open("a") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -312,7 +265,6 @@ def _read_record(path: Path) -> Record | None:
 
 
 def _left_to_quarantine(path: Path) -> bool:
-    """Delete an unreadable file of a retired family; return whether one is left to quarantine."""
     try:
         item = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -338,7 +290,6 @@ def _ship(
     state: dict[str, Any],
     result: DrainResult,
 ) -> bool:
-    """Send one batch and settle its files; return False to stop draining."""
     batch: list[tuple[Path, Record]] = []
     invalid: list[Path] = []
     for path in paths:
@@ -385,13 +336,6 @@ def drain(
     max_batches: int | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> DrainResult:
-    """Send spooled records until a pass finds the spool empty, the budget ends, or a batch fails.
-
-    One process drains at a time (a non-blocking lock); another holder makes this a
-    no-op with ``busy`` set. Records written while draining are picked up by the next
-    pass, so the loop ends only on an empty pass. ``max_batches`` bounds the work of a
-    hook process, which must not outlast its harness's patience.
-    """
     directory = _directory(inbox)
     result = DrainResult()
     if not directory.is_dir():
@@ -412,7 +356,6 @@ def _drain_held(
     in_budget: Callable[[], bool],
     max_batches: int | None,
 ) -> None:
-    """Drain while the caller holds the drain lock and ``in_budget`` stays true."""
     state = read_state(directory)
     while in_budget() and (max_batches is None or result.batches < max_batches):
         paths = pending_paths(directory, BATCH_SIZE)
@@ -425,7 +368,6 @@ def _drain_held(
 
 
 def _prune_heartbeats(directory: Path) -> None:
-    """Delete unsent status heartbeats: the counter is cumulative, so a new one supersedes them."""
     for path in pending_paths(directory):
         item = _read_record(path)
         if item is not None and item["schema"] == STATUS_SCHEMA:
@@ -433,23 +375,14 @@ def _prune_heartbeats(directory: Path) -> None:
 
 
 def hook_endpoint(config: Path | None = None) -> str | None:
-    """Return the logs endpoint for the hook path, loading configuration leniently.
-
-    A missing configuration file is fine (the defaults apply); an invalid one means no
-    endpoint, so records stay spooled, and its error class is logged.
-    """
     try:
         return load_config(config).otlp_logs_endpoint
-    except Exception as exc:
+    except ConfigurationError as exc:
         hooks.log("spool", type(exc).__name__, "0")
         return None
 
 
-# --- Status and sync --------------------------------------------------------------
-
-
 def status_record(inbox: Path | None = None, *, now: datetime | None = None) -> Record:
-    """Build the spool-status heartbeat: backlog, quarantine, age, send counters, last error."""
     directory = _directory(inbox)
     moment = now if now is not None else datetime.now(UTC)
     oldest: float | None = None
@@ -482,18 +415,6 @@ def sync(
     *,
     inbox: Path | None = None,
 ) -> dict[str, Any]:
-    """Record a status heartbeat and drain the spool to ``config.otlp_logs_endpoint``.
-
-    Ordering invariant: under one drain lock, unsent heartbeats from earlier runs are
-    deleted (superseded; the counter is cumulative), records are drained, the status
-    snapshot is taken, and the heartbeat is sent as its own request (spooled only when
-    that send fails). So heartbeat k's ``sent_total`` counts every record shipped before
-    it, each of which the collector observed at or before heartbeat k, and the records in
-    the increment k-1 -> k are observed in (heartbeat k-1, heartbeat k]: the window the
-    Pipeline delivery check counts. This holds except for a microsecond race with a hook
-    drain that ships a batch as the lock changes hands, which the check's GAP_FLOOR
-    absorbs. A busy lock skips the heartbeat.
-    """
     directory = _directory(inbox)
     endpoint = config.otlp_logs_endpoint
     sent = DrainResult()

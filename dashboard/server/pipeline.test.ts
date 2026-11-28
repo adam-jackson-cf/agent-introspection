@@ -17,7 +17,6 @@ import {
   ORDERED_TOTALS,
   PRODUCER_PRUNE,
   SENT_FROM_TOTALS,
-  spoolDelivery,
   SPOOL_STATUS,
   SPOOL_DELIVERY,
   spoolExceptions,
@@ -45,7 +44,10 @@ describe("coverage grid", () => {
       ],
     );
     const cells = Object.fromEntries(
-      coverageGrid(registry(), counts).map((row) => [row.harness, row.state]),
+      coverageGrid(registry(), counts).map((row) => [
+        row["harness"],
+        row["state"],
+      ]),
     );
     expect(cells).toEqual({
       "oh-my-pi": "healthy",
@@ -59,9 +61,9 @@ describe("coverage grid", () => {
   test("flags rows on another harness's route that no stray explains", async () => {
     const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
     const claude = coverageGrid(registry(), counts).find(
-      (row) => row.harness === "claude-code",
+      (row) => row["harness"] === "claude-code",
     );
-    expect(claude?.state).toBe("stray (unexplained)");
+    expect(claude?.["state"]).toBe("stray (unexplained)");
   });
 
   test("an emitted route without rows is a possible break only while the harness is active", async () => {
@@ -72,14 +74,15 @@ describe("coverage grid", () => {
       withTasks,
     );
     const exec = coverageGrid(withTasks, counts).find(
-      (row) => row.harness === "codex_exec" && row.signal === "task.count",
+      (row) =>
+        row["harness"] === "codex_exec" && row["signal"] === "task.count",
     );
-    expect(exec?.state).toBe("possible break");
+    expect(exec?.["state"]).toBe("possible break");
   });
 
   test("a not-applicable cell without rows says so; with rows it is flagged", async () => {
     const idle = coverageGrid(registry(), counting([], [])).find(
-      (row) => row.harness === "claude-code",
+      (row) => row["harness"] === "claude-code",
     );
     expect(idle).toMatchObject({
       state: "not applicable",
@@ -88,20 +91,20 @@ describe("coverage grid", () => {
     const flagged = coverageGrid(
       registry(),
       counting([{ harness: "claude-code", t0: 4, u0: 4 }], []),
-    ).find((row) => row.harness === "claude-code");
-    expect(flagged?.state).toBe("stray (unexplained)");
+    ).find((row) => row["harness"] === "claude-code");
+    expect(flagged?.["state"]).toBe("stray (unexplained)");
   });
 
   test("hook routes count from hook_rows without FINAL, keyed by event_type", async () => {
     const reg = withHookRoute();
     const queries = routeCountQueries(reg);
-    expect(Object.keys(queries).sort()).toEqual(["hooks", "logs", "spans"]);
-    expect(queries.hooks).toContain("FROM introspection.hook_rows WHERE");
-    expect(queries.hooks).not.toContain("FINAL");
-    expect(queries.hooks).toContain(
+    expect(Object.keys(queries).toSorted()).toEqual(["hooks", "logs", "spans"]);
+    expect(queries["hooks"]).toContain("FROM introspection.hook_rows WHERE");
+    expect(queries["hooks"]).not.toContain("FINAL");
+    expect(queries["hooks"]).toContain(
       "countIf((event_type = 'turn_stop') AND ts >= {start:DateTime64(3, 'UTC')}) AS t0",
     );
-    expect(queries.spans).toContain("FROM introspection.spans FINAL");
+    expect(queries["spans"]).toContain("FROM introspection.spans FINAL");
 
     const counts = counting(
       [{ harness: "oh-my-pi", t0: 10, u0: 10 }],
@@ -112,8 +115,8 @@ describe("coverage grid", () => {
     expect(counts.total.get("hook.turn_stop")?.get("claude-code")).toBe(7);
     const cell = coverageGrid(reg, counts).find(
       (row) =>
-        row.signal === "effort.reasoning_tokens" &&
-        row.harness === "claude-code",
+        row["signal"] === "effort.reasoning_tokens" &&
+        row["harness"] === "claude-code",
     );
     expect(cell).toMatchObject({ state: "healthy", own: 7 });
     expect(
@@ -174,7 +177,7 @@ describe("coverage grid", () => {
       Object.keys(contributions(reg, counts, "cache")["usage.input_tokens"]!),
     ).toEqual(["oh-my-pi", "claude-code"]);
     const cells = Object.fromEntries(
-      coverageGrid(reg, counts).map((row) => [row.harness, row.state]),
+      coverageGrid(reg, counts).map((row) => [row["harness"], row["state"]]),
     );
     expect(cells).toMatchObject({
       "oh-my-pi": "healthy",
@@ -198,7 +201,7 @@ describe("coverage grid", () => {
     expect(contributions(everywhere, counts, "provider")).toEqual({});
     expect(
       coverageGrid(everywhere, counts).some(
-        (row) => row.signal === "provider.throughput",
+        (row) => row["signal"] === "provider.throughput",
       ),
     ).toBe(false);
 
@@ -283,16 +286,32 @@ describe("recombination", () => {
       ]),
     );
     const rows = recombine(results);
-    expect(rows.find((row) => row.measure === "sessions")).toMatchObject({
+    expect(rows.find((row) => row["measure"] === "sessions")).toMatchObject({
       all: 4,
       sum_of_harnesses: 3,
       ok: false,
     });
     expect(
-      rows.filter((row) => row.measure !== "sessions").every((row) => row.ok),
+      rows
+        .filter((row) => row["measure"] !== "sessions")
+        .every((row) => row["ok"]),
     ).toBe(true);
   });
 });
+
+const everySql = async (): Promise<string[]> => {
+  const sent: string[] = [];
+  const query: Query = async (sql) => {
+    sent.push(sql);
+    return [];
+  };
+  await pipelineData(query, registry(), {}, true, {
+    counts: Promise.resolve(counting([], [])),
+    sanitization: sanitizationRows(query),
+    unrouted: Promise.resolve({ list: [], totals: [] }),
+  });
+  return sent;
+};
 
 describe("pipeline checks", () => {
   test("sanitization asserts hook events hold no raw-text keys, and daily rows count hooks", async () => {
@@ -324,20 +343,6 @@ describe("pipeline checks", () => {
       "SELECT ts, harness, 'hooks' FROM introspection.hook_rows",
     );
   });
-
-  const everySql = async (): Promise<string[]> => {
-    const sent: string[] = [];
-    const query: Query = async (sql) => {
-      sent.push(sql);
-      return [];
-    };
-    await pipelineData(query, registry(), {}, true, {
-      counts: Promise.resolve(counting([], [])),
-      sanitization: sanitizationRows(query),
-      unrouted: Promise.resolve({ list: [], totals: [] }),
-    });
-    return sent;
-  };
 
   test("every read of the agent-introspection service names its event and schema", async () => {
     for (const sql of await everySql()) {
@@ -402,11 +407,11 @@ describe("pipeline checks", () => {
       sanitization: Promise.resolve([]),
       unrouted: Promise.resolve({ list: [], totals: [] }),
     });
-    expect(data.spool_exceptions!.map((row) => row.host)).toEqual([
+    expect(data["spool_exceptions"]!.map((row) => row["host"])).toEqual([
       "nuc",
       "bad",
     ]);
-    expect(data.spool_summary).toEqual([{ reporting: 2, unknown: 1 }]);
+    expect(data["spool_summary"]).toEqual([{ reporting: 2, unknown: 1 }]);
     const sql = (await everySql()).join("\n");
     expect(sql).toContain(
       "if(age_seconds > 300, 'unknown', 'reporting') AS state",
@@ -454,7 +459,7 @@ describe("spool delivery: sent counters against records received", () => {
       delivery_gap: 0,
     });
     expect(merged[1]).toMatchObject({ hooks_received: 480, delivery_gap: 1 });
-    expect(spoolExceptions(merged).map((row) => row.host)).toEqual(["nuc"]);
+    expect(spoolExceptions(merged).map((row) => row["host"])).toEqual(["nuc"]);
   });
 
   test("a host with no windowed heartbeat has unknown counts and no flag", () => {
@@ -489,104 +494,6 @@ describe("spool delivery: sent counters against records received", () => {
     expect(SPOOL_STATUS).not.toContain("max(timestamp)");
   });
 
-  // Evaluates the real sent arithmetic in ClickHouse over inline values(): read-only.
-  const live = process.env.AGENT_INTROSPECTION_LIVE_CLICKHOUSE === "1";
-  const sentFor = async (totals: number[]): Promise<number> => {
-    // Rows are fed in reverse so the arrival ordering is part of what is checked.
-    const rows = totals
-      .map((total, index) => `(${index + 1}, ${total})`)
-      .reverse()
-      .join(", ");
-    const sql = `SELECT ${SENT_FROM_TOTALS("totals")} AS sent FROM (SELECT ${ORDERED_TOTALS} AS totals FROM values('produced_ns UInt64, sent_total Int64', ${rows})) FORMAT TSV`;
-    const proc = Bun.spawn(
-      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
-    );
-    const [out, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
-    return Number(out.trim());
-  };
-
-  test.skipIf(!live)(
-    "sent sums positive counter increments and counts a post-reset value as its own increment",
-    async () => {
-      expect(await sentFor([100, 0, 150])).toBe(150);
-      expect(await sentFor([100, 120, 0, 30])).toBe(50);
-      expect(await sentFor([10, 20, 35])).toBe(25);
-      expect(await sentFor([40])).toBe(0);
-    },
-    120000,
-  );
-
-  // Runs SPOOL_DELIVERY's own arrived/beats logic over inline rows shaped like the
-  // logs table (offsets are seconds before now). Read-only.
-  const logRow = (
-    kind: "beat" | "record",
-    host: string,
-    observedAgo: number,
-    producedAgo: number,
-    sentTotal = 0,
-  ): string => {
-    const body =
-      kind === "beat"
-        ? `{"schema":"agent-introspection.spool-status/1","sent_total":{"hook-event":${sentTotal},"session-project":0}}`
-        : `{"schema":"agent-introspection.hook-event/1"}`;
-    const event =
-      kind === "beat"
-        ? "agent_introspection.spool_status"
-        : "agent_introspection.hook_event";
-    const ns = (ago: number) =>
-      `toUInt64(toUnixTimestamp(now() - INTERVAL ${ago} SECOND)) * 1000000000`;
-    return `SELECT ${ns(producedAgo)} AS timestamp, ${ns(observedAgo)} AS observed_timestamp, '${body}' AS body, map('service.name', 'agent-introspection', 'host.name', '${host}') AS resources_string, map('event.name', '${event}') AS attributes_string`;
-  };
-  const deliveryFor = async (rows: string[]): Promise<Row[]> => {
-    const sql = `${spoolDelivery(`(${rows.join(" UNION ALL ")})`)} FORMAT JSONEachRow`;
-    const proc = Bun.spawn(
-      ["docker", "exec", "-i", "signoz-clickhouse", "clickhouse-client"],
-      { stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" },
-    );
-    const [out, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) throw new Error(await new Response(proc.stderr).text());
-    return out
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Row);
-  };
-
-  test.skipIf(!live)(
-    "SPOOL_DELIVERY counts a window by arrival, keeps old-producer records, and ignores shipping order",
-    async () => {
-      const hour = 3600;
-      // Heartbeats produced at totals 100, 130, 160; the 130 beat is stale and
-      // ships last, so arrival order is 100, 160, 130. Producer order gives 60.
-      const beats = [
-        logRow("beat", "h", 5 * hour, 5 * hour, 100),
-        logRow("beat", "h", 3 * hour, 3 * hour, 160),
-        logRow("beat", "h", 2 * hour, 4 * hour, 130),
-      ];
-      // Within the window (arrived after the first beat, by the last beat):
-      // one produced 3 days ago (past the old 48 hour guard) but observed 3.5 hours ago, one produced just
-      // before arriving, one outside the window.
-      const records = [
-        logRow("record", "h", 3.5 * hour, 3 * 24 * hour),
-        logRow("record", "h", 3.5 * hour, 3.5 * hour),
-        logRow("record", "h", 6 * hour, 6 * hour),
-      ];
-      const rows = await deliveryFor([...beats, ...records]);
-      const hook = rows.find((row) => row.family === "hook-event");
-      expect(Number(hook!.sent)).toBe(60);
-      expect(Number(hook!.received)).toBe(2);
-    },
-    120000,
-  );
-
   test("the pipeline response carries the delivery columns", async () => {
     const query: Query = async (sql) =>
       sql.includes("AS last_error_class")
@@ -599,54 +506,58 @@ describe("spool delivery: sent counters against records received", () => {
       sanitization: Promise.resolve([]),
       unrouted: Promise.resolve({ list: [], totals: [] }),
     });
-    expect(data.spool_status!.map((row) => row.delivery_gap)).toEqual([0, 1]);
-    expect(data.spool_exceptions!.map((row) => row.host)).toEqual(["nuc"]);
+    expect(data["spool_status"]!.map((row) => row["delivery_gap"])).toEqual([
+      0, 1,
+    ]);
+    expect(data["spool_exceptions"]!.map((row) => row["host"])).toEqual([
+      "nuc",
+    ]);
   });
 });
 
-describe("pipeline calculations come from the server (Phase 2)", () => {
-  const run = async (
-    params: Record<string, string>,
-    list: Row[] = [],
-    totals: Row[] = [],
-  ) => {
-    const sent: string[] = [];
-    const query: Query = async (sql) => {
-      sent.push(sql);
-      return [];
-    };
-    const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
-    const { data } = await pipelineData(query, registry(), params, true, {
-      counts: Promise.resolve(counts),
-      sanitization: Promise.resolve([]),
-      unrouted: Promise.resolve({ list, totals }),
-    });
-    return { data, sql: sent.join("\n;\n") };
+const run = async (
+  params: Record<string, string>,
+  list: Row[] = [],
+  totals: Row[] = [],
+) => {
+  const sent: string[] = [];
+  const query: Query = async (sql) => {
+    sent.push(sql);
+    return [];
   };
+  const counts = counting([{ harness: "claude-code", t0: 3, u0: 2 }], []);
+  const { data } = await pipelineData(query, registry(), params, true, {
+    counts: Promise.resolve(counts),
+    sanitization: Promise.resolve([]),
+    unrouted: Promise.resolve({ list, totals }),
+  });
+  return { data, sql: sent.join("\n;\n") };
+};
 
+describe("pipeline calculations come from the server (Phase 2)", () => {
   test("coverage summary counts cells and unexplained cells after the harness filter", async () => {
     const all = await run({});
-    const grid = all.data.coverage!;
+    const grid = all.data["coverage"]!;
     const unexplained = grid.filter((row) =>
       [
         "possible break",
         "stray (unexplained)",
         "not in use, rows present",
-      ].includes(String(row.state)),
+      ].includes(String(row["state"])),
     ).length;
-    expect(all.data.coverage_summary).toEqual([
+    expect(all.data["coverage_summary"]).toEqual([
       { cells: grid.length, unexplained },
     ]);
     expect(unexplained).toBeGreaterThan(0);
     const one = await run({ harness: "claude-code" });
     expect(
-      one.data.coverage!.every((row) => row.harness === "claude-code"),
+      one.data["coverage"]!.every((row) => row["harness"] === "claude-code"),
     ).toBe(true);
-    expect(one.data.coverage_summary).toEqual([
+    expect(one.data["coverage_summary"]).toEqual([
       {
-        cells: one.data.coverage!.length,
-        unexplained: one.data.coverage!.filter(
-          (row) => row.state === "stray (unexplained)",
+        cells: one.data["coverage"]!.length,
+        unexplained: one.data["coverage"]!.filter(
+          (row) => row["state"] === "stray (unexplained)",
         ).length,
       },
     ]);
@@ -658,12 +569,12 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
       { harness: "oh-my-pi", source: "spans", name: "b", n: 1 },
       { harness: "", source: "hooks", name: "c", n: 4 },
     ];
-    expect((await run({}, unrouted)).data.unrouted).toHaveLength(3);
+    expect((await run({}, unrouted)).data["unrouted"]).toHaveLength(3);
     expect(
-      (await run({ harness: "oh-my-pi" }, unrouted)).data.unrouted,
+      (await run({ harness: "oh-my-pi" }, unrouted)).data["unrouted"],
     ).toEqual([unrouted[1]!]);
-    const strays = (await run({ harness: "oh-my-pi" })).data.strays!;
-    expect(strays.every((row) => row.harness === "oh-my-pi")).toBe(true);
+    const strays = (await run({ harness: "oh-my-pi" })).data["strays"]!;
+    expect(strays.every((row) => row["harness"] === "oh-my-pi")).toBe(true);
   });
 
   test("coverage states and per-view rows partition the filtered grid, and the unrouted totals are exact and filtered", async () => {
@@ -672,19 +583,19 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
       { harness: "oh-my-pi", names: 1, rows: 7 },
     ];
     const { data } = await run({ harness: "claude-code" }, [], totals);
-    const grid = data.coverage!;
-    const states = data.coverage_states!;
-    expect(states.map((row) => row.state)[0]).toBe("healthy");
+    const grid = data["coverage"]!;
+    const states = data["coverage_states"]!;
+    expect(states.map((row) => row["state"])[0]).toBe("healthy");
     expect(states).toHaveLength(9);
-    expect(states.reduce((sum, row) => sum + Number(row.cells), 0)).toBe(
+    expect(states.reduce((sum, row) => sum + Number(row["cells"]), 0)).toBe(
       grid.length,
     );
-    const byView = data.coverage_by_view!;
-    expect(byView.reduce((sum, row) => sum + Number(row.cells), 0)).toBe(
+    const byView = data["coverage_by_view"]!;
+    expect(byView.reduce((sum, row) => sum + Number(row["cells"]), 0)).toBe(
       grid.length,
     );
-    expect(data.unrouted_summary).toEqual([{ names: 3, rows: 240_000 }]);
-    expect((await run({}, [], totals)).data.unrouted_summary).toEqual([
+    expect(data["unrouted_summary"]).toEqual([{ names: 3, rows: 240_000 }]);
+    expect((await run({}, [], totals)).data["unrouted_summary"]).toEqual([
       { names: 4, rows: 240_007 },
     ]);
   });
@@ -696,18 +607,13 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
 
   test("SQL carries the KPI totals, rates, daily sums and harness filter", async () => {
     const { sql } = await run({ harness: "oh-my-pi" });
-    // Loaders KPI: total, failing, ok = total - failing.
     expect(sql).toContain("total - failing AS ok");
-    // Freshness KPI: missing sources and largest lag, a NULL lag counting as 0.
     expect(sql).toContain("countIf(facts_missing = 1) AS missing_facts");
     expect(sql).toContain("if(count() > 0, max(ifNull(lag_seconds, 0)), NULL)");
-    // Parity KPI and subtitle window label.
     expect(sql).toContain("countIf(ok = 1) AS matching");
     expect(sql).toContain("AS window_label");
-    // Daily rows are summed over sources in SQL.
     expect(sql).toContain("count() AS n FROM (");
     expect(sql).toContain("GROUP BY day, harness ORDER BY day, harness");
-    // The harness filter is in the freshness and parity queries.
     expect(
       sql.split("{harness:String} = '' OR harness = {harness:String}").length,
     ).toBeGreaterThan(4);
@@ -723,6 +629,6 @@ describe("pipeline calculations come from the server (Phase 2)", () => {
       "forbidden_keys + long_status + home_paths AS violations",
     );
     expect(sent[0]).toContain("GROUP BY ROLLUP(source)");
-    expect(sent[0].trimEnd().endsWith("SETTINGS max_threads = 2")).toBe(true);
+    expect(sent[0]?.trimEnd().endsWith("SETTINGS max_threads = 2")).toBe(true);
   });
 });

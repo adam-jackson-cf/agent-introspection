@@ -1,5 +1,3 @@
-"""The doctor command of the Agent Introspection CLI, wired to this machine."""
-
 from __future__ import annotations
 
 import argparse
@@ -25,11 +23,10 @@ from agent_introspection.cli_common import diagnostic
 def _drift_report(
     run: facts.SqlRunner, saved_dir: Path | None, services: Sequence[str]
 ) -> dict[str, Any]:
-    return producers.drift_report(run, saved_dir or producers.FINGERPRINT_DIR, services)
+    return producers.drift_report(run, saved_dir or producers.fingerprint_dir(), services)
 
 
 def default_probes() -> doctor.Probes:
-    """Return the probes that touch this machine."""
     return doctor.Probes(
         connect=facts.runner,
         tcp_open=doctor.tcp_open,

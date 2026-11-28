@@ -63,11 +63,8 @@ def test_toml_appends_an_absent_table() -> None:
 @pytest.mark.parametrize(
     "otel",
     [
-        # Sub-tables of the managed table.
         '[otel]\nenvironment = "dev"\n\n[otel.exporter.otlp-grpc]\nendpoint = "http://localhost:4317"\n',
-        # The managed key written as dotted keys.
         '[otel]\nenvironment = "dev"\nexporter.otlp-grpc.endpoint = "http://localhost:4317"\n',
-        # The managed key's value spread over several lines.
         '[otel]\nenvironment = "dev"\n'
         'exporter = { otlp-grpc = { endpoint = """\nhttp://localhost:4317""" } }\n',
     ],
@@ -285,7 +282,6 @@ def test_dotenv_updates_lines_in_place_and_appends_missing_keys() -> None:
     assert updated.notes == ()
     lines = updated.text.splitlines()
     original = _DOTENV.splitlines()
-    # A rewritten line keeps its trailing comment; only the value changes.
     assert lines[1] == "export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 # old"
     assert lines[3] == 'SINGLE="c d" # comment'
     assert lines[6] == "GLUED=y #tight"

@@ -1,5 +1,3 @@
-"""Helpers shared by the command-line subcommand modules."""
-
 from __future__ import annotations
 
 import argparse

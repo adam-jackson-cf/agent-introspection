@@ -1,6 +1,5 @@
 import { rename, rm } from "node:fs/promises";
 
-/** Replace `dist` with `stage`, restoring the previous `dist` if the swap fails. */
 export async function swapDist(stage: string, dist: string): Promise<void> {
   const backup = `${dist}.bak`;
   await rm(backup, { force: true, recursive: true });

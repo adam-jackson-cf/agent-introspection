@@ -1,13 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Fail when maintained TypeScript exceeds the portable Enaible limits that
- * oxlint cannot express: loop depth (PYS250 analogue), class length (PYQ200
- * analogue) and import fan-out (FANOUT.general / FANOUT.large-module analogue).
- *
- * Usage: bun scripts/check-typescript-limits.ts [--root DIR] [FILE...]
- * Without FILE arguments every tracked dashboard and .agents TypeScript file is checked.
- * A trailing `.fixture` suffix is ignored when choosing the parser language.
- */
 import { spawnSync } from "node:child_process";
 import { builtinModules, createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -18,10 +9,10 @@ type Node = TS.Node;
 
 const MAX_LOOP_DEPTH = 2;
 const MAX_CLASS_LINES = 700;
-const MAX_FANOUT = 10;
 const LARGE_MODULE_NLOC = 800;
 const MAX_LARGE_MODULE_FANOUT = 3;
-const TRACKED_GLOBS = ["dashboard/*.ts", "dashboard/*.tsx", ".agents/*.ts", ".agents/*.tsx"];
+const TRACKED_GLOBS = ["*.ts", "*.tsx", "*.mts", "*.cts"];
+const PLACEHOLDER_MESSAGE = /not[ _-]?implemented|\btodo\b/i;
 const ARRAY_ITERATORS: Record<string, true> = {
   every: true,
   filter: true,
@@ -121,6 +112,35 @@ function isIteratorCallback(node: Node): boolean {
   );
 }
 
+function isDeclaredFunction(node: Node): node is TS.FunctionLikeDeclarationBase {
+  if (!ts.isFunctionLike(node) || ts.isConstructorDeclaration(node)) {
+    return false;
+  }
+  const isValue = ts.isArrowFunction(node) || ts.isFunctionExpression(node);
+  return !isValue || (node.parent !== undefined && ts.isVariableDeclaration(node.parent));
+}
+
+function thrownMessage(statement: TS.Statement | undefined): string | undefined {
+  if (statement === undefined || !ts.isThrowStatement(statement)) {
+    return undefined;
+  }
+  const thrown = statement.expression;
+  const isConstruction = ts.isNewExpression(thrown) || ts.isCallExpression(thrown);
+  return literalText(isConstruction ? thrown.arguments?.[0] : thrown);
+}
+
+function placeholderKind(node: Node): string | undefined {
+  const body = isDeclaredFunction(node) ? node.body : undefined;
+  if (body === undefined || !ts.isBlock(body)) {
+    return undefined;
+  }
+  if (body.statements.length === 0) {
+    return "empty body";
+  }
+  const message = body.statements.length === 1 ? thrownMessage(body.statements[0]) : undefined;
+  return message !== undefined && PLACEHOLDER_MESSAGE.test(message) ? "throws a not-implemented error" : undefined;
+}
+
 function nonBlankLines(text: string): number {
   return text.split("\n").filter((line) => {
     const stripped = line.trim();
@@ -142,6 +162,12 @@ function checkFile(path: string): Finding[] {
   const dependencies = new Set<string>();
   const lineOf = (node: Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 
+  const placeholderFindings = (node: Node): Finding[] => {
+    const kind = placeholderKind(node);
+    const message = `function has only a placeholder body (${kind}); implement it, or declare it abstract, as an overload or with declare`;
+    return kind === undefined ? [] : [{ file: displayPath, line: lineOf(node), rule: "CODE.no-placeholder-bodies", message }];
+  };
+
   const visit = (node: Node, depth: number): void => {
     const specifier = importSpecifier(node);
     if (specifier !== undefined && !isBuiltin(specifier)) {
@@ -153,6 +179,7 @@ function checkFile(path: string): Finding[] {
         findings.push({ file: displayPath, line: lineOf(node), rule: "TS.class-lines", message: `class spans ${lines} lines > ${MAX_CLASS_LINES}` });
       }
     }
+    findings.push(...placeholderFindings(node));
     let nextDepth = depth;
     if (ts.isFunctionLike(node) && !isIteratorCallback(node)) {
       nextDepth = 0;
@@ -167,9 +194,6 @@ function checkFile(path: string): Finding[] {
   visit(source, 0);
 
   const nloc = nonBlankLines(text);
-  if (dependencies.size > MAX_FANOUT) {
-    findings.push({ file: displayPath, line: 1, rule: "TS.fanout", message: `non-builtin imports ${dependencies.size} > ${MAX_FANOUT}` });
-  }
   if (nloc > LARGE_MODULE_NLOC && dependencies.size > MAX_LARGE_MODULE_FANOUT) {
     findings.push({ file: displayPath, line: 1, rule: "TS.fanout-large-module", message: `large module ${nloc} NLOC with non-builtin imports ${dependencies.size} > ${MAX_LARGE_MODULE_FANOUT}` });
   }

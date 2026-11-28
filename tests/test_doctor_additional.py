@@ -1,5 +1,3 @@
-"""``doctor`` on an additional machine: no SigNoz here, everything sent to the host."""
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -78,7 +76,6 @@ def test_an_additional_machine_checks_the_host_collector_and_leaves_signoz_to_th
     assert {item["detail"] for item in result["checks"] if item["name"] == "telemetry"} == {
         f"not counted: {_NO_CLICKHOUSE}"
     }
-    # Harness export is judged against the host's collector, not a local one.
     exports = [item for item in result["checks"] if item["name"] == "export_settings"]
     assert {item["status"] for item in exports} == {"pass"}
     claude = settings_of(one(result, "export_settings", "claude-code"))

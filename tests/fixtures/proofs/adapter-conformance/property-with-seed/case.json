@@ -1,0 +1,7 @@
+{
+ "id": "property-with-seed",
+ "rule": "TEST.property-seed",
+ "evidence": "source",
+ "situation": "a property test fixes its seed",
+ "expect": "clean"
+}

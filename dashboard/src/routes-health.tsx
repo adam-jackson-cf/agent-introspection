@@ -6,7 +6,6 @@ import Pipeline from "./views/Pipeline";
 import PipelineCoverage from "./views/PipelineCoverage";
 import Tools from "./views/Tools";
 
-/** Pipeline freshness, cost and friction views. */
 export const HEALTH_VIEWS: ViewSpec[] = [
   {
     id: "pipeline",

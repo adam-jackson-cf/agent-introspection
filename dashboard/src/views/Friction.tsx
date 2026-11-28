@@ -29,20 +29,19 @@ const flag = (value: unknown) =>
 function pivotCleanDaily(daily: Row[]): Row[] {
   const out: Row[] = [];
   for (const row of daily) {
-    const day = String(row.day);
-    let entry = out.find((candidate) => candidate.day === day);
+    const day = String(row["day"]);
+    let entry = out.find((candidate) => candidate["day"] === day);
     if (!entry) out.push((entry = { day }));
-    entry[String(row.harness)] = maybe(row.clean_rate);
+    entry[String(row["harness"])] = maybe(row["clean_rate"]);
   }
   return out;
 }
 
 export default function Friction({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
-  const kpi = data.kpi ?? [];
-  // The server returns one All row (harness '') beside the per-harness rows.
-  const all = kpi.find((row) => row.harness === "") ?? {};
-  const harnessRows = kpi.filter((row) => row.harness !== "");
+  const kpi = data["kpi"] ?? [];
+  const all = kpi.find((row) => row["harness"] === "") ?? {};
+  const harnessRows = kpi.filter((row) => row["harness"] !== "");
   const rate = (key: string) => maybe(all[`${key}_rate`]);
   const detail = (key: string) =>
     `${fmtCount(num(all[`${key}_n`]))} of ${fmtCount(num(all[`${key}_den`]))} tasks that observe it`;
@@ -51,10 +50,10 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
     label: HARNESS_LABEL[harness],
     color: HARNESS_COLOR[harness],
   }));
-  const cleanDaily = pivotCleanDaily(data.daily ?? []);
-  const signals = data.daily_signals ?? [];
-  const recoveryRows = data.recovery_summary ?? [];
-  const recovery = recoveryRows.find((row) => row.harness === "") ?? {};
+  const cleanDaily = pivotCleanDaily(data["daily"] ?? []);
+  const signals = data["daily_signals"] ?? [];
+  const recoveryRows = data["recovery_summary"] ?? [];
+  const recovery = recoveryRows.find((row) => row["harness"] === "") ?? {};
   return (
     <>
       <Section title="At a glance">
@@ -82,8 +81,8 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Recovery after failure"
           source="recovery_summary"
-          value={fmtPct(maybe(recovery.recovered_rate))}
-          detail={`${fmtCount(num(recovery.recovered))} of ${fmtCount(num(recovery.failed_ops))} failed operations later succeeded (inferred)`}
+          value={fmtPct(maybe(recovery["recovered_rate"]))}
+          detail={`${fmtCount(num(recovery["recovered"]))} of ${fmtCount(num(recovery["failed_ops"]))} failed operations later succeeded (inferred)`}
           signals={["friction.recovery"]}
         />
       </Section>
@@ -160,13 +159,13 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "tasks", label: "Tasks", numeric: true },
               {
                 key: "observed",
                 label: "Observes",
-                render: (row) => String(row.observed) || "—",
+                render: (row) => String(row["observed"]) || "—",
               },
               ...COMPONENTS.map((key) => ({
                 key,
@@ -195,7 +194,7 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "failed_ops", label: "Failed ops", numeric: true },
               { key: "recovered", label: "Recovered", numeric: true },
@@ -203,16 +202,16 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 key: "rate",
                 label: "Rate",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.recovered_rate)),
+                render: (row) => fmtPct(maybe(row["recovered_rate"])),
               },
               {
                 key: "p50",
                 label: "P50 to recover",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p50_recovery_seconds)),
+                render: (row) => fmtSeconds(maybe(row["p50_recovery_seconds"])),
               },
             ]}
-            rows={recoveryRows.filter((row) => row.harness !== "")}
+            rows={recoveryRows.filter((row) => row["harness"] !== "")}
           />
         </Panel>
         <Panel
@@ -226,13 +225,13 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "operation", label: "Operation" },
               { key: "failed_ops", label: "Failed", numeric: true },
               { key: "recovered", label: "Recovered", numeric: true },
             ]}
-            rows={data.recovery_ops ?? []}
+            rows={data["recovery_ops"] ?? []}
           />
         </Panel>
       </Section>
@@ -258,17 +257,17 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
                 key: "harnesses",
                 label: "Harnesses",
                 render: (row) =>
-                  (Array.isArray(row.harnesses) ? row.harnesses : [])
+                  (Array.isArray(row["harnesses"]) ? row["harnesses"] : [])
                     .map(harnessLabel)
                     .join(", ") || "—",
               },
               {
                 key: "last_seen",
                 label: "Last seen (UTC)",
-                render: (row) => String(row.last_seen).slice(0, 16),
+                render: (row) => String(row["last_seen"]).slice(0, 16),
               },
             ]}
-            rows={data.where_to_look ?? []}
+            rows={data["where_to_look"] ?? []}
             empty="No failure class in friction tasks in the selected range."
           />
         </Panel>
@@ -288,69 +287,72 @@ export default function Friction({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "task_type",
                 label: "Type",
-                render: (row) => orDash(row.task_type),
+                render: (row) => orDash(row["task_type"]),
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               { key: "model", label: "Model" },
               {
                 key: "effort",
                 label: "Effort",
-                render: (row) => orDash(row.effort),
+                render: (row) => orDash(row["effort"]),
               },
               {
                 key: "failing_tool",
                 label: "Failing tool",
-                render: (row) => orDash(row.failing_tool),
+                render: (row) => orDash(row["failing_tool"]),
               },
               {
                 key: "failure_class",
                 label: "Failure class",
-                render: (row) => orDash(row.failure_class),
+                render: (row) => orDash(row["failure_class"]),
               },
               {
                 key: "started",
                 label: "Started (UTC)",
-                render: (row) => String(row.started).slice(0, 16),
+                render: (row) => String(row["started"]).slice(0, 16),
               },
               {
                 key: "duration_seconds",
                 label: "Duration",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.duration_seconds)),
+                render: (row) => fmtSeconds(maybe(row["duration_seconds"])),
               },
               {
                 key: "interrupted",
                 label: "Interrupted",
-                render: (row) => flag(row.interrupted),
+                render: (row) => flag(row["interrupted"]),
               },
               {
                 key: "steered",
                 label: "Steered",
-                render: (row) => flag(row.steered),
+                render: (row) => flag(row["steered"]),
               },
               {
                 key: "errored",
                 label: "Errored",
-                render: (row) => flag(row.errored),
+                render: (row) => flag(row["errored"]),
               },
               {
                 key: "quick_follow_up",
                 label: "Follow-up",
-                render: (row) => flag(row.quick_follow_up),
+                render: (row) => flag(row["quick_follow_up"]),
               },
             ]}
-            rows={data.tasks ?? []}
+            rows={data["tasks"] ?? []}
           />
         </Panel>
       </Section>

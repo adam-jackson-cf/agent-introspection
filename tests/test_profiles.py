@@ -65,12 +65,10 @@ def test_resolve_names_the_known_profiles_for_an_unknown_name() -> None:
 
 
 def _surfaces() -> list[tuple[profiles.Profile, str]]:
-    """Return each registered profile with each registry harness it covers."""
     return [(profile, key) for profile in profiles.load_profiles() for key in profile.registry_keys]
 
 
 def _registered_cells() -> list[tuple[profiles.Profile, str, str, str]]:
-    """Return every registry cell of a registered profile, with its alignment."""
     registry = facts.load_registry()
     cells = {(str(row["signal"]), str(row["harness"])): row for row in registry.support}
     return [
@@ -234,11 +232,9 @@ def test_settings_render_their_placeholders_into_the_written_value() -> None:
         ("${CONFIG_DIR}x/$NAME.toml", "/srv/configx/codex.toml"),
         ("~/.codex/config.toml", "/home/user/.codex/config.toml"),
         ("~", "/home/user"),
-        # `~` expands only as the first part; a glob pattern stays as written.
         ("/etc/~/a", "/etc/~/a"),
         ("~/$TILDE/config.toml", "/home/user/~/x/config.toml"),
         ("~/.codex/*/config.toml", "/home/user/.codex/*/config.toml"),
-        # An unset or empty variable, in either spelling, rules the path out.
         ("$UNSET/settings.json", None),
         ("${UNSET}/settings.json", None),
         ("$EMPTY/settings.json", None),
@@ -263,8 +259,6 @@ def test_export_context_fills_the_collector_endpoint_protocol_and_service() -> N
         "otlp_protocol": "http/protobuf",
         "service_name": "codex-app-server",
     }
-    # The collector endpoint is OTLP/HTTP on any port (config refuses the gRPC one), and
-    # an additional machine's is the host's.
     for endpoint in ("http://127.0.0.1:14318/", "http://studio.example:4318"):
         context = profiles.export_context(codex, endpoint)
         assert (context["otlp_endpoint"], context["otlp_protocol"]) == (
@@ -294,7 +288,6 @@ def _http(path: str, protocol: str = "binary", host: str = "127.0.0.1:4318") -> 
 @pytest.mark.parametrize(
     ("key", "setting", "current", "expected"),
     [
-        # Codex exporter tables: gRPC to 4317, or OTLP/HTTP to the same signal path.
         ("codex", "exporter", {"exporter": _GRPC}, "grpc"),
         ("codex", "trace_exporter", {"trace_exporter": _GRPC}, "grpc"),
         ("codex", "exporter", {"exporter": _http("/v1/logs", "json")}, "http"),
@@ -307,7 +300,6 @@ def _http(path: str, protocol: str = "binary", host: str = "127.0.0.1:4318") -> 
         ("codex", "exporter", {"exporter": {"statsig": {}}}, None),
         ("codex", "exporter", {}, None),
         ("codex", "log_user_prompt", {"log_user_prompt": False}, None),
-        # Claude Code's endpoint and protocol variables are judged as a pair.
         ("claude-code", _ENDPOINT, {_ENDPOINT: "http://localhost:4317"}, None),
         ("claude-code", _ENDPOINT, {_ENDPOINT: "http://localhost:4317", _PROTOCOL: "grpc"}, "grpc"),
         ("claude-code", _PROTOCOL, {_ENDPOINT: "http://localhost:4317", _PROTOCOL: "grpc"}, "grpc"),
@@ -320,8 +312,6 @@ def _http(path: str, protocol: str = "binary", host: str = "127.0.0.1:4318") -> 
             None,
         ),
         ("claude-code", "OTEL_SERVICE_NAME", {"OTEL_SERVICE_NAME": "other"}, None),
-        # omp exports OTLP/HTTP only, so a gRPC pair never satisfies its literal protocol.
-        # The default names 127.0.0.1; localhost is the same machine.
         (
             "omp",
             _ENDPOINT,
@@ -387,7 +377,6 @@ def test_an_additional_machines_exporters_reach_the_collector_only_by_the_hosts_
     assert _transport("codex", "exporter", on_host, host) == "http"
     elsewhere = {"exporter": _http("/v1/logs", host="other.example:4318")}
     assert _transport("codex", "exporter", elsewhere, host) is None
-    # A local exporter on an additional machine reaches no collector.
     assert _transport("codex", "exporter", {"exporter": _GRPC}, host) is None
     pair = {_ENDPOINT: "http://studio.example:4317", _PROTOCOL: "grpc"}
     assert _transport("claude-code", _ENDPOINT, pair, host) == "grpc"

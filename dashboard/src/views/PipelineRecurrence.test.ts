@@ -15,7 +15,6 @@ test("unresolved hook rows chart as their own series on the day they occurred", 
 });
 
 test("window-end label is the Europe/London date, which the SQL week cuts at", () => {
-  // 23:30 UTC in BST is already the next London day.
   expect(londonDate("2026-07-01T23:30:00.000Z")).toBe("2026-07-02");
   expect(londonDate("2026-01-01T23:30:00.000Z")).toBe("2026-01-01");
 });

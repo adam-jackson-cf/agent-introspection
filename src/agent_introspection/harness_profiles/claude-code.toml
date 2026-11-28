@@ -1,6 +1,3 @@
-# Claude Code: the settings that switch on its telemetry, and the producer
-# capabilities it offers (docs/references/producer-capabilities.md). Routes are
-# registry [[route]] ids; a capability's status is its weakest part.
 schema = "agent-introspection.harness-profile/1"
 key = "claude-code"
 title = "Claude Code"

@@ -1,0 +1,7 @@
+{
+ "id": "retry-marker",
+ "rule": "TEST.no-evasion",
+ "evidence": "source",
+ "situation": "a test is marked for automatic reruns until green",
+ "expect": "finding"
+}

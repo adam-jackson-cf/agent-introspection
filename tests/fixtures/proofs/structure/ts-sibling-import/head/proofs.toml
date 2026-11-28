@@ -1,0 +1,67 @@
+schema = 1
+
+[scope]
+mode = "whole"
+base_ref = "origin/main"
+
+[structure]
+source_root = "src"
+import_package = "shop"
+tiers = ["core", "service", "interface"]
+banned_words = [
+  "common",
+  "compat",
+  "fallback",
+  "helpers",
+  "legacy",
+  "manager",
+  "misc",
+  "new",
+  "old",
+  "stuff",
+  "temp",
+  "utils",
+]
+catalogue_plurals = ["docs", "scripts", "tests"]
+fixed_files = ["__init__.py", "README.md"]
+repeat_exempt_files = ["__init__.py", "__main__.py"]
+pyq_owned_extensions = [".py"]
+test_name_patterns = ["test_*.py"]
+
+[structure.tier_modules]
+core = ["__init__", "money"]
+service = ["billing", "catalog"]
+interface = ["api", "cli"]
+
+[structure.typescript]
+tsconfig = "tsconfig.json"
+tiers = ["contract", "view", "entry"]
+
+[structure.typescript.tier_modules]
+contract = ["web/contract"]
+view = ["web/panel", "web/view", "web/invoice"]
+entry = ["web/main", "web/server"]
+
+[structure.owners]
+"docs/" = "docs"
+"proofs.toml" = "repo"
+"scripts/" = "tooling"
+"src/shop/" = "shop"
+"tests/" = "tests"
+"tsconfig.json" = "repo"
+"web/" = "web"
+
+[structure.casing]
+"scripts/*" = "kebab-case"
+
+[structure.casing_patterns]
+"kebab-case" = "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+
+[structure.skill_layout]
+root = ".agents/skills"
+marker = "SKILL.md"
+files = ["SKILL.md", "README.md", "references/*.md", "assets/**", "scripts/**"]
+
+[layout]
+fixtures_dir = "tests/fixtures"
+test_file_patterns = ["web/*.test.ts"]

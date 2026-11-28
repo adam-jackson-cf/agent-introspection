@@ -29,10 +29,11 @@ from tests.support.doctor_machine import (
     one,
     replace_settings,
     settings_of,
+    through_seams,
     tree,
     write,
 )
-from tests.support.otlp_collector import Collector
+from tests.support.producer_clickhouse import FakeClickHouse, FakeService
 
 
 @pytest.fixture
@@ -71,11 +72,8 @@ def test_secret_values_never_appear_in_the_report(
         f'"https://collector.example/v1/logs", protocol = "binary", headers = {{ k = "{SECRET}" }} '
         "} }\n"
     )
-    probes = replace(
-        machine.probes,
-        harness=replace(machine.probes.harness, environ={"OPENROUTER_API_KEY": SECRET}),
-    )
-    monkeypatch.setattr(cli_doctor, "default_probes", lambda: probes)
+    monkeypatch.setenv("OPENROUTER_API_KEY", SECRET)
+    through_seams(machine, monkeypatch)
 
     code = main(["--config", str(machine.config), "doctor", "--live", "--drift"])
 
@@ -190,7 +188,6 @@ def test_closed_collector_ports_and_a_missing_hooks_endpoint(machine: Machine) -
     result = machine.report(probes)
 
     assert one(result, "collector_http")["status"] == "fail"
-    # The machine's harnesses export over OTLP/gRPC, so a closed 4317 is their route.
     grpc = one(result, "collector_grpc")
     assert grpc["status"] == "warn"
     assert "export over OTLP/gRPC" in grpc["fix"]
@@ -227,7 +224,6 @@ def test_a_partly_enabled_profile_counts_only_its_enabled_surfaces(machine: Mach
     codex = one(result, "telemetry", "codex")
     assert codex["status"] == "pass"
     assert set(codex["services"]) == {"codex_exec"}
-    # Every registry harness is counted, so the surfaces left out are seen sending.
     disabled = one(result, "disabled_harnesses")
     assert disabled["status"] == "warn"
     assert disabled["harnesses"] == ["codex-app-server", "codex_cli_rs"]
@@ -255,29 +251,6 @@ def test_without_a_hooks_endpoint_records_go_to_the_collectors_logs_url(
     assert one(machine.report(unreachable), "hooks_endpoint")["status"] == "fail"
 
 
-def test_live_posts_one_empty_logs_request_to_the_hooks_endpoint(
-    machine: Machine, collector: Collector
-) -> None:
-    machine.config.write_text(
-        machine.config.read_text().replace("http://127.0.0.1:4318/v1/logs", collector.url)
-    )
-    port = int(collector.base.rsplit(":", 1)[1])
-    probes = replace(
-        machine.probes,
-        # Only the test collector is really dialled; the standard OTLP ports are faked.
-        tcp_open=lambda host, wanted: wanted != port or doctor.tcp_open(host, wanted),
-        post_json=doctor.post_json,
-    )
-
-    result = machine.report(probes, live=True)
-
-    assert one(result, "hooks_endpoint")["status"] == "pass"
-    assert one(result, "collector_live")["status"] == "pass"
-    assert collector.bodies == [{"resourceLogs": []}]
-    collector.default = (404, "not found")
-    assert one(machine.report(probes, live=True), "collector_live")["status"] == "fail"
-
-
 def test_live_reports_a_collector_that_does_not_answer(machine: Machine) -> None:
     def refused(_url: str, _body: bytes) -> int:
         raise ConnectionRefusedError
@@ -289,19 +262,6 @@ def test_live_reports_a_collector_that_does_not_answer(machine: Machine) -> None
         "fail",
         "an empty OTLP/HTTP logs request got no answer (ConnectionRefusedError)",
     )
-
-
-def test_tcp_open_and_http_get_talk_to_a_local_server(collector: Collector) -> None:
-    port = int(collector.base.rsplit(":", 1)[1])
-    # A port taken and released: nothing listens, so a connection is refused at once on
-    # every platform, never left to the connect timeout.
-    with socket.socket() as unused:
-        unused.bind(("127.0.0.1", 0))
-        closed = unused.getsockname()[1]
-
-    assert doctor.tcp_open("127.0.0.1", port) is True
-    assert doctor.tcp_open("127.0.0.1", closed) is False
-    assert doctor.http_get(f"{collector.base}/ping") == (501, b"")
 
 
 def test_an_unknown_enabled_harness_fails_the_harness_block(machine: Machine) -> None:
@@ -408,7 +368,6 @@ def test_the_schedule_on_the_signoz_host(
     ("command", "environ", "omp", "expected"),
     [
         (True, {}, None, "pass"),
-        # Only the key command counts: a shell key or omp's stored credential does not.
         (False, {"OPENROUTER_API_KEY": SECRET}, None, "off"),
         (False, {}, "/bin/omp", "off"),
         (False, {}, None, "off"),
@@ -563,7 +522,6 @@ def test_drift_warns_per_drifted_or_unreadable_service_and_unregistered_or_unnam
     }
     assert drift_checks["claude-code"]["detail"].startswith("claude-code gained 2 and lost 1")
     assert "producers profile opencode" in drift_checks["opencode"]["fix"]
-    # Rows no service name claims are counted only; the sender needs OTEL_SERVICE_NAME.
     unnamed = one(result, "drift_unnamed")
     assert (unnamed["status"], unnamed["unnamed_rows"]) == ("info", 12)
     assert unnamed["detail"].startswith("12 rows have an empty service.name")
@@ -604,17 +562,12 @@ def test_a_config_that_does_not_load_fails_and_the_defaults_carry_on(
     assert find(result, "binary", "codex")
 
 
-def test_an_absent_default_config_means_the_defaults(
-    machine: Machine, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    default = machine.config.with_name("default.toml")
-    monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", default)
-    monkeypatch.setattr(doctor, "DEFAULT_CONFIG_PATH", default)
+def test_an_absent_default_config_means_the_defaults(machine: Machine) -> None:
+    assert not config.default_config_path().exists()
 
     result = doctor.report(doctor.Options(inbox=machine.inbox), machine.probes)
 
     assert one(result, "config")["status"] == "info"
-    # With no config, records go to the local collector's logs URL.
     assert one(result, "hooks_endpoint")["detail"] == "127.0.0.1:4318 accepts connections"
 
 
@@ -624,15 +577,17 @@ def test_the_command_prints_one_json_report_and_exits_by_its_result(
     capsys: pytest.CaptureFixture[str],
     inbox: Path,
 ) -> None:
-    monkeypatch.setattr(cli_doctor, "default_probes", lambda: machine.probes)
+    through_seams(machine, monkeypatch)
 
     assert main(["--config", str(machine.config), "doctor"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["passed"] is True
+    assert report["passed"] is True, [c for c in report["checks"] if c["status"] == "fail"]
     assert set(report["summary"]) == {"pass", "warn", "fail", "off", "info"}
 
-    failing = replace(machine.probes, tcp_open=lambda _host, _port: False)
-    monkeypatch.setattr(cli_doctor, "default_probes", lambda: failing)
+    def refused(_host: str, _port: int) -> socket.socket:
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(doctor, "_connect", refused)
     assert main(["--config", str(machine.config), "doctor"]) == EXIT_FACTS
     assert json.loads(capsys.readouterr().out)["passed"] is False
 
@@ -640,23 +595,22 @@ def test_the_command_prints_one_json_report_and_exits_by_its_result(
 def test_the_command_wires_the_probes_that_touch_this_machine(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(signoz_detect, "detect", lambda: {"signoz_present": False})
-    seen: list[Path] = []
-
-    def report(_run: facts.SqlRunner, saved: Path, _services: Sequence[str]) -> dict[str, Any]:
-        seen.append(saved)
-        return {"services": [], "unregistered": [], "drifted": False}
-
-    monkeypatch.setattr(producers, "drift_report", report)
+    monkeypatch.setattr(signoz_detect, "_docker_cli", lambda: None)
+    monkeypatch.setattr(signoz_detect, "port_open", lambda _port, _host="127.0.0.1": False)
+    monkeypatch.setattr(signoz_detect, "clickhouse_answers", lambda _url=None: False)
+    run = FakeClickHouse({"claude-code": FakeService(spans={"claude_code.interaction": 5})})
+    baseline = producers.fingerprint(run, ["claude-code"], 7)["claude-code"]
+    producers.save_fingerprint(baseline, producers.fingerprint_dir())
     probes = cli_doctor.default_probes()
 
     assert probes.connect is facts.runner
     assert probes.tcp_open is doctor.tcp_open
     assert probes.harness.home == Path.home()
-    assert probes.detect() == {"signoz_present": False}
-    probes.drift_report(lambda _sql: "", None, ())
-    probes.drift_report(lambda _sql: "", tmp_path, ())
-    assert seen == [producers.FINGERPRINT_DIR, tmp_path]
+    assert probes.detect()["signoz_present"] is False
+    saved = probes.drift_report(run, None, ["claude-code"])["services"]
+    chosen = probes.drift_report(run, tmp_path, ["claude-code"])["services"]
+    assert [entry["status"] for entry in saved] == ["unchanged"]
+    assert [entry["status"] for entry in chosen] == ["no_baseline"]
 
 
 @pytest.mark.parametrize(

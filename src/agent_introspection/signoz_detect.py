@@ -1,15 +1,3 @@
-"""Read-only detection of a SigNoz and its ClickHouse on this machine.
-
-``signoz detect`` reports what a SigNoz install would collide with: running containers
-whose name or image mentions SigNoz or ClickHouse, the local ports a SigNoz publishes
-(OTLP gRPC 4317, OTLP/HTTP 4318, ClickHouse HTTP 8123, the SigNoz UI 8080), and whether
-ClickHouse answers ``/ping`` on 127.0.0.1:8123. A SigNoz on other ports is checked at
-the ClickHouse URL and OTLP/HTTP endpoint given instead, the same values ``setup``
-takes; ``setup_refusal`` says why ``setup`` would refuse them as config values. It
-never starts, stops, or changes anything. A missing Docker CLI or a daemon that does
-not answer is reported, never raised.
-"""
-
 from __future__ import annotations
 
 import http.client
@@ -26,7 +14,6 @@ from agent_introspection.config import ConfigurationError, parse_config
 
 LOOPBACK: Final = "127.0.0.1"
 CLICKHOUSE_HTTP_PORT: Final = 8123
-# OTLP gRPC, OTLP/HTTP, ClickHouse HTTP, and the SigNoz UI.
 PORTS: Final = (4317, 4318, CLICKHOUSE_HTTP_PORT, 8080)
 INSTALL_SCRIPT: Final = ".agents/skills/introspection-onboarding/scripts/signoz/install-signoz.sh"
 _MARKERS: Final = ("signoz", "clickhouse")
@@ -49,7 +36,6 @@ def _run_docker(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _docker_output(docker: str, *args: str) -> str | None:
-    """Return the output of ``docker ARGS``, or None when it fails or times out."""
     try:
         completed = _run_docker((docker, *args))
     except (OSError, subprocess.TimeoutExpired):
@@ -67,7 +53,6 @@ def _container(row: dict[str, Any]) -> Container:
 
 
 def signoz_containers(listing: str) -> list[Container]:
-    """Return the containers in ``docker ps`` JSON lines that mention SigNoz or ClickHouse."""
     rows: list[Any] = []
     for line in listing.splitlines():
         try:
@@ -83,7 +68,6 @@ def signoz_containers(listing: str) -> list[Container]:
 
 
 def port_open(port: int, host: str = LOOPBACK) -> bool:
-    """Return whether something accepts TCP connections on ``host``:``port``."""
     try:
         with socket.create_connection((host, port), timeout=_CONNECT_TIMEOUT_SECONDS):
             return True
@@ -96,11 +80,6 @@ def default_clickhouse_url() -> str:
 
 
 def clickhouse_answers(url: str | None = None) -> bool:
-    """Return whether ClickHouse answers ``GET /ping`` with ``Ok.`` at ``url``.
-
-    ``url`` defaults to 127.0.0.1:8123, the default ``[signoz] clickhouse_url``.
-    """
-    # No proxy: a loopback address must never be sent through one.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     base = (url or default_clickhouse_url()).rstrip("/")
     try:
@@ -111,7 +90,6 @@ def clickhouse_answers(url: str | None = None) -> bool:
 
 
 def endpoint_open(url: str) -> bool:
-    """Return whether something accepts TCP connections at an OTLP/HTTP endpoint URL."""
     try:
         parts = urlsplit(url if "://" in url else f"http://{url}")
         port = parts.port or (443 if parts.scheme == "https" else 80)
@@ -143,7 +121,6 @@ def _docker_notes(docker: dict[str, Any]) -> list[str]:
 
 
 def setup_refusal(clickhouse_url: str | None, otlp_endpoint: str | None) -> str | None:
-    """Return why ``setup`` would refuse these addresses as config values, or None."""
     signoz = {
         key: value
         for key, value in (("clickhouse_url", clickhouse_url), ("otlp_endpoint", otlp_endpoint))
@@ -226,13 +203,6 @@ def _install_notes(present: bool, ports: dict[str, bool], searched: bool) -> lis
 
 
 def detect(clickhouse_url: str | None = None, otlp_endpoint: str | None = None) -> dict[str, Any]:
-    """Report SigNoz and ClickHouse containers and local ports; change nothing.
-
-    ``signoz_present`` is true when a container that mentions SigNoz or ClickHouse is
-    running, or ClickHouse answers ``/ping``: at ``clickhouse_url`` when given, else on
-    127.0.0.1:8123. ``otlp_open`` says whether ``otlp_endpoint`` accepts connections,
-    and is None when no endpoint is given.
-    """
     docker, containers = _docker_state()
     ports = {str(port): port_open(port) for port in PORTS}
     if clickhouse_url:

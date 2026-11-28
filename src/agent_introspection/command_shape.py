@@ -1,25 +1,3 @@
-"""Command shape: the program, subcommand, segment count, and verification kinds of a shell command.
-
-``facts_sql/command_shape.sql`` renders the same rules for the Codex projection in
-``facts_sql/select_logs.sql``; ``tests/fixtures/command_shape.json`` pins both
-implementations to one set of cases (``tests/test_command_shape_parity.py`` runs the
-SQL against ClickHouse). Only the shape is kept, never command text: program and
-subcommand names, a segment count, closed-enum kinds, and a gate-run flag.
-
-Rules, applied identically in Python and SQL:
-
-1. ``bash|sh|zsh -c "<string>"`` over the whole command is replaced by its string once.
-2. The text is split on ``&&``, ``||``, ``;``, ``|`` and newlines (quotes are not
-   honoured, so an operator inside a quoted argument also splits). Empty segments are
-   dropped, as are leading environment assignments and ``env`` / ``exec``.
-3. Each segment sheds up to three wrappers (``uv run``, ``npx``, ``sudo``, ``python -m``,
-   ``bash script.sh``, ...); a wrapper also sheds the flags that follow it, so a flag
-   that takes a value (``uv run --with pkg``) leaves the value behind.
-4. The significant segment is the first whose program is not a directory or
-   environment builtin (``cd``, ``export``, ...), else the first segment.
-5. The verification kinds and the gate-run flag are the union over every segment.
-"""
-
 from __future__ import annotations
 
 import re
@@ -38,7 +16,6 @@ MAX_UNWRAPS = 3
 SKIPPED_HEADS = ("cd", "pushd", "popd", "export", "set", "source")
 SHELLS = ("bash", "sh", "zsh")
 SCRIPT_RUNNERS = ("npm", "pnpm", "yarn", "bun")
-# One-token wrappers, then two-token wrappers (program and subcommand).
 SIMPLE_WRAPPERS = ("uvx", "npx", "bunx", "time", "nohup", "sudo", "caffeinate")
 PAIR_WRAPPERS = (
     "uv run",
@@ -50,8 +27,6 @@ PAIR_WRAPPERS = (
     "pipx run",
 )
 
-# Only tools whose second token is a subcommand keep it, so a free-text argument
-# (`echo word`) never becomes a stored subcommand.
 SUBCOMMAND_HEADS = frozenset((
     "aws",
     "brew",
@@ -92,10 +67,6 @@ SUBCOMMAND_HEADS = frozenset((
     "yarn",
 ))
 
-# --- Verification kinds ---------------------------------------------------------------
-# Every rule is a regular expression over the segment's shape: the program basename,
-# then its remaining arguments joined by single spaces (`pytest -q tests`). Aliases
-# are package-script and make/just target names, matched on the script name only.
 _RUNNERS = r"^(?:npm|pnpm|yarn|bun|make|just)(?: run)? "
 
 
@@ -108,8 +79,6 @@ _TEST_PROGRAMS = r"pytest|py\.test|unittest|vitest|jest|mocha|ava|tap|rspec|phpu
 _SMOKE_FLAG = rf"^(?:{_TEST_PROGRAMS})(?: |.* )--smoke(?: |$)"
 
 type Rule = tuple[str, tuple[str, ...], str]
-# (kind, any-of include patterns, exclude pattern or ""); order is the kind's rank only
-# for readers, stored arrays are sorted.
 KIND_RULES: tuple[Rule, ...] = (
     (
         "unit_test",
@@ -161,8 +130,6 @@ KIND_RULES: tuple[Rule, ...] = (
         "",
     ),
 )
-# A full local gate: gate scripts and tools, package-script gate aliases, make/just
-# gate targets. A flag on the call, not a kind.
 _GATE_NAMES = r"(?:run-)?(?:ci|gates?|quality-gates?|check-all)(?:\.\w+)?"
 GATE_PATTERNS = (
     rf"^{_GATE_NAMES}(?: |$)",
@@ -186,8 +153,6 @@ _COMPILED_GATES = tuple(re.compile(p, re.ASCII) for p in GATE_PATTERNS)
 
 @dataclass(frozen=True)
 class CommandShape:
-    """The stored shape of one shell command."""
-
     head: str
     sub: str
     segments: int
@@ -208,7 +173,6 @@ def _at(tokens: list[str], index: int) -> str:
 
 
 def command_tokens(command: str) -> list[str]:
-    """Split on whitespace, dropping empty tokens and environment assignments (for paths)."""
     env = _re(_ENV_ASSIGNMENT)
     return [token for token in _re(_WHITESPACE).split(command) if token and not env.match(token)]
 
@@ -221,7 +185,6 @@ def _strip_flags(tokens: list[str]) -> list[str]:
 
 
 def _script_skip(tokens: list[str]) -> int:
-    """Tokens to drop before a ``bash [flags] file.sh`` script name, else 0."""
     for index, token in enumerate(tokens[1:], start=1):
         if not token.startswith("-"):
             return index if token.endswith(".sh") else 0
@@ -242,7 +205,6 @@ def _wrapper_skip(tokens: list[str]) -> int:
 
 
 def _unwrap(tokens: list[str]) -> list[str]:
-    """Shed up to ``MAX_UNWRAPS`` wrappers; a wrapper with nothing after it stays."""
     for _ in range(MAX_UNWRAPS):
         skip = _wrapper_skip(tokens)
         rest = _strip_flags(tokens[skip:]) if skip else []
@@ -286,7 +248,6 @@ def _sub(head: str, tokens: list[str]) -> str:
 def _matches(
     include: tuple[re.Pattern[str], ...], exclude: re.Pattern[str] | None, shapes: list[str]
 ) -> bool:
-    """Whether some segment shape matches an include pattern and not the exclude pattern."""
     return any(
         any(p.search(shape) for p in include) and not (exclude and exclude.search(shape))
         for shape in shapes
@@ -294,7 +255,6 @@ def _matches(
 
 
 def command_shape(command: str) -> CommandShape:
-    """Return the shape of one shell command; empty for no command."""
     segments = _segments(command)
     shapes = [_shape_text(tokens) for tokens in segments]
     main = next((t for t in segments if _basename(t[0]) not in SKIPPED_HEADS), None)
@@ -307,9 +267,6 @@ def command_shape(command: str) -> CommandShape:
     return CommandShape(
         head, _sub(head, main) if main else "", len(segments), tuple(kinds), int(gate)
     )
-
-
-# --- SQL rendering ------------------------------------------------------------------
 
 
 def _literal(text: str) -> str:
@@ -331,7 +288,6 @@ def _kind_array() -> str:
 
 
 def _wrapper_step() -> str:
-    """Return the SQL lambda body that sheds one wrapper from the token array ``acc``."""
     script = "arrayFirstIndex(t -> NOT startsWith(t, '-'), arraySlice(acc, 2))"
     skip = (
         "arrayMap(h -> multiIf("
@@ -352,14 +308,12 @@ def _wrapper_step() -> str:
 
 
 def fill(template: str, values: dict[str, str]) -> str:
-    """Return ``template`` with each ``{name}`` placeholder replaced by its value."""
     for name, value in values.items():
         template = template.replace("{" + name + "}", value)
     return template
 
 
 def sql_parts() -> dict[str, str]:
-    """Return the values that fill ``facts_sql/command_shape.sql`` placeholders."""
     return {
         "shell_c": _literal(_SHELL_C),
         "quotes": _literal(_QUOTES),

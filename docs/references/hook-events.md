@@ -184,8 +184,10 @@ path goes in a `config-path` file beside the shim, which the shim exports as
 `AGENT_INTROSPECTION_CONFIG` unless that is already set; with the default file it is
 removed. One home holds one, so the last `harness configure` sets it for every
 harness, and `doctor`'s `hook_config` warns when it names a config other than the one
-doctor checked. Failures are logged by exception type only
-to `~/.local/share/agent-introspection/hooks.log`. On a machine without `facts sync`,
+doctor checked. An unreadable or invalid envelope, an unsupported event, and a file or
+delivery error are logged by exception type only to
+`~/.local/share/agent-introspection/hooks.log`. Any other exception is a defect: the
+background normalizer ends with a traceback the shim discards, and the record is lost. On a machine without `facts sync`,
 delivery also needs the `spool sync` timer (see the onboarding skill's
 [additional machines workflow](../../.agents/skills/introspection-onboarding/references/additional-machines-workflow.md)).
 
@@ -231,8 +233,11 @@ path) detached. Handlers never block, throw, or return a result.
 | `input` while `ctx.isIdle()` is false | `steer`                                               | text length only is kept                        |
 
 A `tool_result` that is an error hands its text to the shim in memory; `hooks.py` keeps
-only the normalized failure signature, its hash, and the exit code. A failed spawn
-appends `<time> omp <event> spawn <code>` to the hook log, with no payload.
+only the normalized failure signature, its hash, and the exit code. A failed spawn,
+a handler that throws while building or handing over an envelope, and a prompt export
+that fails append `<time> omp <event> <stage> <code>` to the hook log, with no payload:
+`<stage>` is `spawn`, `emit` or `otlp`, and `<code>` is the error's code, else its class
+name. A failure to write the hook log itself is dropped.
 
 ## Prompt export
 
@@ -271,3 +276,25 @@ holds. Beside `OTEL_LOG_USER_PROMPTS=1`, `doctor` reports a value set by hand, s
 `1` to export responses on purpose, as `info` rather than as unset. Under Claude Code's detailed beta tracing
 (`ENABLE_BETA_TRACING_DETAILED`, which the profile does not set), the same switch would
 also export system prompt and model output text on spans.
+
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- `introspection.hook_rows` adds the harness to each hook event for registry route predicates and the Pipeline coverage grid. The view maps a `codex` producer to the harness of that session's Codex logs, because one Codex hook family would serve app-server, CLI, and exec. Such an event has an empty harness until the session's Codex logs arrive. No Codex hook producer exists today.
+- `load_hook_events` flattens each record's `attrs` by type. Numbers and 0/1 flags go to `attrs_number`, and text goes to `attrs_string`. Lists such as `targets` and any other value go to `attrs_string` as compact JSON text.
+- For `turn_stop`, the turn starts at the first transcript user entry that carries the `prompt_id`, else after the last typed user prompt. Streamed entries that share a message ID count once, so `reasoning_tokens` is not inflated. Only numeric usage and the model name are read from the transcript.
+- The six-hour limit exists because a harness can exit mid-turn and never fire `Stop`, which would leave the marker open forever.
+- Only `input` typed while the agent is busy counts as a steer. Input typed while idle starts a prompt, which `before_agent_start` already covers.
+- The shim hands the envelope to the CLI through a pipe, never a temporary file. It writes the envelope with the `printf` shell builtin, so the text never appears in a process list. The shim finds the CLI at `$AGENT_INTROSPECTION_BIN`, else on `PATH`, else at `~/.local/bin/agent-introspection`, and does nothing when none exists.
+- A leftover spool file of a record family this release no longer sends is deleted, not moved to `rejected/`.
+- A drain ends only on a pass that finds the spool empty, so records written meanwhile go in the next pass. A hook process sends only one batch because it must never outlast the harness's hook timeout.
+- On the hook path a missing config file means the defaults apply. An invalid one means no endpoint: records stay spooled and the hook log records the error class.
+- When the delivery query fails, the Pipeline "Hook spool by host" panel shows sent and received as unknown. It never reads as a host with no gap.
+- The Pipeline view marks a host `unknown` when its latest spool status arrived more than 5 minutes ago (`SPOOL_STALE_SECONDS`). Its backlog then shows NULL, so an old report never reads as a backlog of 0. Ageing uses the collector's `observed_timestamp`, never the producer's `timestamp`, so a skewed host clock cannot make a silent host look fresh.
+- The delivery check filters on the producer `timestamp` only to prune partitions, over 4 days (`PRODUCER_PRUNE`). That guard must never be tighter than the loaders' 3-day sweep on `observed_timestamp`. A tighter guard would drop records the sender counted and the loaders still load, and they would read as lost.
+- Digit normalization mirrors the SQL exactly: `0x` splits a run, so the hex after it becomes a second `N`.
+- Jev being unavailable (no key, no credit, or an unexpected model) never fails `facts sync`; the sync reports it and goes on. Without `[labels] openrouter_key_command`, labelling is off and `facts sync` reads no prompts.
+- `classify.py` pins the Jev model version in every request, so a newer Jev never labels prompts until the questions are re-evaluated against it. It also checks the model OpenRouter resolved, because OpenRouter can map the name elsewhere. A different resolved model raises `JevUnavailableError`, and no prompt is labelled.
+- An HTTP error from OpenRouter never carries the provider's response body, because that body can echo the prompt. A failed decision stores a short reason code with no prompt text. The OpenRouter key and its command's output never appear in a log or an error.
+- `tests/fixtures/command_shape.json` pins `command_shape.py` and `facts_sql/command_shape.sql` to one set of cases, and the deferred T2 test `tests/test_command_shape_parity.py` runs the SQL in a ClickHouse container. A rule change updates both files and the fixture together. A wrapper sheds the flags after it but not their values, so `uv run --with pkg tool` leaves `pkg` as the program.

@@ -48,6 +48,12 @@ disagrees with those standards, the standards win: fix this file. The decisions 
 
 ## Enforce
 
-Candidate checks for CI (set up with the `setup-repository-guardrails` skill): no colour literals outside the
-token mirror (`colour_usage.py --allow <mirror>` from `setup-ux-standards`); no calculations in pages.
-Every marked term exists in the signal registry; every page is listed in navigation.
+Enforced today: `dashboard/src/feature-audit.test.ts` fails when a title in
+[`feature-audit/titles.json`](feature-audit/titles.json) is no longer rendered; it runs in the T1 tier of
+`bash scripts/run-ci-quality-gates.sh`, so every commit and CI run includes it.
+
+Candidate checks, not yet enforced: no colour literals outside the token mirror
+(`colour_usage.py --allow <mirror>` from `setup-ux-standards`); no calculations in pages; every marked term
+exists in the signal registry; every page is listed in navigation. Add one as a `check_<name>` function in
+`scripts/run-ci-quality-gates.sh` with a `proofs.toml` claim, as
+[development](../references/development.md#proofs) describes; an instruction here enforces nothing.

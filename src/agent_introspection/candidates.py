@@ -1,9 +1,3 @@
-"""Export the highest-impact finding as a bounded review candidate.
-
-A candidate is one actionable failure cluster without a proposal, chosen by impact
-(then the most recent occurrence), carrying its evidence pack.
-"""
-
 from __future__ import annotations
 
 import json
@@ -43,7 +37,6 @@ LIMIT 1
 
 
 def next_finding(connection: sqlite3.Connection) -> dict[str, Any] | None:
-    """Return the highest-impact actionable failure cluster that has no proposal."""
     row = connection.execute(CANDIDATE_QUERY, (DETECTOR_ID,)).fetchone()
     if row is None:
         return None
@@ -58,11 +51,6 @@ def _size(candidate: dict[str, Any]) -> int:
 
 
 def fit_candidate(candidate: dict[str, Any], limit: int) -> dict[str, Any]:
-    """Drop trailing rows from the largest evidence lists until the payload fits ``limit``.
-
-    Dropped row counts are recorded under ``evidence.trimmed`` so the review knows the
-    pack is partial. Raises ``ValueError`` when no evidence rows are left to drop.
-    """
     pack = candidate["evidence"]
     trimmed: dict[str, int] = {}
     while _size(candidate) > limit:
@@ -77,7 +65,6 @@ def fit_candidate(candidate: dict[str, Any], limit: int) -> dict[str, Any]:
 
 
 def build_candidate(run: SqlRunner, finding: dict[str, Any]) -> dict[str, Any]:
-    """Assemble one bounded candidate: finding fields and evidence pack."""
     pack = evidence.pack(run, finding["subject"])
     candidate = {
         "id": str(finding["id"]),
@@ -94,7 +81,6 @@ def export(
     reserved_model_budget: int,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
-    """Reserve one review session for the next candidate, or report that none is due."""
     finding = next_finding(connection)
     if finding is None:
         return {"status": "no_candidates"}

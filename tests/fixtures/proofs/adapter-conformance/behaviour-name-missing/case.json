@@ -1,0 +1,7 @@
+{
+ "id": "behaviour-name-missing",
+ "rule": "TEST.growth.justified",
+ "evidence": "static-cases",
+ "situation": "a test function has only a generic single-word name",
+ "expect": "finding"
+}

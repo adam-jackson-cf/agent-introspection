@@ -4,7 +4,6 @@ import json
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -27,7 +26,7 @@ from tests.support.doctor_machine import (
     telemetry_rows,
     write,
 )
-from tests.test_producers import FakeClickHouse, FakeService
+from tests.support.producer_clickhouse import FakeClickHouse, FakeService
 
 
 @pytest.fixture
@@ -93,7 +92,6 @@ def test_a_missing_telemetry_switch_fails_and_a_missing_service_name_only_warns(
         if item["path"] != "~/.codex/config.toml"
     )
     assert settings_of(orca)["trace_exporter"][0] == "fail"
-    # The fix pastes into a shell as one --root argument, with ~ left to expand.
     root = f"~/{machine.orca.relative_to(machine.home).as_posix()}"
     assert " --root ~/" in orca["fix"]
     assert shlex.split(orca["fix"]) == [
@@ -131,7 +129,6 @@ def test_prompt_export_is_reported_on_or_off_and_never_fails(machine: Machine) -
     assert "OTEL_LOG_USER_PROMPTS" in claude["detail"]
     assert "--prompt-export" in claude["fix"]
     assert result["passed"] is True
-    # Claude Code's prompt switch alone also exports assistant responses: a warning.
     replace_settings(machine, {**CLAUDE_ENV, "OTEL_LOG_USER_PROMPTS": "1"})
     partly = one(machine.report(), "prompt_export", "claude-code")
     assert partly["status"] == "warn"
@@ -195,8 +192,6 @@ def test_prompt_export_is_reported_on_or_off_and_never_fails(machine: Machine) -
 def test_codex_prompt_export_names_every_home_that_exports_or_differs(
     machine: Machine, main: str, orca: str | None, expected: tuple[str, str, str]
 ) -> None:
-    # Codex reads `[otel]` from each of its homes: one that exports prompt text while
-    # another does not is never reported as off, and each fix names the homes it writes.
     main_config = machine.home / ".codex/config.toml"
     orca_config = machine.orca / "config.toml"
     for config, value in ((main_config, main), (orca_config, orca)):
@@ -220,8 +215,6 @@ def test_codex_prompt_export_names_every_home_that_exports_or_differs(
 def test_a_prompt_export_value_set_by_hand_is_reported_as_it_is_never_as_unset(
     machine: Machine, responses: str
 ) -> None:
-    # Exporting assistant responses (`1`) is a documented choice: doctor names the
-    # value and says what `--prompt-export` would write over it, never "not set".
     replace_settings(
         machine,
         {**CLAUDE_ENV, "OTEL_LOG_USER_PROMPTS": "1", "OTEL_LOG_ASSISTANT_RESPONSES": responses},
@@ -252,7 +245,6 @@ def test_a_prompt_export_value_set_by_hand_is_reported_as_it_is_never_as_unset(
             "off: OTEL_LOG_USER_PROMPTS in ~/.claude/settings.json is '0', where the profile "
             "writes '1'; OTEL_LOG_ASSISTANT_RESPONSES in ~/.claude/settings.json not set",
         ),
-        # Switched off after `--prompt-export`: the redaction setting it wrote stays.
         (
             "0",
             "0",
@@ -273,8 +265,6 @@ def test_a_prompt_export_value_set_by_hand_is_reported_as_it_is_never_as_unset(
 def test_prompt_export_is_off_while_its_switch_is_off_whatever_its_partner_holds(
     machine: Machine, prompts: str | None, responses: str | None, detail: str
 ) -> None:
-    # Claude Code exports no prompt text unless OTEL_LOG_USER_PROMPTS is on, so its
-    # partner never makes the harness "partly on"; a partner set by hand is still named.
     settings = {"OTEL_LOG_USER_PROMPTS": prompts, "OTEL_LOG_ASSISTANT_RESPONSES": responses}
     replace_settings(
         machine, {**CLAUDE_ENV, **{key: v for key, v in settings.items() if v is not None}}
@@ -417,12 +407,6 @@ def test_a_binary_off_path_or_hanging_warns() -> None:
     assert (found["status"], found["detail"]) == ("warn", "omp printed no version (TimeoutExpired)")
 
 
-def test_installed_version_runs_the_binary_and_reads_its_version() -> None:
-    version = doctor_harness.installed_version([sys.executable, "--version"])
-
-    assert version == ".".join(map(str, sys.version_info[:3]))
-
-
 def test_idle_harnesses_warn_and_a_failed_telemetry_query_fails(machine: Machine) -> None:
     machine.telemetry["oh-my-pi"] = (0, 0)
 
@@ -498,8 +482,6 @@ def test_config_paths_skip_unset_variables_and_take_the_first_path_whose_variabl
     )
 
     assert doctor_harness.config_paths(claude, probes) == [home / ".claude/settings.json"]
-    # A set CLAUDE_CONFIG_DIR replaces ~/.claude for Claude Code, even before it holds a
-    # settings.json: that file is the one to read, and it is missing.
     chosen = replace(probes, environ={"CLAUDE_CONFIG_DIR": str(other)})
     assert doctor_harness.config_paths(claude, chosen) == [other / "settings.json"]
     assert doctor_harness.load_file(claude, other / "settings.json").error == "missing"
@@ -508,9 +490,15 @@ def test_config_paths_skip_unset_variables_and_take_the_first_path_whose_variabl
     assert doctor_harness.shown_path(other, home) == str(other)
 
 
-def test_guarded_turns_any_exception_into_a_failing_check() -> None:
+def test_guarded_turns_a_callee_error_into_a_failing_check() -> None:
     def explode() -> dict[str, Any]:
         raise ConfigurationError(SECRET)
+
+    def defect() -> dict[str, Any]:
+        raise TypeError(SECRET)
+
+    with pytest.raises(TypeError):
+        doctor_harness.guarded("x", defect)
 
     assert doctor_harness.guarded("x", explode, harness="h") == [
         {

@@ -1,8 +1,3 @@
-// Turns <dir>/<page>.checks.json (probe) and <dir>/<page>.inspect.json (scorer's yes/no answers to the
-// `inspect` checks) into <dir>/<page>.scores.json by the rubric's scoring_rule, then runs score_rubric.py.
-//
-// Usage: bun scripts/ux-probe/score.ts <dir> <page...>
-// inspect.json: { "A3": { "pass": false, "evidence": "<capture + position or file:line>" }, "D3": { ... } }
 import { readFileSync } from "node:fs";
 
 type Check = { pass: boolean; evidence: string };
@@ -12,11 +7,10 @@ type Rubric = {
 
 const ROOT = new URL("../../", import.meta.url);
 const RUBRIC = new URL("docs/ux/rubrics/ux-page.yaml", ROOT).pathname;
-const SCORER = `${process.env.HOME}/.agents/by-request/setup-ux-standards/scripts/score_rubric.py`;
+const SCORER = `${process.env["HOME"]}/.agents/by-request/setup-ux-standards/scripts/score_rubric.py`;
 const rubric = Bun.YAML.parse(readFileSync(RUBRIC, "utf8")) as Rubric;
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
-/** Highest level whose checks, and every lower level's, all pass. */
 function criterionScore(checks: Rubric["criteria"][number]["checks"], results: Record<string, Check>) {
   let score = 0;
   for (const level of [1, 2, 3]) {
@@ -35,12 +29,13 @@ if (!dir || pages.length === 0) {
   console.error("usage: bun scripts/ux-probe/score.ts <dir> <page...>");
   process.exit(2);
 }
+const answerIds = rubric.criteria.flatMap((c) => c.checks.map((k) => k.id));
 for (const page of pages) {
   const name = page.replaceAll("/", "-");
   const probed = readJson<{ checks: Record<string, Check> }>(`${dir}/${name}.checks.json`);
   const inspected = readJson<Record<string, Check>>(`${dir}/${name}.inspect.json`);
   const results = { ...probed.checks, ...inspected };
-  const missing = rubric.criteria.flatMap((c) => c.checks.map((k) => k.id)).filter((id) => !results[id]);
+  const missing = answerIds.filter((id) => !results[id]);
   if (missing.length) throw new Error(`${name}: no answer for ${missing.join(", ")}`);
   const scores = Object.fromEntries(rubric.criteria.map((c) => [c.id, criterionScore(c.checks, results)]));
   const out = `${dir}/${name}.scores.json`;

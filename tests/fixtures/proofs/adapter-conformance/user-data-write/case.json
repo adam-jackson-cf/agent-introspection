@@ -1,0 +1,7 @@
+{
+ "id": "user-data-write",
+ "rule": "TEST.user-data-guard",
+ "evidence": "run-report",
+ "situation": "a test writes a file under the user's real home directory",
+ "expect": "finding"
+}

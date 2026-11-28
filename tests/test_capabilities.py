@@ -14,8 +14,6 @@ from agent_introspection.capabilities import CapabilityClaim
 
 @dataclass(frozen=True)
 class _Profile:
-    """A minimal capability profile: one status per capability, with overrides."""
-
     key: str
     statuses: dict[str, str]
     registry_keys: tuple[str, ...] = ()
@@ -114,7 +112,6 @@ def test_repo_registry_declares_every_capability_and_requires_one_per_harness_si
     harness_signals = [str(row["signal"]) for row in registry.signals if row["scope"] == "harness"]
     assert list(registry.requires) == harness_signals
     assert all(registry.requires[signal] for signal in harness_signals)
-    # Every capability is consumed by some signal, so none is declared for nothing.
     used = {capability for required in registry.requires.values() for capability in required}
     assert used == set(capabilities.CAPABILITY_IDS)
 
@@ -285,8 +282,6 @@ def test_impact_judges_a_registered_surface_by_its_registry_cell() -> None:
 
     result = capabilities.impact(["alpha"], beta, registry)
 
-    # The cell is authoritative: steps is not emitted for beta, even though the
-    # profile claims every capability; not applicable keeps interrupts visible.
     assert result["visible_after"] == ["tokens", "interrupts"]
     assert result["hidden"] == [
         {
@@ -297,7 +292,6 @@ def test_impact_judges_a_registered_surface_by_its_registry_cell() -> None:
             "note": "beta has no model calls",
         }
     ]
-    # Signals already hidden on this machine are not hidden again.
     already = capabilities.impact(["alpha", "beta"], beta, registry)
     assert already["visible_now"] == ["tokens", "interrupts"]
     assert already["hidden"] == []
@@ -314,7 +308,6 @@ def test_impact_of_opencode_over_claude_code_and_codex_hides_its_token_signals()
         assert hidden[signal]["outcome"] == capabilities.REACHABLE_WITH_WORK
         assert hidden[signal]["missing"] == ["model_usage"]
     assert "tools.calls" in result["visible_after"]
-    # Codex already hides throughput here, so opencode cannot hide it again.
     assert "provider.throughput" not in result["visible_now"]
     assert "provider.throughput" not in hidden
 

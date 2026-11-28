@@ -1,38 +1,26 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.boundary
+
 _SCRIPTS = Path(__file__).parents[1] / "scripts"
-_PRE_COMMIT = """repos:
-  - repo: local
-    hooks:
-      - id: quality-gates
-        entry: bash scripts/run-ci-quality-gates.sh --fix --stage
-        language: system
+_STUB = """#!/bin/sh
+printf '%s %s\\n' "$(basename "$0")" "$*" >>"$STUB_CALLS"
+case "$*" in
+  *list-python-scope.py*) printf 'module.py\\000' ;;
+esac
+exit 0
 """
-_WORKFLOW = """jobs:
-  quality-gates:
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run quality gates
-        run: bash scripts/run-ci-quality-gates.sh
-"""
-_PARITY_REACHED = "parity-check-reached"
 
 
 def _isolated_env() -> dict[str, str]:
-    """Drop GIT_* variables so a git hook's GIT_DIR/GIT_INDEX_FILE cannot redirect us.
-
-    The repo's pre-commit hook runs this suite; in a worktree git exports
-    absolute GIT_DIR and GIT_INDEX_FILE, which would otherwise make these
-    temp-repo commands rewrite the host repository's index, branch and config.
-    """
     return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
@@ -50,10 +38,16 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _run(repo: Path, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    stubs = repo.parent / f"{repo.name}-bin"
+    environment = {
+        **_isolated_env(),
+        "PATH": f"{stubs}{os.pathsep}{_isolated_env()['PATH']}",
+        "STUB_CALLS": str(repo.parent / f"{repo.name}-calls"),
+    }
     return subprocess.run(
         ["bash", f"scripts/{script}", *args],
         cwd=repo,
-        env=_isolated_env(),
+        env=environment,
         capture_output=True,
         text=True,
         timeout=120,
@@ -61,26 +55,33 @@ def _run(repo: Path, script: str, *args: str) -> subprocess.CompletedProcess[str
     )
 
 
-def _make_staging_repo(tmp_path: Path) -> Path:
-    (tmp_path / "scripts").mkdir(parents=True)
-    shutil.copy(_SCRIPTS / "run-ci-quality-gates.sh", tmp_path / "scripts")
-    (tmp_path / "scripts/check-quality-gate-parity.sh").write_text(
-        f"echo {_PARITY_REACHED}\nexit 7\n"
-    )
-    (tmp_path / "module.py").write_text("x = 1\n")
-    (tmp_path / "notes.txt").write_text("a\n")
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "test@example.com")
-    _git(tmp_path, "config", "user.name", "test")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-qm", "init")
-    return tmp_path
+def _calls(repo: Path) -> list[str]:
+    log = repo.parent / f"{repo.name}-calls"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def _make_gate_repo(root: Path) -> Path:
+    (root / "scripts").mkdir(parents=True)
+    for script in ("run-ci-quality-gates.sh", "fix-quality-gates.sh"):
+        shutil.copy(_SCRIPTS / script, root / "scripts")
+    stubs = root.parent / f"{root.name}-bin"
+    stubs.mkdir()
+    for tool in ("uv", "bun"):
+        stub = stubs / tool
+        stub.write_text(_STUB)
+        stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    (root / "module.py").write_text("x=1\n")
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "test@example.com")
+    _git(root, "config", "user.name", "test")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "init")
+    return root
 
 
 @pytest.fixture
-def staging_repo(tmp_path: Path) -> Path:
-    """A git repo holding the gate runner, with the rest of the suite stubbed out."""
-    return _make_staging_repo(tmp_path)
+def gate_repo(tmp_path: Path) -> Path:
+    return _make_gate_repo(tmp_path / "repo")
 
 
 def test_git_hook_environment_does_not_leak_into_temp_repos(
@@ -95,249 +96,48 @@ def test_git_hook_environment_does_not_leak_into_temp_repos(
     _git(host, "add", "-A")
     _git(host, "commit", "-qm", "host")
     head_before = _git(host, "rev-parse", "HEAD")
-    # Mimic what git exports to hooks when committing from a worktree.
     monkeypatch.setenv("GIT_DIR", str(host / ".git"))
     monkeypatch.setenv("GIT_INDEX_FILE", str(host / ".git/index"))
     monkeypatch.setenv("GIT_WORK_TREE", str(host))
 
-    repo = _make_staging_repo(tmp_path / "scratch")
-    (repo / "module.py").write_text("x = 2\n")
-    result = _run(repo, "run-ci-quality-gates.sh", "--fix", "--stage")
+    repo = _make_gate_repo(tmp_path / "scratch")
+    result = _run(repo, "run-ci-quality-gates.sh", "check", "ruff_format", "module.py")
 
-    # The unstaged lint change must reach the staging refusal, not die earlier.
-    assert result.returncode == 2
-    assert "unstaged changes" in result.stderr
-
+    assert result.returncode == 0, result.stderr
+    assert _calls(repo) == ["uv run ruff format --check --no-cache module.py"]
     assert _git(host, "rev-parse", "HEAD") == head_before
     assert _git(host, "ls-files") == "tracked.txt\n"
     assert _git(host, "config", "user.email") == "host@example.com\n"
     assert _git(repo, "rev-parse", "--show-toplevel").strip() == str(repo.resolve())
 
 
-def test_stage_refuses_unstaged_lint_changes_without_touching_index(
-    staging_repo: Path,
+@pytest.mark.parametrize("flag", ["--fix", "--stage"])
+def test_the_gate_entrypoint_rejects_the_removed_fix_and_stage_flags(
+    gate_repo: Path, flag: str
 ) -> None:
-    (staging_repo / "module.py").write_text("x = 2\n")
-    index_before = _git(staging_repo, "diff", "--cached", "--name-only")
-
-    result = _run(staging_repo, "run-ci-quality-gates.sh", "--fix", "--stage")
+    result = _run(gate_repo, "run-ci-quality-gates.sh", flag)
 
     assert result.returncode == 2
-    assert "unstaged changes" in result.stderr
-    assert "module.py" in result.stderr
-    assert _PARITY_REACHED not in result.stdout
-    assert _git(staging_repo, "diff", "--cached", "--name-only") == index_before
+    assert "Usage:" in result.stderr
+    assert _calls(gate_repo) == []
+    assert _git(gate_repo, "status", "--porcelain") == ""
 
 
-def test_stage_proceeds_when_lint_changes_are_already_staged(staging_repo: Path) -> None:
-    (staging_repo / "module.py").write_text("x = 2\n")
-    _git(staging_repo, "add", "module.py")
-    (staging_repo / "notes.txt").write_text("b\n")
+def test_a_named_check_only_reports_and_leaves_the_tree_unchanged(gate_repo: Path) -> None:
+    result = _run(gate_repo, "run-ci-quality-gates.sh", "check", "ruff", "module.py")
 
-    result = _run(staging_repo, "run-ci-quality-gates.sh", "--fix", "--stage")
-
-    assert _PARITY_REACHED in result.stdout
-    assert result.returncode == 7
+    assert result.returncode == 0, result.stderr
+    assert _calls(gate_repo) == ["uv run ruff check --no-fix --no-cache module.py"]
+    assert _git(gate_repo, "status", "--porcelain") == ""
 
 
-def test_fix_without_stage_ignores_unstaged_changes(staging_repo: Path) -> None:
-    (staging_repo / "module.py").write_text("x = 2\n")
+def test_the_fix_script_is_the_only_route_that_rewrites_files(gate_repo: Path) -> None:
+    result = _run(gate_repo, "fix-quality-gates.sh")
 
-    result = _run(staging_repo, "run-ci-quality-gates.sh", "--fix")
-
-    assert _PARITY_REACHED in result.stdout
-
-
-def _parity_repo(tmp_path: Path, pre_commit: str, workflow: str) -> Path:
-    (tmp_path / "scripts").mkdir()
-    shutil.copy(_SCRIPTS / "check-quality-gate-parity.sh", tmp_path / "scripts")
-    (tmp_path / ".pre-commit-config.yaml").write_text(pre_commit)
-    (tmp_path / ".github/workflows").mkdir(parents=True)
-    (tmp_path / ".github/workflows/ci-quality-gates.yml").write_text(workflow)
-    return tmp_path
-
-
-def test_parity_passes_for_active_runner_invocations(tmp_path: Path) -> None:
-    repo = _parity_repo(tmp_path, _PRE_COMMIT, _WORKFLOW)
-
-    assert _run(repo, "check-quality-gate-parity.sh").returncode == 0
-
-
-def test_parity_passes_for_repository_config() -> None:
-    repo = Path(__file__).parents[1]
-
-    assert _run(repo, "check-quality-gate-parity.sh").returncode == 0
-
-
-@pytest.mark.parametrize(
-    ("pre_commit", "workflow", "missing_file"),
-    [
-        (
-            _PRE_COMMIT.replace("        entry:", "        # entry:"),
-            _WORKFLOW,
-            ".pre-commit-config.yaml",
-        ),
-        (
-            _PRE_COMMIT.replace(
-                "entry: bash scripts/run-ci-quality-gates.sh --fix --stage",
-                "entry: true  # bash scripts/run-ci-quality-gates.sh",
-            ),
-            _WORKFLOW,
-            ".pre-commit-config.yaml",
-        ),
-        (
-            _PRE_COMMIT,
-            _WORKFLOW.replace("        run:", "        # run:"),
-            ".github/workflows/ci-quality-gates.yml",
-        ),
-        (
-            _PRE_COMMIT,
-            _WORKFLOW.replace(
-                "        run:",
-                "        # scripts/run-ci-quality-gates.sh\n        run: true\n        # run:",
-            ),
-            ".github/workflows/ci-quality-gates.yml",
-        ),
-        (
-            _PRE_COMMIT.replace("entry: bash", "entry: echo"),
-            _WORKFLOW,
-            ".pre-commit-config.yaml",
-        ),
-        (
-            _PRE_COMMIT,
-            _WORKFLOW.replace("run: bash", "run: echo"),
-            ".github/workflows/ci-quality-gates.yml",
-        ),
-    ],
-    ids=[
-        "pre-commit-entry-commented",
-        "pre-commit-trailing-comment",
-        "workflow-run-commented",
-        "workflow-comment-line-only",
-        "pre-commit-entry-only-mentions-runner",
-        "workflow-run-only-mentions-runner",
-    ],
-)
-def test_parity_rejects_runner_not_actively_invoked(
-    tmp_path: Path, pre_commit: str, workflow: str, missing_file: str
-) -> None:
-    repo = _parity_repo(tmp_path, pre_commit, workflow)
-
-    result = _run(repo, "check-quality-gate-parity.sh")
-
-    assert result.returncode != 0
-    assert missing_file in result.stderr
-
-
-@pytest.mark.parametrize("suffix", [" || true", " ; true", " && true", " | cat"])
-def test_parity_rejects_workflow_runner_with_masked_exit_status(
-    tmp_path: Path, suffix: str
-) -> None:
-    workflow = _WORKFLOW.replace(
-        "run: bash scripts/run-ci-quality-gates.sh",
-        f"run: bash scripts/run-ci-quality-gates.sh{suffix}",
-    )
-    repo = _parity_repo(tmp_path, _PRE_COMMIT, workflow)
-
-    result = _run(repo, "check-quality-gate-parity.sh")
-
-    assert result.returncode != 0
-    assert ".github/workflows/ci-quality-gates.yml" in result.stderr
-
-
-_RUNNER_MARKER = "scripts/check-coverage-slice.py"
-
-
-def _coverage_target(tmp_path: Path, runner_text: str, slice_minimum: int) -> list[str]:
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/run.sh").write_text(runner_text)
-    (tmp_path / "scripts/impl.py").write_text("")
-    (tmp_path / "scripts/coverage-slice.json").write_text(f'{{"minimum_percent": {slice_minimum}}}')
-    catalog = {
-        "schema_version": 1,
-        "rules": [
-            {
-                "id": "TEST.coverage-minimum",
-                "kind": "process",
-                "applicability": "conditional",
-                "contract": {"threshold_percent": 85},
-            }
-        ],
-    }
-    ledger = {
-        "schema_version": 1,
-        "rules": [
-            {
-                "id": "TEST.coverage-minimum",
-                "status": "implemented",
-                "implementation_paths": ["scripts/impl.py"],
-                "local_runner": "scripts/run.sh",
-                "local_marker": _RUNNER_MARKER,
-                "ci_runner": "scripts/run.sh",
-                "ci_marker": _RUNNER_MARKER,
-                "canary": {},
-            }
-        ],
-    }
-    (tmp_path / "catalog.json").write_text(json.dumps(catalog))
-    (tmp_path / "ledger.json").write_text(json.dumps(ledger))
-    return [
-        "python3",
-        str(_SCRIPTS / "validate-rule-coverage.py"),
-        "--root",
-        str(tmp_path),
-        "--catalog",
-        str(tmp_path / "catalog.json"),
-        "--ledger",
-        str(tmp_path / "ledger.json"),
-        "--structure-only",
+    assert result.returncode == 0, result.stderr
+    assert _calls(gate_repo) == [
+        "uv run python scripts/list-python-scope.py",
+        "uv run ruff format --force-exclude module.py",
+        "uv run ruff check --fix --force-exclude module.py",
+        "bun run --cwd dashboard format",
     ]
-
-
-def _validate(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-
-
-def test_rule_coverage_accepts_active_marker_and_matching_threshold(
-    tmp_path: Path,
-) -> None:
-    command = _coverage_target(tmp_path, f"uv run python {_RUNNER_MARKER}\n", 85)
-
-    assert _validate(command).returncode == 0
-
-
-@pytest.mark.parametrize(
-    "runner_text",
-    [
-        f"# uv run python {_RUNNER_MARKER}\n",
-        f"true # {_RUNNER_MARKER}\n",
-        f"true;# {_RUNNER_MARKER}\n",
-        f"true &&# {_RUNNER_MARKER}\n",
-        f"true |# {_RUNNER_MARKER}\n",
-    ],
-    ids=[
-        "full-line-comment",
-        "trailing-comment",
-        "semicolon-comment",
-        "and-comment",
-        "pipe-comment",
-    ],
-)
-def test_rule_coverage_ignores_commented_runner_marker(tmp_path: Path, runner_text: str) -> None:
-    command = _coverage_target(tmp_path, runner_text, 85)
-
-    result = _validate(command)
-
-    assert result.returncode == 1
-    assert "lacks invocation marker" in result.stderr
-
-
-def test_rule_coverage_rejects_slice_minimum_below_registry_threshold(
-    tmp_path: Path,
-) -> None:
-    command = _coverage_target(tmp_path, f"uv run python {_RUNNER_MARKER}\n", 50)
-
-    result = _validate(command)
-
-    assert result.returncode == 1
-    assert "below registry threshold_percent 85" in result.stderr

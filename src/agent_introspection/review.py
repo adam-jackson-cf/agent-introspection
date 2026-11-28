@@ -1,5 +1,3 @@
-"""Bounded, provenance-checked model review sessions that draft proposals."""
-
 from __future__ import annotations
 
 import hashlib
@@ -64,8 +62,6 @@ class ReviewEnvelope:
 
 @dataclass(frozen=True)
 class TokenUsage:
-    """Nullable, source-backed token fields for one accepted review run."""
-
     input_tokens: int | None
     output_tokens: int | None
     reasoning_tokens: int | None
@@ -131,7 +127,6 @@ def create_review_session(
     reserved_model_budget: int,
     batch_id: str | None = None,
 ) -> ReviewEnvelope:
-    """Create and reserve one bounded proposal review session."""
     limits = PROPOSAL_LIMITS
     if not 0 < len(candidates) <= limits.items_per_call:
         raise ValueError(f"candidate count per call must be between 1 and {limits.items_per_call}")
@@ -259,11 +254,6 @@ def _validate_model_provenance(provenance: dict[str, Any], row: sqlite3.Row) -> 
 
 
 def _charged_tokens(provenance: dict[str, Any]) -> int:
-    """Charge the larger of token_count and the sum of every reported component.
-
-    A low token_count must not hide components that already exceed it, even when
-    usage is partial.
-    """
     usage = _token_usage(provenance)
     known = sum(
         value
@@ -296,7 +286,6 @@ def validate_model_output(
     *,
     provenance: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Validate response envelope and recorded SigNoz model provenance."""
     _required_output_fields(document)
     row = _review_session_row(connection, document["session_id"])
     _validate_output_identity(document, row)
@@ -311,11 +300,6 @@ def import_model_output(
     provenance: dict[str, Any],
     outer_transaction: bool = False,
 ) -> None:
-    """Persist validated model output and consume its reserved budget.
-
-    With ``outer_transaction`` the caller's open transaction owns commit and rollback,
-    so the import can share one atomic unit with the proposals it drafts.
-    """
     if outer_transaction and not connection.in_transaction:
         raise RuntimeError("outer_transaction requires an open transaction on the connection")
     results = validate_model_output(connection, document, provenance=provenance)

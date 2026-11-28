@@ -5,7 +5,6 @@ import { experimentalFeatures } from "./features";
 import { END, HOST, registry, registryRows, START } from "./test-fixtures";
 import type { Registry } from "../src/contracts";
 
-/** The fixture registry plus the outcomes feature's system signal. */
 const withOutcomes = (): Registry => {
   const reg = registry();
   return {
@@ -24,10 +23,14 @@ const withOutcomes = (): Registry => {
   };
 };
 
+const signalIds = (reg: Record<string, unknown>) =>
+  (reg["signals"] as { signal: string }[]).map((entry) => entry.signal);
+
+const read = (text: string | undefined) => () => text;
+
 describe("experimental features", () => {
   test("each is off unless the config sets it to true", () => {
     const env = { AGENT_INTROSPECTION_CONFIG: "/config.toml" };
-    const read = (text: string | undefined) => () => text;
     expect(experimentalFeatures(env, read(undefined))).toEqual({
       intervention_outcomes: false,
     });
@@ -63,16 +66,14 @@ describe("experimental features", () => {
       return (await response.json()) as Record<string, unknown>;
     };
     const view = `/api/view?view=interventions&start=${START}&end=${END}&harness=`;
-    const signalIds = (reg: Record<string, unknown>) =>
-      (reg.signals as { signal: string }[]).map((entry) => entry.signal);
     const registryOff = await get(false, "/api/registry");
-    expect(registryOff.features).toEqual({ intervention_outcomes: false });
+    expect(registryOff["features"]).toEqual({ intervention_outcomes: false });
     expect(signalIds(registryOff)).not.toContain("intervene.post_recurrence");
     expect(signalIds(await get(true, "/api/registry"))).toContain(
       "intervene.post_recurrence",
     );
-    const off = (await get(false, view)).data as Record<string, unknown>;
-    expect(Object.keys(off).sort()).toEqual([
+    const off = (await get(false, view))["data"] as Record<string, unknown>;
+    expect(Object.keys(off).toSorted()).toEqual([
       "findings",
       "kpis",
       "proposal_events",
@@ -80,8 +81,8 @@ describe("experimental features", () => {
       "tiers",
     ]);
     expect(seen.some((sql) => sql.includes("AS failures_rate"))).toBe(false);
-    const on = (await get(true, view)).data as Record<string, unknown>;
-    expect(on.comparisons).toEqual([]);
-    expect(on.baseline_daily).toBeDefined();
+    const on = (await get(true, view))["data"] as Record<string, unknown>;
+    expect(on["comparisons"]).toEqual([]);
+    expect(on["baseline_daily"]).toBeDefined();
   });
 });

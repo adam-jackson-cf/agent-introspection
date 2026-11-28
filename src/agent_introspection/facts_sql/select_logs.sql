@@ -1,14 +1,3 @@
--- Curated log projection. The window placeholder is replaced with the loader or backfill
--- predicate over the SigNoz source columns `timestamp` / `observed_timestamp`. The
--- services placeholder is the quoted list of `[harnesses]` keys in signal_support.toml.
--- Raw prompt, tool argument, and tool output text is never stored. For Codex
--- tool results, normalized `x.*` fields are derived from that text instead:
--- command head/subcommand, gate-bypass flag, home-redacted targets, argument
--- hash, exit code, a digit-normalized failure signature, and the verification kinds
--- (see command_shape.sql). The command comes
--- from the `cmd` argument, or for the JavaScript `exec` tool from the first
--- nested `cmd` it passes to `exec_command`. Targets are patch file headers,
--- `path` arguments, and path-like command arguments.
 WITH
     attributes_string['event.name'] AS event,
     attributes_string['arguments'] AS args,
@@ -33,10 +22,8 @@ WITH
     arraySlice(
         arrayDistinct(
             arrayMap(
-                -- Every /Users/<name>, /home/<name> and /root becomes ~: one argument can hold several paths.
                 p -> substring(replaceRegexpAll(trimBoth(p), '/(?:Users|home)/[^/\\s;:,]+|/root($|[/\\s;:,])', '~\\1'), 1, 300),
                 arrayConcat(
-                    -- Patches arrive with real or JSON-escaped newlines; stop at either.
                     extractAll(args, '\\*\\*\\* (?:Update|Add|Delete) File: ([^\\n\\\\]+)'),
                     if(JSONExtractString(args, 'path') != '', [JSONExtractString(args, 'path')], []),
                     command_paths
@@ -57,12 +44,6 @@ WITH
         ),
         splitByChar('\n', out)
     ) AS output_lines,
-    -- Only a diagnostic line may become a signature; with none, the signature is
-    -- empty rather than an arbitrary output line that could carry raw content.
-    -- The most specific diagnostic line wins: the final exception line of a stack
-    -- trace (`ModuleNotFoundError: ...`), else the first diagnostic line that is not
-    -- a generic header or frame (`Traceback ...`, `Script failed`, `at ...`), else
-    -- the first diagnostic line.
     arrayLast(
         l -> match(l, '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(\\s*\\[[A-Z_]+\\])?(:|$)'),
         output_lines
@@ -80,8 +61,6 @@ WITH
             output_lines
         )
     ) AS error_line,
-    -- The signature is capped at 80 characters. When the keyword lies past the cap,
-    -- keep the line from the keyword on, so the signature is always diagnostic.
     if(
         match(substringUTF8(error_line, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         error_line,

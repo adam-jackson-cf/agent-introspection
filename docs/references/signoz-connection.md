@@ -146,6 +146,17 @@ it for each layout.
   and [harness configuration](../../.agents/skills/introspection-onboarding/references/harness-configuration-workflow.md)
   workflows cover the connection, the install order, and each harness's export.
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- The defaults name `127.0.0.1`, not `localhost`. Some clients resolve `localhost` to `::1` first, while SigNoz may publish its ports on `127.0.0.1` only.
+- ClickHouse 24.10 is the minimum because refreshable materialized views need no experimental setting from that release. `APPEND` arrived in 24.9 and `DEPENDS ON` in 23.12, and `facts install` sets no experimental flag.
+- The preflight grant check fails closed. A column-level grant such as `SELECT(a, b)` never counts as table-wide, and a revoke on `introspection` or any of its tables counts against the privilege. Recent servers resolve roles and partial revokes with `CHECK GRANT`; older ones fall back to parsing `SHOW GRANTS`.
+- The Docker runner refuses a non-local Docker context on its first statement, so a remote daemon is never queried.
+- `install-signoz.sh` refuses stopped containers, a `signoz` Compose project, and `signoz-*` volumes because `docker compose up` would reuse them. A Docker listing that fails stops the install rather than passing the check.
+- `otel-collector-opencode-filter.yaml` drops opencode plumbing spans, measured at 93% of its spans on 2026-10-13, and deletes `db.query.text` from `sql.execute` spans, which can hold opencode's own SQL text. It keeps `Tool.execute`, `LLM.run`, `SessionPrompt.*`, `Permission.ask`, and the tool-call spans that `signal_support.toml` capability hints need. Add both processors to the collector config (Foundry: `spec.ingester.spec.config.data."ingester.yaml"` in `casting.yaml`, never the generated file) and list them first in the traces pipeline, restating the existing processors, so dropped spans make no span metrics. Recreate the collector to apply; removing both processors reverts it, and dropped spans are not recovered.
+
 ## Related Docs
 
 - [CLI Reference](cli-reference.md#onboarding): `signoz detect` and `doctor` output.

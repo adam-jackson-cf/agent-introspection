@@ -1,20 +1,3 @@
-"""Prompt labels from the Jev decision model.
-
-Claude Code (`OTEL_LOG_USER_PROMPTS=1`), Codex (`[otel] log_user_prompt = true`), and
-the omp activity extension (an `omp.user_prompt` OTLP log) export each submitted
-prompt to SigNoz. ``run`` (part of ``facts sync``) reads prompts that have no label
-yet from SigNoz, asks Jev (TypeSafe System One, through OpenRouter's decisions API)
-the fixed questions below, and stores only the answers in
-``introspection.prompt_labels``: task type, whether the prompt corrects the agent's
-previous work and how, and the user's sentiment. The facts loader drops prompt text,
-so it stays only in SigNoz (90-day retention); it is redacted and clipped before it
-is sent to Jev. A prompt whose decision fails is retried on later runs, at most
-``MAX_ATTEMPTS`` times.
-
-Jev's resolved model is pinned; a different version raises ``JevUnavailableError``
-until the questions are re-evaluated against it.
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,9 +13,6 @@ from typing import Any
 from agent_introspection.facts import DATABASE, SqlRunner
 from agent_introspection.inbox import insert_statements
 
-# Requests name the pinned version, so a newer Jev never labels prompts until the questions are
-# re-evaluated against it; the resolved model is still checked in case OpenRouter maps the name
-# elsewhere.
 JEV_PINNED_MODEL = "typesafe/jev-1.13-20260917"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 CLASSIFIER_VERSION = 1
@@ -117,31 +97,26 @@ _SECRETS = (
 )
 
 type Poster = Callable[[bytes, str], dict[str, Any]]
-# Returns the OpenRouter key; called only when a prompt is pending.
 type KeySource = Callable[[], str]
 
 
 class JevUnavailableError(RuntimeError):
-    """Jev cannot answer at all (no key, no credit, or an unexpected model)."""
+    pass
 
 
 class DecisionError(RuntimeError):
-    """One decision failed; ``reason`` is a short code that carries no prompt text."""
-
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
 def redact(text: str) -> str:
-    """Remove credentials and keys, following the omp Jev client's redaction."""
     for pattern, replacement in _SECRETS:
         text = pattern.sub(replacement, text)
     return text
 
 
 def clip(text: str, limit: int = PROMPT_CHAR_LIMIT) -> str:
-    """Keep the head and a short tail of long text, with a visible marker."""
     if len(text) <= limit:
         return text
     tail = min(limit // 5, 2_000)
@@ -154,7 +129,6 @@ def _run_key_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]
 
 
 def _command_key(command: Sequence[str], missing: str) -> str:
-    """Return the key ``command`` prints; ``missing`` is the error when it prints none."""
     try:
         result = _run_key_command(command)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -166,18 +140,16 @@ def _command_key(command: Sequence[str], missing: str) -> str:
 
 
 def api_key(key_command: Sequence[str] | None) -> str:
-    """Return the OpenRouter key for Jev: the output of ``[labels] openrouter_key_command``.
-
-    The one source, which the scheduled sync runs too. The key and the command's output
-    are never logged or put in an error.
-    """
     if key_command is None:
         raise JevUnavailableError("no OpenRouter key: set [labels] openrouter_key_command")
     return _command_key(key_command, "labels.openrouter_key_command printed no OpenRouter key")
 
 
+def _urlopen(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def http_poster(body: bytes, key: str) -> dict[str, Any]:
-    """POST one decision request; HTTP errors carry no provider body (it can echo input)."""
     request = urllib.request.Request(
         JEV_ENDPOINT,
         data=body,
@@ -185,7 +157,7 @@ def http_poster(body: bytes, key: str) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with _urlopen(request, TIMEOUT_SECONDS) as response:
             return dict(json.load(response))
     except urllib.error.HTTPError as exc:
         with exc:
@@ -198,10 +170,8 @@ def http_poster(body: bytes, key: str) -> dict[str, Any]:
 
 
 def label(answers: dict[str, Any], cost: float) -> dict[str, Any]:
-    """Flatten Jev's answers into the ``prompt_label`` hook-event attributes."""
     task_type = answers["task_type"]
     sentiment = answers["sentiment"]
-    # A score answer's `score` is the expected level (a float); the label is its most likely level.
     level = max(range(len(SENTIMENTS)), key=lambda i: sentiment["probabilities"][str(i)])
     return {
         "task_type": task_type["choice"],
@@ -242,11 +212,6 @@ def _answers_match(answers: dict[str, Any]) -> bool:
 
 
 def decide(harness: str, prompt: str, key: str, post: Poster) -> dict[str, Any]:
-    """Ask Jev about one prompt and return its label attributes.
-
-    Raises ``JevUnavailableError`` when Jev cannot answer at all and
-    ``DecisionError`` when this one decision failed. Neither message carries text.
-    """
     state = {"harness": harness, "message": clip(redact(prompt))}
     body = json.dumps({"model": JEV_PINNED_MODEL, "state": state, "questions": QUESTIONS}).encode()
     try:
@@ -266,9 +231,6 @@ def decide(harness: str, prompt: str, key: str, post: Poster) -> dict[str, Any]:
         raise DecisionError("unexpected_answers") from exc
 
 
-# Prompt events per harness. Codex keys sessions by `conversation.id`; Claude Code and
-# the omp extension by `session.id`. A redacted placeholder means the producer's
-# prompt export is off, so it is not a prompt.
 PENDING_QUERY = """
 SELECT p.harness AS harness, p.prompt_key AS prompt_key, p.session_id AS session_id,
     p.prompt_id AS prompt_id, p.ts AS ts, p.prompt AS prompt,
@@ -307,7 +269,6 @@ FORMAT JSONEachRow
 """
 
 
-# Label columns of a failed decision, so every row inserts with the same columns.
 UNLABELLED: dict[str, Any] = {
     "task_type": "",
     "task_type_confidence": 0.0,
@@ -322,7 +283,6 @@ UNLABELLED: dict[str, Any] = {
 
 
 def _row(prompt: dict[str, Any], key: str, post: Poster) -> dict[str, Any]:
-    """Label one pending prompt; the row records a failure's reason instead of labels."""
     base = {
         "harness": prompt["harness"],
         "session_id": prompt["session_id"],
@@ -348,10 +308,6 @@ def run(
     key: KeySource,
     post: Poster = http_poster,
 ) -> dict[str, Any]:
-    """Label up to ``limit`` unlabelled prompts from the last ``days`` days of SigNoz.
-
-    ``key`` is asked for the OpenRouter key only when a prompt is pending.
-    """
     query = PENDING_QUERY.format(
         days=int(days), limit=int(limit), database=DATABASE, max_attempts=MAX_ATTEMPTS
     )

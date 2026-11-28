@@ -1,19 +1,5 @@
--- Curated span projection. The window placeholder is replaced with the loader or backfill
--- time predicate over the SigNoz source columns `timestamp` and `duration_nano`. The
--- services placeholder is the quoted list of `[harnesses]` keys in signal_support.toml.
--- Codex emits almost all of its spans as internal plumbing (older builds also
--- emitted h2/tokio frame spans), so only the task, sampling, and user-signal span
--- names below are kept, plus `handle_responses` spans that carry token usage. Status messages can
--- hold raw tool output, so only a normalized first error line is kept: home
--- directories become `~`, digit and hex runs become `N`, capped at 80
--- characters; `x.status_hash` keeps 16 hex chars of SHA-256 over the uncapped
--- normalized line. Span names get the same home-directory redaction.
 WITH
     arrayFilter(l -> l != '', splitByChar('\n', distributed_signoz_index_v3.status_message)) AS status_lines,
-    -- Only a diagnostic line is kept; with none the stored status is empty, so
-    -- arbitrary raw output never reaches the durable table. The most specific line
-    -- wins, as in the log projection: a stack trace's final exception line, else the
-    -- first diagnostic line that is not a generic header or frame, else the first.
     arrayLast(
         l -> match(l, '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(\\s*\\[[A-Z_]+\\])?(:|$)'),
         status_lines
@@ -31,8 +17,6 @@ WITH
             status_lines
         )
     ) AS status_line,
-    -- The stored text is capped at 80 characters. When the keyword lies past the cap,
-    -- keep the line from the keyword on, so the stored text is always diagnostic.
     if(
         match(substringUTF8(status_line, 1, 80), '(?i)(error|fail|denied|not permitted|no such|traceback|exception|cannot|can''t|invalid|not found)'),
         status_line,
@@ -93,9 +77,6 @@ SELECT
         1,
         80
     ) AS status_message,
-    -- omp renamed its `pi.gen_ai.*` attributes to `omp.gen_ai.*` on 2026-09-29; both
-    -- are stored under the original `pi.gen_ai.*` names so every view reads one key.
-    -- Tool intent text is dropped under any prefix.
     mapUpdate(
         mapFilter(
             (k, v) -> k NOT IN (

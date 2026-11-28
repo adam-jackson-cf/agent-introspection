@@ -1,14 +1,3 @@
-"""Evidence packs that let a proposal review reason about a finding's cause.
-
-A failure-cluster pack describes one failure cluster over the last 14 days from the
-facts only: when and in which working directories it happens, the command shape, what
-the agent did next (whether a retry of the same kind of tool succeeded, the failure
-repeated, or it moved on), how the affected tasks ended, what the users asked for in
-them, and a few task references for drill-down. Nothing in a pack is raw prompt,
-command, or output text; signatures, classes, labels, and home-redacted working
-directories are the normalized forms the facts already hold.
-"""
-
 from __future__ import annotations
 
 import json
@@ -37,7 +26,6 @@ def _cluster(tool_family: str, failure_class: str, alias: str = "") -> str:
 
 
 def queries(tool_family: str, failure_class: str) -> dict[str, str]:
-    """Return the named evidence queries for one cluster."""
     cluster = _cluster(tool_family, failure_class)
     affected = (
         f"(harness, task_id) IN (SELECT harness, task_id FROM {_C} WHERE {cluster}"
@@ -89,7 +77,6 @@ ORDER BY last_failure DESC LIMIT 5""",
 
 
 def pack(run: SqlRunner, subject: dict[str, Any]) -> dict[str, Any]:
-    """Build the evidence pack for one failure-cluster subject."""
     named = queries(str(subject["tool_family"]), str(subject["failure_class"]))
     return {
         "window_days": WINDOW_DAYS,

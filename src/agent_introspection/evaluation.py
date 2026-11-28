@@ -1,21 +1,3 @@
-"""Evaluate applied proposals against their structured success metric.
-
-For an applied proposal whose evaluation window has elapsed, the finding's task
-rate over ``evaluation_days`` after the ``applied`` event is compared with the same
-rate over ``baseline_days`` before it, counting only the metric's harnesses. The
-metric is ``cluster_task_rate``: tasks that hit the finding's failure cluster, per task.
-
-The verdict is appended as one immutable ``evaluated`` proposal event:
-
-- ``inconclusive`` when the baseline has fewer than 3 matching tasks or the
-  evaluation window has fewer than 5 tasks;
-- ``validated`` when evaluation rate <= ``max_ratio`` x baseline rate;
-- ``regressed`` otherwise.
-
-Windows that start within the snapshot retention read the snapshot tables; older
-windows read the live views, which cover all loaded history.
-"""
-
 from __future__ import annotations
 
 import json
@@ -116,7 +98,6 @@ FORMAT JSONEachRow"""
 def rate_query(
     metric: SuccessMetric, subject: dict[str, Any], window: Window, now: datetime
 ) -> str:
-    """Return the tasks and matching tasks started in ``window`` for the metric's harnesses."""
     names = ", ".join(sql_string(name) for name in metric.harnesses)
     return _cluster_query(subject, names, window, now)
 
@@ -128,7 +109,6 @@ def window_rate(
     window: Window,
     now: datetime,
 ) -> WindowRate:
-    """Measure one window's task rate."""
     output = run(rate_query(metric, subject, window, now))
     rows = [json.loads(line) for line in output.splitlines() if line]
     row = rows[0] if rows else {"tasks": 0, "matched_tasks": 0}
@@ -138,7 +118,6 @@ def window_rate(
 
 
 def verdict(metric: SuccessMetric, baseline: WindowRate, evaluation: WindowRate) -> str:
-    """Classify the evaluation window against the baseline and the metric's ratio."""
     if (
         baseline.matched_tasks < MIN_BASELINE_MATCHED_TASKS
         or evaluation.tasks < MIN_EVALUATION_TASKS
@@ -156,7 +135,6 @@ def evaluate(
     applied_at: datetime,
     now: datetime,
 ) -> dict[str, Any]:
-    """Return the ``evaluated`` event payload for one applied proposal."""
     baseline_window = Window(applied_at - timedelta(days=metric.baseline_days), applied_at)
     evaluation_window = Window(applied_at, applied_at + timedelta(days=metric.evaluation_days))
     baseline = window_rate(run, metric, subject, baseline_window, now)
@@ -203,7 +181,6 @@ def _skip(proposal_id: str, reason: str) -> dict[str, str]:
 def evaluate_due(
     run: SqlRunner, connection: sqlite3.Connection, now: datetime | None = None
 ) -> dict[str, Any]:
-    """Evaluate every applied proposal whose evaluation window has elapsed, once each."""
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     evaluated: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []

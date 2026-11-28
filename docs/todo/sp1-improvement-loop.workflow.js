@@ -122,12 +122,11 @@ ${ACCESS}`
 
 const findings = args.findings
 
-// Drafts must be sequential; diagnoses run in parallel alongside them.
 const draftResults = []
-let chain = Promise.resolve()
+let previousDraftInSequence = Promise.resolve()
 const draftPromises = findings.map((f, i) => {
-  chain = chain.then(() => agent(draftPrompt(f, i + 1), { label: `draft:${f.short}`, phase: 'Draft', schema: DRAFT_SCHEMA }))
-  return chain
+  previousDraftInSequence = previousDraftInSequence.then(() => agent(draftPrompt(f, i + 1), { label: `draft:${f.short}`, phase: 'Draft', schema: DRAFT_SCHEMA }))
+  return previousDraftInSequence
 })
 const diagPromises = findings.map(f => agent(diagPrompt(f), { label: `diagnose:${f.short}`, phase: 'Diagnose', schema: DIAG_SCHEMA }))
 

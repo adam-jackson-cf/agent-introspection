@@ -3,16 +3,8 @@ repos:
     hooks:
       - id: quality-gates
         name: quality gates
-        entry: bash scripts/run-ci-quality-gates.sh --fix --stage
+        entry: bash scripts/run-ci-quality-gates.sh hook
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
-      # Needs the local SigNoz ClickHouse (CI has none), so it runs only when facts SQL changes.
-      - id: facts-verify
-        name: facts SQL builds in a scratch ClickHouse database
-        entry: uv run agent-introspection facts verify
-        language: system
-        pass_filenames: false
-        files: ^src/agent_introspection/(facts\.py|facts_sql/)
         stages: [pre-commit]

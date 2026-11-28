@@ -11,6 +11,17 @@ import { asOfFor, refreshersFor } from "./refreshers";
 import { END, HOST, registry, registryRows, START } from "./test-fixtures";
 import { VIEW_QUERIES } from "./views";
 
+const failEveryBranch: Query = async (sql) => {
+  if (sql.includes("introspection.signal"))
+    return registryRows(registry(), sql);
+  throw new Error("Code: 241. DB::Exception: Memory limit exceeded");
+};
+
+const failSanitization: Query = async (sql) => {
+  if (sql.includes("AS long_status")) throw new Error("Timeout exceeded");
+  return registryRows(registry(), sql);
+};
+
 describe("partial views", () => {
   const NOW = new Date("2026-09-30T12:00:10.000Z");
   const load = async (query: Query, view: string) => {
@@ -25,7 +36,7 @@ describe("partial views", () => {
   };
 
   test("one failing branch returns 200 with that dataset empty and named in errors", async () => {
-    const failing = VIEW_QUERIES.provider!.latency!;
+    const failing = VIEW_QUERIES.provider!["latency"]!;
     const query: Query = async (sql) => {
       if (sql === failing)
         throw new Error("Code: 241. DB::Exception: Memory limit exceeded");
@@ -34,37 +45,31 @@ describe("partial views", () => {
     const { response, body } = await load(query, "provider");
     expect(response.status).toBe(200);
     expect(Object.keys(body.errors)).toEqual(["latency"]);
-    expect(body.errors.latency).toContain("Code: 241");
-    expect(body.data.latency).toEqual([]);
+    expect(body.errors["latency"]).toContain("Code: 241");
+    expect(body.data["latency"]).toEqual([]);
     expect(Object.keys(body.data)).toEqual(
       expect.arrayContaining(Object.keys(VIEW_QUERIES.provider!)),
     );
   });
 
   test("a pipeline part failing leaves the rest of the view", async () => {
-    const query: Query = async (sql) => {
-      if (sql.includes("AS long_status")) throw new Error("Timeout exceeded");
-      return registryRows(registry(), sql);
-    };
-    const { response, body } = await load(query, "pipeline");
+    const { response, body } = await load(failSanitization, "pipeline");
     expect(response.status).toBe(200);
     expect(body.errors).toEqual({ sanitization: "Timeout exceeded" });
   });
 
   test("every branch failing fails the request", async () => {
-    const query: Query = async (sql) => {
-      if (sql.includes("introspection.signal"))
-        return registryRows(registry(), sql);
-      throw new Error("Code: 241. DB::Exception: Memory limit exceeded");
-    };
     for (const view of ["provider", "pipeline"]) {
-      const { response, body } = await load(query, view);
+      const { response, body } = await load(failEveryBranch, view);
       expect(response.status).toBe(503);
       expect(JSON.stringify(body)).toContain("Code: 241");
       expect(body).not.toHaveProperty("data");
     }
   });
 });
+
+const viewScope = (view: keyof typeof VIEW_QUERIES, snapshots = true) =>
+  refreshersFor(VIEW_QUERIES[view], snapshots);
 
 describe("refreshers feeding a view", () => {
   const rows = [
@@ -88,25 +93,23 @@ describe("refreshers feeding a view", () => {
   ];
 
   test("a failed history refresher marks only the views that read its snapshot", () => {
-    const scope = (view: keyof typeof VIEW_QUERIES, snapshots = true) =>
-      refreshersFor(VIEW_QUERIES[view], snapshots);
-    expect(scope("cache")).toContain("refresh_usage_events_recent");
-    expect(scope("cache")).not.toContain("refresh_task_outcomes_history");
-    expect(asOfFor(rows, scope("cache"))).toMatchObject({
+    expect(viewScope("cache")).toContain("refresh_usage_events_recent");
+    expect(viewScope("cache")).not.toContain("refresh_task_outcomes_history");
+    expect(asOfFor(rows, viewScope("cache"))).toMatchObject({
       stale: false,
       historyStale: false,
       failing: [],
     });
-    expect(scope("guardrails")).toContain("refresh_tool_calls_history");
-    expect(scope("guardrails")).toContain("refresh_tool_calls_recent");
-    expect(scope("friction")).toEqual(
+    expect(viewScope("guardrails")).toContain("refresh_tool_calls_history");
+    expect(viewScope("guardrails")).toContain("refresh_tool_calls_recent");
+    expect(viewScope("friction")).toEqual(
       expect.arrayContaining([
         "refresh_task_labels_history",
         "refresh_tool_calls_history",
       ]),
     );
-    expect(scope("effort")).toContain("refresh_task_outcomes_history");
-    expect(asOfFor(rows, scope("effort"))).toMatchObject({
+    expect(viewScope("effort")).toContain("refresh_task_outcomes_history");
+    expect(asOfFor(rows, viewScope("effort"))).toMatchObject({
       stale: false,
       historyStale: true,
       failing: ["refresh_task_outcomes_history"],
@@ -155,7 +158,6 @@ describe("refreshers feeding a view", () => {
     expect(asOfFor(rows, ["missing"])).toBeNull();
     const never = { view: "load_logs", as_of: null, stale: 1 };
     expect(asOfFor([never], null)).toBeNull();
-    // at is the oldest loader or recent refresh; daily history refreshes are excluded.
     expect(asOfFor([never, ...rows], null)?.at).toBe("2026-09-30T11:50:00Z");
     expect(
       asOfFor(rows, ["load_spans", "refresh_usage_events_recent"])?.at,
@@ -204,11 +206,11 @@ describe("batch", () => {
       return sql === named.empty ? [] : [{ sql }];
     };
     const results = await batch(query, named);
-    expect(sent.sort()).toEqual(Object.values(named).sort());
+    expect(sent.toSorted()).toEqual(Object.values(named).toSorted());
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(BRANCH_CONCURRENCY);
-    expect(results.first).toEqual([{ sql: named.first }]);
-    expect(results.empty).toEqual([]);
+    expect(results["first"]).toEqual([{ sql: named.first }]);
+    expect(results["empty"]).toEqual([]);
   });
 
   test("a failing branch leaves the others intact and is named with a short message", async () => {
@@ -221,10 +223,10 @@ describe("batch", () => {
     };
     const { data, errors } = await batchSettled(query, named);
     expect(Object.keys(errors)).toEqual(["third"]);
-    expect(errors.third!.length).toBeLessThanOrEqual(200);
-    expect(errors.third).toContain("Code: 241");
-    expect(data.third).toEqual([]);
-    expect(data.first).toEqual([{ ok: 1 }]);
+    expect(errors["third"]!.length).toBeLessThanOrEqual(200);
+    expect(errors["third"]).toContain("Code: 241");
+    expect(data["third"]).toEqual([]);
+    expect(data["first"]).toEqual([{ ok: 1 }]);
     await expect(batch(query, named)).rejects.toThrow("Code: 241");
   });
 });

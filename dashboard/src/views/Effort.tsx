@@ -29,15 +29,14 @@ import {
 } from "../format";
 
 const effortSeries = (rows: Row[]): Series[] =>
-  [...new Set(rows.map((row) => String(row.effort)))]
-    .sort((a, b) => effortRank(a) - effortRank(b))
+  [...new Set(rows.map((row) => String(row["effort"])))]
+    .toSorted((a, b) => effortRank(a) - effortRank(b))
     .map((effort) => ({
       key: effort,
       label: effort,
       color: EFFORT_COLOR[effort] ?? OTHER_TOKEN,
     }));
 
-/** Server rate beside its sample size; the rate is a column (`<key>_rate`, n = `<key>_den`). */
 const pct = (row: Row, key: string) => (
   <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
 );
@@ -47,41 +46,39 @@ const fixed1 = (value: unknown) => {
   return figure === null ? "—" : figure.toFixed(1);
 };
 
-/** Long daily rows → one row per day, one column per series (reshape only: values are the server's). */
 const byDay = (rows: Row[], cells: (row: Row) => Row): Row[] => {
   const days = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     days.set(day, { ...(days.get(day) ?? { day }), ...cells(row) });
   }
-  return [...days.values()].sort((a, b) =>
-    String(a.day).localeCompare(String(b.day)),
+  return [...days.values()].toSorted((a, b) =>
+    String(a["day"]).localeCompare(String(b["day"])),
   );
 };
 
 function dailyViews(data: Record<string, Row[]>) {
-  const reasoning = data.daily_reasoning ?? [];
-  const dailyTasks = data.daily_tasks ?? [];
+  const reasoning = data["daily_reasoning"] ?? [];
+  const dailyTasks = data["daily_tasks"] ?? [];
   return {
     reasoningDaily: byDay(reasoning, (row) => ({
-      [String(row.effort)]: row.reasoning,
+      [String(row["effort"])]: row["reasoning"],
     })),
     mixDaily: byDay(dailyTasks, (row) => ({
-      [String(row.effort)]: row.tasks,
+      [String(row["effort"])]: row["tasks"],
     })),
     taskSeries: effortSeries(dailyTasks),
     spendSeries: effortSeries(reasoning),
   };
 }
 
-/** Interval rows grouped by harness, in the server's registry order; `read` maps one row. */
 function intervalGroups(
   rows: Row[],
   read: (row: Row) => { n: number; value: unknown; lo: unknown; hi: unknown },
 ): IntervalGroup[] {
   const groups = new Map<string, IntervalGroup>();
   for (const row of rows) {
-    const harness = String(row.harness);
+    const harness = String(row["harness"]);
     if (!isHarness(harness)) continue;
     const group = groups.get(harness) ?? {
       key: harness,
@@ -91,8 +88,8 @@ function intervalGroups(
     };
     const { n, value, lo, hi } = read(row);
     group.rows.push({
-      key: String(row.effort),
-      label: String(row.effort),
+      key: String(row["effort"]),
+      label: String(row["effort"]),
       n,
       value: maybe(value),
       lo: maybe(lo),
@@ -103,12 +100,11 @@ function intervalGroups(
   return [...groups.values()];
 }
 
-/** Table rows for an interval chart: the exact n, value and bounds the marks draw. */
 const intervalColumns = (unit: (value: unknown) => string) => [
   {
     key: "harness",
     label: "Harness",
-    render: (row: Row) => <HarnessName value={row.harness} />,
+    render: (row: Row) => <HarnessName value={row["harness"]} />,
   },
   { key: "effort", label: "Effort" },
   { key: "n", label: "n", numeric: true },
@@ -116,44 +112,44 @@ const intervalColumns = (unit: (value: unknown) => string) => [
     key: "value",
     label: "Value",
     numeric: true,
-    render: (row: Row) => unit(row.value),
+    render: (row: Row) => unit(row["value"]),
   },
   {
     key: "lo",
     label: "Low",
     numeric: true,
-    render: (row: Row) => unit(row.lo),
+    render: (row: Row) => unit(row["lo"]),
   },
   {
     key: "hi",
     label: "High",
     numeric: true,
-    render: (row: Row) => unit(row.hi),
+    render: (row: Row) => unit(row["hi"]),
   },
 ];
 
 const cleanRead = (row: Row) => ({
-  n: num(row.clean_den),
-  value: row.clean_rate,
-  lo: row.clean_lo,
-  hi: row.clean_hi,
+  n: num(row["clean_den"]),
+  value: row["clean_rate"],
+  lo: row["clean_lo"],
+  hi: row["clean_hi"],
 });
 const durationRead = (row: Row) => ({
-  n: num(row.duration_n),
-  value: row.p50_duration,
-  lo: row.p25_duration,
-  hi: row.p75_duration,
+  n: num(row["duration_n"]),
+  value: row["p50_duration"],
+  lo: row["p25_duration"],
+  hi: row["p75_duration"],
 });
 
 export default function Effort({ data }: { data: Record<string, Row[]> }) {
-  const usage = data.usage ?? [];
-  const outcomes = data.outcomes ?? [];
-  const spend: Row = data.spend?.[0] ?? {};
-  const summary: Row = data.summary?.[0] ?? {};
+  const usage = data["usage"] ?? [];
+  const outcomes = data["outcomes"] ?? [];
+  const spend: Row = data["spend"]?.[0] ?? {};
+  const summary: Row = data["summary"]?.[0] ?? {};
   const { minRateN } = useView();
   const { reasoningDaily, mixDaily, taskSeries, spendSeries } =
     dailyViews(data);
-  const intervals = data.intervals ?? [];
+  const intervals = data["intervals"] ?? [];
   const cleanGroups = intervalGroups(intervals, cleanRead);
   const durationGroups = intervalGroups(intervals, durationRead);
   const durationAxis = {
@@ -168,8 +164,8 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
   };
   const tableRows = (read: (row: Row) => Row) =>
     intervals.map((row) => ({
-      harness: row.harness,
-      effort: row.effort,
+      harness: row["harness"],
+      effort: row["effort"],
       ...read(row),
     }));
   return (
@@ -178,28 +174,28 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Reasoning tokens"
           source="spend"
-          value={fmtCount(num(spend.reasoning))}
-          detail={`across ${fmtCount(num(spend.calls))} model calls (Claude Code: turns)`}
+          value={fmtCount(num(spend["reasoning"]))}
+          detail={`across ${fmtCount(num(spend["calls"]))} model calls (Claude Code: turns)`}
           signals={["effort.reasoning_tokens"]}
         />
         <Kpi
           title="Reasoning share of output"
           source="spend"
-          value={fmtPct(maybe(spend.reasoning_share_rate))}
+          value={fmtPct(maybe(spend["reasoning_share_rate"]))}
           detail="token-weighted over producers that emit reasoning"
           signals={["effort.reasoning_share"]}
         />
         <Kpi
           title="Tasks"
           source="summary"
-          value={fmtCount(num(summary.tasks))}
-          detail={`${fmtPct(maybe(summary.clean_rate))} clean completion · n=${fmtCount(num(summary.clean_den))}`}
+          value={fmtCount(num(summary["tasks"]))}
+          detail={`${fmtPct(maybe(summary["clean_rate"]))} clean completion · n=${fmtCount(num(summary["clean_den"]))}`}
           signals={["task.count", "friction.clean_completion"]}
         />
         <Kpi
           title="Heavy-effort task share"
           source="summary"
-          value={fmtPct(maybe(summary.heavy_rate))}
+          value={fmtPct(maybe(summary["heavy_rate"]))}
           detail="high or xhigh requested"
           signals={["effort.heavy_share", "effort.level"]}
         />
@@ -316,7 +312,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "effort", label: "Effort" },
               { key: "tasks", label: "Tasks", numeric: true },
@@ -348,37 +344,37 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 key: "p50_duration",
                 label: "P50 time",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p50_duration)),
+                render: (row) => fmtSeconds(maybe(row["p50_duration"])),
               },
               {
                 key: "p90_duration",
                 label: "P90 time",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p90_duration)),
+                render: (row) => fmtSeconds(maybe(row["p90_duration"])),
               },
               {
                 key: "steps",
                 label: "Steps / task",
                 numeric: true,
-                render: (row) => fixed1(row.steps_per_task),
+                render: (row) => fixed1(row["steps_per_task"]),
               },
               {
                 key: "delegations",
                 label: "Delegations / task",
                 numeric: true,
-                render: (row) => fixed1(row.delegations_per_task),
+                render: (row) => fixed1(row["delegations_per_task"]),
               },
               {
                 key: "reasoning",
                 label: "Reasoning / task",
                 numeric: true,
-                render: (row) => fmtCount(maybe(row.reasoning_per_task)),
+                render: (row) => fmtCount(maybe(row["reasoning_per_task"])),
               },
               {
                 key: "share",
                 label: "Reasoning share",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.reasoning_share_rate)),
+                render: (row) => fmtPct(maybe(row["reasoning_share_rate"])),
               },
             ]}
             rows={outcomes}
@@ -396,38 +392,38 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "effort", label: "Effort" },
               {
                 key: "calls",
                 label: "Calls",
                 numeric: true,
-                render: (row) => fmtCount(num(row.calls)),
+                render: (row) => fmtCount(num(row["calls"])),
               },
               {
                 key: "reasoning",
                 label: "Reasoning",
                 numeric: true,
-                render: (row) => fmtCount(num(row.reasoning)),
+                render: (row) => fmtCount(num(row["reasoning"])),
               },
               {
                 key: "of_all",
                 label: "Of all reasoning",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.of_all_rate)),
+                render: (row) => fmtPct(maybe(row["of_all_rate"])),
               },
               {
                 key: "per_call",
                 label: "Per call",
                 numeric: true,
-                render: (row) => fmtCount(num(row.per_call)),
+                render: (row) => fmtCount(num(row["per_call"])),
               },
               {
                 key: "share",
                 label: "Share of output",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.reasoning_share_rate)),
+                render: (row) => fmtPct(maybe(row["reasoning_share_rate"])),
               },
             ]}
             rows={usage}
@@ -450,7 +446,7 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "model", label: "Model" },
               { key: "effort", label: "Effort" },
@@ -465,22 +461,22 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
                 key: "p50_duration",
                 label: "P50 time",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.p50_duration)),
+                render: (row) => fmtSeconds(maybe(row["p50_duration"])),
               },
               {
                 key: "avg_steps",
                 label: "Steps",
                 numeric: true,
-                render: (row) => num(row.avg_steps).toFixed(1),
+                render: (row) => num(row["avg_steps"]).toFixed(1),
               },
               {
                 key: "reasoning",
                 label: "Reasoning / step",
                 numeric: true,
-                render: (row) => fmtCount(maybe(row.reasoning_per_step)),
+                render: (row) => fmtCount(maybe(row["reasoning_per_step"])),
               },
             ]}
-            rows={data.model_effort ?? []}
+            rows={data["model_effort"] ?? []}
           />
         </Panel>
       </Section>
@@ -500,13 +496,16 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               { key: "model", label: "Model" },
@@ -514,39 +513,39 @@ export default function Effort({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "started",
                 label: "Started (UTC)",
-                render: (row) => String(row.started).slice(0, 16),
+                render: (row) => String(row["started"]).slice(0, 16),
               },
               {
                 key: "duration_seconds",
                 label: "Duration",
                 numeric: true,
-                render: (row) => fmtSeconds(maybe(row.duration_seconds)),
+                render: (row) => fmtSeconds(maybe(row["duration_seconds"])),
               },
               { key: "model_steps", label: "Steps", numeric: true },
               {
                 key: "reasoning_tokens",
                 label: "Reasoning",
                 numeric: true,
-                render: (row) => fmtCount(num(row.reasoning_tokens)),
+                render: (row) => fmtCount(num(row["reasoning_tokens"])),
               },
               {
                 key: "output_tokens",
                 label: "Output",
                 numeric: true,
-                render: (row) => fmtCount(maybe(row.output_tokens)),
+                render: (row) => fmtCount(maybe(row["output_tokens"])),
               },
               {
                 key: "clean_completion",
                 label: "Clean",
                 render: (row) =>
-                  row.clean_completion === null
+                  row["clean_completion"] === null
                     ? "—"
-                    : num(row.clean_completion) === 1
+                    : num(row["clean_completion"]) === 1
                       ? "yes"
                       : "no",
               },
             ]}
-            rows={data.heaviest ?? []}
+            rows={data["heaviest"] ?? []}
           />
         </Panel>
       </Section>

@@ -8,10 +8,11 @@ from typing import Any
 import pytest
 
 from agent_introspection.config import (
-    DEFAULT_DATABASE_PATH,
+    DEFAULT_DASHBOARD_PORT,
     ConfigurationError,
     DatabaseConfig,
     MachineRole,
+    default_database_path,
     load_config,
     parse_config,
     require_host,
@@ -21,8 +22,8 @@ from agent_introspection.config import (
 def test_documented_defaults_are_canonical() -> None:
     config = parse_config({})
 
-    assert config.database.path == DEFAULT_DATABASE_PATH
-    assert DEFAULT_DATABASE_PATH.parts[-4:] == (
+    assert config.database.path == default_database_path()
+    assert default_database_path().parts[-4:] == (
         ".local",
         "share",
         "agent-introspection",
@@ -85,7 +86,7 @@ def test_load_config_uses_defaults_only_for_the_absent_canonical_file(tmp_path: 
         ({"sessions": {"roots": {"codex": ["~/x"]}}}, "sessions"),
         ({"signoz": {"clickhouse_container": "signoz-clickhouse"}}, "clickhouse_container"),
         ({"signoz": {"docker_context": "desktop-linux"}}, "docker_context"),
-        ({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123"}}, "dashboard"),
+        ({"dashboard": {"clickhouse_url": "http://127.0.0.1:8123"}}, "clickhouse_url"),
     ],
 )
 def test_retired_keys_are_named_as_safe_to_delete(
@@ -95,31 +96,29 @@ def test_retired_keys_are_named_as_safe_to_delete(
         parse_config(document)
 
 
-EXAMPLE = Path(__file__).parents[1] / "config.example.toml"
-# A commented-out table header or `key = value` line in the example.
-COMMENTED_SETTING = re.compile(r"^# (\[[\w.]+\]|\w+ = .*)$")
+REPOSITORY = Path(__file__).parents[1]
+EXAMPLE = REPOSITORY / "config.example.toml"
+SETUP_GUIDE = REPOSITORY / "docs/references/setup.md"
+DOCUMENTED_SETTINGS = re.compile(r"^## Configuration file\n.*?^```toml\n(.*?)^```$", re.M | re.S)
 
 
-def _example_with_every_setting() -> str:
-    """Return the example with each commented setting switched on."""
-    return "\n".join(
-        match.group(1) if (match := COMMENTED_SETTING.match(line)) else line
-        for line in EXAMPLE.read_text().splitlines()
-    )
+def _documented_settings() -> str:
+    found = DOCUMENTED_SETTINGS.search(SETUP_GUIDE.read_text())
+    assert found is not None, f"{SETUP_GUIDE} has no toml block under ## Configuration file"
+    return found.group(1)
 
 
 def test_example_configuration_is_valid_and_the_defaults() -> None:
     example = load_config(EXAMPLE)
-    # The example spells the database path with ~, which expands to this test's home.
-    assert example.database.path == Path.home() / DEFAULT_DATABASE_PATH.relative_to(
-        DEFAULT_DATABASE_PATH.parents[3]
+    assert example.database.path == Path.home() / default_database_path().relative_to(
+        default_database_path().parents[3]
     )
     assert replace(example, database=DatabaseConfig()) == parse_config({})
 
 
-def test_every_setting_the_example_documents_is_accepted(tmp_path: Path) -> None:
+def test_every_setting_the_setup_guide_documents_is_accepted(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    path.write_text(_example_with_every_setting())
+    path.write_text(_documented_settings())
 
     config = load_config(path)
 
@@ -154,6 +153,16 @@ def test_experimental_features_are_off_unless_set_true() -> None:
         parse_config({"experimental": {"intervention_outcomes": "yes"}})
     with pytest.raises(ConfigurationError, match="unsupported keys in experimental: outcomes"):
         parse_config({"experimental": {"outcomes": True}})
+
+
+def test_the_dashboard_port_defaults_to_4173_and_must_be_a_tcp_port() -> None:
+    assert parse_config({}).dashboard.port == DEFAULT_DASHBOARD_PORT == 4173
+    assert parse_config({"dashboard": {"port": 5174}}).dashboard.port == 5174
+    for port in (0, 65_536, True, "5174"):
+        with pytest.raises(ConfigurationError, match=r"dashboard\.port must be a TCP port"):
+            parse_config({"dashboard": {"port": port}})
+    with pytest.raises(ConfigurationError, match="unsupported keys in dashboard: host"):
+        parse_config({"dashboard": {"host": "0.0.0.0"}})
 
 
 def test_signoz_reads_url_user_and_password_variable_name() -> None:
@@ -277,7 +286,6 @@ def test_a_machine_is_the_signoz_host_unless_it_says_it_is_additional() -> None:
     })
 
     assert additional.machine.additional
-    # The host's collector, even when the host's own [signoz] setting was copied over.
     assert additional.collector_endpoint == "https://signoz-host.example:4318"
     with pytest.raises(ConfigurationError, match=r'additional machine \(\[machine\] role = "addi'):
         require_host(additional, "this command needs SigNoz's ClickHouse")
@@ -317,7 +325,6 @@ def test_the_machine_table_rejects_a_bad_role_or_export_endpoint(
 def test_a_collector_endpoint_on_the_otlp_grpc_port_is_refused(
     document: dict[str, Any],
 ) -> None:
-    # Every harness profile writes the collector endpoint with an OTLP/HTTP exporter.
     with pytest.raises(
         ConfigurationError, match=re.escape("OTLP/HTTP base URL (port 4318), not its OTLP/gRPC")
     ):

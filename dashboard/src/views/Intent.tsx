@@ -24,37 +24,32 @@ import {
 const words = (value: unknown) => String(value ?? "").replaceAll("_", " ");
 const harnessOrder = (harness: unknown) =>
   (HARNESSES as readonly unknown[]).indexOf(harness);
-/** Labelled tasks whose type is empty get their own row, so shares sum to 100%. */
 export const typeLabel = (type: string) => (type === "" ? "untyped" : type);
 
-/** Server rate and sample size of a `<key>_rate` / `<key>_den` column pair. */
 const pct = (row: Row, key: string) => (
   <RateValue pct={maybe(row[`${key}_rate`])} n={num(row[`${key}_den`])} />
 );
 
-/** Long daily rows to one row per day: each harness's server rate and its n. */
 function pivotCorrectedRate(rows: Row[]): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     const out = days.get(day) ?? { day };
-    const harness = String(row.harness);
-    out[harness] = maybe(row.corrected_rate);
-    out[`${harness}_n`] = num(row.corrected_den);
+    const harness = String(row["harness"]);
+    out[harness] = maybe(row["corrected_rate"]);
+    out[`${harness}_n`] = num(row["corrected_den"]);
     days.set(day, out);
   }
   return [...days.values()];
 }
 
-/** Rows of a view dataset, empty while the server omits it. */
 const rowsOf = (data: Record<string, Row[]>, key: string) => data[key] ?? [];
 
 export default function Intent({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const kpi = rowsOf(data, "kpi");
-  // The rollup row (harness '') is All, computed by the server.
-  const all = kpi.find((row) => row.harness === "") ?? {};
-  const byHarness = kpi.filter((row) => row.harness !== "");
+  const all = kpi.find((row) => row["harness"] === "") ?? {};
+  const byHarness = kpi.filter((row) => row["harness"] !== "");
   const series = selected.map((harness) => ({
     key: harness,
     label: HARNESS_LABEL[harness],
@@ -65,9 +60,14 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
   const typeMix = rowsOf(data, "task_type_mix");
   const typeDetail = (type: string) =>
     types
-      .filter((row) => row.task_type === type)
-      .sort((a, b) => harnessOrder(a.harness) - harnessOrder(b.harness))
-      .map((row) => `${harnessLabel(row.harness)} ${fmtCount(num(row.tasks))}`)
+      .filter((row) => row["task_type"] === type)
+      .toSorted(
+        (a, b) => harnessOrder(a["harness"]) - harnessOrder(b["harness"]),
+      )
+      .map(
+        (row) =>
+          `${harnessLabel(row["harness"])} ${fmtCount(num(row["tasks"]))}`,
+      )
       .join(" · ");
   const kindTotals = rowsOf(data, "correction_kind_totals");
   const payoff = rowsOf(data, "effort_payoff");
@@ -77,29 +77,29 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Labelled tasks"
           source="kpi"
-          value={fmtPct(maybe(all.labelled_rate))}
-          detail={`${fmtCount(num(all.labelled))} of ${fmtCount(num(all.tasks))} tasks in sessions with exported prompts${
-            num(all.before_export) > 0
-              ? `; ${fmtCount(num(all.before_export))} more come from sessions with none`
+          value={fmtPct(maybe(all["labelled_rate"]))}
+          detail={`${fmtCount(num(all["labelled"]))} of ${fmtCount(num(all["tasks"]))} tasks in sessions with exported prompts${
+            num(all["before_export"]) > 0
+              ? `; ${fmtCount(num(all["before_export"]))} more come from sessions with none`
               : ""
           }`}
-          n={num(all.tasks)}
+          n={num(all["tasks"])}
           signals={["intent.labelled"]}
         />
         <Kpi
           title="Corrected by the next prompt"
           source="kpi"
-          value={fmtPct(maybe(all.corrected_rate))}
-          detail={`${fmtCount(num(all.corrected_n))} of ${fmtCount(num(all.corrected_den))} tasks`}
-          n={num(all.corrected_den)}
+          value={fmtPct(maybe(all["corrected_rate"]))}
+          detail={`${fmtCount(num(all["corrected_n"]))} of ${fmtCount(num(all["corrected_den"]))} tasks`}
+          n={num(all["corrected_den"])}
           signals={["intent.corrected"]}
         />
         <Kpi
           title="Frustrated follow-ups"
           source="kpi"
-          value={fmtPct(maybe(all.frustrated_rate))}
-          detail={`${fmtCount(num(all.frustrated_n))} of ${fmtCount(num(all.frustrated_den))} labelled next prompts`}
-          n={num(all.frustrated_den)}
+          value={fmtPct(maybe(all["frustrated_rate"]))}
+          detail={`${fmtCount(num(all["frustrated_n"]))} of ${fmtCount(num(all["frustrated_den"]))} labelled next prompts`}
+          n={num(all["frustrated_den"])}
           signals={["intent.frustration"]}
         />
       </Section>
@@ -137,11 +137,11 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         >
           <BarList
             items={typeMix.map((row) => ({
-              key: String(row.task_type),
-              label: typeLabel(String(row.task_type)),
-              value: num(row.tasks),
+              key: String(row["task_type"]),
+              label: typeLabel(String(row["task_type"])),
+              value: num(row["tasks"]),
               color: SERIES[0]!,
-              detail: `${fmtPct(maybe(row.share_rate), 0)} · ${typeDetail(String(row.task_type))}`,
+              detail: `${fmtPct(maybe(row["share_rate"]), 0)} · ${typeDetail(String(row["task_type"]))}`,
             }))}
             format={fmtCount}
           />
@@ -150,12 +150,12 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "task_type",
                 label: "Task type",
-                render: (row) => typeLabel(String(row.task_type)),
+                render: (row) => typeLabel(String(row["task_type"])),
               },
               { key: "tasks", label: "Tasks", numeric: true },
             ]}
@@ -170,9 +170,9 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
         >
           <BarList
             items={kindTotals.map((row) => ({
-              key: String(row.correction_kind),
-              label: words(row.correction_kind),
-              value: num(row.tasks),
+              key: String(row["correction_kind"]),
+              label: words(row["correction_kind"]),
+              value: num(row["tasks"]),
               color: SERIES[1]!,
             }))}
             format={fmtCount}
@@ -182,12 +182,12 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "correction_kind",
                 label: "Correction",
-                render: (row) => words(row.correction_kind),
+                render: (row) => words(row["correction_kind"]),
               },
               { key: "tasks", label: "Tasks", numeric: true },
             ]}
@@ -210,7 +210,7 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "tasks", label: "Tasks", numeric: true },
               { key: "labelled", label: "Labelled", numeric: true },
@@ -220,8 +220,8 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
                 numeric: true,
                 render: (row) => (
                   <RateValue
-                    pct={maybe(row.labelled_rate)}
-                    n={num(row.tasks)}
+                    pct={maybe(row["labelled_rate"])}
+                    n={num(row["tasks"])}
                   />
                 ),
               },
@@ -285,35 +285,38 @@ export default function Intent({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               {
                 key: "started",
                 label: "Started (UTC)",
-                render: (row) => String(row.started).slice(0, 16),
+                render: (row) => String(row["started"]).slice(0, 16),
               },
               {
                 key: "task_type",
                 label: "Task type",
-                render: (row) => String(row.task_type) || "—",
+                render: (row) => String(row["task_type"]) || "—",
               },
               { key: "effort", label: "Effort" },
               {
                 key: "correction_kind",
                 label: "Correction",
-                render: (row) => words(row.correction_kind) || "—",
+                render: (row) => words(row["correction_kind"]) || "—",
               },
               {
                 key: "sentiment_next",
                 label: "Next sentiment",
-                render: (row) => String(row.sentiment_next) || "—",
+                render: (row) => String(row["sentiment_next"]) || "—",
               },
             ]}
             rows={rowsOf(data, "recent")}

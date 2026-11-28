@@ -1,8 +1,3 @@
-import { Database } from "bun:sqlite";
-import { readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { extname, join, relative } from "node:path";
 import {
   HARNESSES,
   DETAIL_PATHS,
@@ -23,6 +18,7 @@ import {
   clickhouse,
   clickhouseUrl,
   credentialsFromEnv,
+  dashboardPort,
   live,
   shortMessage,
   SNAPSHOT_DAYS,
@@ -42,37 +38,22 @@ import {
 } from "./server/pipeline";
 import { interventionsData } from "./server/interventions";
 import { MIN_RATE_N, SESSION_QUERIES, VIEW_QUERIES } from "./server/views";
+import { sqliteWorkflow, type WorkflowReader } from "./server/workflow";
+import { loadAssets } from "./server/assets";
 
 const ADDRESS = "127.0.0.1";
-const PORT = 4173;
-const WORKFLOW_DB =
-  process.env.INTROSPECTION_WORKFLOW_DB ??
-  join(homedir(), ".local/share/agent-introspection/introspection.sqlite3");
 const MAX_RANGE_MS = 92 * 86_400_000;
 const REGISTRY_TTL_MS = 60_000;
-/**
- * Route counts (coverage, contributor chips) and Pipeline's whole-history checks
- * are shared for 10 minutes, the cadence the fact snapshots rebuild on.
- */
 const SHARED_TTL_MS = 600_000;
 const CACHE_ENTRIES = 32;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CSP =
   "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self'; img-src 'self'; script-src 'self'; style-src 'self';";
-const MEDIA_TYPES: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".svg": "image/svg+xml",
-};
 const securityHeaders = {
   "content-security-policy": CSP,
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
 };
-
-/** Reads the workflow store's findings and proposals for the Interventions view. */
-export type WorkflowReader = () => Record<string, Row[]>;
 
 type Dependencies = {
   query: Query;
@@ -80,6 +61,7 @@ type Dependencies = {
   assets: Map<string, Response>;
   now: () => Date;
   features: Features;
+  port: number;
 };
 
 function json(body: unknown, status = 200): Response {
@@ -95,9 +77,9 @@ function json(body: unknown, status = 200): Response {
 
 const badRequest = (message: string) => json({ error: message }, 400);
 
-function isTrustedRequest(request: Request): boolean {
+function isTrustedRequest(request: Request, port: number): boolean {
   const url = new URL(request.url);
-  const expectedHost = `${ADDRESS}:${url.port || PORT}`;
+  const expectedHost = `${ADDRESS}:${url.port || port}`;
   if (url.hostname !== ADDRESS || request.headers.get("host") !== expectedHost)
     return false;
   const origin = request.headers.get("origin");
@@ -128,10 +110,6 @@ const params = (filters: Filters): Record<string, string> => ({
   harness: filters.harness,
 });
 
-/**
- * Shares one pending result per key for `ttlMs`, so concurrent and repeated loads
- * run a query once. A failed result is dropped at once, so the next load retries.
- */
 export function ttlCache<T>(
   ttlMs: number,
   maxEntries: number,
@@ -175,11 +153,10 @@ async function loadRegistry(
     });
   if (!signals || signals.length === 0)
     throw new Error("signal support registry is empty; run facts install");
-  // A signal of an experimental feature that is off is not defined on this machine.
   const gated = gatedSignals(features);
   const registry = {
-    signals: signals.filter((row) => !gated.has(String(row.signal))),
-    support: support?.filter((row) => !gated.has(String(row.signal))),
+    signals: signals.filter((row) => !gated.has(String(row["signal"]))),
+    support: support?.filter((row) => !gated.has(String(row["signal"]))),
     routes,
     strays,
     exclusions,
@@ -190,183 +167,21 @@ async function loadRegistry(
   return { ...registry, hidden: hiddenSignals(registry), features };
 }
 
-/**
- * Scalar fields of a finding subject: facts.failure_cluster, or the retired
- * facts.repeated_correction whose dormant findings stay as history.
- */
-const SUBJECT_SCALARS = [
-  "tool_family",
-  "failure_class",
-  "project",
-  "correction_kind",
-  "impact",
-  "sessions",
-];
-/** Array fields of a finding subject, read as JSON text and parsed after the query. */
-const SUBJECT_ARRAYS = ["harnesses", "tools", "task_types"];
-
-/**
- * A finding's subject fields; NULL for findings without a subject, or when the
- * store predates the subject column. Retired detectors' subjects named one
- * `harness`, read here as a one-element `harnesses`.
- */
-const SUBJECT = (table: string, hasSubject: boolean) => {
-  const field = (path: string) =>
-    hasSubject
-      ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE json_extract(${table}.subject, '$.${path}') END`
-      : "NULL";
-  return [
-    ...SUBJECT_SCALARS.map((name) => `${field(name)} AS ${name}`),
-    ...SUBJECT_ARRAYS.filter((name) => name !== "harnesses").map(
-      (name) => `${field(name)} AS ${name}`,
-    ),
-    hasSubject
-      ? `CASE WHEN ${table}.subject = '' THEN NULL ELSE coalesce(json_extract(${table}.subject, '$.harnesses'),
-          CASE WHEN json_extract(${table}.subject, '$.harness') IS NOT NULL
-            THEN json_array(json_extract(${table}.subject, '$.harness')) END) END AS harnesses`
-      : "NULL AS harnesses",
-  ].join(", ");
-};
-
-/** The latest proposal event of one type, or NULL (and NULL when the store has no events table). */
-const latestEvent = (hasEvents: boolean, type: string, expression: string) =>
-  hasEvents
-    ? `(SELECT ${expression} FROM proposal_events AS e WHERE e.proposal_id = p.id
-        AND e.event_type = '${type}' ORDER BY e.sequence DESC LIMIT 1)`
-    : "NULL";
-
-/** A structured success metric field; NULL for a legacy free-text metric. */
-const metricField = (path: string) =>
-  `CASE WHEN json_type(p.payload_json, '$.predicted_success_metric') = 'object'
-    THEN json_extract(p.payload_json, '$.predicted_success_metric.${path}') END`;
-
-/** Parses the JSON-array text columns of a workflow row into arrays. */
-function parseArrays(row: Row, keys: string[]): Row {
-  const out: Row = { ...row };
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value !== "string") continue;
-    try {
-      const parsed: unknown = JSON.parse(value);
-      out[key] = Array.isArray(parsed)
-        ? parsed.map((item) => String(item))
-        : null;
-    } catch {
-      out[key] = null;
-    }
-  }
-  return out;
-}
-
-/** Opens the SQLite workflow store read-only for each request. */
-export function sqliteWorkflow(path = WORKFLOW_DB): WorkflowReader {
-  return () => {
-    // The CLI creates the store on first use; until then there is nothing to show.
-    if (!existsSync(path))
-      return { findings: [], proposals: [], proposal_events: [] };
-    const db = new Database(path, { readonly: true });
-    try {
-      const all = (sql: string) => db.query(sql).all() as Row[];
-      const tables = new Set(
-        all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) =>
-          String(row.name),
-        ),
-      );
-      if (!tables.has("findings") || !tables.has("proposals"))
-        return { findings: [], proposals: [], proposal_events: [] };
-      const hasSubject = all("PRAGMA table_info(findings)").some(
-        (row) => row.name === "subject",
-      );
-      const hasEvents = tables.has("proposal_events");
-      const findings =
-        all(`SELECT category, detector_id AS detector, trend_state AS state,
-            ${SUBJECT("findings", hasSubject)},
-            occurrence_count AS occurrences, canonical_task_count AS tasks, local_day_count AS days,
-            strftime('%Y-%m-%dT%H:%M:%SZ', first_seen_ns / 1e9, 'unixepoch') AS first_seen,
-            strftime('%Y-%m-%dT%H:%M:%SZ', last_seen_ns / 1e9, 'unixepoch') AS last_seen
-          FROM findings WHERE is_active = 1
-          ORDER BY trend_state = 'actionable' DESC, occurrence_count DESC, last_seen_ns DESC`);
-      const proposals =
-        all(`SELECT p.id, p.state, json_extract(p.payload_json, '$.intervention_type') AS tier,
-            json_extract(p.payload_json, '$.target') AS target, f.category, f.detector_id AS detector,
-            p.created_at, ${SUBJECT("f", hasSubject)},
-            ${metricField("metric")} AS metric,
-            ${metricField("harnesses")} AS metric_harnesses,
-            ${metricField("baseline_days")} AS baseline_days,
-            ${metricField("evaluation_days")} AS evaluation_days,
-            ${metricField("max_ratio")} AS max_ratio,
-            coalesce(${latestEvent(hasEvents, "applied", "e.created_at")},
-              CASE WHEN p.state = 'applied' THEN p.updated_at END) AS applied_at,
-            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.verdict')")} AS verdict,
-            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.ratio')")} AS evaluated_ratio,
-            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.baseline_rate')")} AS baseline_rate,
-            ${latestEvent(hasEvents, "evaluated", "json_extract(e.payload_json, '$.evaluation_rate')")} AS evaluation_rate
-          FROM proposals AS p JOIN findings AS f ON f.id = p.finding_id ORDER BY p.created_at DESC`);
-      // Decision history: who moved each proposal, when, and a short reason.
-      // Only whitelisted scalar evidence fields are read, never the raw payload.
-      const history = hasEvents
-        ? all(`SELECT p.id AS proposal_id, json_extract(p.payload_json, '$.target') AS target,
-            e.sequence, e.event_type AS event, json_extract(e.payload_json, '$.actor') AS actor,
-            e.created_at AS at,
-            substr(coalesce(json_extract(e.payload_json, '$.evidence.reason'),
-              json_extract(e.payload_json, '$.evidence.decision'),
-              json_extract(e.payload_json, '$.evidence.request'),
-              json_extract(e.payload_json, '$.verdict')), 1, 200) AS summary
-          FROM proposal_events AS e JOIN proposals AS p ON p.id = e.proposal_id
-          ORDER BY e.created_at DESC, e.sequence DESC`)
-        : [];
-      return {
-        findings: findings.map((row) => parseArrays(row, SUBJECT_ARRAYS)),
-        proposals: proposals.map((row) =>
-          parseArrays(row, [...SUBJECT_ARRAYS, "metric_harnesses"]),
-        ),
-        proposal_events: history,
-      };
-    } finally {
-      db.close();
-    }
-  };
-}
-
-async function loadAssets(): Promise<Map<string, Response>> {
-  const root = join(import.meta.dir, "dist");
-  const assets = new Map<string, Response>();
-  async function add(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const file = join(directory, entry.name);
-      if (entry.isDirectory()) await add(file);
-      else if (entry.isFile()) {
-        const path = `/${relative(root, file).replaceAll("\\", "/")}`;
-        assets.set(
-          path,
-          new Response(await Bun.file(file).arrayBuffer(), {
-            headers: {
-              ...securityHeaders,
-              "content-type":
-                MEDIA_TYPES[extname(path)] ?? "application/octet-stream",
-            },
-          }),
-        );
-      }
-    }
-  }
-  await add(root);
-  return assets;
-}
+const tenMinutes = (bound: Record<string, string>) =>
+  `${bound["start"]!.slice(0, 15)}|${bound["end"]!.slice(0, 15)}`;
 
 export function createApp(
   overrides: Partial<Dependencies> = {},
 ): (request: Request) => Promise<Response> {
   const dependencies: Dependencies = {
-    // Resolved only when no query is injected, so tests need no ClickHouse address.
     query:
       overrides.query ??
       clickhouse(clickhouseUrl(), fetch, credentialsFromEnv()),
     workflow: sqliteWorkflow(),
     assets: new Map(),
     now: () => new Date(),
-    // Read once at start; a config change takes effect when the service restarts.
     features: overrides.features ?? experimentalFeatures(),
+    port: overrides.port ?? dashboardPort(),
     ...overrides,
   };
   const { query, features } = dependencies;
@@ -391,13 +206,7 @@ export function createApp(
   );
   const checkCache = ttlCache<Row[]>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
   const unroutedCache = ttlCache<Unrouted>(SHARED_TTL_MS, CACHE_ENTRIES, clock);
-  // Live presets move `end` on every load; keys keep only the 10-minute slot of each
-  // bound, so every load in one slot shares one count and one set of checks.
-  const tenMinutes = (bound: Record<string, string>) =>
-    `${bound.start!.slice(0, 15)}|${bound.end!.slice(0, 15)}`;
 
-  // "Data as of": the refreshers feeding the view (see server/refreshers.ts). `stale` is
-  // the loader's own test (a refresh failed, or the next one is more than 2 minutes late).
   const refreshersCache = ttlCache<Row[]>(SHARED_TTL_MS, 1, clock);
   const factsAsOf = (scope: string[] | null): Promise<ViewResponse["asOf"]> =>
     refreshersCache("facts", () => query(REFRESHERS))
@@ -409,7 +218,6 @@ export function createApp(
     const bound = params(filters);
     const reg = await registry();
     const registryDone = performance.now();
-    // Started now, awaited after the view's own batch, so the two run together.
     const countsMs = { value: 0 };
     const counts = routeCountCache(tenMinutes(bound), () =>
       routeCounts(query, reg, bound),
@@ -420,8 +228,6 @@ export function createApp(
       },
       () => undefined,
     );
-    // Snapshots keep one extra day (facts.SNAPSHOT_DAYS + 1), so a "Last 90 days"
-    // window whose start was computed a moment before this request still reads them.
     const withinSnapshots =
       Date.parse(filters.start) >=
       dependencies.now().getTime() - (SNAPSHOT_DAYS + 1) * 86_400_000;
@@ -429,7 +235,6 @@ export function createApp(
     let errors: Record<string, string>;
     let asOf: Promise<ViewResponse["asOf"]>;
     if (id === "pipeline") {
-      // Pipeline reads every fact table, so every refresher is in scope.
       asOf = factsAsOf(null);
       ({ data, errors } = await pipelineData(
         query,
@@ -447,7 +252,6 @@ export function createApp(
         },
       ));
     } else {
-      // Without intervention outcomes, the before/after inputs are never queried.
       const queries =
         id === "interventions" && !features.intervention_outcomes
           ? {}
@@ -459,7 +263,6 @@ export function createApp(
         bound,
       ));
       const names = Object.keys(queries);
-      // Every branch failing means ClickHouse is down, not that one query is bad.
       if (names.length > 0 && Object.keys(errors).length === names.length)
         throw new Error(Object.values(errors)[0]);
       if (id === "interventions")
@@ -471,9 +274,8 @@ export function createApp(
         );
     }
     const sqlDone = performance.now();
-    // Chips need the route counts; without them the view shows no chips.
     const totals = await counts.catch((error: unknown) => {
-      errors.route_counts = shortMessage(error);
+      errors["route_counts"] = shortMessage(error);
       return null;
     });
     const contributed = totals ? contributions(reg, totals, id) : {};
@@ -520,7 +322,6 @@ export function createApp(
       harness,
       session,
       queriedAt: dependencies.now().toISOString(),
-      // A session can be older than the snapshot horizon.
       data: await batch(query, live(SESSION_QUERIES), { harness, session }),
     };
     return json(response);
@@ -561,7 +362,7 @@ export function createApp(
   }
 
   return async (request) => {
-    if (!isTrustedRequest(request))
+    if (!isTrustedRequest(request, dependencies.port))
       return json({ error: "untrusted host or origin" }, 403);
     if (request.method !== "GET" && request.method !== "HEAD")
       return json({ error: "method not allowed" }, 405);
@@ -571,14 +372,14 @@ export function createApp(
 }
 
 if (import.meta.main) {
-  const assets = await loadAssets();
-  const app = createApp({ assets });
-  Bun.serve({ hostname: ADDRESS, port: PORT, fetch: app });
-  // Load the registry before the first view request needs it.
+  const assets = await loadAssets(securityHeaders);
+  const port = dashboardPort();
+  const app = createApp({ assets, port });
+  Bun.serve({ hostname: ADDRESS, port, fetch: app });
   void app(
-    new Request(`http://${ADDRESS}:${PORT}/api/registry`, {
-      headers: { host: `${ADDRESS}:${PORT}` },
+    new Request(`http://${ADDRESS}:${port}/api/registry`, {
+      headers: { host: `${ADDRESS}:${port}` },
     }),
   );
-  console.log(`Dashboard listening on http://${ADDRESS}:${PORT}`);
+  console.log(`Dashboard listening on http://${ADDRESS}:${port}`);
 }

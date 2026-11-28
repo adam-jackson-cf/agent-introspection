@@ -1,7 +1,3 @@
--- Durable, curated copies of producer telemetry. SigNoz expires traces and logs
--- after 90 days; these tables have no TTL. ReplacingMergeTree collapses the rows that
--- overlapping loader windows insert more than once, so reads use FINAL.
-
 CREATE DATABASE IF NOT EXISTS introspection;
 
 CREATE TABLE IF NOT EXISTS introspection.spans
@@ -44,12 +40,6 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (harness, log_id);
 
 
--- Normalized activity-hook events (see docs/references/hook-events.md) that close signals the
--- producers' own telemetry lacks. Hooks keep no raw prompt, argument, or output
--- text. Events from every machine arrive as OTLP logs through SigNoz
--- (load_hook_events), which keeps them for its retention, so this table is the durable
--- copy; `host` is the producing machine. `producer` is the hook family (`codex` covers
--- app-server, CLI, and exec).
 CREATE TABLE IF NOT EXISTS introspection.hook_events
 (
     event_id String,
@@ -65,10 +55,6 @@ ENGINE = ReplacingMergeTree(loaded_at)
 ORDER BY (session_id, event_id);
 ALTER TABLE introspection.hook_events ADD COLUMN IF NOT EXISTS host LowCardinality(String) DEFAULT '';
 
--- Jev labels for user prompts (`facts sync`, classify.py). Only the answers are
--- stored: prompt text stays in SigNoz and expires with it, so this table is the only
--- copy. A failed decision is a row with `status = 'failed'` and a reason code; it is
--- retried until `attempts` reaches the limit.
 CREATE TABLE IF NOT EXISTS introspection.prompt_labels
 (
     harness LowCardinality(String),

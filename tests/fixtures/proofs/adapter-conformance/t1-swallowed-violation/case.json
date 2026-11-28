@@ -1,0 +1,7 @@
+{
+ "id": "t1-swallowed-violation",
+ "rule": "TEST.t1-isolation",
+ "evidence": "run-report",
+ "situation": "a T1 test catches the guard's error and carries on",
+ "expect": "finding"
+}

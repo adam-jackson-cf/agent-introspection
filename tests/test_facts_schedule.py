@@ -1,5 +1,3 @@
-"""Refresher schedules: the minute map that keeps heavy queries from overlapping."""
-
 from __future__ import annotations
 
 import itertools
@@ -24,15 +22,12 @@ def test_history_refreshers_run_one_at_a_time_off_the_shared_ten_minute_marks() 
         offsets.append(int(match.group(1)))
         assert f"\nSETTINGS {facts.HISTORY_RETRY_SETTINGS}\nTO " in history
         assert f"\nSETTINGS {facts.RECENT_RETRY_SETTINGS}\nTO " in recent
-    # Strictly increasing in SNAPSHOTS order (so a dependency, which must come earlier
-    # in that order, builds first) and never on a minute shared with other refreshers.
     assert all(a < b for a, b in itertools.pairwise(offsets))
     assert len(set(offsets)) == len(offsets)
     assert all(offset % 10 == 5 for offset in offsets)
 
 
 def _minute_class(schedule: str) -> int:
-    """Return the minute within a 10-minute period that a schedule fires on."""
     match = re.search(r"OFFSET (\d+) MINUTE", schedule)
     return int(match.group(1)) % 10 if match else 0
 
@@ -44,8 +39,6 @@ def _backoff_minutes(settings: str, key: str) -> float:
 
 
 def test_retry_backoffs_clear_the_slots_each_refresher_class_could_land_on() -> None:
-    # Backoff counts from the failed attempt's end, so a history retry must clear the
-    # whole block of later histories (plus a 10-minute margin for the attempt itself).
     block = (len(facts.SNAPSHOTS) - 1) * facts.HISTORY_OFFSET_STEP_MINUTES + 10
     for key in ("initial", "max"):
         history = _backoff_minutes(facts.HISTORY_RETRY_SETTINGS, f"refresh_retry_{key}_backoff_ms")
@@ -89,18 +82,14 @@ def test_recent_refreshers_take_distinct_minutes_off_loaders_history_and_sweeps(
     for snapshot in facts.SNAPSHOTS:
         recent = facts.snapshot_statements(snapshot)[-1]
         assert f"REFRESH {facts.recent_schedule(snapshot)} DEPENDS" in recent
-    # A dependency is waited for only when its offset is earlier; labels follow outcomes.
     assert recents["task_labels"] == recents["task_outcomes"] + 1
 
 
 @pytest.mark.parametrize("hour", [0, 0.4, 0.6, 1.5, 1.7, 12, 23.9])
 def test_history_and_recent_both_cover_the_boundary_between_rebuilds(hour: float) -> None:
-    """History views rebuild daily from 00:35 to 01:35 UTC and recent every 10 minutes;
-    whenever the dashboard reads, the boundary must lie inside both parts or rows go missing."""
     day = timedelta(days=1)
     now = datetime(2026, 10, 2, tzinfo=UTC) + timedelta(hours=hour)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Before the last history build, history may be yesterday's; recent may be 10 minutes old.
     last_offset = max(
         facts.HISTORY_FIRST_OFFSET_MINUTES + facts.HISTORY_OFFSET_STEP_MINUTES * index
         for index in range(len(facts.SNAPSHOTS))
@@ -145,7 +134,6 @@ def test_install_refreshes_loaders_then_histories_then_recents_one_at_a_time() -
     assert tail == [
         f"SYSTEM {verb} VIEW introspection.{name}" for name in names for verb in ("REFRESH", "WAIT")
     ]
-    # Sweeps are created EMPTY and left to their slot, never refreshed at install.
     assert not [s for s in ran[created + 1 :] if s.startswith("SYSTEM") and "sweep_" in s]
     assert all(" EMPTY\nAS" in s for s in ran if s.startswith("CREATE MATERIALIZED VIEW"))
 
@@ -174,7 +162,6 @@ def test_install_attempts_every_refresher_and_reports_all_failures_after_one_ret
         assert f"refresh of {name} failed: REFRESH_FAILED" in str(raised.value)
         assert attempts[name] == 2
     assert pauses == [facts.REFRESH_RETRY_PAUSE_SECONDS] * len(bad)
-    # Everything else was still refreshed, once, after the failures.
     assert attempts["refresh_model_call_attempts_recent"] == 1
     assert attempts["refresh_task_labels_recent"] == 1
 
@@ -299,29 +286,28 @@ def test_verify_uses_a_scratch_database_per_run_and_drops_only_stale_ones() -> N
     assert {"introspection_verify", stale} <= dropped
     assert fresh not in dropped
     assert "introspection" not in {s.split()[4] for s in ran if s.startswith("DROP DATABASE")}
-    # Each run builds and drops its own database, and the name embeds time and pid.
     assert first["database"] == f"introspection_verify_{int(now)}_{os.getpid()}"
     assert ran.count(f"DROP DATABASE IF EXISTS {first['database']} SYNC") == 2
 
 
-def test_refresh_with_retry_does_not_requeue_a_refresh_that_is_still_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_refresh_with_retry_does_not_requeue_a_refresh_that_is_still_running() -> None:
     attempts: list[str] = []
     slept: list[float] = []
 
-    def refresh_view(_run: object, name: str) -> None:
-        attempts.append(name)
+    def run(sql: str) -> str:
+        name = sql.rsplit(".", 1)[1]
+        if sql.startswith("SYSTEM REFRESH VIEW"):
+            attempts.append(name)
+            return ""
         raise facts.RefreshStillRunningError(f"refresh of {name} failed: still running")
 
-    monkeypatch.setattr(facts, "refresh_view", refresh_view)
     with pytest.raises(facts.RefreshStillRunningError):
-        facts.refresh_with_retry(lambda _sql: "", "load_spans", slept.append)
+        facts.refresh_with_retry(run, "load_spans", slept.append)
     assert attempts == ["load_spans"]
     assert slept == []
 
     with pytest.raises(facts.FactsError, match="refresh of load_spans failed: still running"):
-        facts.refresh_all(lambda _sql: "", [("load_spans", "")], slept.append)
+        facts.refresh_all(run, [("load_spans", "")], slept.append)
     assert attempts == ["load_spans", "load_spans"]
 
 

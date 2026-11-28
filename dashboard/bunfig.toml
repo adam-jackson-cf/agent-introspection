@@ -1,0 +1,2 @@
+[test]
+preload = ["./t1-guard.ts"]

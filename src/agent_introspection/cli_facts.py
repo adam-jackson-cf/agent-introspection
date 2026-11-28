@@ -1,8 +1,7 @@
-"""Facts subcommands of the Agent Introspection CLI."""
-
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -16,12 +15,11 @@ from agent_introspection import (
     spool,
 )
 from agent_introspection.cli_common import app_config, diagnostic, open_store
-from agent_introspection.config import AppConfig, load_config
+from agent_introspection.config import AppConfig, ConfigurationError, load_config
 
 
 def _schedule_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.schedule_command == "install":
-        # Validate now, and resolve the path so the job reads the same file later.
         config = Path(args.config).expanduser().resolve() if args.config else None
         load_config(config)
         return schedule.schedule_install(config)
@@ -56,12 +54,9 @@ def _install(args: argparse.Namespace, config: AppConfig, run: facts.SqlRunner) 
     try:
         result = facts.install(run, config.harnesses_enabled)
     except Exception:
-        # The dashboard reads the workflow store, so install creates and migrates it
-        # too, even when a refresh failed after the ClickHouse store was created.
-        # A store error here must not hide the install failure that is propagating.
         try:
             open_store(args).close()
-        except Exception as store_error:
+        except (ConfigurationError, sqlite3.Error, OSError) as store_error:
             diagnostic(f"workflow store setup also failed: {store_error}")
         raise
     open_store(args).close()
@@ -79,10 +74,6 @@ def _findings(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
 def _labels(
     run: facts.SqlRunner, config: AppConfig, *, days: int = 2, limit: int = 60
 ) -> dict[str, Any]:
-    """Label exported prompts with Jev; Jev being unavailable never fails the sync.
-
-    With no key command, labels are off, as ``doctor`` reports them: nothing is read.
-    """
     command = config.labels_openrouter_key_command
     if command is None:
         return {"status": "off", "reason": "no [labels] openrouter_key_command (optional)"}
@@ -97,13 +88,11 @@ _LOADER = "load_hook_events"
 
 
 def _load_spooled(run: facts.SqlRunner) -> None:
-    """Run the hook-event loader now, so records the drain just delivered are in its table."""
     run(f"SYSTEM REFRESH VIEW {facts.DATABASE}.{_LOADER}")
     run(f"SYSTEM WAIT VIEW {facts.DATABASE}.{_LOADER}")
 
 
 def _sync(args: argparse.Namespace, run: facts.SqlRunner) -> dict[str, Any]:
-    """Ship the spool, load it, label prompts, promote findings, evaluate proposals."""
     config = app_config(args)
     shipped = spool.sync(config)
     _load_spooled(run)

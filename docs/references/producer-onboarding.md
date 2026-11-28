@@ -209,6 +209,18 @@ saved. A version that passes this review can then be added to the profile's
   [`scripts/signoz/`](../../.agents/skills/introspection-onboarding/scripts/signoz/README.md)
   does. Applying it changes the user's SigNoz, so it is their decision.
 
+## Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- A producer listed under `[producers]` in `signal_support.toml` exports to the same SigNoz but is not a harness. The loaders do not read it, no signal is defined for it, and it is never ranked or compared. A registered stray may name such a producer in place of a harness.
+- A `~` expands only as the first part of a path, as in a shell, never inside a variable's value. `paths` are never globbed: each names one file or directory. A directory matched by `home_globs` never stands in for the default home when nothing else is chosen.
+- Codex reads `[otel]` only from each Codex home and ignores it in a project's `.codex/config.toml`. A Codex `otlp-http` exporter posts to its endpoint exactly as given, so the endpoint must name the signal path such as `/v1/logs`. Its protocol `binary` is protobuf.
+- Claude Code's endpoint and protocol variables are judged as a pair. omp exports OTLP/HTTP only, so a gRPC pair never satisfies its literal protocol setting.
+- omp reads its telemetry environment from `~/.omp/.env` and exports spans only, no logs. Its prompt event and hook records come from the activity extension (hook adapter `omp`).
+- Matching only the last word keeps identifiers and counts such as `message.id` or `input_tokens` out of `content_keys`. Trailing index words are skipped, so `gen_ai.prompt.0` still counts as a prompt key.
+- An assessment query by hand must window spans and logs differently: SigNoz span timestamps are `DateTime64`, while log timestamps are nanoseconds since the epoch.
+
 ## Related Docs
 
 - [Producer Capabilities](producer-capabilities.md): every capability, its hints, and

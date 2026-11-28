@@ -1,0 +1,13 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[surface]
+lever_command = ["bash", "lever.sh"]
+data_dir_arg = "--data-dir"
+evidence_dir_arg = "--evidence-dir"
+doctor_marker = "LEVER DOCTOR FAILED"
+evidence_ports_file = "ports"
+lever_timeout_s = 30
+doctor_failure_env = { FAKE_LEVER_DOCTOR = "broken" }

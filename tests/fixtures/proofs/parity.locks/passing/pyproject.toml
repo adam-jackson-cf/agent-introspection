@@ -1,0 +1,7 @@
+[project]
+name = "fixture-project"
+version = "0.1.0"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=9.0.0"]

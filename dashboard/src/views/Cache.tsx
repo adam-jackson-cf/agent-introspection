@@ -19,7 +19,6 @@ import {
   SERIES,
 } from "../format";
 
-/** Pure reshape: one wide row per day, values copied from the server rows. */
 function wideByDay(
   rows: Row[],
   pick: (row: Row) => string | null,
@@ -29,7 +28,7 @@ function wideByDay(
   for (const row of rows) {
     const series = pick(row);
     if (series === null) continue;
-    const day = String(row.day);
+    const day = String(row["day"]);
     days.set(day, { ...days.get(day), day, [series]: value(row) });
   }
   return [...days.values()];
@@ -38,23 +37,23 @@ function wideByDay(
 export default function Cache({ data }: { data: Record<string, Row[]> }) {
   const selected = useSelectedHarnesses();
   const creationShown = useVisible("usage.cache_creation");
-  const kpi = data.kpi ?? [];
-  const all = kpi.find((row) => row.harness === "") ?? {};
-  const byHarness = kpi.filter((row) => row.harness !== "");
-  const daily = data.daily ?? [];
+  const kpi = data["kpi"] ?? [];
+  const all = kpi.find((row) => row["harness"] === "") ?? {};
+  const byHarness = kpi.filter((row) => row["harness"] !== "");
+  const daily = data["daily"] ?? [];
   const partition = daily
-    .filter((row) => row.harness === "")
+    .filter((row) => row["harness"] === "")
     .map((row) => ({
-      day: row.day,
-      uncached: num(row.uncached),
-      cached: num(row.cached),
-      output: num(row.output),
+      day: row["day"],
+      uncached: num(row["uncached"]),
+      cached: num(row["cached"]),
+      output: num(row["output"]),
     }));
   const harnesses = selected;
   const utilizationDaily = wideByDay(
     daily,
-    (row) => (row.harness === "" ? null : String(row.harness)),
-    (row) => maybe(row.cache_rate),
+    (row) => (row["harness"] === "" ? null : String(row["harness"])),
+    (row) => maybe(row["cache_rate"]),
   );
   const partitionSeries = [
     { key: "uncached", label: "Uncached input", color: SERIES[1]! },
@@ -72,33 +71,33 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Input tokens"
           source="kpi"
-          value={fmtCount(num(all.input))}
-          detail={`${fmtCount(num(all.operations))} completed operations`}
+          value={fmtCount(num(all["input"]))}
+          detail={`${fmtCount(num(all["operations"]))} completed operations`}
           signals={["usage.input_tokens", "usage.operations"]}
         />
         <Kpi
           title="Input cache utilization"
           source="kpi"
-          value={fmtPct(maybe(all.cache_rate))}
-          detail={`${fmtCount(num(all.cached))} cached of ${fmtCount(num(all.input))}`}
+          value={fmtPct(maybe(all["cache_rate"]))}
+          detail={`${fmtCount(num(all["cached"]))} cached of ${fmtCount(num(all["input"]))}`}
           signals={["usage.cache_utilization", "usage.cached_input"]}
         />
         <Kpi
           title="Uncached input"
           source="kpi"
-          value={fmtCount(num(all.uncached))}
+          value={fmtCount(num(all["uncached"]))}
           detail={
             creationShown
-              ? `incl. ${fmtCount(num(all.creation))} written to cache`
-              : `${fmtPct(maybe(all.uncached_rate))} of input`
+              ? `incl. ${fmtCount(num(all["creation"]))} written to cache`
+              : `${fmtPct(maybe(all["uncached_rate"]))} of input`
           }
           signals={["usage.uncached_input", "usage.cache_creation"]}
         />
         <Kpi
           title="Output tokens"
           source="kpi"
-          value={fmtCount(num(all.output))}
-          detail={`${fmtCount(num(all.sessions))} usage-active sessions`}
+          value={fmtCount(num(all["output"]))}
+          detail={`${fmtCount(num(all["sessions"]))} usage-active sessions`}
           signals={["usage.output_tokens", "usage.active_sessions"]}
         />
       </Section>
@@ -179,31 +178,31 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "input",
                 label: "Input",
                 numeric: true,
-                render: (row) => fmtCount(num(row.input)),
+                render: (row) => fmtCount(num(row["input"])),
               },
               {
                 key: "cached",
                 label: "Cached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.cached)),
+                render: (row) => fmtCount(num(row["cached"])),
               },
               {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.cache_rate)),
+                render: (row) => fmtPct(maybe(row["cache_rate"])),
               },
               {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.uncached)),
+                render: (row) => fmtCount(num(row["uncached"])),
               },
               ...(creationShown
                 ? [
@@ -211,7 +210,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                       key: "creation",
                       label: "Cache writes",
                       numeric: true,
-                      render: (row: Row) => fmtCount(num(row.creation)),
+                      render: (row: Row) => fmtCount(num(row["creation"])),
                     },
                   ]
                 : []),
@@ -219,13 +218,13 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "output",
                 label: "Output",
                 numeric: true,
-                render: (row) => fmtCount(num(row.output)),
+                render: (row) => fmtCount(num(row["output"])),
               },
               {
                 key: "operations",
                 label: "Operations",
                 numeric: true,
-                render: (row) => fmtCount(num(row.operations)),
+                render: (row) => fmtCount(num(row["operations"])),
               },
               { key: "sessions", label: "Sessions", numeric: true },
             ]}
@@ -244,7 +243,7 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               { key: "provider", label: "Provider" },
               { key: "model", label: "Model" },
@@ -253,28 +252,28 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "input",
                 label: "Input",
                 numeric: true,
-                render: (row) => fmtCount(num(row.input)),
+                render: (row) => fmtCount(num(row["input"])),
               },
               {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.cache_rate)),
+                render: (row) => fmtPct(maybe(row["cache_rate"])),
               },
               {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.uncached)),
+                render: (row) => fmtCount(num(row["uncached"])),
               },
               {
                 key: "output",
                 label: "Output",
                 numeric: true,
-                render: (row) => fmtCount(num(row.output)),
+                render: (row) => fmtCount(num(row["output"])),
               },
             ]}
-            rows={data.models ?? []}
+            rows={data["models"] ?? []}
           />
         </Panel>
       </Section>
@@ -291,13 +290,16 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
               {
                 key: "harness",
                 label: "Harness",
-                render: (row) => <HarnessName value={row.harness} />,
+                render: (row) => <HarnessName value={row["harness"]} />,
               },
               {
                 key: "session_id",
                 label: "Session",
                 render: (row) => (
-                  <SessionLink harness={row.harness} session={row.session_id} />
+                  <SessionLink
+                    harness={row["harness"]}
+                    session={row["session_id"]}
+                  />
                 ),
               },
               { key: "models", label: "Models" },
@@ -305,28 +307,28 @@ export default function Cache({ data }: { data: Record<string, Row[]> }) {
                 key: "uncached",
                 label: "Uncached",
                 numeric: true,
-                render: (row) => fmtCount(num(row.uncached)),
+                render: (row) => fmtCount(num(row["uncached"])),
               },
               {
                 key: "util",
                 label: "Utilization",
                 numeric: true,
-                render: (row) => fmtPct(maybe(row.cache_rate)),
+                render: (row) => fmtPct(maybe(row["cache_rate"])),
               },
               {
                 key: "output",
                 label: "Output",
                 numeric: true,
-                render: (row) => fmtCount(num(row.output)),
+                render: (row) => fmtCount(num(row["output"])),
               },
               { key: "operations", label: "Operations", numeric: true },
               {
                 key: "last_seen",
                 label: "Last seen (UTC)",
-                render: (row) => String(row.last_seen).slice(0, 16),
+                render: (row) => String(row["last_seen"]).slice(0, 16),
               },
             ]}
-            rows={data.sessions ?? []}
+            rows={data["sessions"] ?? []}
           />
         </Panel>
       </Section>

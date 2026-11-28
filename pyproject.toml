@@ -15,11 +15,14 @@ agent-introspection = "agent_introspection.cli:main"
 [dependency-groups]
 dev = [
   "mypy>=1.19.0",
+  "packaging>=26.3",
   "pre-commit>=4.5.0",
   "pytest>=9.0.0",
   "pytest-cov>=6.0.0",
   "pyyaml>=6.0.3",
   "ruff>=0.15.0",
+  "shellcheck-py==0.11.0.1",
+  "shfmt-py==4.2.0",
   "types-pyyaml>=6.0.12",
 ]
 
@@ -27,23 +30,32 @@ dev = [
 packages = ["src/agent_introspection"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+markers = [
+  "boundary: T2 test that drives a local process, build, socket or loopback seam",
+  "deferred: test that runs only in the install mode, under an approved exception in proofs.toml",
+]
 testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]
-pythonpath = ["src", "."]
-# A leaked SQLite connection surfaces as an unraisable ResourceWarning at GC time.
+pythonpath = ["src", "scripts", "."]
 filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.coverage.report]
+fail_under = 85
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-fix = true
+fix = false
 output-format = "full"
 respect-gitignore = true
 preview = true
 exclude = [
+    ".build",
     ".git",
+    ".tox",
     ".venv",
+    "venv",
     "__pycache__",
     "node_modules",
     ".pytest_cache",
@@ -51,7 +63,7 @@ exclude = [
     ".ruff_cache",
     "build",
     "dist",
-    "tests/fixtures/",
+    "*.egg-info",
 ]
 
 [tool.ruff.lint]
@@ -68,9 +80,10 @@ select = [
     "PT",
     "PGH",
     "A",
-    "D",
     "N",
     "RUF",
+    "S110",
+    "BLE001",
     "PLR0904",
     "PLR0911",
     "PLR0912",
@@ -79,13 +92,8 @@ select = [
     "PLR0915",
     "PLR0917",
 ]
-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D"]
-
 [tool.ruff.lint.isort]
-known-first-party = []
+known-first-party = ["agent_introspection", "lib", "tests"]
 force-single-line = false
 combine-as-imports = true
 split-on-trailing-comma = true
@@ -102,25 +110,18 @@ max-public-methods = 20
 max-returns = 6
 max-statements = 50
 
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
-docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_unused_ignores = true
-follow_imports = "skip"
-mypy_path = "src"
+follow_imports = "normal"
+mypy_path = ["src", "scripts"]
+explicit_package_bases = true
 files = ["src", "scripts", "tests"]
 show_error_codes = true
 exclude = ["^tests/fixtures/"]
-
-[[tool.mypy.overrides]]
-module = ["pytest", "_pytest.*"]
-follow_imports = "normal"

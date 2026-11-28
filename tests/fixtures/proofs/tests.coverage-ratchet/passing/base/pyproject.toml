@@ -1,0 +1,9 @@
+[project]
+name = "fixture"
+version = "0"
+
+[tool.coverage.run]
+omit = ["*/app/cli.py"]
+
+[tool.coverage.report]
+fail_under = 85

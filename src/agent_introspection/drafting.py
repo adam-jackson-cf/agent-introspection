@@ -1,13 +1,3 @@
-"""Draft one intervention proposal with a bounded, read-only ``codex exec`` review.
-
-``draft`` exports the next candidate (reserving a review session), asks Codex to
-root-cause it from the evidence pack and audit the established tools of the
-repository where the failures ran, and imports the structured answer through the
-same validated path as ``proposal create``. Codex runs in a read-only sandbox with
-its telemetry export disabled, so drafting never changes a project or adds its own
-runs to the facts.
-"""
-
 from __future__ import annotations
 
 import json
@@ -42,8 +32,6 @@ from agent_introspection.review import (
 
 CODEX_TIMEOUT_SECONDS = 3600.0
 SCHEMA_PLACEHOLDER = "<output-schema.json>"
-# Codex exports its own OpenTelemetry to the same SigNoz; a drafting run must not
-# become a `codex_exec` task in the facts it is reviewing.
 TELEMETRY_OFF = (
     'otel.exporter="none"',
     'otel.trace_exporter="none"',
@@ -52,7 +40,7 @@ TELEMETRY_OFF = (
 
 
 class DraftingError(RuntimeError):
-    """The Codex drafting run failed or produced no usable answer."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -66,7 +54,6 @@ type CodexRunner = Callable[[list[str], str], CodexResult]
 
 
 def run_codex(command: list[str], prompt: str) -> CodexResult:
-    """Run ``codex exec`` with the prompt on stdin."""
     try:
         completed = subprocess.run(
             command,
@@ -82,7 +69,6 @@ def run_codex(command: list[str], prompt: str) -> CodexResult:
 
 
 def codex_command(cwd: Path, schema_path: str) -> list[str]:
-    """Return the non-interactive, read-only, telemetry-free ``codex exec`` command."""
     overrides = [item for value in TELEMETRY_OFF for item in ("-c", value)]
     return [
         "codex",
@@ -170,7 +156,6 @@ def _proposal_schema(
 
 
 def output_schema(review: dict[str, Any]) -> dict[str, Any]:
-    """Return the JSON Schema of the complete model output document for one review."""
     ids = list(review["ordered_candidate_ids"])
     subjects = [
         candidate.get("finding", {}).get("subject", {})
@@ -258,7 +243,6 @@ characters.
 
 
 def build_prompt(review: dict[str, Any]) -> str:
-    """Return the drafting instructions followed by the review envelope."""
     envelope = {
         key: review[key]
         for key in (
@@ -278,10 +262,6 @@ def build_prompt(review: dict[str, Any]) -> str:
 
 
 def working_directory(review: dict[str, Any], fallback: Path) -> Path:
-    """Return the candidate's top failure workdir when it exists locally, else ``fallback``.
-
-    Workdirs are home-redacted (``~/...``) in the facts, so ``~`` expands to this home.
-    """
     for candidate in review["payload"]["candidates"]:
         for entry in candidate.get("evidence", {}).get("workdirs", []):
             path = Path(str(entry.get("workdir", ""))).expanduser()
@@ -317,7 +297,6 @@ def _record_event(run: CodexRun, event: dict[str, Any]) -> None:
 
 
 def parse_events(stdout: str) -> CodexRun:
-    """Read the ``codex exec --json`` JSONL stream: thread id, last message, usage."""
     run = CodexRun()
     for line in stdout.splitlines():
         try:
@@ -330,12 +309,6 @@ def parse_events(stdout: str) -> CodexRun:
 
 
 def provenance(run: CodexRun) -> dict[str, Any]:
-    """Model provenance for ``import_model_output`` from a parsed Codex run.
-
-    Codex reports reasoning tokens inside ``output_tokens``, so only the input and
-    output components are recorded (availability ``partial``) and ``token_count``
-    is their sum; cached input tokens are part of ``input_tokens``.
-    """
     if not run.thread_id:
         raise DraftingError("codex exec reported no thread id")
     input_tokens = run.usage.get("input_tokens")
@@ -355,11 +328,6 @@ def provenance(run: CodexRun) -> dict[str, Any]:
 def import_proposals(
     connection: sqlite3.Connection, document: dict[str, Any], provenance: dict[str, Any]
 ) -> list[str]:
-    """Validate model output, import the review, and create its proposals atomically.
-
-    The review import and its proposals commit together or not at all, so a failed
-    proposal insert never leaves the review consumed without proposals.
-    """
     with immediate_transaction(connection):
         results = validate_model_output(connection, document, provenance=provenance)
         proposal_inputs: list[ProposalInput] = []
@@ -403,7 +371,6 @@ def _export(
 def _dry_run(
     connection: sqlite3.Connection, run: SqlRunner, request: DraftRequest, fallback_cwd: Path
 ) -> dict[str, Any]:
-    # Export against an in-memory copy, so a dry run reserves no session or budget.
     scratch = sqlite3.connect(":memory:")
     try:
         connection.backup(scratch)
@@ -448,11 +415,6 @@ def draft(
     codex: CodexRunner = run_codex,
     fallback_cwd: Path | None = None,
 ) -> dict[str, Any]:
-    """Export the next candidate, draft its proposal with Codex, and import it.
-
-    With ``request.dry_run`` nothing is reserved or run: the result carries the review
-    envelope, the exact ``codex exec`` command, its output schema, and the prompt.
-    """
     cwd_fallback = fallback_cwd or Path.cwd()
     if request.dry_run:
         return _dry_run(connection, run, request, cwd_fallback)

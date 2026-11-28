@@ -17,7 +17,6 @@ const harnessOrder = (harness: unknown) =>
 const stringList = (value: unknown) =>
   Array.isArray(value) ? value.map(String) : [];
 
-/** The Europe/London calendar date of an ISO instant, which the SQL week cuts at. */
 export function londonDate(instant: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/London",
@@ -27,38 +26,32 @@ export function londonDate(instant: string): string {
   }).format(new Date(instant));
 }
 
-/**
- * Failure-cluster rows arrive finished (one per tool family × failure class);
- * only the per-harness breakdown is put in registry order, never ranked.
- */
 export function clusterRows(rows: Row[]): Row[] {
   return rows.map((row) => ({
     ...row,
-    breakdown: stringList(row.breakdown).sort(
+    breakdown: stringList(row["breakdown"]).toSorted(
       (a, b) => harnessOrder(a.split(":")[0]) - harnessOrder(b.split(":")[0]),
     ),
   }));
 }
 
-/** Long daily rows (one per day and harness, finished) as one row per day for the chart. */
 function dailyWide(rows: Row[]): Row[] {
   const days = new Map<string, Row>();
   for (const row of rows) {
-    const day = String(row.day);
+    const day = String(row["day"]);
     days.set(day, {
       ...days.get(day),
       day,
-      [String(row.harness)]: row.failures,
+      [String(row["harness"])]: row["failures"],
     });
   }
-  return [...days.values()].sort((a, b) =>
-    String(a.day).localeCompare(String(b.day)),
+  return [...days.values()].toSorted((a, b) =>
+    String(a["day"]).localeCompare(String(b["day"])),
   );
 }
 
-/** Each harness's occurrences of one cluster, in registry order. */
 function Breakdown({ row }: { row: Row }) {
-  const parts = stringList(row.breakdown);
+  const parts = stringList(row["breakdown"]);
   return (
     <span className="breakdown">
       {parts.map((part) => {
@@ -88,7 +81,7 @@ const CLUSTER_COLUMNS: Column[] = [
   {
     key: "last_seen",
     label: "Last seen (UTC)",
-    render: (row) => String(row.last_seen).slice(0, 16),
+    render: (row) => String(row["last_seen"]).slice(0, 16),
   },
 ];
 
@@ -96,13 +89,13 @@ const firstRow = (rows: Row[] | undefined): Row => rows?.[0] ?? {};
 
 function deriveRecurrence(data: Record<string, Row[]>) {
   return {
-    targets: firstRow(data.target_summary),
-    summary: firstRow(data.cluster_summary),
-    actionable: clusterRows(data.actionable ?? []),
-    recurring: clusterRows(data.clusters ?? []),
-    daily: dailyWide(data.daily ?? []),
-    actionableTotal: num(firstRow(data.actionable_summary).actionable),
-    targetsTotal: num(firstRow(data.targets).total_files),
+    targets: firstRow(data["target_summary"]),
+    summary: firstRow(data["cluster_summary"]),
+    actionable: clusterRows(data["actionable"] ?? []),
+    recurring: clusterRows(data["clusters"] ?? []),
+    daily: dailyWide(data["daily"] ?? []),
+    actionableTotal: num(firstRow(data["actionable_summary"])["actionable"]),
+    targetsTotal: num(firstRow(data["targets"])["total_files"]),
   };
 }
 
@@ -137,15 +130,15 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
         <Kpi
           title="Recurring failure clusters"
           source="cluster_summary"
-          value={fmtCount(num(summary.recurring))}
-          detail={`of ${fmtCount(num(summary.clusters))} clusters, seen in ≥ 2 tasks`}
+          value={fmtCount(num(summary["recurring"]))}
+          detail={`of ${fmtCount(num(summary["clusters"]))} clusters, seen in ≥ 2 tasks`}
           signals={["recur.signatures"]}
         />
         <Kpi
           title="Recurring targets"
           source="target_summary"
-          value={fmtCount(num(targets.recurring))}
-          detail={`of ${fmtCount(num(targets.targets))} files touched in ≥ 2 tasks`}
+          value={fmtCount(num(targets["recurring"]))}
+          detail={`of ${fmtCount(num(targets["targets"]))} files touched in ≥ 2 tasks`}
           signals={["recur.targets"]}
         />
       </Section>
@@ -203,7 +196,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
           <DataTable
             columns={CLUSTER_COLUMNS}
             rows={recurring}
-            total={num(summary.recurring)}
+            total={num(summary["recurring"])}
           />
           <ViewLink view="tools">Open Tool failures</ViewLink>
         </Panel>
@@ -223,7 +216,7 @@ export default function Recurrence({ data }: { data: Record<string, Row[]> }) {
               { key: "calls", label: "Calls", numeric: true },
               { key: "failed", label: "Failed", numeric: true },
             ]}
-            rows={data.targets ?? []}
+            rows={data["targets"] ?? []}
             total={targetsTotal}
           />
           <ViewLink view="guardrails">

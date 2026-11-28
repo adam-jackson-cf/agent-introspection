@@ -1,11 +1,3 @@
-"""Render the generated block of the producer capabilities reference.
-
-Used by ``scripts/render-measures.py [--check]``. The block lists each capability from
-the signal registry with what to look for, how to check it, its hints, and the signals
-that require it, then the status every harness profile claims. Tables are padded the
-way Prettier formats Markdown, so a regenerated document stays clean.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -25,7 +17,6 @@ _HINT_LABELS = {
 
 
 def _table(header: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
-    """Return a Markdown table with every column padded to its widest cell."""
     cells = [[cell.replace("|", "\\|") for cell in row] for row in [header, *rows]]
     widths = [max(3, *(len(row[index]) for row in cells)) for index in range(len(header))]
     lines = [cells[0], ["-" * width for width in widths], *cells[1:]]
@@ -40,7 +31,6 @@ def _patterns(patterns: Sequence[str]) -> str:
 
 
 def _required_by(registry: facts.Registry, capability: str) -> list[str]:
-    """Return one list item per view naming the signals there that require ``capability``."""
     by_view: dict[str, list[str]] = {}
     for signal in registry.signals:
         if capability in registry.requires.get(str(signal["signal"]), ()):
@@ -81,7 +71,6 @@ def _status_matrix(loaded: Sequence[profiles.Profile]) -> list[str]:
 def _exceptional_claims(
     profile: profiles.Profile, labels: dict[str, str]
 ) -> list[tuple[str, str, CapabilityClaim]]:
-    """Return the profile's claims that lack some signals, then its surface overrides."""
     lacking = [
         (profile.title, capability, claim)
         for capability, claim in profile.capabilities.items()
@@ -96,7 +85,6 @@ def _exceptional_claims(
 
 
 def _exceptions(registry: facts.Registry, loaded: Sequence[profiles.Profile]) -> list[str]:
-    """Return a table of the claims that lack some signals or that a surface overrides."""
     titles = {str(signal["signal"]): str(signal["title"]) for signal in registry.signals}
     claims = [
         claim for profile in loaded for claim in _exceptional_claims(profile, registry.harnesses)
@@ -117,7 +105,6 @@ def _exceptions(registry: facts.Registry, loaded: Sequence[profiles.Profile]) ->
 def render_capabilities(
     registry: facts.Registry | None = None, loaded: Sequence[profiles.Profile] | None = None
 ) -> str:
-    """Return the generated block: capabilities, then the status each profile claims."""
     registry = registry or facts.load_registry()
     loaded = profiles.load_profiles(registry) if loaded is None else loaded
     lines = ["## Capabilities", ""]

@@ -1,0 +1,8 @@
+{
+ "schema": 1,
+ "tier": "t1",
+ "framework": "pytest",
+ "started_at": 100,
+ "wall_seconds": 1,
+ "cases": []
+}

@@ -1,0 +1,11 @@
+{
+ "id": "tier-selection",
+ "rule": "TEST.tier-selectors",
+ "evidence": "collection",
+ "situation": "a tier selector lists exactly the tests it selects",
+ "expect": {
+  "ids": [
+   "tests/test_case.py::test_fast_total"
+  ]
+ }
+}

@@ -12,7 +12,6 @@ export const HOST = { host: "127.0.0.1:4173" };
 export const START = "2026-09-21T00:00:00.000Z";
 export const END = "2026-09-28T00:00:00.000Z";
 
-/** The registry as this machine sees it: only `enabled` in use, hidden signals derived. */
 export const enabling = (
   reg: Registry,
   enabled: readonly Harness[],
@@ -25,7 +24,6 @@ export const enabling = (
   return { ...reg, harnesses, hidden: hiddenSignals({ ...reg, harnesses }) };
 };
 
-/** The registry table each `loadRegistry` query reads, in the order it queries them. */
 const REGISTRY_TABLES = [
   "FROM introspection.signals ",
   "FROM introspection.signal_support",
@@ -35,7 +33,6 @@ const REGISTRY_TABLES = [
   "FROM introspection.harnesses",
 ] as const;
 
-/** The registry rows a registry query returns; no rows for any other statement. */
 export const registryRows = (reg: Registry, sql: string): Row[] => {
   const tables = [
     reg.signals,
@@ -49,10 +46,6 @@ export const registryRows = (reg: Registry, sql: string): Row[] => {
   return index < 0 ? [] : (tables[index] as unknown as Row[]);
 };
 
-/**
- * A registry with one signal: omp and Codex reach it; it is not applicable to
- * Claude Code. Every harness is enabled.
- */
 export const registry = (): Registry =>
   ({
     signals: [
@@ -158,10 +151,6 @@ export const registry = (): Registry =>
     features: { intervention_outcomes: false },
   }) as Registry;
 
-/**
- * The base registry plus `provider.throughput`, which omp reaches and Codex does
- * not emit (Claude Code: not applicable here, to keep one route).
- */
 export const withThroughput = (): Registry => {
   const base = registry();
   return {
@@ -192,7 +181,6 @@ export const withThroughput = (): Registry => {
   };
 };
 
-/** The base registry plus `task.count`, which Codex reaches on its turn spans. */
 export const withTaskRoute = (): Registry => {
   const base = registry();
   return {
@@ -223,7 +211,6 @@ export const withTaskRoute = (): Registry => {
   };
 };
 
-/** The base registry plus one activity-hook route (`hook.turn_stop`) for Claude Code. */
 export const withHookRoute = (): Registry => {
   const base = registry();
   return {
@@ -261,7 +248,6 @@ export const withHookRoute = (): Registry => {
   };
 };
 
-/** Route counts as `routeCountQueries` would return them per source table. */
 export const counting = (
   spans: Row[],
   logs: Row[],

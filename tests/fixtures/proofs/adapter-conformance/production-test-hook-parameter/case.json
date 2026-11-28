@@ -1,0 +1,7 @@
+{
+ "id": "production-test-hook-parameter",
+ "rule": "TEST.no-test-hooks",
+ "evidence": "source",
+ "situation": "owned production code declares a parameter that exists only for tests",
+ "expect": "finding"
+}

@@ -1,0 +1,7 @@
+{
+ "id": "property-without-seed",
+ "rule": "TEST.property-seed",
+ "evidence": "source",
+ "situation": "a property test neither fixes nor reports its seed",
+ "expect": "finding"
+}

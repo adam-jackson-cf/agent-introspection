@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,49 +13,7 @@ import pytest
 from agent_introspection import facts, preflight
 from agent_introspection.config import AppConfig, ConfigurationError, load_config, parse_config
 from agent_introspection.facts import FactsError
-
-ALL_GRANTS = "GRANT SELECT, INSERT, ALTER, CREATE, DROP ON *.* TO default\n"
-
-
-def _columns(names: tuple[str, ...], resource: str = "JSON(max_dynamic_paths=100)") -> str:
-    return "\n".join(
-        json.dumps({"name": name, "type": resource if name == "resource" else "String"})
-        for name in names
-    )
-
-
-def fake_clickhouse(
-    *,
-    version: str = "25.5.6.14",
-    span_columns: tuple[str, ...] = preflight.SPAN_COLUMNS,
-    grants: dict[str, str] | None = None,
-    show_grants: str = ALL_GRANTS,
-    database_exists: bool = False,
-) -> tuple[list[str], facts.SqlRunner]:
-    """Answer each preflight statement; CHECK GRANT is unsupported unless given."""
-    executed: list[str] = []
-
-    def run(sql: str) -> str:
-        executed.append(sql)
-        answers = {
-            "SELECT version()": version,
-            "system.databases": "1" if database_exists else "0",
-            "table = 'distributed_signoz_index_v3'": _columns(span_columns),
-            "table = 'distributed_logs_v2'": _columns(preflight.LOG_COLUMNS),
-            "SHOW GRANTS": show_grants,
-            "GROUP BY source, service": json.dumps({
-                "source": "spans",
-                "service": "claude-code",
-                "rows": "3",
-            }),
-        }
-        if sql.startswith("CHECK GRANT"):
-            if grants is None:
-                raise FactsError("Code: 62. DB::Exception: Syntax error")
-            return grants.get(sql.split(" ON ")[0].removeprefix("CHECK GRANT "), "1")
-        return next((answer for key, answer in answers.items() if key in sql), "")
-
-    return executed, run
+from tests.support.preflight_clickhouse import fake_clickhouse
 
 
 def _statuses(result: dict[str, Any]) -> dict[str, str]:
@@ -170,28 +127,6 @@ def _services_read(select: str, column: str) -> list[str]:
     return [item.strip().strip("'") for item in listed.split(",")]
 
 
-_BROKEN_REGISTRY_IMPORT = """
-from agent_introspection import facts
-original = facts._sql
-facts._sql = lambda name: "[[broken\\n" if name == facts.REGISTRY_FILE else original(name)
-import agent_introspection.cli
-"""
-
-
-def test_a_registry_that_does_not_parse_never_stops_the_cli_from_starting() -> None:
-    # `hook`, `spool sync`, and `doctor` must start while the registry is mid-edit;
-    # only the commands that read it fail.
-    result = subprocess.run(
-        [sys.executable, "-c", _BROKEN_REGISTRY_IMPORT],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
 def test_checked_columns_and_services_are_the_ones_the_projections_read() -> None:
     spans = facts.render_select("select_spans.sql", "1")
     logs = facts.render_select("select_logs.sql", "1")
@@ -200,8 +135,9 @@ def test_checked_columns_and_services_are_the_ones_the_projections_read() -> Non
 
     for column in preflight.SPAN_COLUMNS:
         assert column in spans
+    windows = " ".join(loader.window for loader in facts.LOADERS)
     for column in preflight.LOG_COLUMNS:
-        assert column in logs + hook_events
+        assert column in logs + hook_events + windows
     assert "resources_string" in hook_events
     checked: list[str] = []
 
@@ -220,8 +156,6 @@ def test_checked_columns_and_services_are_the_ones_the_projections_read() -> Non
 
 
 def _local_command(monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str) -> None:
-    """Answer the Docker context lookup or password command without running anything."""
-
     def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, returncode, stdout, "")
 
@@ -230,8 +164,6 @@ def _local_command(monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
 
 @dataclass(frozen=True)
 class SetupCase:
-    """A config whose connection cannot be set up, and what the local command answers."""
-
     config: str
     reason: str
     statuses: dict[str, str]

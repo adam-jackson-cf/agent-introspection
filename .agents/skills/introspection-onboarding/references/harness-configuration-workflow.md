@@ -17,7 +17,7 @@ records and prompt export).
    `version_verified` against the profile's verified versions; `--no-version` runs no
    binary), and its hook adapter.
 2. Record the choice in the config's `[harnesses] enabled` (the registry keys listed in
-   `config.example.toml`; `codex` names the three Codex surfaces; absent means Claude
+   [docs/references/setup.md](../../../../docs/references/setup.md#configuration-file); `codex` names the three Codex surfaces; absent means Claude
    Code and Codex). `doctor` warns when a harness left out still sends rows. Parity is judged over this list: a signal is shown only when
    every enabled harness reaches it. Before adding a harness to the list, show the user
    `agent-introspection harness impact <key>`, which lists the signals it would hide.

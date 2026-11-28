@@ -1,10 +1,3 @@
-"""Producers subcommands of the Agent Introspection CLI.
-
-``discover``, ``profile``, and ``fingerprint`` only read SigNoz. ``profile --write``
-writes the draft profile to the given path, and ``fingerprint --save`` writes each
-fingerprint under ``producers.FINGERPRINT_DIR``; nothing else is written.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -105,7 +98,7 @@ def _fingerprint(
             )
     saved = (
         [
-            producers.save_fingerprint(record, producers.FINGERPRINT_DIR)
+            producers.save_fingerprint(record, producers.fingerprint_dir())
             for record in records.values()
         ]
         if args.save
@@ -122,13 +115,10 @@ def producers_command(args: argparse.Namespace) -> dict[str, Any]:
     config = app_config(args)
     registry = facts.load_registry()
     if args.producers_command == "profile" and args.write is not None:
-        # Refuse a bad --write path before running any query.
         producers.draft_target(Path(args.write), force=args.force)
     if args.producers_command == "fingerprint" and args.save:
-        # Refuse a service that cannot name a file before running any query, so a save
-        # is never partial.
         for service in _fingerprint_services(args, registry, config):
-            producers.fingerprint_path(producers.FINGERPRINT_DIR, service)
+            producers.fingerprint_path(producers.fingerprint_dir(), service)
     run = facts.runner(config)
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
         "discover": lambda: producers.discover(run, registry, config.harnesses_enabled, args.days),

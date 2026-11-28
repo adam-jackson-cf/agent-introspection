@@ -3,25 +3,11 @@ import { EFFORT_TOKENS, HARNESS_TOKENS, PART_TOKENS } from "./tokens";
 
 export { HARNESS_LABEL };
 
-/**
- * Harness identity colors: the categorical harness slots in docs/ux/DESIGN.md, read from
- * the token mirror, one per harness in registry order. Color follows the harness
- * everywhere; it never follows rank.
- */
 export const HARNESS_COLOR = Object.fromEntries(
   HARNESSES.map((harness, index) => [harness, HARNESS_TOKENS[index]]),
 ) as Record<Harness, string>;
-/**
- * Categorical slots for non-harness series, in fixed order: `cat-6`…`cat-8`
- * (PART_TOKENS), so a series never shares a colour with a harness.
- */
 export const SERIES = [...PART_TOKENS];
 
-/**
- * Effort is ordinal: one blue ramp low → xhigh (`seq-effort-*` in DESIGN.md).
- * The data holds low, medium, high, xhigh, unset, and mixed; unset (provider
- * default) and mixed sit apart from the ramp.
- */
 export const EFFORT_ORDER = [
   "low",
   "medium",
@@ -36,7 +22,6 @@ export const effortRank = (effort: string) => {
   return index === -1 ? EFFORT_ORDER.length : index;
 };
 
-/** Verification kinds in display order, as stored in `tool_calls.verification_kinds`. */
 export const VERIFICATION_KINDS = [
   "unit_test",
   "integration_e2e",
@@ -69,7 +54,6 @@ export const num = (value: unknown): number => {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 };
-/** null when the value is absent, so callers render "—", never 0. */
 export const maybe = (value: unknown): number | null =>
   value === null || value === undefined || value === "" ? null : num(value);
 
@@ -88,11 +72,9 @@ export const fmtSeconds = (value: number | null) => {
   return `${value.toFixed(value >= 10 ? 0 : 1)} s`;
 };
 
-/** A text cell, "—" when the value is empty. */
 export const orDash = (value: unknown): string => String(value ?? "") || "—";
 
 export const shortTime = (value: unknown) =>
   typeof value === "string" ? value.slice(0, 16).replace("T", " ") : "—";
 
-/** Registry prose without its inline-code backticks, for reading rather than copying. */
 export const plain = (text: string): string => text.replaceAll("`", "");

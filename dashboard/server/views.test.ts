@@ -19,26 +19,26 @@ describe("Batch C view queries", () => {
       Object.values(queries),
     );
     for (const sql of all) expect(sql).not.toContain("policy_blocked");
-    expect(VIEW_QUERIES.tools.kpi).toContain(
+    expect(VIEW_QUERIES.tools["kpi"]).toContain(
       "outcome IN ('succeeded', 'failed', 'aborted')",
     );
   });
 
   test("kind rows order by a fixed kind order, then harness order, never by value", () => {
-    expect(VIEW_QUERIES.guardrails.verification_kinds).toMatch(
+    expect(VIEW_QUERIES.guardrails["verification_kinds"]).toMatch(
       /ORDER BY if\(indexOf\(\['unit_test'.*kind\).*indexOf\(\['oh-my-pi'/s,
     );
   });
 
   test("kind rows count the failures caught later in the same task", () => {
-    const kinds = VIEW_QUERIES.guardrails.verification_kinds!;
+    const kinds = VIEW_QUERIES.guardrails["verification_kinds"]!;
     expect(kinds).toContain(
       "countIf(failed > 0 AND arrayExists(t -> t > first_failure, successes)) AS caught",
     );
     expect(kinds).toContain("coalesce(k.caught, 0) AS caught");
     expect(kinds).toContain("toString(max(ts)) AS last_seen");
     expect(kinds).toContain("k.harness = r.harness AND k.kind = r.kind");
-    expect(VIEW_QUERIES.effort.intervals).toContain(
+    expect(VIEW_QUERIES.effort["intervals"]).toContain(
       "quantilesExact(0.25, 0.5, 0.75)",
     );
   });

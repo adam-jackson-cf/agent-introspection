@@ -1,0 +1,21 @@
+schema = 1
+
+[scope]
+mode = "whole"
+
+[[claim]]
+id = "check"
+rules = ["GATE.self-check"]
+control = ["check.sh"]
+
+[[claim.enforced_by]]
+point = "ci"
+file = "ci.yml"
+ref = "sh check.sh"
+status = "gate"
+
+[[claim.canary]]
+command = ["sh", "check.sh", "{fixture}"]
+passing = "good.txt"
+violating = "bad.txt"
+expect = "A.rule: violation"

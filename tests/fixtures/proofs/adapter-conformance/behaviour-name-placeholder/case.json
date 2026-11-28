@@ -1,0 +1,7 @@
+{
+ "id": "behaviour-name-placeholder",
+ "rule": "TEST.growth.justified",
+ "evidence": "static-cases",
+ "situation": "a test function's name holds only placeholder text",
+ "expect": "finding"
+}

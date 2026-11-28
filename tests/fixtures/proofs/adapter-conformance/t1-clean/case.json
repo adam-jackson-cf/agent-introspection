@@ -1,0 +1,7 @@
+{
+ "id": "t1-clean",
+ "rule": "TEST.t1-isolation",
+ "evidence": "run-report",
+ "situation": "a T1 test computes in memory and writes only its temporary directory; the report shows the tier's guards",
+ "expect": "clean"
+}

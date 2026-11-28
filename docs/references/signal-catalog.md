@@ -1075,3 +1075,16 @@ The Pipeline view runs these checks for the selected window:
 
 Each view's totals were reconciled per harness and for All against direct queries on
 the live fact views when it shipped; the results are recorded in the plan.
+
+## 7. Design notes
+
+The notes below record why parts of this area work the way they do. They came from code comments, which the repository no longer allows.
+
+- `tool_family` groups each harness's tool names by what the tool does, so one behaviour is one finding whatever harness produced it. `failure_class` generalizes quoted values and paths in the signature, so one failure on different files is one class. It also drops the `(eval):N:` prefix zsh adds to errors of `eval`ed commands, which would otherwise split one failure into many. A line that is only shell punctuation before "not found", such as a markdown rule typed as a command, gets no class.
+- Codex patches arrive with real or JSON-escaped newlines, so the log projection ends each patch file header at either. The projection redacts every home path in an argument, because one argument can hold several paths.
+- Codex `turn/interrupt` and `turn/steer` RPC spans carry only the turn ID. `user_signals` takes their session from the `session_task.turn` span with that ID. omp approval decisions come from the activity hooks' `approval` events.
+- `task_labels` gives a task the latest prompt label submitted within five seconds of the task start, before or after. The window exists because the prompt event and the task start are stamped by different producers; 14 days of matches fall inside it. An older label belongs to an earlier prompt, so the task stays unlabelled. The view reads the `task_outcomes` snapshot instead of the live view, because labels exist only from 2026-09-30, well inside the snapshot's 91 days.
+- Snapshots keep one day more than the 90-day horizon (`facts.SNAPSHOT_DAYS + 1`). A "Last 90 days" window whose start the browser computed a moment earlier therefore still reads the snapshots instead of the live views.
+- Queries over activity-hook events read `introspection.hook_rows`, a view that resolves each event's harness. That view already reads `hook_events` with `FINAL`, so a query over `hook_rows` never adds `FINAL` itself.
+- Source parity covers only the last 7 days because the raw recount scans SigNoz's full trace table. It ends 10 minutes before now, so rows the loaders have not copied yet do not read as drift.
+- When the All query or the per-harness query of a recombination check fails, the Pipeline view leaves that check out. A missing side would otherwise read as a passing 0 = 0.

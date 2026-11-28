@@ -1,22 +1,3 @@
-# opencode: a candidate producer, not a harness. Measured on this machine on 2026-10-13
-# over 2026-09-30 to 2026-10-11 (opencode last sent spans on 2026-10-11): SigNoz service
-# `opencode` (resource keys `opencode.run`, `opencode.client`, `service.version`) holds
-# 17.88M spans on four days, 16.5M of them on 2026-10-09 and 2026-10-10, and no logs.
-# 93% are plumbing (`sql.execute` with `db.query.text`, `SessionProcessor.readToolCall`,
-# `Session.getPart`), which the onboarding skill's opt-in collector filter drops. Call and
-# turn counts below are of distinct span IDs, because SigNoz stored some spans twice on
-# the busiest days.
-#
-# Versions: the `opencode` on PATH prints 1.2.6, and the hook and event payload fields
-# below come from the installed `@opencode-ai/plugin` and `@opencode-ai/sdk` 1.2.6 type
-# definitions. The spans came from a newer build: their `service.version` is later than
-# 1.2.6 and equals the session version of 3,250 of the 3,259 store sessions in the window.
-# Payload key names were also checked, by name and count only, in that build's stored
-# events in opencode.db. Re-check both on the build that is meant to run.
-#
-# No [[config_file]] or [[setting]]: how opencode's export is switched on is not yet
-# verified, so `harness configure` has nothing to write for it. The pilot write-up is
-# docs/todo/opencode-onboarding.md.
 schema = "agent-introspection.harness-profile/1"
 key = "opencode"
 title = "opencode"
