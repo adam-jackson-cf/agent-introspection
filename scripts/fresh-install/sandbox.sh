@@ -5,6 +5,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 CLICKHOUSE_IMAGE=${FRESH_INSTALL_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:25.8}
 SYSTEM_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+while IFS= read -r git_variable; do
+  unset "$git_variable"
+done < <(compgen -e | grep '^GIT_' || true)
 
 die() {
   printf 'sandbox: %s\n' "$*" >&2
