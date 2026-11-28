@@ -5,8 +5,9 @@ each can produce reaches the facts: telemetry export, activity hooks, and prompt
 export. Each registered harness has a profile,
 `src/agent_introspection/harness_profiles/<key>.toml`, that names its config files and
 the settings to write, with each setting's purpose; `agent-introspection harness
-configure` writes them. Contract: `docs/references/hook-events.md` (activity-hook
-records and prompt export).
+configure` writes them. The activity-hook records are defined in
+`src/agent_introspection/hooks.py`, and the hooks themselves ship in
+`src/agent_introspection/hook_runtime/`.
 
 ## Choose the harnesses
 
@@ -16,16 +17,15 @@ records and prompt export).
    `PATH`, the version that binary prints (`installed_version`, and
    `version_verified` against the profile's verified versions; `--no-version` runs no
    binary), and its hook adapter.
-2. Record the choice in the config's `[harnesses] enabled` (the registry keys listed in
-   [docs/references/setup.md](../../../../docs/references/setup.md#configuration-file); `codex` names the three Codex surfaces; absent means Claude
-   Code and Codex). `doctor` warns when a harness left out still sends rows. Parity is judged over this list: a signal is shown only when
+2. Record the choice in the config's `[harnesses] enabled` (the keys of the `[harnesses]`
+   table in `src/agent_introspection/facts_sql/signal_support.toml`; `codex` names the
+   three Codex surfaces; absent means Claude Code and Codex). `doctor` warns when a harness left out still sends rows. Parity is judged over this list: a signal is shown only when
    every enabled harness reaches it. Before adding a harness to the list, show the user
    `agent-introspection harness impact <key>`, which lists the signals it would hide.
 3. A **registered** harness (Claude Code, Codex, omp) is configured with the steps
    below. Any other producer (opencode, or another agent harness) goes through the
    [producer onboarding workflow](producer-onboarding-workflow.md) first, which checks
-   it against
-   [Producer capabilities](../../../../docs/references/producer-capabilities.md);
+   it against the registry's `[[capability]]` entries;
    `harness configure` refuses a candidate.
 
 ## What each registered harness needs

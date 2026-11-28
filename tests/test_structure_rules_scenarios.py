@@ -61,6 +61,17 @@ def test_violating_scenario_fails_with_one_line_per_finding(
     assert all("; " in line for line in output)
 
 
+def test_a_single_word_rename_flags_its_path_references_but_not_the_plain_word(
+    checker: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert checker.main(["--scenario", str(_SCENARIOS / "rename-residue")]) == 1
+    output = capsys.readouterr().out.splitlines()
+    flagged = [
+        line.split(": RENAME.residue")[0] for line in output if "retired name 'service'" in line
+    ]
+    assert flagged == ["docs/guide.md:5"]
+
+
 def _scenario_repo(git: ModuleType, tmp_path: Path, name: str) -> Path:
     return Path(git.build_scenario(_SCENARIOS / name, tmp_path))
 

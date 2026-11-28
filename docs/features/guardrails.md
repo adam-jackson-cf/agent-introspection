@@ -21,3 +21,4 @@ Outcome tests: [dashboard/server/views.test.ts](../../dashboard/server/views.tes
 ## Gotchas
 
 - Verification queries read only rows that carry the command shape, so commands recorded before the shape existed do not count.
+- The command shape, verification kinds and gate-run flag are stored from commit `f563c3d` (2026-10-12), so verification panels leave earlier hook rows out rather than reading them as no verification.

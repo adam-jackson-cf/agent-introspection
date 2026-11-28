@@ -8,6 +8,7 @@ The Pipeline view of the dashboard, in its Health group.
 - Fact freshness: how far each harness's facts trail SigNoz.
 - Source parity and All = Σ harnesses: usage_events against a direct recount, and per-harness values against the All value.
 - Sanitization: whether any raw prompt, command, argument, output or identity text is stored.
+- Signals hidden on this machine: signals an enabled harness does not emit, with that harness and the reason. Their panels are left out of the views.
 - Coverage grid (`/pipeline/coverage`): whether each harness emits what the registry says it does.
 
 ## How to get to it (user POV)
@@ -23,4 +24,4 @@ Outcome tests: [dashboard/server/pipeline.test.ts](../../dashboard/server/pipeli
 ## Gotchas
 
 - The coverage grid shows harnesses this machine does not enable as not in use, and flags them when their routes still have rows.
-- A route with no rows while its harness is active shows as route missing, a possible break; an idle harness shows no activity.
+- In the coverage grid, an active harness whose route has no rows is `possible break`, and an inactive one is `idle`. View cells show the same states as `route missing` and `no activity`.

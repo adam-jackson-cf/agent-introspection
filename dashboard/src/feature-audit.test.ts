@@ -9,15 +9,10 @@ type Entry = {
   removed: string | null;
 };
 
-const audit = join(import.meta.dir, "../../docs/ux/feature-audit");
-const manifest: Entry[] = await Bun.file(join(audit, "titles.json")).json();
-const decided = new Set(
-  [
-    ...(await Bun.file(join(audit, "README.md")).text()).matchAll(
-      /^\| (DC\d+)\s+\|/gm,
-    ),
-  ].map((match) => match[1]),
-);
+const golden: { decisions: Record<string, string>; titles: Entry[] } =
+  await Bun.file(join(import.meta.dir, "feature-audit.titles.json")).json();
+const manifest = golden.titles;
+const decided = new Set(Object.keys(golden.decisions));
 
 async function sourceText(directory: string): Promise<string> {
   const parts: string[] = [];
@@ -43,7 +38,7 @@ describe("feature audit baseline", () => {
       );
     expect(missing).toEqual([]);
   });
-  test("a removal names a decision recorded in the audit README", () => {
+  test("a removal names a decision recorded in the titles file", () => {
     const undecided = manifest.filter(
       (entry) => entry.removed !== null && !decided.has(entry.removed),
     );

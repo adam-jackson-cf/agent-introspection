@@ -3,9 +3,6 @@
 Take a producer that is not a registered harness (opencode, or any other agent
 harness) from first sight to a decision: add it as a harness, or leave it a candidate.
 The same steps watch the registered harnesses for changes after an upgrade.
-[Producer Onboarding](../../../../docs/references/producer-onboarding.md) explains the
-model behind these steps, and the
-[opencode pilot](../../../../docs/todo/opencode-onboarding.md) is the worked example.
 
 ```text
 identify ─▶ explore ─▶ assess ─▶ decide ─▶ add (or keep a candidate) ─▶ configure ─▶ validate ─▶ watch
@@ -13,15 +10,18 @@ discover    profile    capability harness   change workflow             harness 
                        reference  impact                                configure     (--live)    doctor --drift
 ```
 
-Each dashboard signal consumes some kinds of producer data, called capabilities.
-[Producer capabilities](../../../../docs/references/producer-capabilities.md) says,
-for each capability, what to find in a producer, how to check it, and which signals
-need it. A harness profile (`src/agent_introspection/harness_profiles/<key>.toml`)
+Each dashboard signal consumes some kinds of producer data, called capabilities. The
+registry (`src/agent_introspection/facts_sql/signal_support.toml`) declares each one
+under `[[capability]]` with its `need` (what to find in a producer), its `check` (how
+to confirm it), and its `hints`; each harness-scoped signal lists the capabilities it
+`requires`. A harness profile (`src/agent_introspection/harness_profiles/<key>.toml`)
 records one producer's status for each capability, with the route and evidence.
 
 The `producers` commands read names and counts, never values. Keep any query of your
-own to the same: never print attribute values, prompts, commands, SQL text, or
-secrets.
+own to the same: read-only, with `SETTINGS max_execution_time`, never printing
+attribute values, prompts, commands, SQL text, or secrets. Window spans and logs
+differently: SigNoz span timestamps are `DateTime64`, while log timestamps are
+nanoseconds since the epoch.
 
 ## Identify
 
@@ -84,7 +84,9 @@ Work through the draft against the capability reference, one capability at a tim
    tool rows.
 2. Set each capability's `status` (`native`, `hook`, `hook_available`, `missing`,
    `not_applicable`, or `unverified`) with its `evidence`, and its `route` once a
-   registry route reads it. `lacks` names signals a capability is too coarse for.
+   registry route reads it. A claim takes its weakest part: omp's `model_outcome` is
+   `hook` because its retries come from an activity hook. `lacks` names signals a
+   capability is too coarse for; for those the claim counts as `missing`.
 3. From the producer's installed docs, types, and config, fill what telemetry cannot
    show: `binary`, `version_args`, and `verified_versions`. `draft_check.to_complete` lists
    what is still empty; `harness impact` loads a draft file only once these are set.
@@ -115,8 +117,8 @@ Show the user the hidden list. The user decides:
 ## Close the gaps and add it
 
 - **Hooks:** a hook or plugin adapter in the CLI package's `hook_runtime/`, installed
-  by `hook_install.py`, with its events in `hooks.py` and
-  `docs/references/hook-events.md`, turns `hook_available` into `hook`.
+  by `hook_install.py`, with its events in `hooks.py`, turns `hook_available` into
+  `hook`.
 - **Registration:** follow the `introspection-signals` change workflow, "Add a
   harness". The profile becomes `registered`, and the registry and dashboard changes
   ship in one change.

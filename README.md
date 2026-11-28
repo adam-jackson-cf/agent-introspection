@@ -1,7 +1,7 @@
 # Agent Introspection
 
-**See how your coding agents use models and work, across Claude Code, Codex, and omp,
-and turn recurring problems into fixes you approve.**
+**Read how your coding agents use models and work, across Claude Code, Codex, and omp,
+from one CLI, and find where they fail and where you lose time.**
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg?style=flat-square)
@@ -10,9 +10,11 @@ and turn recurring problems into fixes you approve.**
 ![Platform](https://img.shields.io/badge/platform-local%20self--hosted%20SigNoz-purple.svg?style=flat-square)
 
 Everything runs on your own desktop: your agents send telemetry to a SigNoz on the same
-machine, and Agent Introspection turns it into a local dashboard and a list of
-evidence-backed improvement proposals. It never applies a proposal without your
-explicit request.
+machine, and Agent Introspection turns it into sanitized facts. The
+`agent-introspection` CLI returns every dashboard view as JSON, so you or an agent can
+find recurring failures and user friction without a browser. A local dashboard shows
+the same views. A fix cycle that drafts and evaluates improvement proposals also
+exists, but it is not the focus, and it never applies a proposal for you.
 
 ## Quick Install
 
@@ -57,19 +59,20 @@ export, the prompt-label key), shows `setup --dry-run`, and runs `setup` once yo
 confirm. Every file it changes is backed up first.
 
 When it finishes, `agent-introspection doctor` shows `"passed": true` and the dashboard
-shows your agent sessions within a few minutes of use. To do it by hand, follow
-[Setup](docs/references/setup.md). If anything looks wrong, run
-`agent-introspection doctor` and follow the `fix` on each `fail` or `warn`.
+shows your agent sessions within a few minutes of use. To do it by hand, run the
+Quick Install commands; `agent-introspection setup --help` lists every option. If
+anything looks wrong, run `agent-introspection doctor` and follow the `fix` on each
+`fail` or `warn`.
 
 ## What Agent Introspection Does
 
 It collects the same signals from every agent harness on the machine, so one person can
-compare model usage and agent process across them, find what goes wrong, and act on it.
+compare model usage and agent process across them and find what goes wrong.
 
 ```text
-harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──> dashboard
+harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──> CLI (JSON) and dashboard
 (Claude Code,       (local)          (sanitized,   │
- Codex, omp)                          ClickHouse)  └──> findings ──> proposals ──> your decision
+ Codex, omp)                          ClickHouse)  └──> findings (recurring failures)
 ```
 
 - `src/agent_introspection/`: the `agent-introspection` CLI, the ClickHouse fact views
@@ -88,9 +91,11 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
   - [`introspection-analysis`](.agents/skills/introspection-analysis/SKILL.md):
     read what the dashboard shows from the terminal and route its themes.
   - [`introspection-improvement`](.agents/skills/introspection-improvement/SKILL.md):
-    findings → proposal → decision → evaluation.
+    the fix cycle: findings → proposal → decision → evaluation.
   - [`python-conventions`](.agents/skills/python-conventions/SKILL.md): this
     repository's Python rules and quality gates.
+  - [`testing-approach`](.agents/skills/testing-approach/SKILL.md): how to write,
+    change, move, or delete tests here.
 
 ## Core Concepts
 
@@ -108,37 +113,28 @@ harnesses ──OTLP──> SigNoz ──sync──> facts store ──┬──
 - **Activity hooks**: small hooks that record what a harness's own telemetry misses.
 - **Prompt labels**: per-prompt task type, correction kind, and sentiment, classified
   by Jev; only the labels are stored.
-- **Finding → proposal**: a finding is a recurring problem the facts prove; a proposal
-  is one intervention for it, which you approve or reject and which is evaluated after
-  it is applied.
+- **Finding**: a recurring problem the facts prove, such as one failure class across
+  several tasks.
+- **Proposal**: in the fix cycle, one intervention for a finding. You approve or reject
+  it, and it is evaluated after you apply it.
 
 ## Go Deeper
 
-| To…                                    | Read                                                                                                                                                          |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Set up by hand                         | [Setup](docs/references/setup.md), [SigNoz Connection](docs/references/signoz-connection.md)                                                                  |
-| Run or debug a command                 | [CLI Reference](docs/references/cli-reference.md)                                                                                                             |
-| Read the dashboard and its blind spots | [Dashboard Companion](docs/references/dashboard-companion.md), [Data Gaps](docs/references/data-gaps.md), [Signal Catalog](docs/references/signal-catalog.md) |
-| Add a producer or harness              | [Producer Onboarding](docs/references/producer-onboarding.md), [Producer Capabilities](docs/references/producer-capabilities.md)                              |
-| Understand the data pipeline           | [Facts Store](docs/references/facts-store.md), [Hook Events](docs/references/hook-events.md)                                                                  |
-| Run the improvement loop               | [Proposal Lifecycle](docs/references/proposal-lifecycle.md)                                                                                                   |
-| Contribute code                        | [Development](docs/references/development.md)                                                                                                                 |
-
-[docs/README.md](docs/README.md) indexes every doc.
+- [docs/features/](docs/features/pipeline.md): one page per dashboard view and CLI
+  feature: what it does, how to reach it, and its gotchas.
+- `agent-introspection --help`, and `--help` on each command: every command and
+  option.
+- [docs/README.md](docs/README.md) indexes every doc.
 
 ## Contributing
 
-Install the pinned Bun and the commit hook once in each clone (every gate mode also runs
-the last two commands). With mise activated in your shell, `bun` in the checkout is the
-pinned 1.3.0, which the commit hook's time budget expects:
-
-```bash
-mise trust && mise install
-uv sync --locked --dev
-uv run pre-commit install
-```
-
-Every commit then runs `bash scripts/run-ci-quality-gates.sh hook`, which only checks and
-never changes files. Every CI job runs `scripts/ci <job>` (`static`, `t1`, `t2`,
-`install` or `proofs`), which runs the same entrypoint. [Development](docs/references/development.md) lists the gate modes,
-the fix script `scripts/fix-quality-gates.sh`, the test tiers, and `proofs.toml`.
+1. Activate [mise](https://mise.jdx.dev) in your shell, then run `mise trust` and
+   `mise install` in the checkout, so `bun` resolves to the pinned 1.3.0. With another
+   Bun, the T1 time budget finds no approved machine entry and only reports timing.
+   `uv run python scripts/check-test-budget.py --print-machine-id` prints the id it
+   looks up.
+2. Docker is needed only for the gate's `install` mode.
+3. Run `bash scripts/run-ci-quality-gates.sh hook` before you commit. The commit hook
+   runs the same command, and every CI job runs the same entrypoint.
+4. Fix what a tool can fix with `bash scripts/fix-quality-gates.sh`. The gate itself
+   never changes a file.

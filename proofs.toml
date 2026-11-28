@@ -1843,7 +1843,6 @@ entry = [
 ".github/" = "ci"
 ".markdownlint-cli2.jsonc" = "tooling"
 ".pre-commit-config.yaml" = "ci"
-"HANDOFF.md" = "docs"
 "config.example.toml" = "package"
 "dashboard/" = "dashboard"
 "docs/" = "docs"
@@ -1997,7 +1996,7 @@ lever_timeout_s = 1500
 doctor_failure_env = { DOCKER_HOST = "unix:///nonexistent/docker.sock" }
 
 [golden]
-globs = ["tests/fixtures/command_shape.json", "docs/ux/feature-audit/titles.json"]
+globs = ["tests/fixtures/command_shape.json", "dashboard/src/feature-audit.titles.json"]
 change_record = "docs/references/golden-changes.md"
 
 [identity_artefacts]

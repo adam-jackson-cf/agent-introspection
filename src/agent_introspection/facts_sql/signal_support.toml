@@ -734,7 +734,7 @@ unit = "signature"
 formula = "Failed calls grouped by tool and the hash of the full normalized failure line (home → ~, digit and hex runs → N); the stored text is the first 80 characters, so failures sharing a prefix stay distinct."
 requires = ["tool_calls", "tool_failure"]
 [signal.support]
-codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: first error-like output line." }
+codex = { route = "codex.tool_result", alignment = "aligned", note = "`x.failure_signature`: most specific diagnostic line of the output." }
 oh-my-pi = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `tool_result` error text from the `tool_failure` hook; from the deploy date. The first error-like line of the span status message before." }
 claude-code = { route = "hook.tool_failure", alignment = "differs", note = "Most specific diagnostic line of the `PostToolUseFailure` error; before the hooks, and when the hook has no error text, the `error_type` class." }
 
@@ -1194,7 +1194,7 @@ view = "interventions"
 title = "Findings and proposals"
 question = "Which findings and intervention proposals exist, and in what state?"
 unit = "records"
-formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the V8 actionable-repeat rule, emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order."
+formula = "Findings by state; proposals by state and tier, from the local workflow store. `facts sync` promotes each failure cluster (tool family × failure class, across harnesses) seen in ≥ 2 tasks over the last 7 Europe/London days: actionable when it meets the actionable-repeat rule (`recur.actionable`), emerging otherwise, dormant once it stops recurring. Candidates are exported in impact order."
 scope = "system"
 
 [[signal]]

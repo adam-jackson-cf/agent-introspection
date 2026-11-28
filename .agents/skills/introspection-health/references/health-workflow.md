@@ -34,9 +34,9 @@ without bypassing a failed check.
    - source parity (last 7 days) and All = Σ harnesses recombination;
    - sanitization: no forbidden keys (including tool-intent keys), no stored diagnostic
      text (status message, failure signature) over 160 characters (new rows are capped
-     at 80), no home paths in rows loaded after the documented cutoff (`HOME_PATH_CUTOFF`, see
-     [Sanitization](../../../../docs/references/facts-store.md#sanitization)), and no raw text
-     in `hook_events`;
+     at 80), no home paths in rows loaded at or after the cutoff (`HOME_PATH_CUTOFF` in
+     `dashboard/server/record-route.ts`; older rows can still hold a Linux home path and
+     are never rewritten), and no raw text in `hook_events`;
    - coverage grid: a boundary route with no rows is a possible break; an `events`
      route with no rows is valid; rows under a `not applicable` cell or unclaimed rows
      need a registered stray or a fix;

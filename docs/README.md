@@ -4,25 +4,12 @@ Start at the root [README](../README.md) for install and first run.
 
 ## references/
 
-- [cli-reference](references/cli-reference.md): every `agent-introspection` command, output contract, and exit code (operators).
-- [dashboard-companion](references/dashboard-companion.md): server binding, environment variables, how views aggregate harnesses (dashboard developers).
-- [data-gaps](references/data-gaps.md): what the dashboard cannot show, per harness and signal; contains the generated harness support matrix (anyone reading a dashboard).
-- [design-rationale](references/design-rationale.md): the reasons behind non-obvious choices in the code (contributors).
-- [development](references/development.md): the check-only gate entrypoint and its modes, the commit hook, the fix script, test tiers, `proofs.toml` and its validator, dashboard package commands (contributors).
-- [facts-store](references/facts-store.md): how telemetry becomes fact views, snapshots, registry tables, and the standing decisions (contributors).
-- [golden-changes](references/golden-changes.md): the golden files tests compare with, and the record of each change to them (contributors).
-- [hook-events](references/hook-events.md): activity-hook record contract, route, delivery, prompt export (contributors and operators).
-- [producer-capabilities](references/producer-capabilities.md): what each producer capability needs, how to check it, the signals that require it, and the status each profile claims; generated from the registry and the profiles (anyone onboarding a producer).
-- [producer-onboarding](references/producer-onboarding.md): the onboarding lifecycle, known and candidate producers, harness profiles, projection and parity impact, fingerprints and drift, privacy rules (operators and contributors).
-- [proposal-lifecycle](references/proposal-lifecycle.md): findings to evaluated proposals (operators and improvement agents).
-- [setup](references/setup.md): the manual single-machine setup, from installing the CLI to a dashboard showing live sessions (new users).
-- [signal-catalog](references/signal-catalog.md): producer routes and calculations behind every dashboard signal (view builders).
-- [signoz-connection](references/signoz-connection.md): finding SigNoz, the opt-in guided install, the two SigNoz layouts, connection modes, and ClickHouse grants (operators).
+- [golden-changes](references/golden-changes.md): the required record of why each golden test file changed (contributors).
 
 ## Other folders
 
-- [features/](features/pipeline.md): one page per dashboard feature, how to reach and drive it, and the tests that prove it (anyone checking a feature).
+- [features/](features/pipeline.md): the feature map, one page per dashboard view and per CLI feature: what it does, how to reach it, how the `sandbox.sh lever` drives it, its gotchas, and the tests that prove it; `scripts/check-verification-surface.py` checks each page (anyone checking a feature).
 - [ux/](ux/AGENTS.md): design and UX standards; `ux/AGENTS.md` is the index.
-- [todo/](todo/decision-models-plan.md): proposed, unscheduled plans.
+- [todo/](todo/AGENTS.md): unscheduled feature work, one file per feature. Agents need the user's explicit permission to open it.
 - [proofs.toml](../proofs.toml): the repository's rule contract (claims, enforcement points, canaries), read by `scripts/validate-rule-coverage.py`; not the dashboard's Guardrails page (contributors).
 - [scripts/fresh-install/](../scripts/fresh-install/README.md): the fresh-install sandbox behind the gate's `install` mode (contributors).

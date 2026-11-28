@@ -34,10 +34,26 @@ def _alive(head_paths: tuple[str, ...]) -> set[str]:
     return {name for path in head_paths for name in _names(path)}
 
 
-def _pattern(name: str) -> re.Pattern[str]:
+_WORD = re.compile(r"[A-Za-z0-9]+")
+_EDGE_BEFORE = r"(?<![A-Za-z0-9_-])"
+_EDGE_AFTER = r"(?![A-Za-z0-9_-])"
+
+
+def _word_reference(name: str, old_path: str) -> str:
+    word = re.escape(name)
+    old_name = old_path.rsplit("/", 1)[-1]
+    if name_stem(old_name) == name:
+        filename = re.escape(old_name)
+        return rf"{_EDGE_BEFORE}{filename}{_EDGE_AFTER}|(?<=/){word}(?![A-Za-z0-9_./-])"
+    return rf"{_EDGE_BEFORE}{word}/|(?<=/){word}{_EDGE_AFTER}"
+
+
+def _pattern(name: str, old_path: str) -> re.Pattern[str]:
+    if _WORD.fullmatch(name):
+        return re.compile(_word_reference(name, old_path))
     variants = sorted({name, name.replace("_", "-"), name.replace("-", "_")})
     alternatives = "|".join(re.escape(variant) for variant in variants)
-    return re.compile(rf"(?<![A-Za-z0-9_-])(?:{alternatives})(?![A-Za-z0-9_-])")
+    return re.compile(rf"{_EDGE_BEFORE}(?:{alternatives}){_EDGE_AFTER}")
 
 
 def _text(root: Path, path: str) -> str | None:
@@ -72,7 +88,7 @@ def _line_findings(
 def residue_findings(root: Path, scope: Scope) -> set[Finding]:
     alive = _alive(scope.head_paths)
     retired = [
-        (name, replacement, change, _pattern(name))
+        (name, replacement, change, _pattern(name, change.old_path or ""))
         for change in scope.renames
         for name, replacement in retired_names(change)
         if name not in alive

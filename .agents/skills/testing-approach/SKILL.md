@@ -22,22 +22,26 @@ description: "Use when writing, changing, moving or deleting tests in agent-intr
 - Name tests like `test_failed_decisions_are_recorded_with_a_reason_and_retried_later`.
 - Coverage: floors in `pyproject.toml` `[tool.coverage.report]`: `fail_under = 85` (T1 pytest). Per-test limits: none configured.
 - Boundary launch: `subprocess.run([...], capture_output=True, text=True, timeout=<seconds>, check=False)` inside a one-call wrapper listed for its file in `proofs.toml` `[python_quality.subprocess_wrappers]`, such as `_run_activity_shim` in `tests/test_hooks_runtime_scripts.py`.
-- Golden files: `tests/fixtures/command_shape.json` and `docs/ux/feature-audit/titles.json`, verified by `bash scripts/run-ci-quality-gates.sh t1`; no regeneration command is documented, so ask the user before adding one; record each change in `docs/references/golden-changes.md` as one line under `Entries`, newest first, with the date, the golden file's path and why it changed.
+- Golden files: `tests/fixtures/command_shape.json` and `dashboard/src/feature-audit.titles.json`, verified by `bash scripts/run-ci-quality-gates.sh t1`; no regeneration command is documented, so ask the user before adding one; record each change in `docs/references/golden-changes.md` as one line under `Entries`, newest first, with the date, the golden file's path and why it changed.
+
+- T1 time budget: it blocks only the commit (`hook` mode); CI never measures timing. The budget entry is chosen by `uv run python scripts/check-test-budget.py --print-machine-id`, which includes the `bun` on `PATH`, so a Bun other than 1.3.0 gives an unknown machine whose run only reports timing. A new machine or a raised limit needs five baseline T1 runs and the owner's approval in its `[[test_budget.machine]]` entry.
+- Home isolation: `tests/conftest.py` points `HOME` at an empty directory for every test and puts an `omp` stand-in on `PATH`; product code resolves home paths at call time (`hooks.inbox_dir()`, `schedule.plist_file()`, `config.default_config_path()`), so no test writes the real home.
+- Dashboard T1 guard: `dashboard/bunfig.toml` preloads `t1-guard.ts`, so a `bun test` that calls `Bun.spawn`, `fetch`, `Bun.serve` or Node `child_process` or `net` fails.
+- Diff base: `test_placement`, `test_evasion`, `test_growth`, `coverage_ratchet`, `identity_artefacts` and `golden_changes` judge the staged changes in `hook` mode and the branch against its merge base with `origin/main` otherwise; a clone without `origin/main` fails them rather than skipping them.
 
 ## Every task
 
-- See docs/references/development.md (Test tiers).
-- Local checks: the commit hook configured in `.pre-commit-config.yaml` (installed with `bash scripts/run-ci-quality-gates.sh prepare`), which runs `bash scripts/run-ci-quality-gates.sh hook`: the static checks, all T1 and all T2. CI runs `scripts/ci static`, `scripts/ci t1`, `scripts/ci t2`, `scripts/ci proofs` and `scripts/ci install` on pull requests. See docs/references/development.md (What To Check).
-- Automatic fixes: only through `bash scripts/fix-quality-gates.sh`. See docs/references/development.md (Steps).
+- Local checks: the commit hook configured in `.pre-commit-config.yaml` (installed with `bash scripts/run-ci-quality-gates.sh prepare`), which runs `bash scripts/run-ci-quality-gates.sh hook`: the static checks, all T1 and all T2. CI runs `scripts/ci static`, `scripts/ci t1`, `scripts/ci t2`, `scripts/ci proofs` and `scripts/ci install` on pull requests.
+- Automatic fixes: only through `bash scripts/fix-quality-gates.sh`.
 - Never add skip, xfail, only, retry or quarantine markers, rerun until green, raise a timeout or loosen an assertion
   to get a pass, unless the user asks for it.
 
 ## Task routes
 
-- Writing, changing, moving or deleting a test: docs/references/development.md (Test tiers), then docs/references/development.md (Guardrails), then .agents/skills/python-conventions/SKILL.md (Repository gates), then [.agents/skills/testing-approach/references/writing-tests.md](references/writing-tests.md).
-- Adding or changing a T2 boundary test or journey: docs/references/development.md (Steps), then [.agents/skills/testing-approach/references/boundary-tests.md](references/boundary-tests.md).
+- Writing, changing, moving or deleting a test: .agents/skills/python-conventions/SKILL.md (Repository gates), then [.agents/skills/testing-approach/references/writing-tests.md](references/writing-tests.md).
+- Adding or changing a T2 boundary test or journey: [.agents/skills/testing-approach/references/boundary-tests.md](references/boundary-tests.md).
 - A test passes and fails on the same tree: [.agents/skills/testing-approach/references/flaky-tests.md](references/flaky-tests.md).
-- Reviewing or deleting tests, or changing the suite's run time: docs/references/development.md (Guardrails), then [.agents/skills/testing-approach/references/suite-maintenance.md](references/suite-maintenance.md).
+- Reviewing or deleting tests, or changing the suite's run time: [.agents/skills/testing-approach/references/suite-maintenance.md](references/suite-maintenance.md).
 - Adding, changing or regenerating golden or snapshot files: docs/references/golden-changes.md (Golden changes), then [.agents/skills/testing-approach/references/golden-files.md](references/golden-files.md).
 
 ## Repository decisions
